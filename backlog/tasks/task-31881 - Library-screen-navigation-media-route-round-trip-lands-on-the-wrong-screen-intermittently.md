@@ -38,3 +38,19 @@ Filed by the wave-7 (media) Library-decomposition wave close. Measured rates, si
 
 Same assertion on both trees, so pre-existing rather than wave-caused. In the batch that surfaced it, a RAG-named sibling (test_search_route_lands_on_library_rag_canvas) was the BASELINE-unique failure while this media-named one was the branch-unique -- the bidirectional signature recipe section 7 calls independent evidence of run-to-run flakiness. Related documented names in the same file: test_search_route_round_trips_to_the_library_rag_row, test_library_screen_round_trip_returns_to_landing_with_rag_draft, test_generic_library_entry_lands_hub_on_first_visit. Provenance: wave-7 task 3 report section 9.1 (.superpowers/sdd/2026-09-06-library-decomposition-wave7-media/task-3-report.md).
 <!-- SECTION:NOTES:END -->
+
+**More evidence — task-32461 fix round (2026-09-14), same file, same assertion.**
+Two node ids, run twice minutes apart on the SAME unmodified tree, isolated
+(`pytest <two node ids> -q -p no:cacheprovider --timeout=300`):
+
+    Tests/UI/test_screen_navigation.py::test_boot_with_search_default_tab_lands_on_library_rag_canvas
+    Tests/UI/test_screen_navigation.py::test_search_route_round_trips_to_the_library_rag_row
+      run 1: 1 failed, 1 passed
+      run 2: 2 failed
+
+The failure is `AssertionError: assert 'Screen' == 'LibraryScreen'` with
+"app never mounted its initial screen" — the boot-mount race this task names,
+not a route assertion. Full-file runs on the same tree: 40 failed / 102 passed
+vs 36 / 106 with a three-line diff that no boot test touches, and the two extra
+names both from this family. Cost: a library_screen.py change had to run this
+file twice (~4 min each) plus four isolation runs to clear its own name set.

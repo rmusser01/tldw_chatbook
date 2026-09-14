@@ -252,6 +252,195 @@ def test_scan_excludes_git_and_symlinks_and_rejects_unsafe_paths(
     assert (root / "ignored.rst").exists()
 
 
+def test_dot_directories_are_hidden_from_the_tree(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 AC#2: one rule -- every dot-directory is hidden.
+
+    Critique #3 (A 49; B 40): the tree listed ``.trash`` but not
+    ``.obsidian``. Nothing special-cased ``.obsidian``: the walk skipped only
+    ``.git``, and ``.obsidian`` simply held no supported file, so it fell out
+    of the folder index -- ``.trash/Old idea.md`` is Markdown, so it stayed.
+    """
+    root = tmp_path / "vault"
+    (root / ".obsidian").mkdir(parents=True)
+    (root / ".trash").mkdir()
+    (root / ".git").mkdir()
+    (root / ".hidden-notes").mkdir()
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    (root / ".obsidian" / "app.json").write_text("{}", encoding="utf-8")
+    (root / ".obsidian" / "readme.md").write_text("cfg", encoding="utf-8")
+    (root / ".trash" / "Old idea.md").write_text("old", encoding="utf-8")
+    (root / ".git" / "hidden.md").write_text("hidden", encoding="utf-8")
+    (root / ".hidden-notes" / "secret.md").write_text("secret", encoding="utf-8")
+    (root / ".dotfile.md").write_text("a dot FILE is not a folder", encoding="utf-8")
+    service = FileNotesService(root, replica)
+
+    result = service.scan()
+
+    assert [entry.relative_path for entry in result.entries] == [
+        ".dotfile.md",
+        "visible.md",
+    ]
+
+
+def test_a_file_indexed_under_a_dot_directory_is_forgotten_not_recently_deleted(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 AC#2, upgrade path: the replica remembers what the walk no
+    longer visits. Live on a profile that had indexed ``.trash/Old idea.md``
+    before the rule, the first scan after it listed that file under
+    "Recently deleted" -- it was still on disk, and Restore would refuse it
+    as "exists". A hidden file is forgotten, not tombstoned, and it leaves
+    the search index with it."""
+    root = tmp_path / "vault"
+    (root / ".trash").mkdir(parents=True)
+    (root / ".trash" / "Old idea.md").write_text("old idea body", encoding="utf-8")
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    raw = b"old idea body"
+    replica.upsert_file(
+        service.root_key,
+        ".trash/Old idea.md",
+        raw,
+        content_hash=_digest(raw),
+        decoded_text="old idea body",
+        size=len(raw),
+        mtime_ns=0,
+    )
+    assert replica.search(service.root_key, "idea") == [".trash/Old idea.md"]
+
+    assert [entry.relative_path for entry in service.scan().entries] == [
+        "visible.md"
+    ]
+    result = service.reconcile()
+
+    assert [entry.relative_path for entry in result.entries] == ["visible.md"]
+    assert result.deleted == ()
+    assert replica.list_deleted(service.root_key) == []
+    assert replica.search(service.root_key, "idea") == []
+
+
+def test_a_tombstone_left_under_a_dot_directory_is_swept_on_the_next_scan(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 AC#2, the other half of the upgrade path.
+
+    Forgetting a hidden file at reconcile only covers rows the walk still
+    reported last time: ``old_files`` is ``list_active_files``, so a row
+    already tombstoned by a build without the dot-directory rule is never
+    revisited, and "Recently deleted" names it forever. The live wave-4
+    profile was in exactly that state (``.trash/Old idea.md`` tombstoned at
+    15:25Z on 2026-09-13). Both read seams sweep it.
+    """
+    root = tmp_path / "vault"
+    (root / ".trash").mkdir(parents=True)
+    (root / ".trash" / "Old idea.md").write_text("old idea body", encoding="utf-8")
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    raw = b"old idea body"
+    replica.upsert_file(
+        service.root_key,
+        ".trash/Old idea.md",
+        raw,
+        content_hash=_digest(raw),
+        decoded_text="old idea body",
+        size=len(raw),
+        mtime_ns=0,
+    )
+    assert replica.mark_deleted(service.root_key, ".trash/Old idea.md")
+    assert replica.list_deleted(service.root_key) == [".trash/Old idea.md"]
+
+    assert service.scan().status == "ok"
+
+    assert replica.list_deleted(service.root_key) == []
+    assert replica.get_restore_bytes(service.root_key, ".trash/Old idea.md") is None
+    assert service.reconcile().deleted == ()
+
+
+def test_a_tombstone_for_a_hidden_file_that_is_really_gone_still_restores(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 review, Important: the sweep must not eat the last copy.
+
+    A tombstone row is where a deleted file's ``raw_bytes`` live, and
+    ``restore_file`` is the only way back. The sweep above targets a file the
+    dot-directory rule merely HID -- one still on disk. It cannot be allowed
+    to also drop the tombstone of a file the user genuinely deleted under an
+    older build: for that user the row, the "Recently deleted" entry and the
+    only recoverable bytes would all vanish on the first scan after
+    upgrading. Driven end to end: sweep, then restore, then read the file.
+    """
+    root = tmp_path / "vault"
+    (root / ".trash").mkdir(parents=True)
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    raw = b"the only copy of a deleted idea"
+    replica.upsert_file(
+        service.root_key,
+        ".trash/Deleted for real.md",
+        raw,
+        content_hash=_digest(raw),
+        decoded_text=raw.decode(),
+        size=len(raw),
+        mtime_ns=0,
+    )
+    assert replica.mark_deleted(service.root_key, ".trash/Deleted for real.md")
+    # The defining difference from the sweep case: nothing on disk.
+    assert not (root / ".trash" / "Deleted for real.md").exists()
+
+    assert service.scan().status == "ok"
+    assert service.reconcile().status == "ok"
+
+    assert replica.list_deleted(service.root_key) == [".trash/Deleted for real.md"]
+    result = service.restore_file(".trash/Deleted for real.md")
+    assert result.status == "ok", result
+    assert (root / ".trash" / "Deleted for real.md").read_bytes() == raw
+
+
+def test_reconcile_tombstones_a_hidden_file_that_left_the_disk(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 review, Important: the SIBLING forget site, same exposure.
+
+    The sweep reads tombstones; reconcile reads ``list_active_files``. A
+    replica built before the dot-directory rule holds an ACTIVE row for a
+    hidden path, and if the user deleted that file on disk before upgrading,
+    reconcile is the site that decides its fate. Forgetting it there destroys
+    the bytes just as surely -- ``mark_deleted`` is what retains them. So the
+    guard is one predicate both sites call, and this pins the reconcile half:
+    gone from disk means tombstone (and restore), not forget.
+    """
+    root = tmp_path / "vault"
+    (root / ".trash").mkdir(parents=True)
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    raw = b"deleted before the upgrade"
+    replica.upsert_file(
+        service.root_key,
+        ".trash/Gone.md",
+        raw,
+        content_hash=_digest(raw),
+        decoded_text=raw.decode(),
+        size=len(raw),
+        mtime_ns=0,
+    )
+    assert replica.list_active_files(service.root_key)
+    assert not (root / ".trash" / "Gone.md").exists()
+
+    result = service.reconcile()
+
+    assert result.deleted == (".trash/Gone.md",)
+    assert replica.list_deleted(service.root_key) == [".trash/Gone.md"]
+    assert service.restore_file(".trash/Gone.md").status == "ok"
+    assert (root / ".trash" / "Gone.md").read_bytes() == raw
+
+
 def test_service_uses_shared_path_confinement(
     tmp_path: Path,
     replica: FileNotesReplica,

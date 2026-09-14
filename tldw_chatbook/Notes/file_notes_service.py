@@ -214,6 +214,8 @@ class FileNotesService:
         self._session_binding = session_binding
         self._entry_cache: dict[str, FileNoteEntry] = {}
         self._pending_replica_moves: dict[str, str] = {}
+        # task-32552: the dot-directory migration runs once per service.
+        self._hidden_tombstones_swept = False
 
     @property
     @_serialized
@@ -233,6 +235,68 @@ class FileNotesService:
         self._replica = None
         if replica is not None:
             replica.close()
+
+    def _hidden_file_still_on_disk(self, relative_path: str) -> bool:
+        """Whether the dot-directory rule merely HID this path (task-32552).
+
+        The one question both forget sites ask, because forgetting a row is
+        destructive: a tombstone row is where a deleted file's ``raw_bytes``
+        live (``FileNotesReplica.mark_deleted`` retains them and
+        ``get_restore_bytes`` is their only reader), so dropping it destroys
+        the user's only way back through **Restore**. A hidden path that is
+        STILL ON DISK was never deleted -- the new rule just stopped visiting
+        it, and its row is stale index, not a recovery copy. A hidden path
+        that is gone was genuinely deleted, and its tombstone is the last
+        copy there is. Anything unresolvable (``_safe_path`` rejects ``.git``
+        and symlink traversal) counts as "cannot confirm", which keeps it.
+
+        Args:
+            relative_path: File path relative to the notes root.
+
+        Returns:
+            ``True`` only for a path under a dot-directory that is still
+            present on disk.
+        """
+        if not _under_hidden_directory(relative_path):
+            return False
+        try:
+            return os.path.lexists(self._safe_path(relative_path))
+        except (ValueError, OSError):
+            return False
+
+    def _forget_hidden_tombstones(self) -> str | None:
+        """Drop tombstones for files the dot-directory rule hid (task-32552).
+
+        The reconcile below forgets a hidden file the walk stops reporting,
+        but only while the replica still lists it as active: ``old_files`` is
+        ``list_active_files``, so a row a build without the dot-directory
+        rule had already tombstoned is never revisited and "Recently deleted"
+        names it forever -- for a file that is still on disk, which Restore
+        would then refuse as "exists". Both read seams sweep those rows.
+
+        A one-shot migration, not a standing pass: after it runs, the only
+        hidden tombstones this build creates are the ones it deliberately
+        KEPT (a hidden file genuinely deleted -- see
+        ``_hidden_file_still_on_disk``), and re-examining those forever would
+        be a `lexists` per row per scan for no possible change.
+
+        Returns:
+            A replica warning, or ``None``.
+        """
+        replica = self._replica
+        if replica is None or self._hidden_tombstones_swept:
+            return None
+        try:
+            for relative_path in replica.list_deleted(self.root_key):
+                if self._hidden_file_still_on_disk(relative_path):
+                    replica.forget_file(self.root_key, relative_path)
+        except Exception as error:
+            # Not marked done: a transient replica error must not cost the
+            # migration for the life of the service. Retrying is safe --
+            # ``forget_file`` on a row already gone is a no-op.
+            return _replica_warning(error)
+        self._hidden_tombstones_swept = True
+        return None
 
     @_serialized
     def scan(
@@ -262,7 +326,7 @@ class FileNotesService:
             return ScanResult(status="offline", offline=True)
 
         entries: list[FileNoteEntry] = []
-        warning: str | None = None
+        warning: str | None = self._forget_hidden_tombstones()
         observed, uncertain_paths, _ = self._walk_candidates(
             should_cancel=should_cancel,
             on_progress=on_progress,
@@ -1012,7 +1076,7 @@ class FileNotesService:
             return ReconcileResult(status="offline", offline=True)
 
         old_files: dict[str, ReplicaFileInfo] | None = None
-        warning: str | None = None
+        warning: str | None = self._forget_hidden_tombstones()
         if self._replica is not None:
             try:
                 old_files = {
@@ -1020,9 +1084,9 @@ class FileNotesService:
                     for item in self._replica.list_active_files(self.root_key)
                 }
             except Exception as error:
-                warning = _replica_warning(error)
+                warning = _merge_warnings(warning, _replica_warning(error))
         else:
-            warning = "Replica unavailable"
+            warning = _merge_warnings(warning, "Replica unavailable")
 
         observed, uncertain_paths, had_walk_error = self._walk_candidates()
         pending_move_entries: dict[str, OpenedFileNote] = {}
@@ -1149,18 +1213,28 @@ class FileNotesService:
         )
         deleted: list[str] = []
         if old_files is not None and not had_walk_error:
-            deleted = sorted(
+            missing = sorted(
                 set(old_files)
                 - set(observed)
                 - uncertain_paths
                 - pending_move_sources
             )
-            for relative_path in deleted:
+            for relative_path in missing:
                 try:
                     assert self._replica is not None
+                    if self._hidden_file_still_on_disk(relative_path):
+                        # task-32552: indexed before dot-directories were
+                        # hidden, and STILL ON DISK -- so it is forgotten,
+                        # not tombstoned as "Recently deleted". A hidden
+                        # path that is gone falls through and is tombstoned
+                        # as before: that row is the user's only copy.
+                        self._replica.forget_file(self.root_key, relative_path)
+                        continue
                     self._replica.mark_deleted(self.root_key, relative_path)
                 except Exception as error:
                     warning = _merge_warnings(warning, _replica_warning(error))
+                    continue
+                deleted.append(relative_path)
         entries.sort(key=lambda entry: entry.relative_path)
         self._entry_cache = {
             entry.relative_path: entry
@@ -1280,10 +1354,14 @@ class FileNotesService:
                 reported = seen
                 on_progress(reported)
             current_path = Path(current)
+            # task-32552 AC#2: one rule, every dot-directory is hidden --
+            # ``.git`` as before, and ``.obsidian``/``.trash``, which used
+            # to differ only by whether they happened to hold a Markdown
+            # file (critique #3: ``.trash`` listed, ``.obsidian`` not).
             directory_names[:] = sorted(
                 name
                 for name in directory_names
-                if name != ".git" and not _is_symlink(current_path / name)
+                if not name.startswith(".") and not _is_symlink(current_path / name)
             )
             for name in sorted(file_names):
                 # A flat folder is ONE walk yield, so the check above never
@@ -1737,6 +1815,11 @@ def _decode_for_replica(raw_bytes: bytes) -> str | None:
 
 def _digest(raw_bytes: bytes) -> str:
     return hashlib.sha256(raw_bytes).hexdigest()
+
+
+def _under_hidden_directory(relative_path: str) -> bool:
+    """Whether any directory component of ``relative_path`` starts with a dot."""
+    return any(part.startswith(".") for part in relative_path.split("/")[:-1])
 
 
 def _is_symlink(path: Path) -> bool:

@@ -952,6 +952,22 @@ _LIBRARY_NOTE_EDITOR_ENTER_LABELS = {
     "library-note-context-delete": "delete note",
 }
 
+#: task-32545 AC#2: the Manage sync folders rows all render as Buttons, so
+#: every Tab used to leave the footer saying "enter run action" -- true of
+#: any of them and therefore of none. Keyed on the action token in
+#: ``notes-sync-root-<action>-<index>``; an empty label is a disabled
+#: control, where Enter does nothing and the generic chip stays.
+_LIBRARY_SYNC_ROOTS_ENTER_LABELS = {
+    "check": "check changes",
+    "review": "review changes",
+    "migration": "review migration",
+    "resume": "resume",
+    "pause": "pause",
+    "recover": "open recovery",
+    "retarget": "",
+    "disconnect": "",
+}
+
 
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
@@ -1224,10 +1240,12 @@ class LibraryScreen(BaseAppScreen):
     #: state -- task-2856 adds two more context-specific "esc" sets below
     #: for the same reason; every remaining Library surface keeps
     #: ``LIBRARY_GENERAL_SHORTCUTS``, where Escape is genuinely unbound.
+    #: task-32552: the Escape chip is spliced in per state (see the Folder
+    #: files branch of ``_library_route_shortcuts_for_current_state``):
+    #: ``esc files`` while the editor has focus, ``esc notes`` otherwise.
     LIBRARY_NOTES_FILES_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
-        ("esc", "back to Library notes"),
     )
 
     LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS = (
@@ -4188,7 +4206,25 @@ class LibraryScreen(BaseAppScreen):
             workspace = self._notes_state.file_notes_workspace
             if workspace is not None and workspace.reload_confirmation_active:
                 return self.LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS
-            return self.LIBRARY_NOTES_FILES_SHORTCUTS
+            shortcuts = list(self.LIBRARY_NOTES_FILES_SHORTCUTS)
+            # task-32552 AC#1: Ctrl+End/Ctrl+Home are live while the editor
+            # has focus, as the Library editor advertises its own
+            # (task-32247). Focus-gated rather than open-file-gated because
+            # a focus move is what re-registers this footer: live, the
+            # open-file gate left "ctrl+end end of file" standing after a
+            # folder change had closed the file.
+            if workspace is not None and workspace.editor_focused:
+                shortcuts.append(("ctrl+end", "end of file"))
+            # task-32552 AC#3: the two-step Escape ladder, named per step.
+            shortcuts.append(
+                (
+                    "esc",
+                    "files"
+                    if workspace is not None and workspace.editor_returns_to_tree
+                    else "notes",
+                )
+            )
+            return tuple(shortcuts)
         if self._library_media_viewer_substate_active():
             return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
         if (
@@ -4424,7 +4460,15 @@ class LibraryScreen(BaseAppScreen):
             focused: The newly focused widget.
         """
         typing = isinstance(focused, (Input, TextArea))
-        context = (typing, self._library_focus_enter_label(focused))
+        # task-32552: the Folder files editor is a third axis -- its Escape
+        # chip ("files" inside it, "notes" anywhere else) and its Ctrl+End
+        # chip follow whether THAT widget has focus, and a move from the
+        # editor to the "File contents…" box flips neither of the other two.
+        context = (
+            typing,
+            self._library_focus_enter_label(focused),
+            getattr(focused, "id", None) == "file-notes-editor",
+        )
         if context != getattr(self, "_library_footer_focus_context", None):
             self._library_footer_focus_context = context
             self._library_footer_typing_context = typing
@@ -4485,6 +4529,9 @@ class LibraryScreen(BaseAppScreen):
         # characters cannot land visibly there, so the footer names the
         # control instead -- the AC's other branch, in the grammar the two
         # surfaces above already use.
+        if widget_id.startswith("notes-sync-root-"):
+            action = widget_id.removeprefix("notes-sync-root-").rsplit("-", 1)[0]
+            return _LIBRARY_SYNC_ROOTS_ENTER_LABELS.get(action, "")
         return _LIBRARY_NOTE_EDITOR_ENTER_LABELS.get(widget_id, "")
 
     @staticmethod
@@ -4772,8 +4819,8 @@ class LibraryScreen(BaseAppScreen):
     def _begin_library_notes_operation(self, kind: Literal['import', 'export', 'copy', 'console']) -> LibraryNotesOperationState | None:
         return self._notes_controller._begin_library_notes_operation(kind)
 
-    def _finish_library_notes_operation(self, operation: LibraryNotesOperationState, *, success: bool, completion_next_action: str='', failure_next_action: str='try again') -> bool:
-        return self._notes_controller._finish_library_notes_operation(operation, success=success, completion_next_action=completion_next_action, failure_next_action=failure_next_action)
+    def _finish_library_notes_operation(self, operation: LibraryNotesOperationState, *, success: bool, completion_next_action: str='', failure_next_action: str='try again', failure_line: str='') -> bool:
+        return self._notes_controller._finish_library_notes_operation(operation, success=success, completion_next_action=completion_next_action, failure_next_action=failure_next_action, failure_line=failure_line)
 
     def _apply_library_note_presentation_state(self) -> None:
         return self._notes_controller._apply_library_note_presentation_state()
@@ -8173,9 +8220,20 @@ class LibraryScreen(BaseAppScreen):
             phase = self._library_notes_sync_controller.snapshot.phase
             if phase in {"checking", "activating"}:
                 return (("wait", "current step"),)
-            return self._notes_footer_tier(
+            tier = self._notes_footer_tier(
                 (("enter", "run action"), ("esc", "back to notes")),
                 (("enter", "act"), ("esc", "notes")),
+            )
+            # task-32545 AC#2: name the focused control, in place -- the
+            # editor tier appends its chip, but this tier already spends the
+            # narrow budget on "enter", so replacing the generic label costs
+            # nothing and keeps the exit.
+            enter_label = self._library_focus_enter_label()
+            if not enter_label:
+                return tier
+            return tuple(
+                (key, enter_label if key == "enter" else label)
+                for key, label in tier
             )
         if region == "trash":
             # Only what this view answers: no Enter chip, because entry focus
@@ -16558,6 +16616,11 @@ class LibraryScreen(BaseAppScreen):
             else self._local_source_records.get("notes", ())
         )
         operation = self._library_notes_operation_for_active_region()
+        if operation is not None and operation.region != "navigator":
+            # task-32536 AC#3: this state paints the list pane, which sits
+            # beside the editor at wide widths -- an editor-region operation
+            # (a failed hand-off) is the editor's to show, not the list's.
+            operation = None
         state = build_library_notes_list_state(
             sort_notes_records(source_records, self._notes_state.sort),
             filter_note=self._notes_state.filter,
@@ -20510,7 +20573,7 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_copy(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_copy(event)
 
-    def _open_selected_library_note_handoff(self) -> bool:
+    def _open_selected_library_note_handoff(self) -> tuple[str, str]:
         return self._notes_controller._open_selected_library_note_handoff()
 
     @on(Button.Pressed, '#library-note-context-use-in-console')
@@ -20835,9 +20898,6 @@ class LibraryScreen(BaseAppScreen):
             self._library_onboarding_all_empty = False
             self._library_onboarding_status = LibraryEvidenceStatus.PARTIAL_FAILURE
         self._sync_library_onboarding_status_copy()
-        # Before the presentation legs below: they paint the announcement
-        # carrier, so the decision has to be made first.
-        self._apply_graduation_notice(previous_lifecycle)
         current_back_admitted = (
             self._library_lifecycle is LibraryLifecycle.EXPANDED
             and self._library_onboarding_all_empty
@@ -20849,39 +20909,6 @@ class LibraryScreen(BaseAppScreen):
             self._sync_library_rail_lifecycle_presentation()
         elif self.is_mounted and self._library_onboarding_status is not previous_status:
             self._sync_library_landing_lifecycle_presentation()
-
-    def _apply_graduation_notice(self, previous_lifecycle: LibraryLifecycle) -> None:
-        """Announce graduation only when the compact rail actually gave way.
-
-        task-32063: this fired on ANY transition into GRADUATED, including the
-        first source read of a returning, already-populated profile (which
-        settles to EXPANDED and graduates immediately). Nothing became
-        available there, so the toast was noise. EXPANDED already shows every
-        tool; STARTER and UNKNOWN are the two lifecycles the rail paints
-        COMPACT (``LibraryRail._compose_rows``), so those are the two whose
-        tools were genuinely hidden a moment earlier.
-
-        UNKNOWN is not merely transient (review of PR #2531): task-32059
-        stamps it at profile creation, and evidence that finds content goes
-        straight from UNKNOWN to GRADUATED without passing through STARTER --
-        exactly the new user whose tools just appeared.
-
-        The toast is the ONLY surface: an in-canvas line for the same event
-        was two surfaces for one thing, and (task-32062) its arrival
-        repainted the canvas the reader was typing into.
-        """
-        if (
-            previous_lifecycle
-            not in (LibraryLifecycle.STARTER, LibraryLifecycle.UNKNOWN)
-            or self._library_lifecycle is not LibraryLifecycle.GRADUATED
-        ):
-            return
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(
-                "Library tools are now available.",
-                severity="information",
-            )
 
     def _mirror_library_lifecycle(self, lifecycle: LibraryLifecycle) -> None:
         app_config = self.app_instance.app_config
@@ -21303,7 +21330,11 @@ class LibraryScreen(BaseAppScreen):
         if not source_type or not record_id:
             return
         self.run_worker(
-            self._open_library_item_by_id(source_type, record_id),
+            self._open_library_item_by_id(
+                source_type,
+                record_id,
+                display_name=str(getattr(event.button, "record_title", "") or ""),
+            ),
             exclusive=True,
             group="library_hub_open_recent",
         )
@@ -25882,6 +25913,10 @@ class LibraryScreen(BaseAppScreen):
         if type(prompt_id) is not int or prompt_id < 1:
             return
         if not await self._flush_library_prompt_save():
+            # task-32461: the row press was refused in silence, which reads
+            # as a dead row. Same copy as Back/Escape and the rail-row
+            # switch, which this seam sits directly beside.
+            self._notify_prompt_dirty_veto()
             return
         self._acknowledge_library_destination_change()
         self._clear_library_prompt_selection(announce=True)
@@ -26101,8 +26136,10 @@ class LibraryScreen(BaseAppScreen):
         """
         return not self._prompts_state.dirty
 
-    def _notify_prompt_dirty_veto(self) -> None:
-        return self._prompts_controller._notify_prompt_dirty_veto()
+    def _notify_prompt_dirty_veto(self, *, blocked_target: str = "") -> None:
+        return self._prompts_controller._notify_prompt_dirty_veto(
+            blocked_target=blocked_target
+        )
 
     def _apply_library_prompt_working_copy(self, *, state: PromptBlockEditorState, system_prompt: str | None, user_prompt: str | None) -> None:
         return self._prompts_controller._apply_library_prompt_working_copy(state=state, system_prompt=system_prompt, user_prompt=user_prompt)
@@ -26837,6 +26874,17 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.view = "lasting_roots"
         self._apply_library_notes_footer_context()
         _sync_library_canvas(self, "notes")
+        # task-32534 AC#3: the Receipts section is the only trace of the
+        # writes lasting sync performs on its own, and this is the route the
+        # reader takes to it. Opportunistic: a runtime that cannot answer
+        # leaves the section empty rather than closing the list.
+        try:
+            await self._library_notes_sync_controller.refresh_receipts()
+        except Exception as error:  # noqa: BLE001 - bounded, metadata only
+            logger.warning(
+                "notes sync receipts unavailable; error_type={}",
+                type(error).__name__,
+            )
 
     @on(LibraryNotesAddFromFilesCanvas.RelationshipRequested)
     def handle_library_notes_relationship_choice(self, event: LibraryNotesAddFromFilesCanvas.RelationshipRequested) -> None:
@@ -33762,6 +33810,7 @@ class LibraryScreen(BaseAppScreen):
         source_type: str,
         record_id: str,
         *,
+        display_name: str = "",
         entry_origin: bool = False,
         required_database: Any | None = None,
         required_authority: str = "",
@@ -33783,6 +33832,11 @@ class LibraryScreen(BaseAppScreen):
                 only, since the Open action is only rendered for rows with
                 resolvable provenance (``LibraryRagResultRow.can_open``).
             record_id: The item's id within its source type.
+            display_name: What the user pressed, for a refusal to name back
+                (task-32461 fix round 1). Both hand-reachable callers already
+                hold it -- the evidence card's title, the hub recent row's
+                title -- so this is a pass-through, never a lookup. Empty
+                falls back to the id label.
             entry_origin: Whether this open belongs to the automatic Library
                 entry lifecycle and therefore must use strict retained-owner
                 synchronization with no screen-level fallback.
@@ -33837,16 +33891,30 @@ class LibraryScreen(BaseAppScreen):
             )
 
         if source_type == "prompt":
-            if not await self._flush_library_prompt_save():
-                return None
-            if not entry_is_current():
-                return LibraryEntryReconcileResult.SUPERSEDED
+            # Validated BEFORE the dirty veto so a malformed deep link is
+            # dropped silently rather than named back at the user as
+            # "Can't open Prompt <garbage>" (review F-8). Both checks are
+            # pure, so the order between them is free.
             try:
                 parsed_prompt_id = int(record_id)
             except (TypeError, ValueError):
                 return None
             if parsed_prompt_id < 1:
                 return None
+            if not await self._flush_library_prompt_save():
+                # task-32461 (controller's ruling): a deep link that
+                # evaporates is the same click-does-nothing defect one layer
+                # out -- the user pressed something, somewhere, to cause it.
+                # So name what did not open and the way out; nothing is
+                # queued to apply after the save. The name is what the user
+                # actually pressed when the caller knows it.
+                self._notify_prompt_dirty_veto(
+                    blocked_target=display_name.strip()
+                    or f"Prompt {parsed_prompt_id}"
+                )
+                return None
+            if not entry_is_current():
+                return LibraryEntryReconcileResult.SUPERSEDED
             if not entry_origin:
                 self._acknowledge_library_destination_change()
             self._clear_library_prompt_selection(announce=True)

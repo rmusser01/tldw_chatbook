@@ -57,6 +57,10 @@ from textual.worker import Worker, get_current_worker
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import get_runtime_config_snapshot
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_RADIO_SELECTED,
+    LIBRARY_GLYPH_RADIO_UNSELECTED,
+)
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     PARAKEET_PRECISIONS,
     active_managed_parakeet_dir,
@@ -128,10 +132,15 @@ class SetupRadioButton(RadioButton):
     TASK-1497: stock ToggleButton renders one constant BUTTON_INNER glyph and
     conveys on/off purely through the glyph's color, which is invisible in a
     monochrome capture and fails WCAG 1.4.1 (use of color). The inner glyph
-    itself switches here — ● selected, ○ unselected — so state survives any
-    palette; a bold text-style on the selected row (see _wizards.tcss) is the
-    second cue. BUTTON_INNER is set as an instance attribute right before the
-    parent property renders, shadowing the class attribute per-state.
+    itself switches here — the Library legend's radio pair — so state survives
+    any palette; a bold text-style on the selected row (see _wizards.tcss) is
+    the second cue. BUTTON_INNER is set as an instance attribute right before
+    the parent property renders, shadowing the class attribute per-state.
+
+    task-32464 fix round 1: the pair used to be two literals here, the same
+    duplication that surface's twin (``ConsoleAccessRadioButton``) carried.
+    Both now read the one definition in ``Library.library_shell_state``, so a
+    legend change cannot pass either of them by.
     """
 
     @property
@@ -143,7 +152,11 @@ class SetupRadioButton(RadioButton):
         # test_selected_and_unselected_glyphs_differ_structurally, so a
         # Textual upgrade that changes the mechanism fails loudly in CI
         # instead of silently regressing to color-only state.
-        self.BUTTON_INNER = "●" if self.value else "○"
+        self.BUTTON_INNER = (
+            LIBRARY_GLYPH_RADIO_SELECTED
+            if self.value
+            else LIBRARY_GLYPH_RADIO_UNSELECTED
+        )
         return super()._button
 
 
@@ -2105,6 +2118,11 @@ class ProviderStep(SetupStep):
                     f"(Already exported {env_var}? It's picked up "
                     "automatically.)"
                 )
+            # task-32555 AC#3: the skip is visible where the key goes.
+            parts.append(
+                "No key yet? Enter skips this step — you can add a provider "
+                "later in Settings."
+            )
             status.update(" ".join(parts))
             return
         if self._clear_requested:
@@ -2872,6 +2890,24 @@ class ProviderStep(SetupStep):
     def _on_provider_chosen(self, event: OptionList.OptionSelected) -> None:
         self._provider_choice_interacted = True
         self._select_provider_option(event.option)
+
+    def skip_without_key(self) -> None:
+        """Forget the provider choice so ``commit`` takes its skip path.
+
+        task-32555 AC#3: Enter in the empty key field. Nothing was staged
+        for this provider (a stage needs a ready credential), so clearing
+        the choice loses nothing; the highlighted list row re-selects on
+        the next interaction if the user comes Back.
+
+        A provider that is ALREADY ready without a typed key (an exported
+        env var, a local server) is the exception -- commit() would stage
+        it, and the key field's hint never offered the skip in that state
+        (``_refresh_auth_readiness`` adds it only under "not ready").
+        """
+        if self.selected_provider_key and self._current_provider_readiness().ready:
+            return
+        self.selected_provider_key = ""
+        self._provider_choice_interacted = False
 
     def _effective_provider_key(self) -> str:
         """Return the selected key, falling back to the highlighted option."""
@@ -7512,11 +7548,21 @@ class SetupWizardContainer(WizardContainer):
     @on(Input.Submitted)
     def _advance_on_input_submit(self, event: Input.Submitted) -> None:
         """Enter in a step Input means "continue" (UAT N-1) — with one
-        exception: the provider key field, where Enter launches the
-        credential probe (TASK-1506's live-but-never-blocking check).
+        exception: the provider key field, where Enter with a key launches
+        the credential probe (TASK-1506's live-but-never-blocking check).
+
+        task-32555 AC#3: Enter with NO key used to do nothing at all — no
+        probe, no advance, no message. It now skips the provider (the field's
+        own hint says so): the choice is cleared so the step's commit takes
+        its skip-safe path, and the Summary reports the provider as not
+        configured.
         """
         if event.input.id == "setup-provider-api-key":
-            return
+            if event.value.strip():
+                return
+            step = self.steps[self.current_step]
+            if isinstance(step, ProviderStep):
+                step.skip_without_key()
         event.stop()
         self.action_next()
 

@@ -538,7 +538,7 @@ async def test_activating_a_lasting_root_refreshes_a_seeded_notes_list(
             )
             activate.press()
             await _wait_for_selector(screen, pilot, "#notes-sync-receipt")
-            assert "3 applied · durable receipt recorded" in _painted_text(host)
+            assert "3 applied · listed under Receipts" in _painted_text(host)
             assert database.count_notes() == 5
 
             screen.query_one("#notes-sync-back", Button).press()
@@ -1296,7 +1296,7 @@ async def test_lasting_recovery_returns_to_roots_without_blank_add_canvas(
             controller._state = replace(  # noqa: SLF001 - mounted receipt setup
                 controller.snapshot,
                 phase="receipt",
-                receipt_line="1 applied · durable receipt recorded",
+                receipt_line="1 applied · listed under Receipts",
             )
             controller._publish()  # noqa: SLF001 - mounted receipt setup
             undo = await _wait_for_selector(screen, pilot, "#notes-sync-receipt-undo-0")
@@ -1433,7 +1433,7 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
         assert not activate.disabled
         activate.press()
         await _wait_for_selector(screen, pilot, "#notes-sync-receipt")
-        assert "1 applied · durable receipt recorded" in _painted_text(activation_host)
+        assert "1 applied · listed under Receipts" in _painted_text(activation_host)
         assert ("activate_root", "setup-root", token) in runtime.calls
 
     runtime.roots = (

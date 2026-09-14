@@ -13883,6 +13883,136 @@ especially suspicious of a report whose stated mechanism ("404 is the length
 of a title") does not survive being checked: "Markdown showcase" is 17
 characters.
 
+## Three filed sites are three instances; the shared predicate's call sites are the defect
+
+**TASK-32461, fix round 1, 2026-09-14.** The task named three seams that read
+`_flush_library_prompt_save()` and refused in silence. All three were wired,
+pinned red-first and mutation-tested, and the task passed spec review. The
+review then grepped the predicate: **8** call sites, and the one the task did
+not name (`library_inspection_admission.py:230`, the barrier every navigation
+INTO Library crosses) was both silent AND the only one a user reaches by hand
+today — it returns before the deep-link seam the branch had spent its scope
+argument on, so the newly shipped line there was correct but dormant. It sat
+five lines above a skill veto that already spoke.
+
+**What to do.** When a defect is "callers of X do not do Y", the unit of work
+is `grep -n "X()" -r` and a disposition for every hit — speaks / deliberately
+silent / unreachable-with-this-state, each with its evidence — recorded in the
+task. The filed list of sites is a sample someone took by hand, not the
+population. That sweep costs one grep and would have caught this before review.
+
+
+## Two worktrees running the same app-booting suite at once DEADLOCK, and it reads as "slow"
+
+**task-32536 / task-32555, 2026-09-14.** The branch-vs-dev-baseline comparison
+is normally two pytest runs fired together, one per worktree. For
+`Tests/UI/test_first_run_wizard_live_contract.py` — 95 node ids, each booting a
+real app under `run_test` — that pair sat at **one completed test each for over
+fifteen minutes**, burning 18 s of CPU in ten minutes of wall clock. It looked
+exactly like CPU starvation (the box genuinely was loaded: another session was
+running the `tldw_Server_API` suite at 99 %), so the first instinct was to wait
+it out. Twice. Killing one side and running the first six of the same node ids
+alone finished them in **8.68 s**. Separate worktrees are not separate
+environments here: these tests share a per-user data directory and its instance
+lock, so two app boots serialise on each other and the wait is invisible in
+pytest's dot output.
+
+**What to do.** Run the branch side and the baseline side **sequentially** for
+any suite that boots the app, never as a parallel pair — the whole comparison
+is still faster. Diagnose an apparently-stalled pytest by CPU time, not wall
+clock (`ps -o pid,etime,time`): near-zero CPU accumulation means blocked, not
+starved, and no amount of waiting fixes blocked. And before concluding a long
+file cannot be run, check whether the change is even reachable from it: a
+repo-wide scan showed the new test was the only test anywhere that pressed
+Enter in `#setup-provider-api-key`, which bounded the risk far better than the
+full file would have.
+
+## A pin that mounts a fresh host per state never exercises the UPDATE path
+
+**task-32535, 2026-09-14.** `test_sync_setup_offers_the_obsidian_toggle_on_for_a_vault`
+drove the real controller, asserted `obsidian_vault is True`, mounted
+`_Host(controller.snapshot)` and found the checkbox. Green. In the running app
+at 235x52 the checkbox never appeared: picking the folder leaves the setup form
+already mounted, and `LibraryNotesAddFromFilesCanvas.sync_state` keeps a fast
+path that PATCHES the configure form's fields in place (so a snapshot cannot
+eat what the user is typing) and returns before `refresh(recompose=True)`.
+Patching can update a Static or a Button label; it can never add a widget that
+only exists for some states. The pin mounted a new host per snapshot, so it
+composed the vault state from scratch every time and never took that path.
+
+**What to do.** When a change makes a widget CONDITIONAL, the pin has to mount
+once and then push the new state through the real update seam (`sync_state`,
+`watch_*`, the publish callback) — `app.query_one(Canvas).sync_state(...)`,
+then assert. Also grep the widget's update method for early `return`s before
+the recompose: each one is a shape the snapshot cannot change, and each is
+invisible to a compose-once test.
+
+## A pin that CONSTRUCTS the state it asserts proves the renderer, never the producer (task-32545, 2026-09-14)
+
+**task-32545, 2026-09-14.** `test_sync_copy_uses_no_engineering_terms` rendered
+the lasting-sync receipt phase from a hand-built snapshot
+(`replace(base, phase="receipt", receipt_line="60 applied · listed under
+Receipts")`) and asserted no engineering terms were painted. It passed. The
+live walk's very first activation then printed "60 applied · durable receipt
+recorded": the copy had been fixed at `apply_reviewed`'s site and missed at
+`activate_root`'s, and the test could never have caught it, because the test
+supplied the string it was checking. Two sibling defects surfaced the same way
+and only live — a row-reason table whose keys a filter upstream could never
+return, and a button set keyed on a status the fix itself rewrites.
+
+**What to do.** When a fix changes a string or a state a PRODUCER computes,
+at least one pin must drive the producer's route (here: `await
+controller.activate_root(...)`, then assert `snapshot.receipt_line`), not
+construct the snapshot. A canvas-level render pin is still worth having for
+layout, but it is evidence about the widget only. Corollary from the same
+task: `git grep` the exact old string across `tldw_chatbook/` after the edit —
+two call sites producing the same line is the normal case, not the odd one.
+
+## A duplicate dict key is a silent overwrite, and only the SOURCE can show it (task-32534, 2026-09-14)
+
+**task-32534 fix round 1, 2026-09-14.** Three reason codes were added to
+`_CHECK_REFUSAL_COPY` after a live walk showed them unclassified. They were
+already defined 60 lines above. Python keeps the last literal, so three shipped
+user-facing strings were replaced — `root_lease_unavailable`, the "another
+Chatbook is holding this folder" case, lost "Close any other Chatbook window
+using it" and began sending the reader to a Reconnect that cannot help. The
+diff read as pure addition, no test pinned the old strings, and a test that
+inspects the dict OBJECT cannot see it: by then the duplicate is gone.
+
+**What to do.** When appending to a keyed table, grep the table for the key
+first — a table long enough to need appending is long enough to hide the key.
+Pin it with an `ast` scan over the module source (`ast.Dict`, count
+`ast.Constant` keys) rather than a per-string assertion, so the guard covers
+every future row instead of the three you happened to notice. Same round, same
+disease in a different organ: a sibling suite asserted `"unavailable" in
+status_line.casefold()` as a proxy for "the line is truthful", so rewording the
+line turned that pin red with no clue why — proxy substring assertions on copy
+decay into tripwires. Assert the sentence, and find these by diffing the
+FAILED-name SET over whole files against a detached `origin/dev`, not by
+running your own new ids.
+
+## A pane's `content_region.width` is not the width its text wraps at — measure `wrap_width`, and stamp only what you measured
+
+**task-32552, 2026-09-13/14.** AC#4 said an embed line must not wrap mid-token
+at 100x30. The first pin asserted `editor.content_region.width >= len(EMBED)`
+and passed, and the guide stamp went out saying the 28-cell
+`![[attachments/diagram.png]]` "renders on one row in the 32-cell editor".
+Driven live at 100x30 it does not: the frame is 32 cells, but a document
+taller than the pane paints a vertical scrollbar inside it and the text wraps
+at **27**, so the embed splits as `![[attachments/diagram.png]` / `]`. The pin
+had been green because its fixture note was short enough not to scroll — a
+different widget from the one the critique saw — and because
+`content_region.width` counts cells the scrollbar and padding then take back.
+
+**What to do.** For any "does this line fit" claim, assert against the
+widget's own wrap width (`TextArea.wrap_width`) and make the fixture produce
+the same scrollbar state as the real screen — for a scrolling pane, assert
+`wrapped_document.height > content_region.height` so the pin fails if the
+fixture ever stops measuring the scrolled case. And never put a layout outcome
+in a "Verified against" stamp that you did not read off a capture: this stamp
+asserted the opposite of what the terminal showed, and the pin agreed with it
+for a day.
+
 ## A layout pin proves one width, and only that width — and a new row has a price
 
 **task-32549, 2026-09-14.** Wave-4's `layout` group added a disabled reason to

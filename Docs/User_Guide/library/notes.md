@@ -351,7 +351,7 @@ both stay closed until you choose to reopen one.
 | "New" | Opens the **New note** view — the same destination as the rail's **New note** row: **Blank note**, or **From a template…**. (**Ctrl+N** skips the view and makes the blank note itself.) Disabled while another notes operation is running. |
 | "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
-| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
+| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. The folder picker opens with nothing selected, and **Choose** does nothing until you pick a folder. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
 | "Restore folder" | Appears after a folder removal, to put it back. |
 | "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). While a filter is showing the control cannot own the order, so it renders blocked ("○ Sort: Newest") and the line under the toolbar says why: "Sort unavailable — clear the filter" (task-32549). *(Was: the reason lived in the tooltip "Filter results keep their own order. Clear the filter to sort.", which a terminal never renders — superseded by task-32549.)* |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
@@ -562,7 +562,18 @@ that was the toolbar button's label, never the heading's.)
   folder, direction, and local Library destination, then choose **Check
   changes**. Checking is mutation-free. Review safe actions, attention items,
   skips, filesystem effects, and deletion-like effects before **Activate
-  reviewed root** is enabled.
+  reviewed root** is enabled. Each row reads the same way an Import once row
+  does — the file's path, what will happen to it, and the Library folder it
+  lands in ("Daily/2026-09-06.md · Create a Library note · PowerVault") —
+  under a heading per effect carrying its count ("Create a Library note
+  (56)"). A folder whose files all get the same effect collapses to one
+  summary row you can open ("▶ Archive · 45 files · Create a Library note ·
+  PowerVault"). Files the check leaves alone appear under **Skipped (N)**
+  with the reason on the row (".trash/Old idea.md · Obsidian trash —
+  skipped", "Inbox/Untitled.md · Empty file — nothing to import"). *(This
+  page previously described these rows only as "safe actions, attention
+  items, skips" — superseded by task-32535: before it they read "Safe item
+  N / Create a Library note" with no file name at all.)*
 
 Both folder pickers remember where you were. Each reopens at the directory it
 last picked in *that* flow, so Import once and Keep a folder synced never move
@@ -635,7 +646,18 @@ legacy candidates use **Review migration**. **Pause** and **Resume** control an
 active root. **Resume** re-activates the root and runs the same check as
 **Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
 Check changes", and edits made while it was paused surface as "◌ Changes
-available" or "⚠ Needs attention · Next: Review changes" (task-32519). (Was
+available" or "⚠ Needs attention · Next: Review changes" (task-32519). A check
+the app cannot run says so on the row itself: the row flips to "⚠ Needs
+attention · Check failed — <reason> · Next: <action>" and offers that action's
+control — Check changes on a paused root reads "Check failed — folder is
+paused · Next: Resume" and puts **Resume** first. The reason is never the
+exception text; where the cause cannot be named, the row states its category.
+A failure changes only what the row SAYS, never what it is: a disconnected or
+externally-held folder keeps its Check disabled with its own reason, and never
+grows a Pause it should not have. The next action you run on that root clears
+the failure and the line goes back to restating the row (task-32534). (Was
+"Manual check failed. Review root status, then try again." beside a row still
+reading "✓ Up to date" — superseded by task-32534 below.) (Was
 "though today **Resume** does not bring a paused root back at all, whether or
 not anything changed while it was paused: its row reads '✕ Failed · Next:
 Review changes', **Check changes** answers 'Manual check failed', and
@@ -646,8 +668,25 @@ the restart never syncs — so pause only if you can live with the root staying
 paused; nothing in this release resumes it" — fixed by task-32519 below. Before
 that it was "so pause only when you can live with a restart" — superseded by
 task-32271 below: the restart was asserted, then walked.)
-**Retarget** and **Disconnect** remain visibly disabled with an
-unavailable-in-this-release reason; no files or notes change.
+**Retarget** and **Disconnect** carry their reason in the control's own label
+— "○ Retarget unavailable — not in this release" — with the same line repeated
+under the list; no files or notes change (task-32545). (Was a bare grey "○"
+whose reason only appeared in a tooltip — superseded by task-32545 below.)
+
+A paused folder keeps its receipts: reading them is a read, so pausing one
+folder never blanks the list for the others (task-32534).
+
+**Receipts**, under the root list, is where the writes lasting sync performs
+on its own show up: the newest 20 across every listed root, newest first, as
+"when · what happened · file · note" — "2026-09-14 07:34 · Wrote note to file ·
+People/Sam.md · Sam" for a note you edited in Chatbook, "Updated note from
+file" for a file you edited on disk (task-32534). Before this a completed
+write left no trace anywhere in the app.
+
+Tab moves through the root controls; the footer names the one you are on
+("enter check changes", "enter pause") instead of a generic "run action", and
+disabled controls keep the generic chip because Enter does nothing there
+(task-32545).
 
 ### Import once
 
@@ -834,6 +873,18 @@ With it on:
   file is still a working Obsidian link, and importing that file again
   recovers the same link rather than stacking a second identifier on it.
 
+Keep a folder synced offers the same **Obsidian vault** toggle, default-on,
+once the folder you chose holds an `.obsidian/` directory — see "Import once
+vs Keep a folder synced on the same folder" below for the one thing the two
+paths do differently with it. There, turning the toggle **off** lasts only
+until you quit Chatbook: the choice is not stored, so a vault is offered the
+toggle again, on, on the next start, and a later check of that root skips the
+three folders again. The toggle is offered while you are setting the folder up
+and nowhere else — once the root is active, **Manage sync folders** has no
+switch for it — so if you want those folders synced, import them with Import
+once instead. Nothing already synced changes when it comes back on —
+the pass only ever leaves files the sync has never taken alone.
+
 Turn the toggle off to import the vault exactly as any other folder — every
 directory walked, frontmatter left in the body, links left as text. The config
 files inside are then listed one by one, still as **Skipped** ("Not a note file
@@ -891,7 +942,9 @@ stayed as text and are not counted.
    and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead. **Manage sync folders** appears in the notes toolbar once
-   a root is active. Choosing **Back** returns to a Notes list that already
+   a root is active. The receipt reads "N applied · listed under Receipts" and
+   names where to see them (task-32545; was "N applied · durable receipt
+   recorded"). Choosing **Back** returns to a Notes list that already
    counts the synced notes and shows them under a **⇄ Sync managed** folder
    named after the display name — no restart needed (task-32518). (Was "the
    synced notes and their **⇄ Sync managed** folder are in the database as soon
@@ -900,6 +953,43 @@ stayed as text and are not counted.
    were, through a manual check and a source round trip — until you restart
    the app" — fixed by task-32518 below.)
 
+#### Import once vs Keep a folder synced on the same folder
+
+Run over the same Obsidian vault, the two paths now skip the same files for
+the same reasons: `.obsidian/`, `.trash/` and `Templates/` while the
+**Obsidian vault** toggle is on, and an empty or whitespace-only file
+whatever the toggle says. (Keep a folder synced does not remember the toggle
+across a restart — see "Obsidian vaults" above.) Both read the frontmatter, so `title` becomes the
+note's title and `tags`/`aliases` become its keywords. A synced note bounds
+both: a tag or alias longer than 256 characters is dropped (half an alternate
+name is a name nothing has, and the note keeps its other keywords), while a
+`title:` longer than 4,096 characters is cut to the first 4,096 (a title is
+the note's only name, so cutting it keeps the note findable where dropping it
+would silently rename the note to its file name). Neither costs you the note,
+and neither stops the rest of the folder from syncing.
+
+Two things still differ:
+
+- **The frontmatter block stays in a synced note's body**, byte for byte,
+  where Import once removes it. Keeping a folder synced is two-way: editing
+  the note in Chatbook writes the body back to the file on disk, so a
+  stripped block would delete the properties out of your vault on your next
+  edit. **Folder files** keeps the block for the same reason.
+- **Synced notes do not keep the vault's folder tree.** Every synced note
+  sits directly in the sync-managed folder, and the review says so — each
+  row's destination is that folder. Import once reproduces the folder
+  hierarchy. The file's own folder is still visible on every review row, in
+  its path, and in the note's title where the frontmatter names one.
+
+*Verified against fix/library-notes-w4-sync-review — 2026-09-14 at 235x52
+and 100x30 (task-32535: review rows name the file, the effect and the
+destination; a 45-file folder collapses to one summary row; the Obsidian
+toggle appears for a vault and its four skips carry reasons; the frontmatter
+title and keywords are lifted while the block stays in the note body.
+Keeping the vault's folder tree — AC#4 — is NOT delivered: the folder layer
+refuses a manual child of a sync-managed subtree, so every synced note sits
+in the root folder, as this section now says).*
+
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
 activate explicitly. The migration never inherits a legacy conflict winner or
@@ -907,9 +997,25 @@ automatic-sync setting.
 
 ### Use a note in Console
 1. Open the note and click **Use in Console**.
-2. You land in the Console with the note staged as context and the
+2. The note is linked to your active workspace on the way — a new note
+   belongs to no workspace, and that is what the hand-off needs — so the
+   status line reads "Use in Console complete — Linked to *workspace* ·
+   staged in Console." The line says what actually happened: "Already
+   linked to *workspace* · staged in Console." when the note was a member
+   already, and "Staged in Console." when no linking was needed at all.
+3. You land in the Console with the note staged as context and the
    prompt "Use this note as context and help me work with it." ready to
-   send or rewrite.
+   send or rewrite. On a profile with no provider set up yet, the note is
+   still staged and the Console shows its own setup card; add a provider
+   from there and the staged note is waiting.
+
+If the hand-off cannot be made, the editor's status line is the only
+message, and it names what stopped it and what to do — for example
+"Can't use this note in Console — the workspace registry is unavailable.
+Next: restart Chatbook, then try again." Opening another note, or saving
+this one, clears it. A hand-off that fails leaves no workspace link behind
+— if it linked the note on the way, it removes that link again, and says
+so if it could not.
 
 ### Capture a Console answer as a note
 The return leg of **Use in Console**. In the Console, select an assistant
@@ -1524,6 +1630,103 @@ value after a resize to 100x30; critique #3's own captures read "5,404 words
 thousands separator dropped in the reading. The open path is pinned rather
 than changed (`data-20-strip-short-note-441`,
 `data-21-strip-long-note-235x52`, `data-22-strip-100x30`).)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32536,
+at 235x52 and 100x30 on a no-provider profile and on a 12-note profile): **Use
+in Console** on a note that belongs to no workspace links it to the active one
+and stages it — status "Use in Console complete — Linked to Local Default ·
+staged in Console." — and Console opens on its own Get started card reading
+"notes evidence staged — finish provider setup to use it."
+(`wave4-caps/console-handoff/handoff-10-console-card`,
+`14-fresh-status-after`, `10b`/`14b` at 100x30; `15`/`16` and `15b`/`16b` on
+the seeded profile). The membership write is in
+`tldw_chatbook_workspaces.db`. Opening another note ends the message: the next
+note's status reads "Saved · Next: Keep editing; changes save automatically."
+with an empty transfer row (`17-power-note-switch-clears`), and the list pane
+beside the editor never carried it. Before this the hand-off refused every
+fresh note with a toast about workspace linking AND a status line about
+Console readiness — two messages naming two different blockers, the second of
+which was not the real one.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32536
+fix round 1, 235x52 on the 12-note profile): the completion line names the
+branch it took. On "Grocery plan", already a member, it reads "Saved · Use in
+Console complete — Already linked to Local Default · staged in Console."
+(`wave4-caps/console-handoff/handoff-30-already-linked-status`) and
+`workspace_memberships` stayed at three note rows; on "Ideas backlog", a
+member of nothing, it reads "… Linked to Local Default · staged in Console."
+(`31-fresh-link-status`) and exactly one row appeared; pressing it a second
+time on the same note reads "Already linked …" and wrote nothing
+(`32-second-press-already-linked`, still four rows). Before this every
+closed-gate press claimed "Linked to" — the gate is profile-wide, so that was
+the common case, not an edge. The two hand-off FAILURE paths changed in this
+round (the Console seam missing, and the seam raising) cannot be induced from
+the UI — they are pinned by tests, not walked.)*
+
+*Verified against fix/library-notes-w4-crash — 2026-09-14 (task-32533, at
+235x52 and 100x30 on a fresh no-provider scratch profile): a note selected →
+**Add to folder** opens "Add note to folder" with the picker reading its blank
+prompt, and **Choose** with nothing picked leaves the dialog open
+(`wave4-caps/crash/crash-02-add-to-folder-dialog-survives`,
+`crash-03-choose-with-nothing-selected-stays-open`,
+`crash-07-add-to-folder-dialog-100x30`). Opening that dialog used to exit the
+whole app: its blank value was spelled `Select.BLANK`, which is not a `Select`
+attribute on this Textual version, and **Choose** with nothing picked filed the
+note under a folder id of "Select.NULL". An unhandled error inside a panel no
+longer closes the app either — the screen stays open, the failure and where it
+happened go to the log file, and the panel that failed may stop responding or
+disappear until it is reopened. The app surviving is stamped: the same profile
+log holds a real crash that ended the app and, after the fix, the same crash
+carrying its site with the app still logging five minutes later. The error
+notification itself is **not** stamped — no capture in this set shows it
+rendering, and when the pump that raised is the screen it may never render at
+all; the log record is the reliable signal.)*
+
+*Verified against fix/library-notes-w4-sync-roots — 2026-09-14 (task-32534,
+task-32545, at 235x52 and 100x30, scratch profile + a 60-file git vault under
+`$HOME/.cache/tldw-crit`): **Activate reviewed root** → "3 applied · listed
+under Receipts" (`wave4-caps/sync-roots/roots-18-second-root-activated`); the
+setup review reads "60 safe · 0 need attention · 0 skipped · 0 folder moves"
+and its scroll cue "More below — scroll." (`roots-21-review-folder-moves`,
+`roots-20-setup-scroll-cue`). Editing the synced note "Sam" in Chatbook and
+then appending to `Daily/2026-09-06.md` on disk leaves two receipt rows —
+"Wrote note to file · People/Sam.md · Sam" and "Updated note from file ·
+Daily/2026-09-06.md · 2026-09-06" — and the note reaches version 2 with the
+disk text (`roots-11-disk-edit-review`, `roots-12-note-version`). A disk
+append followed immediately by **Check changes** now also lands in the note
+(`roots-14-race-check-applied`): the manual pass used to consume the watcher's
+change baseline, so the automatic pass that applies the edit never ran.
+**Check changes** on a paused root reads "⚠ Needs attention · Check failed —
+folder is paused · Next: Resume" with **Resume** offered first
+(`roots-13-failed-row`; `roots-13-failed-row-before-reasoncode-fix` is the same
+walk before the reason code was classified), and the log records only
+`reason=` / `error_type=` / `root_id=`. **Retarget** and **Disconnect** state
+their reason at the control, and Tab makes the footer read "enter check
+changes" / "enter pause" at both sizes (`roots-15-focus-check-footer`,
+`roots-16-roots-100x30`, `roots-17-focus-100x30`).)*
+
+*Verified against fix/library-notes-w4-sync-roots — 2026-09-14 (task-32534,
+task-32545 fix round 1, at 235x52 on the same profile and vault): with two
+roots listed, pausing the first leaves BOTH roots' writes in **Receipts**
+across a full re-entry of the list
+(`wave4-caps/sync-roots/roots-30-paused-root-receipts-survive`) — reading
+receipts no longer goes through the admission gate that a pause closes.
+**Check changes** on the paused root reads "⚠ Needs attention · Check failed —
+folder is paused · Next: Resume", offers **Resume** first and does NOT grow a
+Recovery button, while the second root's row is untouched
+(`roots-31-paused-check-failed-row`); **Resume** then clears the failure and
+the status line restates the row as "✓ Up to date · Next: Check changes."
+(`roots-32-resume-clears-overlay`), where it used to leave the failure
+sentence standing beside it. The chooser's unavailable line and the setup
+validation message now read "Keeping a folder synced isn't ready on this
+profile yet." The offline-root case (a refused Check keeping its Check
+disabled and growing no Pause) is pinned end-to-end through the controller and
+canvas rather than walked: a folder that goes missing while Chatbook is
+already holding it does not flip to `offline` in that session, because a root
+that already holds its folder never re-checks the path — reaching `offline`
+needs the folder to be gone at the moment the folder is claimed, i.e. a
+restart. (A second Chatbook holding the folder is the different `passive`
+state, whose Check is disabled for its own reason.))*
 
 *Verified against fix/library-notes-w4-layout — 2026-09-14 (wave-4 group
 `layout`. task-32544: with a note open at 235x52 the list pane is 64 cells

@@ -331,8 +331,15 @@ class NotesScopeSyncAuthority:
         note_id: str,
         title: str,
         content: str,
+        keywords: tuple[str, ...] = (),
     ) -> NotesSyncNoteSnapshot:
-        """Create one reviewed caller-identified note through the service."""
+        """Create one reviewed caller-identified note through the service.
+
+        Args:
+            keywords: Keywords lifted from the file's frontmatter, if any
+                (task-32535). The frontmatter block itself stays in the
+                content: sync writes the note body back to disk.
+        """
 
         try:
             record = await self._service.create_note_for_sync(
@@ -340,6 +347,7 @@ class NotesScopeSyncAuthority:
                 note_id=note_id,
                 title=title,
                 content=content,
+                keywords=keywords,
                 user_id=self._user_id,
             )
         except Exception as exc:

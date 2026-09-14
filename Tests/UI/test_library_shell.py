@@ -2249,12 +2249,9 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
             assert screen.query_one(
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button
             ).has_focus, f"unexpected focus after graduation: {screen.focused!r}"
-            assert notifications[-1] == (
-                "Library tools are now available.",
-                {"severity": "information"},
-            )
-            # task-32063: the toast is the only surface; the canvas line that
-            # used to repeat it is gone.
+            # task-32063 made the toast the only surface; task-32555 AC#2
+            # dropped it too -- the rail growing is the evidence.
+            assert notifications == []
             assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
@@ -2301,7 +2298,7 @@ async def test_library_graduation_leaves_the_note_creation_canvas_intact() -> No
 
             assert screen.query_one("#library-note-work-pane")
             assert creation_action.has_focus
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
@@ -2316,7 +2313,7 @@ async def test_library_graduation_leaves_the_note_creation_canvas_intact() -> No
             await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
             await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
             await pilot.pause()
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2354,7 +2351,7 @@ async def test_library_graduation_paints_no_canvas_line_across_a_notes_files_swi
                 message="note evidence did not graduate before the source switch",
             )
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2370,7 +2367,7 @@ async def test_library_graduation_paints_no_canvas_line_across_a_notes_files_swi
             )
             await pilot.pause()
 
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2400,7 +2397,7 @@ async def test_library_graduation_paints_no_canvas_line_on_a_direct_item_open() 
                 message="note evidence did not graduate before the direct open",
             )
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2435,7 +2432,7 @@ async def test_library_graduation_paints_no_canvas_line_on_a_direct_item_open() 
             )
             await pilot.pause()
 
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2485,7 +2482,7 @@ async def test_library_cancelled_source_switch_keeps_the_notes_database_source(
                 screen._notes_state.source
                 == library_screen_module.LIBRARY_NOTES_SOURCE_DATABASE
             )
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
@@ -22836,9 +22833,12 @@ async def test_library_shell_note_use_in_console_triggers_handoff():
         await pilot.pause()
         await pilot.pause()
 
+        # task-32536 fix round 1: the note is already a member here (the gate
+        # is open), so the line says what happened without claiming a link
+        # this press did not make.
         assert str(
             screen.query_one("#library-note-transfer-status", Static).renderable
-        ) == ("Use in Console complete.")
+        ) == ("Use in Console complete — Staged in Console.")
 
     app.open_chat_with_handoff.assert_called_once()
     payload = app.open_chat_with_handoff.call_args.args[0]
@@ -22872,10 +22872,12 @@ async def test_library_shell_note_console_failure_stays_visible_with_recovery():
 
         assert (
             str(screen.query_one("#library-note-transfer-status", Static).renderable)
-            == "Use in Console failed — check Console readiness and try again."
+            == "Can't use this note in Console — Console could not take it. Next: try again."
         )
         assert screen._notes_state.operation is not None
         assert screen._notes_state.operation.running is False
+    # task-32536 AC#2: the status line is the one message -- no toast beside it.
+    app.notify.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -22892,13 +22894,14 @@ async def test_library_shell_note_use_in_console_without_open_note_notifies():
         await _wait_for_library_shell(screen, pilot)
 
         assert screen._notes_state.selected_note_id == ""
-        screen._open_selected_library_note_handoff()
+        blocker, linked = screen._open_selected_library_note_handoff()
         await pilot.pause()
 
     app.open_chat_with_handoff.assert_not_called()
-    app.notify.assert_called_once()
-    message = app.notify.call_args.args[0]
-    assert "Open a note" in message
+    # task-32536 AC#2: the blocker is returned for the status line, not toasted.
+    app.notify.assert_not_called()
+    assert "open a note" in blocker.lower()
+    assert linked == ""
 
 
 def test_library_note_css_bounds_editor_body_and_mutes_meta():

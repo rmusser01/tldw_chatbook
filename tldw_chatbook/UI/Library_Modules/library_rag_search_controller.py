@@ -1143,7 +1143,11 @@ class LibraryRagSearchController:
         if index is None or not (0 <= index < len(rows)):
             return
         row = rows[index]
-        await self._open_library_item_by_id(row.open_source_type, row.source_id)
+        await self._open_library_item_by_id(
+            row.open_source_type,
+            row.source_id,
+            display_name=row.title,
+        )
 
     def _focused_library_rag_result_card_index(self) -> int | None:
         """Return the evidence index of the focused `.library-rag-result-card`.

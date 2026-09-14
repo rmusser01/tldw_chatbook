@@ -14,6 +14,9 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncRootRow,
     LibraryNotesLastingSyncSnapshot,
 )
+from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+    _disabled_action_label,
+)
 
 
 class LibraryNotesSyncRootsCanvas(Vertical):
@@ -71,7 +74,15 @@ class LibraryNotesSyncRootsCanvas(Vertical):
                         markup=False,
                     )
                     yield Static(
-                        f"{root.status_label} · Next: {root.next_action_label}",
+                        " · ".join(
+                            part
+                            for part in (
+                                root.status_label,
+                                root.failure,
+                                f"Next: {root.next_action_label}",
+                            )
+                            if part
+                        ),
                         classes="library-notes-sync-root-status",
                         markup=False,
                     )
@@ -99,8 +110,31 @@ class LibraryNotesSyncRootsCanvas(Vertical):
                         disabled=self.snapshot.root_page
                         >= self.snapshot.root_page_count,
                     )
+            # task-32534 AC#3: lasting sync writes on its own; before this
+            # section a completed write left no trace anywhere in the app.
+            yield Static(
+                "Receipts",
+                id="notes-sync-receipts-heading",
+                classes="destination-section",
+                markup=False,
+            )
+            if not self.snapshot.write_receipts:
+                yield Static(
+                    "No writes yet. Sync writes are listed here when you open this list.",
+                    id="notes-sync-receipts-empty",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+            for receipt in self.snapshot.write_receipts:
+                yield Static(
+                    f"{receipt.when} · {receipt.effect} · "
+                    f"{receipt.relative_path} · {receipt.note_title}",
+                    classes="library-notes-sync-receipt-row",
+                    markup=False,
+                )
         yield Static(
-            "Retarget and Disconnect are unavailable in this release. No files or notes are changed.",
+            "Retarget/Disconnect unavailable — not in this release; "
+            "nothing on disk or in Notes changes.",
             id="notes-sync-disconnect-copy",
             classes="library-disabled-reason",
             markup=False,
@@ -118,42 +152,53 @@ class LibraryNotesSyncRootsCanvas(Vertical):
     ) -> ComposeResult:
         """Put the runtime-declared contextual action before management."""
 
+        # task-32534 AC#1 (fix round 1): a refusal names the action to offer,
+        # but never the root's real state -- ``status`` keeps gating the
+        # controls the canvas must not offer at all (a disconnected folder
+        # cannot be checked, a passive one cannot be paused).
+        next_action = root.failed_action or root.next_action
         check_blocked = root.status in {"offline", "passive"}
         actions: list[tuple[str, str, bool, str | None]] = [
             (
                 "check",
                 "○ Check changes" if check_blocked else "Check changes",
                 check_blocked,
-                "Reconnect the folder before checking changes."
+                "the folder is disconnected"
                 if root.status == "offline"
-                else "Use the active process to check changes."
+                else "another Chatbook has this folder open"
                 if root.status == "passive"
                 else None,
             )
         ]
-        if root.next_action == "review_changes":
+        if next_action == "review_changes":
             actions.append(("review", "Review", False, None))
-        if root.next_action == "review_migration":
+        if next_action == "review_migration":
             actions.append(("migration", "Review migration", False, None))
-        if root.status == "paused":
+        if root.status == "paused" or next_action == "resume_sync":
             actions.append(("resume", "Resume", False, None))
         elif root.status not in {"passive", "offline"}:
             actions.append(("pause", "Pause", False, None))
-        if root.status in {"failed", "partial", "needs_attention"}:
+        if next_action == "resolve_cleanup" or root.status in {
+            "failed",
+            "partial",
+            "needs_attention",
+        }:
             actions.append(("recover", "Recovery", False, None))
         actions.extend(
             (
+                # task-32545 AC#1: the reason was tooltip-only, so the
+                # control said "○" and nothing else.
                 (
                     "retarget",
                     "○ Retarget",
                     True,
-                    "Retarget is unavailable in this release.",
+                    "not in this release",
                 ),
                 (
                     "disconnect",
                     "○ Disconnect",
                     True,
-                    "Disconnect is unavailable in this release.",
+                    "not in this release",
                 ),
             )
         )
@@ -165,14 +210,14 @@ class LibraryNotesSyncRootsCanvas(Vertical):
             "resolve_cleanup": "recover",
             "reconnect_folder": "retarget",
             "review_settings": "retarget",
-        }.get(root.next_action)
+        }.get(next_action)
         actions.sort(key=lambda action: action[0] != primary_action)
         for action, label, disabled, tooltip in actions:
             yield self._action_button(
                 index,
                 root.root_id,
                 action,
-                label,
+                _disabled_action_label(label, disabled=disabled, reason=tooltip or ""),
                 disabled=disabled,
                 tooltip=tooltip,
                 primary=action == primary_action,

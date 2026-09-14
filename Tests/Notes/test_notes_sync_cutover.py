@@ -227,6 +227,10 @@ class _SetupAdapter:
         self.with_file = with_file
         self.built_requests: list[object] = []
         self.executed_requests: list[object] = []
+        self.obsidian_modes: dict[str, bool] = {}
+
+    def remember_obsidian_mode(self, root_id: str, enabled: bool) -> None:
+        self.obsidian_modes[root_id] = enabled
 
     async def observe_root(self, root: object) -> object:
         from tldw_chatbook.Notes.notes_sync_reconciler import (
