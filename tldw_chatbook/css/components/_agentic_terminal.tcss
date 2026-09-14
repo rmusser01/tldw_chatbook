@@ -2003,6 +2003,21 @@ ConsoleRunLogModal {
     outline: none;
 }
 
+/* task-32546 (critique #3, B D16): the Library landing's "From your
+   Library" rows are the first thing Tab and F6 reach on the way into
+   Notes, and they marked focus with a background colour alone
+   (rgb(30,30,30) -> rgb(28,70,102), read off an ANSI capture) -- the same
+   colour-only cue task-32359 removed from the rail rows one pane away.
+   Same shape and the same reasons: the house bar replaces the row's own
+   left padding so the label neither shifts nor is clipped, and
+   `outline: none` suppresses the generic `*:focus{outline:solid}`
+   fallback (core/_reset.tcss). */
+.library-hub-recent:focus {
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* Flashcards-due emphasis on the create-flashcards rail row. Bright uses an
    accent text color (not a background fill) so the row stands out without
    reading as selected -- real selection is `.library-rail-row-selected`'s

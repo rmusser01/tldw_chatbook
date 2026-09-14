@@ -4462,6 +4462,12 @@ class LibraryScreen(BaseAppScreen):
             return f"toggle {source.replace('-', ' ').capitalize()}"
         if widget_id.startswith("library-rag-result-card-"):
             return "select evidence"
+        # task-32546 AC#1: the landing's "From your Library" rows are the
+        # first thing Tab and F6 reach, and Enter opens whichever one has
+        # focus -- which the footer never said, so a walk that had no
+        # visible focus cue had no written one either.
+        if widget_id.startswith("library-hub-recent-"):
+            return f"open {widget_id.removeprefix('library-hub-recent-')}"
         if widget_id == "library-notes-create-blank" or widget_id.startswith(
             "library-notes-template-"
         ):
@@ -4534,13 +4540,21 @@ class LibraryScreen(BaseAppScreen):
         # "select evidence" everywhere -- in the query box (Enter runs the
         # search) and on a source toggle (Enter empties the results), the
         # two places the live walk actually pressed it.
+        enter_label = self._library_focus_enter_label()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
-            enter_label = self._library_focus_enter_label()
             shortcuts = tuple(
                 ("enter", enter_label) if pair[0] == "enter" else pair
                 for pair in shortcuts
                 if pair[0] != "enter" or enter_label
             )
+        elif enter_label and not any(pair[0] == "enter" for pair in shortcuts):
+            # task-32546 AC#1: the same honest-footer rule on a surface whose
+            # static set has no "enter" chip to replace -- the Library
+            # landing, where Enter opens the focused "From your Library"
+            # row. Appended, not prepended, for the reason task-32246 AC#2
+            # records: the narrow stage keeps only the leading chips that
+            # fit, and naming focus is the smaller promise of the two.
+            shortcuts = shortcuts + (("enter", enter_label),)
         # task-31223 (re-critique P1): while a text field holds focus, every
         # single printable key is INSERTED AS TEXT, so advertising "] next
         # in set" or "s select" is the footer lying -- live, a stray "]"

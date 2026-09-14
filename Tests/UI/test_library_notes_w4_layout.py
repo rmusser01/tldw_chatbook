@@ -61,7 +61,15 @@ WIDE = (235, 52)
 COMPACT = (60, 24)
 
 #: The house focus bar (task-31983 / task-32359): focus is a SHAPE here.
-THICK_LEFT_GLYPH = "▎"
+THICK_LEFT_GLYPH = "█"
+
+
+def _painted_rows(app) -> list[str]:
+    """What the compositor actually put on screen, row by row."""
+    return [
+        "".join(segment.text for segment in strip)
+        for strip in app.screen._compositor.render_strips()
+    ]
 
 
 def _items_width(terminal_width: int, *, reader_has_item: bool) -> int:
@@ -330,7 +338,7 @@ async def test_landing_recent_rows_show_the_focus_shape_and_the_footer_names_the
         assert recent.styles.border_left[0], (
             f"{recent.id} has no focus shape: {recent.styles.border_left!r}"
         )
-        line = host.app.screen.export_text().splitlines()[recent.region.y]
+        line = _painted_rows(host.app)[recent.region.y]
         assert line[recent.region.x] == THICK_LEFT_GLYPH, line
         assert screen._library_focus_enter_label(recent) == "open notes"
         chips = dict(screen._library_footer_shortcuts_for_current_state())
