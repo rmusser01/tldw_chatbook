@@ -63,14 +63,14 @@ Reframed from a tidy-up into a verification pass, because wave 4 found eight aut
 
 Roughly 300 factual claims checked across notes.md, file-notes.md, library.md, import-and-export.md and console.md; **nine were wrong and were corrected**, none deleted:
 
-1. notes.md 'Getting there' named the rail's Browse ▸ Notes row as the only route. An empty profile has no Browse section — LibraryLifecycle.STARTER composes exactly Import… / New note / Explore all tools (library_rail.py:1076-1079). Walked: docs-01, and docs-02 shows Explore all tools growing the full Browse section with a Notes (0) row on an empty Library. AC#2.
+1. notes.md 'Getting there' named the rail's Browse ▸ Notes row as the only route. An empty profile has no Browse section — LibraryLifecycle.STARTER composes exactly Import… / New note / Explore all tools, then returns (library_rail.py:1076-1080). Walked: docs-01, and docs-02 shows Explore all tools growing the full Browse section with a Notes (0) row on an empty Library. AC#2.
 2. The duplicate-title tie-break was claimed 'in Edit, Preview and Info alike' with no width. True at 235x52 ('Reading list · #d3d7', docs-05); at 100x30 the heading strip carries the back cue and source name either side and the title ellipsizes first — '‹ Back to list    Reading … Library notes' (docs-08, docs-09). Rider 32575.
 3. The toolbar Tab counts were said to turn on the filter alone; select_disabled = rendered_count == 0 or running (library_notes_canvas.py:1747), and '○ Select' is visible live on an empty list (docs-03).
 4. Retarget/Disconnect's line under the root list is one combined sentence naming both, not 'the same line repeated'.
 5. Preview's Escape chip is 'esc back to notes' wide, 'esc notes' compact (LIBRARY_NOTES_PREVIEW_SHORTCUTS(_COMPACT)).
-6-8. file-notes.md's Session Git heading, scope line and keyboard guide were all three rewritten by task-15122 on 2026-08-11 and never updated — five 'Verified against' stamps were added to that page in between, two of them live walks of that very panel.
+6-8. file-notes.md's Session Git heading, scope line and keyboard guide were all three rewritten by task-15122 on 2026-08-11 and never updated — five 'Verified against' stamps were added to that page in between, two of them live walks of that very panel. [SUPERSEDED by Fix round 1 below: it was FIFTEEN stamps across six dates, three of them naming the panel. Left in place rather than edited away, per this wave's own supersession rule.]
 9. file-notes.md's Chunking Lab quirk described a header strip task-32064 (Done) removed, and cited that task as still tracking it.
-Plus console.md's 'Both actions' on the Get started card, contradicted by its own task-32555 stamp four paragraphs below (a detected loopback server adds a third).
+Plus console.md's 'Both actions' on the Get started card, contradicted by its own task-32555 stamp (a detected loopback server adds a third). [The round-0 wording said 'four paragraphs below'; that stamp is in the page's own Verified-against section, ~455 lines away — SUPERSEDED by Fix round 1 below.]
 
 Also added to the body rather than left in a stamp: every Manage sync folders row is titled 'Sync folder (name unavailable before cutover)' and carries no path, so two roots are distinguishable only by status line and order (task-32451, open).
 
