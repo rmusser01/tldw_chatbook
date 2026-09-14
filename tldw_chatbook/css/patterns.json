@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "families": {
+    "forms": {
+      "owning_sheet": "components/_forms.tcss",
+      "classes": {
+        "form-label": { "status": "canonical" },
+        "form-row": { "status": "canonical" },
+        "form-col": { "status": "canonical" },
+        "form-input": { "status": "canonical" },
+        "form-textarea": { "status": "canonical" },
+        "form-select": { "status": "canonical" },
+        "form-checkbox": { "status": "canonical" },
+        "form-button": { "status": "canonical" },
+        "form-section-title": { "status": "canonical" },
+        "form-section-collapsible": { "status": "canonical" },
+        "form-actions": { "status": "canonical" }
+      }
+    },
+    "buttons": {
+      "owning_sheet": "components/_buttons.tcss",
+      "classes": {
+        "button-group": { "status": "canonical" },
+        "button-group-left": { "status": "canonical" },
+        "button-group-center": { "status": "canonical" },
+        "button-group-right": { "status": "canonical" },
+        "sidebar-toggle": { "status": "canonical" }
+      }
+    },
+    "lists": {
+      "owning_sheet": "components/_lists.tcss",
+      "widget_contract": "ListView/DataTable/OptionList cursor-hover-selected type selectors; no public classes",
+      "classes": {}
+    },
+    "dialogs": {
+      "owning_sheet": "components/_dialogs.tcss",
+      "classes": {}
+    },
+    "status": {
+      "owning_sheet": "components/_status.tcss",
+      "classes": {}
+    },
+    "navigation": {
+      "owning_sheet": "layout/_sidebars.tcss",
+      "classes": {
+        "sidebar": { "status": "canonical" },
+        "sidebar-button": { "status": "canonical" },
+        "sidebar-header": { "status": "canonical" },
+        "sidebar-listview": { "status": "canonical" },
+        "sidebar-section-collapsible": { "status": "canonical" },
+        "nav-button": {
+          "status": "canonical",
+          "owning_sheet": "components/_navigation.tcss"
+        }
+      }
+    },
+    "sections": {
+      "owning_sheet": "components/_sections.tcss",
+      "classes": {
+        "section-title": { "status": "canonical" },
+        "section-header": { "status": "canonical" },
+        "subsection-title": { "status": "canonical" }
+      }
+    },
+    "messages": {
+      "owning_sheet": "components/_messages.tcss",
+      "classes": {}
+    },
+    "ds_primitives": {
+      "owning_sheet": "components/_ds_primitives.tcss",
+      "classes": {
+        "ds-panel": { "status": "draft" },
+        "ds-toolbar": { "status": "draft" },
+        "ds-field-row": { "status": "draft" },
+        "ds-info-callout": { "status": "draft" },
+        "ds-approval-card": { "status": "draft" },
+        "ds-destination-header": { "status": "draft" }
+      }
+    }
+  },
+  "deprecated": {}
+}
