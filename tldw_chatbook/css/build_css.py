@@ -205,6 +205,14 @@ CSS_MODULES = [
     "layout/_panes.tcss",
     "layout/_containers.tcss",
     # 3. Components - Reusable UI (depends on core + layout)
+    # ADR-161 task 9: the ds-primitives family's owning sheet (.ds-panel/
+    # .ds-toolbar/.ds-field-row/.ds-info-callout/.ds-approval-card/
+    # .ds-destination-header + .density-* variants), extracted from
+    # components/_agentic_terminal.tcss and tokenized. FIRST among the
+    # component sheets -- the atomic layer every other component family
+    # composes from, so later sheets can override at equal specificity
+    # (the move was probe-verified computed-style-neutral).
+    "components/_ds_primitives.tcss",
     "components/_buttons.tcss",
     "components/_forms.tcss",
     # ADR-161 task 4: the titled-section vocabulary's owning sheet

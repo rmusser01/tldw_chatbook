@@ -76,7 +76,7 @@ Notes on the schema:
 
 | Family | Owning sheet | Classes (status) |
 |---|---|---|
-| forms | `components/_forms.tcss` | form-label, form-row, form-col, form-input, form-textarea, form-select, form-checkbox, form-button, form-section-title, form-section-collapsible, form-actions (all Canonical); settings-input-label (Canonical variant of form-label, owning sheet `components/_agentic_terminal.tcss`) |
+| forms | `components/_forms.tcss` | form-label, form-row, form-col, form-input, form-textarea, form-select, form-checkbox, form-button, form-section-title, form-section-collapsible, form-actions (all Canonical); settings-input-label (Canonical variant of form-label, owning sheet `components/_agentic_terminal.tcss`); settings-compact-input (Canonical variant of form-input), settings-detail-row (Canonical variant of form-row) — both task 9; settings-input-row, settings-select-row, settings-status-row, settings-compact-select, settings-focus-card (Draft — Settings-screen-only, stay in the monolith for task 10) |
 | buttons | `components/_buttons.tcss` | action-button, button-group, button-group-left, button-group-center, button-group-right, sidebar-toggle (all Canonical) |
 | lists | `components/_lists.tcss` | none — widget contract (ListView/DataTable/OptionList cursor-hover-selected type selectors) |
 | dialogs | `components/_dialogs.tcss` | dialog-title, dialog-buttons (all Canonical) |
@@ -84,7 +84,7 @@ Notes on the schema:
 | navigation | `layout/_sidebars.tcss` | sidebar, sidebar-button, sidebar-header, sidebar-listview, sidebar-section-collapsible (Canonical); nav-button (Canonical, owning sheet `components/_navigation.tcss`) |
 | sections | `components/_sections.tcss` | section-title, section-header, subsection-title (all Canonical) |
 | messages | `components/_messages.tcss` | message-header, message-text, message-actions (all Canonical) |
-| ds_primitives | `components/_ds_primitives.tcss` | ds-panel, ds-toolbar, ds-field-row, ds-info-callout, ds-approval-card, ds-destination-header (all DRAFT) |
+| ds_primitives | `components/_ds_primitives.tcss` | ds-panel, ds-toolbar, ds-field-row, ds-info-callout, ds-approval-card, ds-destination-header (all Canonical; extracted from the agentic monolith in task 9) |
 
 ## Entry template
 
@@ -140,12 +140,30 @@ def compose_form(self):
   `components/_agentic_terminal.tcss`; scoped compounds (RAG card width 20,
   imagegen backend rows width 12, stacked rows width 100%) compose on top.
 - `form-row` — horizontal field-grouping container; stack with `$ds-space-stack`.
+- `settings-detail-row` — documented **variant** of `form-row` (ADR-161 task 9,
+  probe-measured): the read-only detail line — `$ds-surface-panel` fill,
+  `$ds-text-primary`, one-row minimum, `$ds-space-inline` padding. Consumed on
+  two production surfaces (Settings workbench + the STTS speech settings pane),
+  so it lives in this owning sheet (boot bundle) rather than the lazily-loaded
+  settings screen sheet. `#settings-impact-pane .settings-detail-row` stays
+  with the Settings surface.
 - `form-col` — equal-width (`1fr`) column inside a `form-row`; edge columns drop
   their outer `$ds-space-inline` padding.
 - `form-input` — single-line `Input`. Rest edge per §2.7 (the compact-field
   `$ds-control-edge` left-edge convention); `:focus` recolours via
   `$ds-input-focus-border` / `$ds-input-focus-accent` / `$ds-input-focus-bg`;
   `.error` modifier marks validation failure.
+- `settings-compact-input` — documented **variant** of `form-input` (ADR-161
+  task 9, probe-measured): the one-row editable field — height
+  `$ds-control-height-compact`, `$ds-width-fill` share of the row, the
+  task-1586 one-column left edge at rest flipping to a thick
+  `$ds-action-focus` edge on focus, no underline (task-185). Its border
+  suppression is what lets the single row paint text (TASK-13154.1); do NOT
+  merge into `form-input`. Also composed by the pattern gallery, so it lives
+  in this owning sheet (boot bundle). The `.settings-invalid-input` states
+  (error tint, stronger at 28% while focused — task-1369) live with it;
+  scoped compounds (`#settings-web-search-panel …`,
+  `.settings-speech-path-control …`) stay with the Settings surface.
 - `form-textarea` — multi-line `TextArea`, `min-height: $ds-textarea-min-height`;
   same `:focus` contract as `form-input`.
 - `form-select` — `Select` wrapper sized to `$ds-control-height`; focus states
@@ -177,7 +195,30 @@ optional, not canonical. Hand-compose.
 
 **Lifecycle.** All Canonical (owning sheet `components/_forms.tcss`), plus
 the `settings-input-label` variant (Canonical, owning sheet
-`components/_agentic_terminal.tcss`).
+`components/_agentic_terminal.tcss`), the `settings-compact-input` variant of
+`form-input` and the `settings-detail-row` variant of `form-row` (Canonical,
+this owning sheet — task 9). The Settings-screen-only field classes
+(`settings-input-row`, `settings-select-row`, `settings-status-row`,
+`settings-compact-select`, `settings-focus-card`) are Draft: probe-measured
+genuinely different from the forms family but consumed only by the Settings
+workbench, so they stay in the agentic monolith (riding the lazily-loaded
+settings screen sheet) for the task-10 feature carve.
+
+**Consolidation record (ADR-161 task 9, 2026-09-13).** The remaining
+settings field vocabulary was probed against the forms family on the
+production cascade (computed styles + height-1 geometry, Task 7
+methodology): every class diverges materially (3–11 property diffs), so
+nothing was renamed or deprecated — all are variants, not duplicates.
+`settings-compact-input` and `settings-detail-row` moved tokenized into this
+owning sheet because each has a second surface beyond Settings (the pattern
+gallery; the STTS speech settings pane). The move fixes a latent
+visit-order trap the split documented for `settings-input-label`: those two
+definitions rode the lazy settings screen sheet, so the STTS pane and the
+gallery demo rendered them unstyled until Settings was first visited.
+Bundle-only probes after the move match the full-stack target exactly. The
+five Settings-only siblings stay put (Draft) with their consumers;
+`settings-compact-select`'s `> SelectCurrent`/`> SelectOverlay` shape rules
+stay with it.
 
 **Consolidation record (ADR-161 task 7, 2026-09-13).** The competing label
 conventions were renamed onto `form-label` and their definitions deleted:
@@ -653,18 +694,27 @@ def compose_panel(self):
 - `ds-destination-header` — tall-accented destination header
   (`$ds-action-focus` border, `$ds-surface-panel` fill).
 
-All currently defined in `components/_agentic_terminal.tcss`; the monolith
-carve-up moves them (tokenized) into `components/_ds_primitives.tcss`.
+Defined in `components/_ds_primitives.tcss` (the bundle's FIRST component
+sheet — the atomic layer) since ADR-161 task 9, extracted tokenized from
+`components/_agentic_terminal.tcss`; their `.density-compact` /
+`.density-comfortable` variants ride with the family (the
+`ds-inspector`/`ds-recovery-callout` halves of those comma rules stay in the
+monolith until task 10 decides those classes' home). Rest-state geometry
+lives in tokens (`$ds-panel-min-height`, `$ds-destination-header-min-height`
+and its density variants, `$ds-field-row-min-height`, `$ds-toolbar-min-height`).
 
 **States.** Static containers — interactive states come from whatever
 controls are composed inside them (buttons → Button contract).
 
 **Tokens consumed.** `$ds-surface-panel`, `$ds-surface-raised`,
 `$ds-text-primary`, `$ds-grid-line`, `$ds-action-focus`, `$ds-status-info`,
-`$ds-status-warning`, `$ds-status-approval-required`.
+`$ds-status-approval-required`, `$ds-text-strong`, `$ds-space-0/1/2`, and the
+family's `$ds-*-min-height` geometry tokens.
 
 **Python idiom.** none — hand-compose class strings.
 
-**Lifecycle.** All DRAFT — flips to Canonical in the monolith carve-up
-(Task 9), when the owning sheet `components/_ds_primitives.tcss` exists and
-the single-definition rule can safely apply.
+**Lifecycle.** All Canonical since ADR-161 task 9 (2026-09-13): the owning
+sheet exists, the single-definition rule applies, and the move was
+probe-verified computed-style-neutral (generic + density + height-1
+geometry contexts) with byte-identical SVG A/B on Home, Console, Settings
+and Library.

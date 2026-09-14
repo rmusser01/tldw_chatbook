@@ -121,6 +121,17 @@ $ds-chat-rp-strong-dark: #fff0a6;
 $ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
+/* ADR-161 task 9: the ds-primitives family's geometry, tokenized as the
+   rules moved out of the agentic-terminal monolith into
+   components/_ds_primitives.tcss. Rest-state panel/header minimums and the
+   density-variant header minimums travel together so a density re-tune
+   has one home. */
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
 $ds-home-dashboard-grid-height: 18;
 $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
@@ -168,6 +179,10 @@ $ds-textarea-min-height: 5;
  * of the recurring `width: 100%` on promoted full-width components (status
  * areas, message bodies). Raw percentage widths in moved rules map here. */
 $ds-width-full: 100%;
+/* Claim one share of the parent's inline axis (ADR-161 task 9): the
+ * tokenized expression of `width: 1fr` on promoted fill fields (the
+ * Settings compact field pair). */
+$ds-width-fill: 1fr;
 
 /* ========================================
  * MOTION (ADR-150)

@@ -14,6 +14,36 @@
         "form-row": { "status": "canonical" },
         "form-col": { "status": "canonical" },
         "form-input": { "status": "canonical" },
+        "settings-compact-input": {
+          "status": "canonical",
+          "variant_of": "form-input",
+          "note": "Documented variant (ADR-161 task 9 probe, 2026-09-13): the one-row editable field with the task-1586 left-edge control convention (TASK-13154.1: border suppression is what lets the single row paint text; form-input's full border would spend the row on chrome). NOT equivalent to form-input (11 computed-property diffs). Moved tokenized from components/_agentic_terminal.tcss: composed on TWO surfaces (Settings panels + the pattern gallery), so it rides the boot bundle instead of the lazy settings screen sheet (AGENTIC_SPLIT_PINNED_TOKENS rationale). Scoped compounds (#settings-web-search-panel .settings-compact-input, .settings-speech-path-control .settings-compact-input) stay with the Settings surface."
+        },
+        "settings-detail-row": {
+          "status": "canonical",
+          "variant_of": "form-row",
+          "note": "Documented variant (ADR-161 task 9 probe, 2026-09-13): the read-only detail line (panel fill, primary text, one-row minimum, padding 0 1) vs form-row's auto-height unstyled row (5 computed-property diffs). Moved tokenized from components/_agentic_terminal.tcss: consumed on TWO production surfaces (Settings workbench + the STTS speech settings pane via SpeechSettingsPane), so it rides the boot bundle -- previously it lived on the lazily-loaded settings screen sheet, leaving STTS rows unstyled until Settings was first visited (the exact AGENTIC_SPLIT_PINNED_TOKENS trap; fixed by the move). #settings-impact-pane .settings-detail-row stays with the Settings surface."
+        },
+        "settings-input-row": {
+          "status": "draft",
+          "note": "ADR-161 task 9 probe: genuinely different from form-row (fixed height 1 + min-height 1 + margin 0 vs auto height + bottom stack margin). Settings-screen-only consumer set (settings_screen + settings_* panels) -- STAYS in components/_agentic_terminal.tcss (rides the lazy settings screen sheet) for the task-10 feature carve per the one-feature-one-sheet rule."
+        },
+        "settings-select-row": {
+          "status": "draft",
+          "note": "ADR-161 task 9 probe: genuinely different from form-row (fixed height 3/min 3, margin 0). Settings-screen-only -- stays in the monolith for the task-10 carve."
+        },
+        "settings-status-row": {
+          "status": "draft",
+          "note": "ADR-161 task 9 probe: genuinely different from the forms family (inspector fill, muted text, padding 0 1, one-row min). Settings-screen-only -- stays in the monolith for the task-10 carve."
+        },
+        "settings-compact-select": {
+          "status": "draft",
+          "note": "ADR-161 task 9 probe: genuinely different from form-select (grid-line border, inspector fill, 1fr width, SelectCurrent/SelectOverlay shape rules). Settings-screen-only -- stays in the monolith for the task-10 carve."
+        },
+        "settings-focus-card": {
+          "status": "draft",
+          "note": "ADR-161 task 9 probe: genuinely different from the forms family (bordered panel card, padding 0 1, bottom margin 1). Settings-screen-only -- stays in the monolith for the task-10 carve."
+        },
         "form-textarea": { "status": "canonical" },
         "form-select": { "status": "canonical" },
         "form-checkbox": { "status": "canonical" },
@@ -93,13 +123,14 @@
     "ds_primitives": {
       "owning_sheet": "components/_ds_primitives.tcss",
       "classes": {
-        "ds-panel": { "status": "draft" },
-        "ds-toolbar": { "status": "draft" },
-        "ds-field-row": { "status": "draft" },
-        "ds-info-callout": { "status": "draft" },
-        "ds-approval-card": { "status": "draft" },
-        "ds-destination-header": { "status": "draft" }
-      }
+        "ds-panel": { "status": "canonical" },
+        "ds-toolbar": { "status": "canonical" },
+        "ds-field-row": { "status": "canonical" },
+        "ds-info-callout": { "status": "canonical" },
+        "ds-approval-card": { "status": "canonical" },
+        "ds-destination-header": { "status": "canonical" }
+      },
+      "note": "ADR-161 task 9 (2026-09-13): extracted tokenized from components/_agentic_terminal.tcss (base rules + .density-compact/.density-comfortable member halves; the ds-inspector/ds-recovery-callout halves of those comma rules stay in the monolith until task 10). FIRST among component sheets in CSS_MODULES (atomic layer). Probe-verified computed-style-neutral (generic + density + height-1 geometry) and byte-identical SVG A/B on Home/Console/Settings/Library."
     }
   },
   "deprecated": {

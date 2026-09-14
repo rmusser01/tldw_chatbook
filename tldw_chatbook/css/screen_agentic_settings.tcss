@@ -62,6 +62,12 @@ $ds-chat-rp-strong-dark: #fff0a6;
 $ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
 $ds-home-dashboard-grid-height: 18;
 $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
@@ -88,6 +94,7 @@ $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
 $ds-width-full: 100%;
+$ds-width-fill: 1fr;
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -383,14 +390,12 @@ Button.settings-category-group-toggle:focus {
     text-style: bold;
 }
 
-.settings-detail-row {
-    width: 100%;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
+/* ADR-161 task 9: the bare .settings-detail-row definition moved to
+   components/_forms.tcss (documented variant of form-row; consumed on TWO
+   production surfaces -- the Settings workbench and the STTS speech
+   settings pane -- so it rides the boot bundle instead of the lazy
+   settings screen sheet). The scoped override below stays with its
+   surface. */
 
 /* The narrow Scope Inspector keeps the airy row rhythm: its prose wraps at
    ~30 columns, so the blank line between rows earns its keep there (and
@@ -429,32 +434,11 @@ Button.settings-category-group-toggle:focus {
     margin: 0;
 }
 
-.settings-compact-input {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    /* task-1586 control convention: the one-column left edge marks "this
-       row is editable" at rest; full borders stay off because they cost
-       a row above and below on these one-row fields. */
-    border: none;
-    border-left: solid $ds-control-edge;
-    background: $ds-surface-inspector;
-    color: $ds-text-primary;
-}
-
-.settings-compact-input:focus {
-    border: none;
-    border-left: thick $ds-action-focus;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    /* No underline: it made placeholder copy read as a link (task-185). */
-    text-style: bold;
-    outline: none;
-}
-
-.settings-compact-input.settings-invalid-input,
+/* ADR-161 task 9: the .settings-compact-input definitions (base, :focus,
+   and its halves of the two .settings-invalid-input rules below) moved to
+   components/_forms.tcss as the documented compact variant of form-input
+   -- also composed by the pattern gallery, so it rides the boot bundle.
+   The compact-SELECT stays here (Settings-only). */
 .settings-compact-select.settings-invalid-input {
     background: $ds-status-error 18%;
     color: $ds-text-primary;
@@ -462,7 +446,6 @@ Button.settings-category-group-toggle:focus {
     outline: none;
 }
 
-.settings-compact-input.settings-invalid-input:focus,
 .settings-compact-select.settings-invalid-input:focus {
     /* task-1369: keep the error tint while focused so the invalid marker is
        not lost; slightly stronger than the unfocused 18% to still read as

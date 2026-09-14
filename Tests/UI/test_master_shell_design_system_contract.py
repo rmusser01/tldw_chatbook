@@ -66,6 +66,7 @@ DESIGN_SYSTEM_SPEC = Path(
     "Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md"
 )
 DESIGN_SYSTEM_TCSS = Path("tldw_chatbook/css/components/_agentic_terminal.tcss")
+DS_PRIMITIVES_TCSS = Path("tldw_chatbook/css/components/_ds_primitives.tcss")
 CORE_VARIABLES_TCSS = Path("tldw_chatbook/css/core/_variables.tcss")
 MAIN_TCSS = Path("tldw_chatbook/css/main.tcss")
 LOADED_TCSS = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
@@ -104,10 +105,32 @@ def test_agentic_terminal_tcss_module_is_implemented_and_imported():
 
     assert '@import "./components/_agentic_terminal.tcss";' in main_text
     assert '"components/_agentic_terminal.tcss"' in build_text
+    # ADR-161 task 9: the ds-primitives family's bare definitions moved to
+    # components/_ds_primitives.tcss (FIRST component sheet, tokenized);
+    # the contract's vocabulary still reaches the loaded stylesheet, and
+    # the shell classes that did NOT move stay checkable against the
+    # monolith. Both sets stay in REQUIRED_DESIGN_SYSTEM_CLASSES for the
+    # contract-doc and loaded-bundle checks above.
+    ds_primitives_text = DS_PRIMITIVES_TCSS.read_text(encoding="utf-8")
+    moved_to_ds_primitives = {
+        "ds-destination-header",
+        "ds-panel",
+        "ds-approval-card",
+        "ds-field-row",
+        "ds-toolbar",
+    }
     for class_name in REQUIRED_DESIGN_SYSTEM_CLASSES | REQUIRED_STATE_CLASSES:
-        assert f".{class_name}" in class_text
-    assert ".density-compact" in class_text
-    assert ".density-comfortable" in class_text
+        source = (
+            ds_primitives_text
+            if class_name in moved_to_ds_primitives
+            else class_text
+        )
+        assert f".{class_name}" in source, (
+            f".{class_name} missing from its owning sheet "
+            f"({'components/_ds_primitives.tcss' if class_name in moved_to_ds_primitives else 'the agentic terminal monolith'})"
+        )
+    assert ".density-compact" in class_text + ds_primitives_text
+    assert ".density-comfortable" in class_text + ds_primitives_text
 
 
 def test_loaded_stylesheet_contains_agentic_terminal_contract():

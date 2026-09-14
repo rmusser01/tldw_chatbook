@@ -1013,7 +1013,12 @@ def test_console_transcript_selected_message_uses_selected_contract_without_geom
 
 
 def test_settings_compact_input_focus_preserves_single_row_content():
-    text = AGENTIC.read_text(encoding="utf-8")
+    # ADR-161 task 9: .settings-compact-input moved (tokenized) to the forms
+    # owning sheet -- a documented variant of form-input with a second
+    # surface (the pattern gallery), so it rides the boot bundle; the
+    # contract itself is unchanged. `text-style: bold` arrived as its token
+    # ($ds-text-strong = bold).
+    text = FORMS.read_text(encoding="utf-8")
     block = css_block(text, ".settings-compact-input:focus")
     assert "border: none;" in block
     assert "border-bottom:" not in block
@@ -1024,7 +1029,7 @@ def test_settings_compact_input_focus_preserves_single_row_content():
     # Underline was dropped deliberately (2026-07-11 UAT): underlined
     # placeholders read as snake_case tokens. Bold + background still
     # satisfies the non-obscuring focus contract (no border/outline rows).
-    assert "text-style: bold;" in block
+    assert "text-style: $ds-text-strong;" in block
     assert "underline" not in block
 
 

@@ -68,6 +68,13 @@ class PatternGalleryScreen(Screen):
                             "Palette limit", classes="settings-input-label"
                         )
                         yield Static("24", classes="settings-compact-input")
+                    # ADR-161 task 9: the read-only detail-line variant --
+                    # panel fill, primary text, one-row minimum; a documented
+                    # variant of form-row (probe), consumed by Settings and
+                    # the STTS speech settings pane.
+                    yield Static(
+                        "Saved profile: default", classes="settings-detail-row"
+                    )
                     yield Label(
                         "Generation parameters", classes="form-section-title"
                     )

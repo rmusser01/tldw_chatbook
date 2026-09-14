@@ -4973,29 +4973,36 @@ def test_settings_shell_button_focus_does_not_use_heavy_outline():
 
 
 def test_settings_invalid_compact_fields_keep_focused_text_readable():
-    css_path = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-    )
-    css = css_path.read_text()
-    match = re.search(
-        r"\.settings-compact-input\.settings-invalid-input:focus,\s*"
-        r"\.settings-compact-select\.settings-invalid-input:focus\s*\{(?P<body>[^}]*)\}",
-        css,
-        flags=re.DOTALL,
-    )
+    # ADR-161 task 9: the compact-input half of the two invalid-state rules
+    # moved (tokenized) to the forms owning sheet; the compact-select half
+    # stays in the agentic monolith. The contract is identical on both
+    # sides, so each owning sheet is checked for its own half.
+    css_root = Path(__file__).resolve().parents[2] / "tldw_chatbook/css/components"
+    for sheet_name, selector in (
+        ("_forms.tcss", r"\.settings-compact-input\.settings-invalid-input:focus"),
+        (
+            "_agentic_terminal.tcss",
+            r"\.settings-compact-select\.settings-invalid-input:focus",
+        ),
+    ):
+        css = (css_root / sheet_name).read_text()
+        match = re.search(
+            rf"{selector}\s*\{{(?P<body>[^}}]*)\}}",
+            css,
+            flags=re.DOTALL,
+        )
 
-    assert match
-    body = match.group("body")
-    assert "color: $ds-text-primary;" in body
-    assert "text-opacity: 1;" in body
-    # task-1369: the focused invalid field keeps an error-tinted background
-    # instead of restyling to the normal surface (the highlight must not be
-    # lost exactly while the user edits the field).
-    assert "background: $ds-status-error" in body
-    assert "$ds-surface-raised" not in body
-    assert "outline: none;" in body
-    assert "outline: heavy" not in body
+        assert match, f"{selector} not found in {sheet_name}"
+        body = match.group("body")
+        assert "color: $ds-text-primary;" in body
+        assert "text-opacity: 1;" in body
+        # task-1369: the focused invalid field keeps an error-tinted background
+        # instead of restyling to the normal surface (the highlight must not be
+        # lost exactly while the user edits the field).
+        assert "background: $ds-status-error" in body
+        assert "$ds-surface-raised" not in body
+        assert "outline: none;" in body
+        assert "outline: heavy" not in body
 
 
 @pytest.mark.asyncio

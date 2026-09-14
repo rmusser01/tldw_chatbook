@@ -133,6 +133,17 @@ $ds-chat-rp-strong-dark: #fff0a6;
 $ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
+/* ADR-161 task 9: the ds-primitives family's geometry, tokenized as the
+   rules moved out of the agentic-terminal monolith into
+   components/_ds_primitives.tcss. Rest-state panel/header minimums and the
+   density-variant header minimums travel together so a density re-tune
+   has one home. */
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
 $ds-home-dashboard-grid-height: 18;
 $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
@@ -180,6 +191,10 @@ $ds-textarea-min-height: 5;
  * of the recurring `width: 100%` on promoted full-width components (status
  * areas, message bodies). Raw percentage widths in moved rules map here. */
 $ds-width-full: 100%;
+/* Claim one share of the parent's inline axis (ADR-161 task 9): the
+ * tokenized expression of `width: 1fr` on promoted fill fields (the
+ * Settings compact field pair). */
+$ds-width-fill: 1fr;
 
 /* ========================================
  * MOTION (ADR-150)
@@ -1045,6 +1060,106 @@ TabbedContent Underline {
     color: $text;                 /* Your existing style */
 }
 
+/* ===== MODULE: components/_ds_primitives.tcss ===== */
+/* ========================================
+ * COMPONENTS: DS Primitives (atomic layer)
+ * ========================================
+ * The token-native primitive containers that grew up inside the
+ * agentic-terminal monolith and form the base layer other families
+ * compose from: panels, toolbars, field rows, callouts, approval cards,
+ * and the destination header. Family reference:
+ * backlog/docs/component-patterns.md (ADR-161).
+ *
+ * ADR-161 task 9: extracted from components/_agentic_terminal.tcss and
+ * tokenized on arrival; FIRST among the component sheets so later
+ * component/feature sheets override at equal specificity exactly as they
+ * did when these rules sat later in the manifest. The move is
+ * bundle-internal only (two-track rule): the per-screen
+ * screen_agentic_*.tcss sources are untouched, and no local $ds-*
+ * fallbacks live here.
+ *
+ * Density variants: the .density-compact/.density-comfortable halves that
+ * touch THIS family's classes ride with the family; the ds-inspector /
+ * ds-recovery-callout halves of the same comma rules stay in the monolith
+ * (those classes are not family members -- task 10 decides their home).
+ * ======================================== */
+
+.ds-destination-header {
+    height: auto;
+    min-height: $ds-destination-header-min-height;
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: tall $ds-action-focus;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-style: $ds-text-strong;
+}
+
+.ds-panel {
+    height: auto;
+    min-height: $ds-panel-min-height;
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.ds-approval-card {
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: thick $ds-status-approval-required;
+    background: $ds-status-approval-required 12%;
+    color: $ds-text-primary;
+}
+
+/* Field rows are label-above-value: every current user (Personas card and
+   editors) composes them as Vertical containers, so the row must not force a
+   horizontal layout (it jammed "Name"+value side by side and squeezed Inputs
+   into the leftover width). */
+.ds-field-row {
+    height: auto;
+    min-height: $ds-field-row-min-height;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+.ds-toolbar {
+    height: auto;
+    min-height: $ds-toolbar-min-height;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.ds-info-callout {
+    border: round $ds-status-info;
+    background: $ds-status-info 10%;
+    padding: $ds-space-0 $ds-space-1;
+    height: auto;
+}
+
+.density-compact .ds-panel,
+.density-compact .ds-approval-card {
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.density-compact .ds-destination-header {
+    min-height: $ds-destination-header-compact-min-height;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+.density-comfortable .ds-panel,
+.density-comfortable .ds-approval-card {
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-1 $ds-space-1;
+}
+
+.density-comfortable .ds-destination-header {
+    min-height: $ds-destination-header-comfortable-min-height;
+    padding: $ds-space-1 $ds-space-2;
+}
+
 /* ===== MODULE: components/_buttons.tcss ===== */
 /* ========================================
  * COMPONENTS: Buttons
@@ -1564,6 +1679,79 @@ Switch:focus {
     border-bottom: solid $ds-input-focus-accent;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
+}
+
+/* ADR-161 task 9: the Settings compact field vocabulary's cross-surface
+ * members, moved tokenized from components/_agentic_terminal.tcss.
+ * Probe evidence (task 9, production cascade): genuinely different from
+ * the standard form classes -- documented variants, not merge candidates:
+ *   settings-detail-row -- the read-only detail line (panel fill, primary
+ *       text, one-row minimum) vs form-row's auto-height unstyled row.
+ *       Consumed on TWO production surfaces (the Settings workbench and
+ *       the STTS speech settings pane via SpeechSettingsPane), so it rides
+ *       the boot bundle instead of the lazily-loaded settings screen
+ *       sheet (same rationale as AGENTIC_SPLIT_PINNED_TOKENS).
+ *   settings-compact-input -- the one-row editable field with the task-1586
+ *       left-edge control convention (TASK-13154.1: the border suppression
+ *       is what lets the single row paint its text; form-input's full
+ *       border would spend the row on chrome). Also composed by the
+ *       pattern gallery, so it too rides the boot bundle.
+ * The Settings-screen-only siblings (settings-input-row,
+ * settings-select-row, settings-status-row, settings-compact-select,
+ * settings-focus-card) stay in the monolith for the task-10 feature carve,
+ * as do the scoped overrides (#settings-impact-pane .settings-detail-row,
+ * #settings-web-search-panel .settings-compact-input, ...) that belong to
+ * their surfaces. */
+.settings-detail-row {
+    width: $ds-width-full;
+    min-height: $ds-control-height-compact;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.settings-compact-input {
+    width: $ds-width-fill;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    /* task-1586 control convention: the one-column left edge marks "this
+       row is editable" at rest; full borders stay off because they cost
+       a row above and below on these one-row fields. */
+    border: none;
+    border-left: solid $ds-control-edge;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-input:focus {
+    border: none;
+    border-left: thick $ds-action-focus;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    /* No underline: it made placeholder copy read as a link (task-185). */
+    text-style: $ds-text-strong;
+    outline: none;
+}
+
+.settings-compact-input.settings-invalid-input {
+    background: $ds-status-error 18%;
+    color: $ds-text-primary;
+    text-style: $ds-text-strong;
+    outline: none;
+}
+
+.settings-compact-input.settings-invalid-input:focus {
+    /* task-1369: keep the error tint while focused so the invalid marker is
+       not lost; slightly stronger than the unfocused 18% to still read as
+       focused. */
+    background: $ds-status-error 28%;
+    color: $ds-text-primary;
+    text-opacity: 1;
+    text-style: $ds-text-strong;
+    outline: none;
 }
 
 /* Note: Textual doesn't support @media queries
@@ -2448,26 +2636,11 @@ EnhancedFileDialog InputBar Select {
  * Ready, Running, Paused, Blocked, Unavailable, Approval required, Unsaved, Recovered.
  * ======================================== */
 
-.ds-destination-header {
-    height: auto;
-    min-height: 3;
-    padding: 1 2;
-    margin: 0 0 1 0;
-    border: tall $ds-action-focus;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-.ds-panel {
-    height: auto;
-    min-height: 3;
-    padding: 1 2;
-    margin: 0 0 1 0;
-    border: round $ds-grid-line;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
+/* ADR-161 task 9: the ds-primitives family (.ds-panel, .ds-toolbar,
+ * .ds-field-row, .ds-info-callout, .ds-approval-card,
+ * .ds-destination-header + their .density-* variants) moved to
+ * components/_ds_primitives.tcss, tokenized. The remaining ds-* shell
+ * classes below stay here until the task-10 feature carve. */
 
 .ds-inspector {
     height: auto;
@@ -2515,37 +2688,11 @@ EnhancedFileDialog InputBar Select {
     background: $ds-surface-raised;
 }
 
-.ds-approval-card {
-    height: auto;
-    padding: 1 2;
-    border: thick $ds-status-approval-required;
-    background: $ds-status-approval-required 12%;
-    color: $ds-text-primary;
-}
-
 .ds-event-row {
     height: auto;
     min-height: 1;
     padding: 0 1;
     border-bottom: solid $ds-grid-line;
-    color: $ds-text-primary;
-}
-
-/* Field rows are label-above-value: every current user (Personas card and
-   editors) composes them as Vertical containers, so the row must not force a
-   horizontal layout (it jammed "Name"+value side by side and squeezed Inputs
-   into the leftover width). */
-.ds-field-row {
-    height: auto;
-    min-height: 2;
-    padding: 0 1;
-}
-
-.ds-toolbar {
-    height: auto;
-    min-height: 1;
-    padding: 0 1;
-    background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
@@ -4219,30 +4366,20 @@ _CredentialClearModal {
     color: $ds-text-muted;
 }
 
-.density-compact .ds-panel,
+/* ADR-161 task 9: the .ds-panel / .ds-approval-card /
+   .ds-destination-header members of these density rules moved to
+   components/_ds_primitives.tcss with the family; these halves style the
+   shell classes that still live here. */
 .density-compact .ds-inspector,
-.density-compact .ds-approval-card,
 .density-compact .ds-recovery-callout {
     padding: 0 1;
     margin: 0 0 1 0;
 }
 
-.density-compact .ds-destination-header {
-    min-height: 2;
-    padding: 0 1;
-}
-
-.density-comfortable .ds-panel,
 .density-comfortable .ds-inspector,
-.density-comfortable .ds-approval-card,
 .density-comfortable .ds-recovery-callout {
     padding: 1 2;
     margin: 1 1;
-}
-
-.density-comfortable .ds-destination-header {
-    min-height: 4;
-    padding: 1 2;
 }
 
 .is-active {
@@ -4588,13 +4725,6 @@ Button.mcp-inspector-action {
 /* task-2239: the off/opt-in display state (the disabled built-in server) --
 quiet, not alarming; same muted tier as the legend/hint lines. */
 .mcp-status-muted { color: $ds-text-muted; }
-
-.ds-info-callout {
-    border: round $ds-status-info;
-    background: $ds-status-info 10%;
-    padding: 0 1;
-    height: auto;
-}
 
 Button.mcp-callout {
     width: 100%;

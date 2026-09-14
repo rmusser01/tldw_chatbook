@@ -417,6 +417,79 @@ Switch:focus {
     color: $ds-text-primary;
 }
 
+/* ADR-161 task 9: the Settings compact field vocabulary's cross-surface
+ * members, moved tokenized from components/_agentic_terminal.tcss.
+ * Probe evidence (task 9, production cascade): genuinely different from
+ * the standard form classes -- documented variants, not merge candidates:
+ *   settings-detail-row -- the read-only detail line (panel fill, primary
+ *       text, one-row minimum) vs form-row's auto-height unstyled row.
+ *       Consumed on TWO production surfaces (the Settings workbench and
+ *       the STTS speech settings pane via SpeechSettingsPane), so it rides
+ *       the boot bundle instead of the lazily-loaded settings screen
+ *       sheet (same rationale as AGENTIC_SPLIT_PINNED_TOKENS).
+ *   settings-compact-input -- the one-row editable field with the task-1586
+ *       left-edge control convention (TASK-13154.1: the border suppression
+ *       is what lets the single row paint its text; form-input's full
+ *       border would spend the row on chrome). Also composed by the
+ *       pattern gallery, so it too rides the boot bundle.
+ * The Settings-screen-only siblings (settings-input-row,
+ * settings-select-row, settings-status-row, settings-compact-select,
+ * settings-focus-card) stay in the monolith for the task-10 feature carve,
+ * as do the scoped overrides (#settings-impact-pane .settings-detail-row,
+ * #settings-web-search-panel .settings-compact-input, ...) that belong to
+ * their surfaces. */
+.settings-detail-row {
+    width: $ds-width-full;
+    min-height: $ds-control-height-compact;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.settings-compact-input {
+    width: $ds-width-fill;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    /* task-1586 control convention: the one-column left edge marks "this
+       row is editable" at rest; full borders stay off because they cost
+       a row above and below on these one-row fields. */
+    border: none;
+    border-left: solid $ds-control-edge;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-input:focus {
+    border: none;
+    border-left: thick $ds-action-focus;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    /* No underline: it made placeholder copy read as a link (task-185). */
+    text-style: $ds-text-strong;
+    outline: none;
+}
+
+.settings-compact-input.settings-invalid-input {
+    background: $ds-status-error 18%;
+    color: $ds-text-primary;
+    text-style: $ds-text-strong;
+    outline: none;
+}
+
+.settings-compact-input.settings-invalid-input:focus {
+    /* task-1369: keep the error tint while focused so the invalid marker is
+       not lost; slightly stronger than the unfocused 18% to still read as
+       focused. */
+    background: $ds-status-error 28%;
+    color: $ds-text-primary;
+    text-opacity: 1;
+    text-style: $ds-text-strong;
+    outline: none;
+}
+
 /* Note: Textual doesn't support @media queries
    Responsive behavior must be handled programmatically
    in the Python code using terminal size detection */

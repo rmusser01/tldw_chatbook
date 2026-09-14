@@ -1,6 +1,6 @@
 {
   "dimensions": {
-    "components/_agentic_terminal.tcss": 2693,
+    "components/_agentic_terminal.tcss": 2668,
     "components/_buttons.tcss": 5,
     "components/_change_review.tcss": 56,
     "components/_dialogs.tcss": 4,
@@ -14,7 +14,7 @@
     "components/_widgets.tcss": 56,
     "components/_workbench.tcss": 71,
     "core/_base.tcss": 5,
-    "core/_variables.tcss": 18,
+    "core/_variables.tcss": 24,
     "features/_chat.tcss": 55,
     "features/_chatbooks.tcss": 36,
     "features/_chatbooks_improved.tcss": 37,

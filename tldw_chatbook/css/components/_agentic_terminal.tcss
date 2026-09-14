@@ -16,26 +16,11 @@
  * Ready, Running, Paused, Blocked, Unavailable, Approval required, Unsaved, Recovered.
  * ======================================== */
 
-.ds-destination-header {
-    height: auto;
-    min-height: 3;
-    padding: 1 2;
-    margin: 0 0 1 0;
-    border: tall $ds-action-focus;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-.ds-panel {
-    height: auto;
-    min-height: 3;
-    padding: 1 2;
-    margin: 0 0 1 0;
-    border: round $ds-grid-line;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
+/* ADR-161 task 9: the ds-primitives family (.ds-panel, .ds-toolbar,
+ * .ds-field-row, .ds-info-callout, .ds-approval-card,
+ * .ds-destination-header + their .density-* variants) moved to
+ * components/_ds_primitives.tcss, tokenized. The remaining ds-* shell
+ * classes below stay here until the task-10 feature carve. */
 
 .ds-inspector {
     height: auto;
@@ -83,37 +68,11 @@
     background: $ds-surface-raised;
 }
 
-.ds-approval-card {
-    height: auto;
-    padding: 1 2;
-    border: thick $ds-status-approval-required;
-    background: $ds-status-approval-required 12%;
-    color: $ds-text-primary;
-}
-
 .ds-event-row {
     height: auto;
     min-height: 1;
     padding: 0 1;
     border-bottom: solid $ds-grid-line;
-    color: $ds-text-primary;
-}
-
-/* Field rows are label-above-value: every current user (Personas card and
-   editors) composes them as Vertical containers, so the row must not force a
-   horizontal layout (it jammed "Name"+value side by side and squeezed Inputs
-   into the leftover width). */
-.ds-field-row {
-    height: auto;
-    min-height: 2;
-    padding: 0 1;
-}
-
-.ds-toolbar {
-    height: auto;
-    min-height: 1;
-    padding: 0 1;
-    background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
@@ -8456,14 +8415,12 @@ Button.settings-category-group-toggle:focus {
     text-style: bold;
 }
 
-.settings-detail-row {
-    width: 100%;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
+/* ADR-161 task 9: the bare .settings-detail-row definition moved to
+   components/_forms.tcss (documented variant of form-row; consumed on TWO
+   production surfaces -- the Settings workbench and the STTS speech
+   settings pane -- so it rides the boot bundle instead of the lazy
+   settings screen sheet). The scoped override below stays with its
+   surface. */
 
 /* The narrow Scope Inspector keeps the airy row rhythm: its prose wraps at
    ~30 columns, so the blank line between rows earns its keep there (and
@@ -8538,32 +8495,11 @@ Button.settings-category-group-toggle:focus {
     min-width: 20;
 }
 
-.settings-compact-input {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    /* task-1586 control convention: the one-column left edge marks "this
-       row is editable" at rest; full borders stay off because they cost
-       a row above and below on these one-row fields. */
-    border: none;
-    border-left: solid $ds-control-edge;
-    background: $ds-surface-inspector;
-    color: $ds-text-primary;
-}
-
-.settings-compact-input:focus {
-    border: none;
-    border-left: thick $ds-action-focus;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    /* No underline: it made placeholder copy read as a link (task-185). */
-    text-style: bold;
-    outline: none;
-}
-
-.settings-compact-input.settings-invalid-input,
+/* ADR-161 task 9: the .settings-compact-input definitions (base, :focus,
+   and its halves of the two .settings-invalid-input rules below) moved to
+   components/_forms.tcss as the documented compact variant of form-input
+   -- also composed by the pattern gallery, so it rides the boot bundle.
+   The compact-SELECT stays here (Settings-only). */
 .settings-compact-select.settings-invalid-input {
     background: $ds-status-error 18%;
     color: $ds-text-primary;
@@ -8571,7 +8507,6 @@ Button.settings-category-group-toggle:focus {
     outline: none;
 }
 
-.settings-compact-input.settings-invalid-input:focus,
 .settings-compact-select.settings-invalid-input:focus {
     /* task-1369: keep the error tint while focused so the invalid marker is
        not lost; slightly stronger than the unfocused 18% to still read as
@@ -9362,30 +9297,20 @@ _CredentialClearModal {
     color: $ds-text-muted;
 }
 
-.density-compact .ds-panel,
+/* ADR-161 task 9: the .ds-panel / .ds-approval-card /
+   .ds-destination-header members of these density rules moved to
+   components/_ds_primitives.tcss with the family; these halves style the
+   shell classes that still live here. */
 .density-compact .ds-inspector,
-.density-compact .ds-approval-card,
 .density-compact .ds-recovery-callout {
     padding: 0 1;
     margin: 0 0 1 0;
 }
 
-.density-compact .ds-destination-header {
-    min-height: 2;
-    padding: 0 1;
-}
-
-.density-comfortable .ds-panel,
 .density-comfortable .ds-inspector,
-.density-comfortable .ds-approval-card,
 .density-comfortable .ds-recovery-callout {
     padding: 1 2;
     margin: 1 1;
-}
-
-.density-comfortable .ds-destination-header {
-    min-height: 4;
-    padding: 1 2;
 }
 
 .is-active {
@@ -10210,13 +10135,6 @@ Button.mcp-inspector-action {
 /* task-2239: the off/opt-in display state (the disabled built-in server) --
 quiet, not alarming; same muted tier as the legend/hint lines. */
 .mcp-status-muted { color: $ds-text-muted; }
-
-.ds-info-callout {
-    border: round $ds-status-info;
-    background: $ds-status-info 10%;
-    padding: 0 1;
-    height: auto;
-}
 
 Button.mcp-callout {
     width: 100%;
