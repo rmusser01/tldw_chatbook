@@ -4,10 +4,10 @@ title: >-
   Library Notes: in Preview, Tab moves focus across the mode buttons but the
   footer never names it, so the mode reads as a keyboard trap and a blind Enter
   fires Use in Console
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:45'
-updated_date: '2026-09-14 18:36'
+updated_date: '2026-09-14 19:25'
 labels:
   - library
   - notes
@@ -44,6 +44,7 @@ Critique #3 (dev 5fd502dbac), both assessors, persona Sam (keyboard-only, low vi
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
+
 <!-- SECTION:NOTES:BEGIN -->
 Reproduced live first at dev 2f97a42c9a on a scratch power profile, 235x52:
 Preview open, Tab x6 walked the heavy focus box across ‹ Notes, Edit, Preview,

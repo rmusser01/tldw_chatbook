@@ -3,10 +3,10 @@ id: TASK-32548
 title: >-
   Library Notes: duplicate-title notes are distinguishable only in the list —
   the open editor and Info show no id
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:47'
-updated_date: '2026-09-14 18:36'
+updated_date: '2026-09-14 19:25'
 labels:
   - library
   - notes
@@ -41,6 +41,7 @@ Critique #3 (dev 5fd502dbac), both assessors, personas Alex and Riley. Residual 
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
+
 <!-- SECTION:NOTES:BEGIN -->
 Reproduced live at dev 2f97a42c9a (235x52): the list showed "Reading list ·
 Unfiled · 2m · #7f65" and "· #8a41"; opening the second one gave a heading of

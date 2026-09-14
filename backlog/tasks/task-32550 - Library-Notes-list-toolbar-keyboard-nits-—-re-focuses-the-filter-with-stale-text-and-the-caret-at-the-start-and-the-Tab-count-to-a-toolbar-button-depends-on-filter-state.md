@@ -4,10 +4,10 @@ title: >-
   Library Notes: list-toolbar keyboard nits — "/" re-focuses the filter with
   stale text and the caret at the start, and the Tab count to a toolbar button
   depends on filter state
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:47'
-updated_date: '2026-09-14 18:36'
+updated_date: '2026-09-14 19:25'
 labels:
   - library
   - notes
@@ -44,6 +44,7 @@ Critique #3 (dev 5fd502dbac), both assessors, persona Alex. Two small keyboard d
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
+
 <!-- SECTION:NOTES:BEGIN -->
 **No production code. Both halves re-derived live at dev 2f97a42c9a first,
 and the task's first defect does not reproduce.**

@@ -3,10 +3,10 @@ id: TASK-32539
 title: >-
   Library Notes: focus vanishes after a confirmed delete, and Undo is reachable
   only by / then Tab×6
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:46'
-updated_date: '2026-09-14 18:36'
+updated_date: '2026-09-14 19:25'
 labels:
   - library
   - notes
@@ -42,6 +42,7 @@ Critique #3 (dev 5fd502dbac), assessor B, personas Sam and Jordan, Edit/delete w
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
+
 <!-- SECTION:NOTES:BEGIN -->
 Reproduced live at dev 2f97a42c9a (235x52): Info → Delete → Tab → Enter left
 the receipt on screen with NOTHING focused; the next Tab restarted at the

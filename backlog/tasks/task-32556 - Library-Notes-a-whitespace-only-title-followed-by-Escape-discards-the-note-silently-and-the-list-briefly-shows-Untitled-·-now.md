@@ -3,10 +3,10 @@ id: TASK-32556
 title: >-
   Library Notes: a whitespace-only title followed by Escape discards the note
   silently, and the list briefly shows "Untitled · now"
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:48'
-updated_date: '2026-09-14 18:36'
+updated_date: '2026-09-14 19:25'
 labels:
   - library
   - notes
@@ -41,6 +41,7 @@ Critique #3 (dev 5fd502dbac), both assessors, persona Riley. Residual of task-32
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
+
 <!-- SECTION:NOTES:BEGIN -->
 Reproduced live at dev 2f97a42c9a (235x52), and the list half is worse than
 filed: Ctrl+N, three spaces in Title, Escape — no toast, and the list kept

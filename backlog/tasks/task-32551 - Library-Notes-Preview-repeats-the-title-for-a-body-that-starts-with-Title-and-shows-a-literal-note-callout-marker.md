@@ -3,10 +3,10 @@ id: TASK-32551
 title: >-
   Library Notes: Preview repeats the title for a body that starts with "#
   Title", and shows a literal "[note]" callout marker
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:47'
-updated_date: '2026-09-14 18:36'
+updated_date: '2026-09-14 19:25'
 labels:
   - library
   - notes
@@ -42,6 +42,7 @@ Critique #3 (dev 5fd502dbac), both assessors, persona researcher. Residual of ta
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
+
 <!-- SECTION:NOTES:BEGIN -->
 Reproduced live at dev 2f97a42c9a on the seeded "Markdown showcase" note
 (235x52): its body opens `# Markdown showcase`, so Preview painted the title
