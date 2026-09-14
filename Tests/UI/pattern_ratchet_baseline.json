@@ -1,8 +1,7 @@
 {
   "dimensions": {
     "components/_lists.tcss": 1,
-    "core/_variables.tcss": 24,
-    "utilities/_overrides.tcss": 2
+    "core/_variables.tcss": 24
   },
   "python_styles": {
     "Event_Handlers/ingest_status_helper.py": 3,

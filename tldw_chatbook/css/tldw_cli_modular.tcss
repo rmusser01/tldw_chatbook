@@ -21668,6 +21668,10 @@ FeatureNotAvailableDialog Button {
  * ======================================== 
  * Important overrides and edge case fixes
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* TASK-382 / TASK-386: opaque, bordered tooltip surface.
  *
@@ -21680,6 +21684,6 @@ Tooltip {
     background: $panel;
     color: $text;
     border: round $primary;
-    padding: 0 1;
-    max-width: 60;
+    padding: $ds-space-0 $ds-space-1;
+    max-width: $ds-size-60;
 }
