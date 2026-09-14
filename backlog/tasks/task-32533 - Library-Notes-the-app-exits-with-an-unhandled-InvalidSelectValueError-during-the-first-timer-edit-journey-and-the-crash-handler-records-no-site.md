@@ -174,4 +174,21 @@ select and the row beneath it describing different providers. Declined, with the
 reason: no `console.md` stamp -- the popover's change is not reachable on any
 profile that can be driven live, and a stamp for a state nobody saw is the
 failure those stamps prevent.
+**Landing round (controller rulings).** Two more writes to
+`#settings-provider-value` were folded in rather than left as a rider, because
+AC#1 as amended binds every provider `Select` reachable on a no-provider
+profile: `handle_provider_picker_selected` (a user clicking a picker row --
+the rows are a live catalog read, the select's options are the compose-time
+set) and the Providers branch of `_revert_category`. Both now route through
+`assign_select_value`; a refused picker assignment applies the provider
+directly so the click still does what the user asked, and a refused revert
+needs no handling because the `_sync_provider_manual_widget` call underneath
+already falls back to the manual spelling. RED (guards patched out of a
+scratch-backed copy, restored after): `Illegal select value 'anthropic'` on the
+picker route, `'openai'` on the revert route; GREEN 4 passed. The two `app.py`
+comments that still described the pre-widening frame logic ("the run loop ...
+has no dispatch frame") were rewritten: the run loop *does* carry
+`_process_messages_loop` and is excluded only by `pump is not self`, so both
+clauses are named as load-bearing together.
+
 <!-- SECTION:NOTES:END -->
