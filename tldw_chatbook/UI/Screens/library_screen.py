@@ -6484,7 +6484,22 @@ class LibraryScreen(BaseAppScreen):
             # task-32127: while the work pane holds only "Select a note to
             # edit it here.", its width belongs to the list. Opening a note
             # hands it straight back.
-            reader_has_item=self._notes_state.view != "list",
+            #
+            # task-32544/32547: the New note view is the OTHER thing that
+            # fills the work pane, and it is not a ``view`` at all -- the
+            # canvas switches to create mode on ``_library_selected_row_id``
+            # while ``_notes_state.view`` stays "list" (see
+            # ``_build_library_notes_state``'s mode ladder, and
+            # ``_library_notes_focus_region``'s first branch). Reading only
+            # ``view`` therefore told the resolver the work pane was empty:
+            # at 235 the empty list kept 138 columns while "Ready · Next:
+            # Press Blank note, or choose a template." wrapped inside 48,
+            # and at 60 the ``list_first_when_empty`` rule kept the list on
+            # the whole stage so Blank note never appeared at all.
+            reader_has_item=(
+                self._notes_state.view != "list"
+                or self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+            ),
         )
         shell.sync_layout(layout, manual_reopen=manual_reopen)
         self._notes_state.reader_layout = layout
