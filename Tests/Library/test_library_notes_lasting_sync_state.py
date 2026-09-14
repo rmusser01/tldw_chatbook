@@ -646,3 +646,85 @@ def test_empty_optional_review_and_history_identifiers_remain_valid() -> None:
     LastingSyncReviewRow("bind-1", "safe", "No change")
     lasting_state.LastingSyncReview()
     lasting_state.LastingSyncHistory()
+
+
+def test_review_rows_carry_path_effect_and_destination() -> None:
+    """task-32535 AC#1: a safe row names the file, the effect and where it lands."""
+    from tldw_chatbook.Notes.notes_sync_runtime import RuntimeBindingLabel
+
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-1", NotesSyncActionKind.CREATE_NOTE, "bind-1"),
+            NotesSyncAction("act-2", NotesSyncActionKind.CREATE_NOTE, "bind-2"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+    labels = {
+        "bind-1": RuntimeBindingLabel(
+            "bind-1", "Daily/2026-09-06.md", "2026-09-06", "Vault"
+        ),
+        "bind-2": RuntimeBindingLabel("bind-2", "README.md", "README", "Vault"),
+    }
+
+    review = build_reconciliation_review(plan, labels=labels)
+
+    first, second = review.rows
+    # "Vault", not "Vault / Daily": the only destination the product ships is
+    # the root folder (task-32535 AC#4 as amended), and a pin showing a nested
+    # one reads as evidence that nested destinations exist.
+    assert (first.relative_path, first.effect, first.destination) == (
+        "Daily/2026-09-06.md",
+        "Create a Library note",
+        "Vault",
+    )
+    assert " · ".join((first.relative_path, first.effect, first.destination)) == (
+        "Daily/2026-09-06.md · Create a Library note · Vault"
+    )
+    assert (second.relative_path, second.destination) == ("README.md", "Vault")
+    # A row without a label degrades to the effect alone, never to a wrong path.
+    unlabeled = build_reconciliation_review(plan).rows[0]
+    assert (unlabeled.relative_path, unlabeled.destination) == ("", "")
+    assert "Daily" not in repr(review)
+
+
+def test_item_skips_project_as_skipped_rows_with_reason_copy_and_count() -> None:
+    """task-32535 AC#3: a per-file skip is a row with its path and reason."""
+    from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationItemSkip
+
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-1", NotesSyncActionKind.CREATE_NOTE, "bind-1"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+        item_skips=(
+            ReconciliationItemSkip(".trash/Old idea.md", "obsidian_trash"),
+            ReconciliationItemSkip("Templates/Daily.md", "obsidian_template"),
+            ReconciliationItemSkip(".obsidian/app.json", "obsidian_config"),
+            ReconciliationItemSkip("Inbox/Untitled.md", "empty_file"),
+        ),
+    )
+
+    review = build_reconciliation_review(plan)
+
+    assert review.skip_count == 4
+    skipped = [row for row in review.rows if row.category == "skipped"]
+    assert [(row.relative_path, row.effect, row.reason) for row in skipped] == [
+        (".trash/Old idea.md", "Obsidian trash — skipped", "obsidian_trash"),
+        ("Templates/Daily.md", "Obsidian template — skipped", "obsidian_template"),
+        (".obsidian/app.json", "Obsidian configuration — skipped", "obsidian_config"),
+        ("Inbox/Untitled.md", "Empty file — nothing to import", "empty_file"),
+    ]
+    assert len({row.item_id for row in skipped}) == 4
+    assert all("/" not in row.item_id for row in skipped)
+    # A per-file skip is not a root skip: it never blocks applying the rest.
+    assert review.can_apply is True

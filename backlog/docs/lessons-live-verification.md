@@ -2844,6 +2844,47 @@ a hard exit is observed, capture `tmux capture-pane -p -S -200` from the pane
 relaunch runs, the scrollback is gone. The product-side half — persisting the
 raising frame in the diagnostic — is task-32533 AC#3.
 
+## "The list is not on screen in editor mode" is a `compose()` claim, not a screen claim
+
+**TASK-32461, Library ▸ Prompts dirty vetoes, 2026-09-14.** Two of the three
+refusals to be wired sit on the prompt-row press and the **Select** button —
+both in the Prompts *list*. `LibraryPromptsCanvas.compose` switches wholesale
+(`if self.mode == "editor": yield from self._compose_editor(); return`), and
+the rows are only built in `_compose_list`, so reading the widget said the list
+and a dirty editor cannot coexist and both seams are defensive-only. The plan
+that followed was "pin them, they are unreachable live". At 235x52 the real
+screen paints the list pane and the editor pane side by side — the Library
+reader shell hosts both — so pressing a row and pressing **Select** on a dirty
+editor are ordinary gestures, and both refusals were captured live in minutes.
+
+**What to do.** Reachability is a property of the composed SCREEN, not of one
+widget's `compose`. Before writing off a seam as unreachable, put the state on
+screen once at the review width and look; a shell that hosts two panes, an
+adaptive reader layout, or a modal over a live canvas all defeat the single-
+widget reading. Write "unreachable" only about a path you tried to reach —
+here exactly one of the three genuinely was (the deep link: every route to it
+is itself vetoed while the editor is dirty), and that one is worth stating
+because it is now evidence, not an assumption.
+
+### Correction: do NOT tee this app's stderr in the tmux launch line
+
+**TASK-32461 fix round 1, 2026-09-14.** Following the entry above, the live
+run was launched as
+`… -m tldw_chatbook.app 2>>"$PROFILE/stderr.log"`. The app started (the pane's
+process was `python3.12`) but the pane rendered **blank** — 52 empty lines from
+`capture-pane` — and `stderr.log` filled with the rendered frames themselves
+(`[25;2H[38;2;163;164;166;48;2;25;29;33m …`). Relaunching the identical command
+without the redirect rendered normally on the first capture. Whatever the
+mechanism (the app writes its paint through a stream that follows the stderr
+redirect when stderr is not a tty), the cost is a silent blank pane that looks
+like a crashed app.
+
+**What to do.** Launch without the redirect, and get the traceback the other
+way when you need it: `tmux capture-pane -p -S -200` from the pane *before*
+relaunching, or start the app under `script`/a wrapper that keeps stderr a tty.
+Verify the first capture actually shows the nav bar before driving anything —
+a blank capture after 25s is this, not a slow start.
+
 ## A surviving app is no longer evidence of no crash (task-32533, 2026-09-14)
 
 **What happened.** task-32533 stopped an unhandled widget-handler exception from

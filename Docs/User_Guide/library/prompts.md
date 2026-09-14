@@ -250,13 +250,19 @@ it; the membership outcome never says that the Prompt itself was saved.
 
 Nothing autosaves here. While you have unsaved edits the meta line shows an "Unsaved
 changes" marker, and leaving the editor (Back, Escape, another row, another screen)
-is blocked until you save or resolve the edit. Back and Escape say so: the block
-raises "Unsaved Prompt changes — Save or Discard changes first.", and while the
+is blocked until you save or resolve the edit. Every one of those refusals says so —
+Back, Escape, pressing another prompt row, pressing **Select**, switching rail rows,
+and leaving for another screen (including a route that lands back on Library) all raise
+"Unsaved Prompt changes — Save or Discard changes first.", and while the
 editor is dirty the footer's Escape chip reads **esc save or discard first**
 instead of "esc back to list", so the key and the chip agree. The same holds while
 a save, delete or import is still running: Escape answers "Prompt changes are still
 in progress. Try again when they finish." and the chip reads **esc busy, try again**
-until the write settles. The save-status line reports the outcome:
+until the write settles. A link that opens a prompt from somewhere else (a
+Search / RAG result's **Open**, or a deep link the screen reconciles on entry)
+is refused by the same unsaved edit, and names the one it did not open: "Can't
+open Prompt 7 — Save or Discard the open Prompt first." Nothing is queued: save
+or discard, then follow the link again. The save-status line reports the outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —
@@ -541,3 +547,15 @@ seeded profile, with the editor showing "• Unsaved changes".)*
 (task-32393, PR #2655 review: the Escape chip follows the in-flight write as
 well as the unsaved edit — a clean deletion no longer leaves "esc back to list"
 on screen while the key can only report that the write is busy.)*
+
+*Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32461:
+the sibling dirty vetoes that still refused in silence now speak. The
+prompt-row switch and **Select** borrow Back/Escape's own sentence; a deep link
+into a prompt names the one it did not open and drops it rather than queueing
+it. Both new refusals were driven live at 235x52 on a scratch profile with the
+editor showing "• Unsaved changes"; the deep link is pinned on the mounted
+screen, since no hand route reaches it while the editor is dirty. Leaving for
+another screen, and routing back into Library, already explained themselves
+before this change and still do — fix round 1 added the same sentence to the
+Library admission barrier behind them as defence in depth, after a caller sweep
+of all eight sites, with no user-visible change.)*
