@@ -167,12 +167,14 @@ stacked form (`$ds-space-stack`) of `.form-input` fields, actions row at
 
 ## 6. What is deliberately NOT tokenized yet
 
-- The ~7,000 legacy dimension literals in feature sheets — migrate
-  opportunistically when touching a file; new sheets must be token-clean.
-  **Migration reference:** `features/_chat.tcss` (TASK-32480) is the
-  canonical end-to-end example of the pattern — tokenize what maps 1:1,
-  keep feature-specific geometry literal with its comments, invent nothing
-  in the feature sheet.
+- ~~The ~7,000 legacy dimension literals in feature sheets~~ **Done
+  (ADR-161 task 11): the floor is a HARD ZERO** — no sheet may carry a raw
+  numeric padding/margin/width/height literal, enforced by the governance
+  test; raw dimension values are legal only in token definitions
+  (`core/_variables.tcss`, exempt from the ban just like raw hex).
+  Feature-specific geometry lives in `$ds-<feature>-<name>` tokens there.
+  **Migration reference:** `features/_chat.tcss` (TASK-32480, completed by
+  ADR-161 §3.10).
 - Python-side `styles.*` mutations (~250 call sites) — new code assigns
   token-backed classes instead of ad-hoc literals.
 - Multi-value composite tokens (e.g. `border: round $border` as one token)

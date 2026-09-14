@@ -19,10 +19,14 @@ bundle membership:
    new local ``$ds-*`` fallback definitions (the TASK-15993 trap); the
    blocks that already carried them when this test landed are
    grandfathered in ``FALLBACK_ALLOWED`` (empty at pinning time).
-5. **Dimension-literal ratchet** — per-sheet counts of raw numeric
-   ``padding``/``margin``/``width``/``height`` declarations, pinned by
-   ``Tests/UI/pin_pattern_ratchets.py`` into
-   ``pattern_ratchet_baseline.json``; may only decrease, floor zero.
+5. **Dimension-literal floor (hard zero)** — no hand-written sheet may
+   carry a raw numeric ``padding``/``margin``/``width``/``height``
+   declaration. ADR-161 task 11 completed the migration (3,514 -> 0), so
+   the former baseline ratchet is now a flat ban. ``core/_variables.tcss``
+   is exempt: raw values are legal ONLY in token definitions by design
+   (ADR-150's "raw hex legal only in token definitions", same principle
+   for dimensions) — the counting regex is name-blind and would otherwise
+   match ``height: 3`` inside ``$ds-control-height: 3;``.
 6. **Python ad-hoc style ratchet** — per-file counts of
    ``.styles.<visual-property> = <literal>`` assignments, pinned the same
    way; may only decrease, floor zero.
@@ -245,16 +249,36 @@ def test_no_new_local_ds_fallbacks() -> None:
             )
 
 
+#: The one sheet where raw dimension VALUES are legal: token definitions.
+#: Raw values live only here by design (ADR-150's raw-hex rule, same
+#: principle for dimensions); the counting regex is name-blind and would
+#: otherwise match ``height: 3`` inside ``$ds-control-height: 3;``.
+TOKENS_SHEET = "core/_variables.tcss"
+
+
 def test_dimension_literal_ratchet() -> None:
-    """Per-sheet raw numeric dimension counts may only decrease."""
+    """The dimension floor is a HARD ZERO (ADR-161 task 11 close-out).
+
+    Every baseline entry reached zero during the task-11 migration, so the
+    baseline-pinned allowance ratchet was replaced by a flat ban: no
+    hand-written sheet outside the tokens file may carry a raw numeric
+    padding/margin/width/height declaration. ``core/_variables.tcss`` alone
+    is exempt -- mirroring the hex ratchet's tokens-file exemption in
+    ``test_design_token_governance.py``.
+    """
+    offenders: list[str] = []
     for sheet, css in _sheet_sources().items():
+        if sheet == TOKENS_SHEET:
+            continue
         count = len(_DIM.findall(css))
-        allowance = BASELINE["dimensions"].get(sheet, 0)
-        assert count <= allowance, (
-            f"{sheet}: {count} raw dimension literals > pinned {allowance}. "
-            "Use the $ds-space-*/$ds-control-* scale; the ratchet only goes "
-            "down (ADR-161 spec 3.7/3.10)."
-        )
+        if count:
+            offenders.append(f"{sheet}: {count}")
+    assert not offenders, (
+        "Raw numeric dimension literals remain (ADR-161 spec 3.10: the "
+        "floor is hard zero; raw values are legal only in token "
+        "definitions, which live in core/_variables.tcss):\n  "
+        + "\n  ".join(offenders)
+    )
 
 
 def test_python_style_ratchet() -> None:

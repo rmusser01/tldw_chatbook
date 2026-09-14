@@ -1,7 +1,4 @@
 {
-  "dimensions": {
-    "core/_variables.tcss": 24
-  },
   "python_styles": {
     "Event_Handlers/ingest_status_helper.py": 3,
     "UI/Console_Modules/frame.py": 2,
