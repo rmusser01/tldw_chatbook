@@ -13659,3 +13659,30 @@ which service method the current code calls and whether the fake has it —
 contract copy; when production moves to a new seam, the fake keeps passing
 whatever it still implements. And treat a production `if not callable(...):
 return` as a place where a missing seam becomes invisible, not as a safety net.
+
+## Run the would-be regression pin on unpatched dev before writing the fix
+
+**task-32538, 2026-09-14.** Critique #3 filed "the chrome strip's word count is
+wrong on a long note: 404 words for 5,407 tokens", with an inferred mechanism
+("404 is the character length of the list's first row title") and a plausible
+stale-count story — the strip keeps the last count fed to it and repaints from
+that on caret moves and resizes, so a count painted for the previously open
+note *could* stick. Nobody had checked the number itself. Live on the seeded
+power profile the strip read `441 words · 1:1` for "Markdown showcase" and
+then `5,427 words · 1:1` for the 37,519-character note opened straight after
+it; `SELECT content` from the profile database gives exactly 5,427 `\S+`
+tokens. The critique's own captures read "5,404 words · 1:1" and "5,407 words
+· 363:22": "404 words" was those numbers with the thousands separator dropped
+in the reading. The decisive artefact was cheap — the two regression pins
+written for the bug PASS on unpatched `origin/dev`, which is proof there is
+nothing to fix, in a form a reviewer can re-run.
+
+**What to do.** Before implementing a fix for a reported-value bug, write the
+pin and run it against the unpatched baseline tree. Green there means the
+report is a reading error or a different route, and the pin still ships — it
+is the evidence that the behaviour is right, and it fails if someone breaks it
+later. Verify the number against the source of truth (the database row, not
+the screen) rather than against the reporter's transcription, and be
+especially suspicious of a report whose stated mechanism ("404 is the length
+of a title") does not survive being checked: "Markdown showcase" is 17
+characters.
