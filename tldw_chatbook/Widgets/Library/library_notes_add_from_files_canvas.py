@@ -18,7 +18,11 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_note_import_state import UNIFORM_RUN_MIN
-from tldw_chatbook.Library.library_shell_state import back_cue_label
+from tldw_chatbook.Library.library_shell_state import (
+    back_cue_label,
+    library_disabled_action_label,
+    library_disabled_reason_line,
+)
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
     LastingSyncHistoryRow,
@@ -271,6 +275,22 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         )
         with VerticalScroll(id="notes-sync-body"):
             yield from self._compose_phase()
+        history_reason = self._history_disabled_reason()
+        if history_reason:
+            # task-32549: "○ Resolution history" said that history was off
+            # and nothing about why -- the reason was on a tooltip, which
+            # does not render in a TUI. The shared `.library-disabled-reason`
+            # line, above the pinned bar rather than inside the label: that
+            # bar is a single `max-height: 3` row of actions, and the
+            # sentence is 33 cells wider than the label it would have to fit
+            # in a 50-column work pane at 60x24. Same treatment "○ Server
+            # notes" has carried in this canvas since task-32257.
+            yield Static(
+                history_reason,
+                id="notes-sync-history-disabled-reason",
+                classes="library-disabled-reason",
+                markup=False,
+            )
         if self._expects_body_overflow():
             yield Static(
                 "More below — scroll.",
@@ -280,6 +300,21 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             )
         with Horizontal(id="notes-sync-pinned-actions", classes="ds-toolbar"):
             yield from self._compose_pinned_actions()
+
+    def _history_disabled_reason(self) -> str:
+        """Why the Resolution history opener is blocked, for the screen.
+
+        Returns:
+            The reason sentence, or ``""`` while the opener is absent or
+            reachable.
+        """
+        if self.snapshot.phase not in {"review", "receipt"} or not self._root_id():
+            return ""
+        if self.snapshot.review.source in {"root", "migration"}:
+            return ""
+        return library_disabled_reason_line(
+            "Resolution history", "it starts after this root is activated"
+        )
 
     def _expects_body_overflow(self) -> bool:
         """Name scrollability only for phases whose bounded body can overflow."""
@@ -977,10 +1012,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     "migration",
                 }
                 yield ReviewActionButton(
-                    (
-                        "Resolution history"
-                        if history_reachable
-                        else "○ Resolution history"
+                    library_disabled_action_label(
+                        "Resolution history", not history_reachable
                     ),
                     review_root_id=root_id,
                     review_observation_token=self.snapshot.review.observation_token,
@@ -1009,10 +1042,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     "migration",
                 }
                 yield ReviewActionButton(
-                    (
-                        "Resolution history"
-                        if history_reachable
-                        else "○ Resolution history"
+                    library_disabled_action_label(
+                        "Resolution history", not history_reachable
                     ),
                     review_root_id=root_id,
                     review_observation_token=self.snapshot.review.observation_token,

@@ -356,12 +356,12 @@ both stay closed until you choose to reopen one.
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
 | Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. The folder picker opens with nothing selected, and **Choose** does nothing until you pick a folder. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
 | "Restore folder" | Appears after a folder removal, to put it back. |
-| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). Disabled while a filter is showing, with "Filter results keep their own order. Clear the filter to sort." |
+| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). While a filter is showing the control cannot own the order, so it renders blocked ("○ Sort: Newest") and the line under the toolbar says why: "Sort unavailable — clear the filter" (task-32549). *(Was: the reason lived in the tooltip "Filter results keep their own order. Clear the filter to sort.", which a terminal never renders — superseded by task-32549.)* |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. With nothing checked, "Export selected" is blocked, and the count line under the row names it: "0 selected — Export selected unavailable" (task-32549). The reason is on that line rather than in the button, because this row is measured to the cell and a line of its own would cost the list a row; it reverts to the plain count the moment you check something. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
 
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
@@ -379,6 +379,20 @@ keeps its full wording — the status line drops its "Library notes ·"
 prefix, since the source strip above it already says which notes these
 are, and the toolbar moves the action that does not fit onto a row of its
 own. Nothing is ever painted as half a word.
+
+That rule now holds for every toolbar row at every width, not only for the
+browse actions on a narrow terminal (task-32544, task-32557). Any group of
+actions wider than the pane it is in wraps onto as many rows as it needs,
+in reading order — which is what the folder actions do beside an open note
+on a wide terminal, where "New folder  Add to folder  Move note  Remove
+placement" needs one more cell than the list pane has and used to paint as
+"Remove pl". And a pane that narrows re-shapes its
+toolbar at once: making the terminal smaller no longer leaves the row in
+the shape the previous, wider size chose, which is what painted "Add from
+files…" as "Add from" against the grip after a resize down to 60 columns. A
+pane that *widens* keeps its shape until the next time the list refreshes —
+a row with room to spare costs nothing, and re-shaping on every resize would
+undo the in-place updates that keep a terminal drag cheap.
 
 ### Edit, Preview, and Info
 
@@ -519,6 +533,15 @@ template name with the title the note will get. Available templates:
 Brainstorming session, Bug report, Code review, Daily journal entry, Meeting
 notes, Project planning, Research notes, Todo list. The rows stay folded
 until you ask for them, and fold again the next time you open the view.
+
+This view is the task in hand while it is open, and it gets the pane width
+that goes with that (task-32544, task-32547). On a wide terminal it no
+longer shares the canvas with an empty notes list that had kept about 130
+of 235 columns while the view's own status line wrapped inside 52. On a
+terminal too narrow to show both at once — 60 columns, say — the view takes
+the stage outright: before this, pressing **New** there changed the footer
+to "enter create | esc notes" while the list stayed on screen and **Blank
+note** never appeared at all. Escape returns to the list at the same size.
 
 Opening this view parks keyboard focus on **Blank note**, so Enter creates
 a note straight away without tabbing to find it; ↑/↓ move between Blank
@@ -1746,6 +1769,42 @@ that already holds its folder never re-checks the path — reaching `offline`
 needs the folder to be gone at the moment the folder is claimed, i.e. a
 restart. (A second Chatbook holding the folder is the different `passive`
 state, whose Check is disabled for its own reason.))*
+
+*Verified against fix/library-notes-w4-layout — 2026-09-14 (wave-4 group
+`layout`. task-32544: with a note open at 235x52 the list pane is 64 cells
+and the folder actions needed 65, so "Remove placement" was laid out at
+x=48..68 and painted "Remove pl"; any action group wider than its pane now
+wraps, and the row reads "New folder  Add to folder  Move note" above
+"Remove placement" (`wave4-caps/layout/layout-10-remove-placement-after`).
+Also at 235x52, the New note view's status line wrapped inside a 52-column
+work pane while the empty list kept ~130 columns; the view is now the task
+in hand and the line fits on one row in ~122 columns
+(`layout-11-new-note-235-after`). task-32547: at 60x24 "New" left the list
+on stage and Blank note never appeared — the create view is carried by the
+selected rail row, not by the notes view, so the resolver thought the work
+pane was empty; it now takes the stage and Escape returns
+(`layout-17-60x24-new-after`, `layout-18-60x24-escape-back`). task-32557:
+narrowing an already-merged 235-column list to 60 painted "New  Sort:
+Newest  Select  Add from   s" — the screen re-resolved the pane on the
+resize but never told the canvas, so the toolbar kept deciding its shape
+from the width its last compose had; the resolved width is handed over now,
+and a pane that shrank re-shapes at once (`layout-19-resize-60-after`,
+`layout-28-resize-60-after-v2`). task-32549: the
+three blocked controls state their reason on screen. The label spelling was
+tried first and clipped at 100x30 — "○ Sort unavailable — clear the"
+against the grip (`layout-21-100x30-sort-reason`) — so the reasons went to lines instead:
+Sort's own line under the toolbar (absent in select mode, where its control
+is not on screen), Export selected's on the count line that was already
+there — a dedicated line for it cost the tree a row at 60x20, which
+`test_library_note_60x20_navigator_state_allocation[selection]` caught —
+and Resolution history's above the sync canvas's pinned bar (`layout-22`,
+`layout-23`, `layout-24`, `layout-25`, `layout-14`). Re-walked on the merged
+tree before landing: the wrapped folder row with a note open
+(`layout-32-postmerge-note-open-235`), the 235 -> 60 -> 235 round trip
+(`layout-33`/`layout-34`/`layout-35`/`layout-36-postmerge-*`) and the blocked
+Sort line (`layout-37-postmerge-sort-reason-235`). A pane that widens keeps its
+narrower shape until the next refresh, and that refresh now reads the true
+width -- the grown width is recorded even though it does not re-shape.)*
 
 *Verified against fix/library-notes-w4-import-kbd — 2026-09-14 (task-32540,
 task-32553, task-32554, at 235x52 and 100x30 on a scratch power profile with
