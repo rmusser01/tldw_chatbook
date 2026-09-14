@@ -5845,51 +5845,55 @@ StatCard:hover {
  * zero-importer orphans were removed. What remains below is the LIVE, feature-
  * scoped styling for the in-Settings theme editor and splash-screen viewer
  * (`settings_theme_editor.py`, `settings_splash_screen_viewer.py`). */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* ===== Settings theme editor ===== */
 #settings-theme-tree {
-    width: 100%;
-    height: 12;
-    min-height: 8;
+    width: $ds-width-full;
+    height: $ds-size-12;
+    min-height: $ds-size-8;
     border: solid $ds-grid-line;
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 /* TASK-31259: the preview is a Console-shaped stub whose rows are painted from
    the palette being edited (see SettingsThemeEditor._refresh_preview), so it
    follows every keystroke instead of the applied app theme. */
 .settings-theme-preview {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    margin: 1 0;
+    margin: $ds-space-1 $ds-space-0;
     border: solid $ds-grid-line;
 }
 
 .settings-theme-preview-row {
-    width: 100%;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 /* TASK-31254: a 1-row Static with `border: solid` paints only its top border
    glyphs -- the hex text (and the "invalid" label) never had a content row.
    No border; the colour IS the swatch and the text sits on it. */
 .color-swatch {
-    width: 9;
-    min-width: 9;
-    height: 1;
-    min-height: 1;
+    width: $ds-size-9;
+    min-width: $ds-size-9;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     border: none;
     content-align: center middle;
     text-style: bold;
 }
 
 .color-preset-swatch {
-    width: 3;
-    min-width: 3;
-    height: 1;
-    min-height: 1;
-    margin: 0 1 0 0;
+    width: $ds-size-3;
+    min-width: $ds-size-3;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     border: none;
 }
 
@@ -5907,11 +5911,11 @@ StatCard:hover {
    `.settings-imagegen-backend-row Checkbox`). One row: glyph + On/Off label. */
 #settings-theme-dark-mode {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin-bottom: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-bottom: $ds-space-0;
     border: none;
-    padding: 0;
+    padding: $ds-space-0;
 }
 #settings-theme-dark-mode > .toggle--button {
     color: $ds-surface-panel;
@@ -5929,37 +5933,37 @@ StatCard:hover {
     height: auto;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-card .theme-editor-action {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* ===== Settings splash screen viewer ===== */
 .settings-splash-gallery {
-    height: 24;
-    min-height: 16;
-    width: 100%;
+    height: $ds-size-24;
+    min-height: $ds-size-16;
+    width: $ds-width-full;
 }
 
 #settings-splash-card-list {
-    width: 45%;
-    height: 100%;
+    width: $ds-percent-45;
+    height: $ds-height-full;
     border: solid $primary-lighten-2;
 }
 
 #settings-splash-preview-scroll {
-    width: 1fr;
-    height: 100%;
+    width: $ds-width-fill;
+    height: $ds-height-full;
     border: solid $primary-lighten-2;
     background: $surface;
 }
 
 .settings-splash-preview {
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
 }
 
 .settings-splash-preview #splash-display {
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
 }
 
 /* ===== MODULE: components/_settings_personal_context.tcss ===== */
