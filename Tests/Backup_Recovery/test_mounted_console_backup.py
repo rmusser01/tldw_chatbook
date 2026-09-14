@@ -25,7 +25,9 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
 from tldw_chatbook.Backup_Recovery import archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
-from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures,observe_startup_refusals,observe_capture_review,observe_runtime_settlement,_write
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures,observe_startup_refusals,observe_capture_review,observe_runtime_settlement,stop_observer,_write
+from Tests.Backup_Recovery.admission_diagnostics import observe_admission
+from Tests.Backup_Recovery.loop_diagnostics import observe_loop_profile
 from Tests.Backup_Recovery.initial_screen_observation import initial_screen_observation
 phase_start=time.monotonic();phases=[]
 def phase(name):
@@ -38,6 +40,7 @@ diagnostics.callback(observe_recovery_failures(Path.home()/'mounted-recovery-fai
 diagnostics.callback(observe_startup_refusals(Path.home()/'mounted-startup-refusals.log'))
 diagnostics.callback(observe_capture_review(Path.home()/'mounted-capture-review.log'))
 diagnostics.callback(observe_runtime_settlement(Path.home()/'mounted-runtime-settlement.log'))
+diagnostics.callback(stop_observer,observe_admission(Path.home()/'mounted-admission-timing.log',native_calls=False))
 import tldw_chatbook
 assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook'/'__init__.py'
 async def main():
@@ -78,8 +81,10 @@ async def main():
    print('MOUNTED_BEFORE_START',flush=True)
    operation=service.start_backup((selector,),inventory.scope_digest,destination,options=options,password=None)
    print('MOUNTED_BEFORE_WAIT',flush=True)
+   stop_loop=observe_loop_profile(Path.home()/'mounted-loop-profile.log',delay=2,duration=5)
    try:result=await asyncio.to_thread(service.wait,operation,timeout=240)
    finally:
+    stop_observer(stop_loop)
     state=service.status(operation)
     print('MOUNTED_AFTER_WAIT',state['state'],state['phase'],tuple(state['issues']),flush=True)
    assert result['state']=='succeeded',dict(result)

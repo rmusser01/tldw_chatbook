@@ -11,6 +11,85 @@ import pytest
 from Tests.Backup_Recovery.thread_diagnostics import _frames, observe_threads
 
 
+@pytest.mark.parametrize("via_stack", [False, True])
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_observer_cleanup_preserves_active_failure(via_stack, cancelled):
+    import asyncio
+    from contextlib import ExitStack
+
+    from Tests.Backup_Recovery.thread_diagnostics import stop_observer
+
+    primary = asyncio.CancelledError() if cancelled else RuntimeError("product failure")
+    calls = []
+
+    def stop():
+        calls.append(True)
+        raise OSError("private diagnostic detail")
+
+    with pytest.raises(type(primary)) as caught:
+        try:
+            raise primary
+        finally:
+            original_trace = primary.__traceback__
+            if via_stack:
+                stack = ExitStack()
+                stack.callback(stop_observer, stop)
+                stack.close()
+            else:
+                stop_observer(stop)
+
+    assert caught.value is primary and primary.__traceback__ is original_trace
+    assert calls == [True]
+    assert primary.__notes__ == ["Optional test diagnostic cleanup failed."]
+
+
+def test_observer_cleanup_reports_diagnostic_only_failure():
+    from Tests.Backup_Recovery.thread_diagnostics import stop_observer
+
+    failure = OSError("diagnostic failure")
+
+    def stop():
+        raise failure
+
+    with pytest.raises(OSError) as caught:
+        stop_observer(stop)
+    assert caught.value is failure
+
+
+def test_observer_cleanup_note_failure_cannot_replace_primary():
+    from Tests.Backup_Recovery.thread_diagnostics import stop_observer
+
+    class PrimaryError(RuntimeError):
+        def add_note(self, _note):
+            raise KeyboardInterrupt()
+
+    primary = PrimaryError()
+
+    def stop():
+        raise OSError()
+
+    with pytest.raises(PrimaryError) as caught:
+        try:
+            raise primary
+        finally:
+            stop_observer(stop)
+    assert caught.value is primary
+
+
+def test_observer_cleanup_success_runs_once_without_a_note():
+    from Tests.Backup_Recovery.thread_diagnostics import stop_observer
+
+    calls = []
+    primary = RuntimeError()
+    with pytest.raises(RuntimeError) as caught:
+        try:
+            raise primary
+        finally:
+            stop_observer(lambda: calls.append(True))
+    assert caught.value is primary and calls == [True]
+    assert not getattr(primary, "__notes__", ())
+
+
 def test_frame_metadata_is_bounded_and_excludes_locals():
     secret = "synthetic-local-must-not-appear"
     frames = _frames(sys._getframe(), limit=2)

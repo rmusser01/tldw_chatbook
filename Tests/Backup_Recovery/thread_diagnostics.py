@@ -11,6 +11,20 @@ from collections.abc import Callable
 from pathlib import Path
 
 
+def stop_observer(stop: Callable[[], None]) -> None:
+    """Report cleanup failures without replacing an active product exception."""
+    primary = sys.exception()
+    try:
+        stop()
+    except BaseException:
+        if primary is None:
+            raise
+        try:
+            primary.add_note("Optional test diagnostic cleanup failed.")
+        except BaseException:  # noqa: BLE001, S110 - note metadata cannot mask the primary.  # nosec B110
+            pass
+
+
 def _frames(frame, limit: int = 64) -> list[dict]:
     """Copy code metadata while Python retains every traversed frame."""
     result = []
