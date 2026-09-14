@@ -13908,3 +13908,24 @@ file cannot be run, check whether the change is even reachable from it: a
 repo-wide scan showed the new test was the only test anywhere that pressed
 Enter in `#setup-provider-api-key`, which bounded the risk far better than the
 full file would have.
+
+## A pin that mounts a fresh host per state never exercises the UPDATE path
+
+**task-32535, 2026-09-14.** `test_sync_setup_offers_the_obsidian_toggle_on_for_a_vault`
+drove the real controller, asserted `obsidian_vault is True`, mounted
+`_Host(controller.snapshot)` and found the checkbox. Green. In the running app
+at 235x52 the checkbox never appeared: picking the folder leaves the setup form
+already mounted, and `LibraryNotesAddFromFilesCanvas.sync_state` keeps a fast
+path that PATCHES the configure form's fields in place (so a snapshot cannot
+eat what the user is typing) and returns before `refresh(recompose=True)`.
+Patching can update a Static or a Button label; it can never add a widget that
+only exists for some states. The pin mounted a new host per snapshot, so it
+composed the vault state from scratch every time and never took that path.
+
+**What to do.** When a change makes a widget CONDITIONAL, the pin has to mount
+once and then push the new state through the real update seam (`sync_state`,
+`watch_*`, the publish callback) — `app.query_one(Canvas).sync_state(...)`,
+then assert. Also grep the widget's update method for early `return`s before
+the recompose: each one is a shape the snapshot cannot change, and each is
+invisible to a compose-once test.
+

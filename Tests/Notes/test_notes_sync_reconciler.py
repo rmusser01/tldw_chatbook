@@ -507,3 +507,69 @@ def test_public_planner_outputs_validate_and_redact_private_observations() -> No
             managed_placement_effects=(),
             deletion_groups=(),
         )
+
+
+def test_obsidian_mode_skips_config_trash_templates_and_empty_files_with_reasons() -> (
+    None
+):
+    """task-32535 AC#3: the vault's own folders and empty files are skipped."""
+    from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationItemSkip
+
+    def candidate(binding_id: str, path: str, *, blank: bool = False) -> BindingObservation:
+        return replace(
+            _binding(note_digest=None, relative_path=path, baseline_path=path),
+            binding_id=binding_id,
+            note_id=f"note-{binding_id}",
+            bound=False,
+            file_blank=blank,
+        )
+
+    bindings = (
+        candidate("b1", ".obsidian/app.json"),
+        candidate("b2", ".trash/Old idea.md"),
+        candidate("b3", "Templates/Daily.md"),
+        candidate("b4", "Inbox/Untitled.md", blank=True),
+        candidate("b5", "Untitled 1.md", blank=True),
+        candidate("b6", "People/Sam.md"),
+        candidate("b7", "Nested/Templates/Keep.md"),
+    )
+    request = ReconciliationInput(
+        root_id="root-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        bindings=bindings,
+        observation_generation=7,
+        expected_generation=7,
+        obsidian_mode=True,
+    )
+
+    plan = plan_reconciliation(request)
+
+    assert plan.item_skips == (
+        ReconciliationItemSkip(".obsidian/app.json", "obsidian_config"),
+        ReconciliationItemSkip(".trash/Old idea.md", "obsidian_trash"),
+        ReconciliationItemSkip("Templates/Daily.md", "obsidian_template"),
+        ReconciliationItemSkip("Inbox/Untitled.md", "empty_file"),
+        ReconciliationItemSkip("Untitled 1.md", "empty_file"),
+    )
+    assert [action.binding_id for action in plan.safe_actions] == ["b6", "b7"]
+    assert all(
+        action.kind is NotesSyncActionKind.CREATE_NOTE for action in plan.safe_actions
+    )
+    assert plan.skips == ()
+    assert "Old idea" not in repr(plan)
+
+    # Off: the vault's folders are creates again. An empty file is not -- the
+    # toggle covers the three folders and the frontmatter lift, while Import
+    # once refuses an empty source whatever folder it came from.
+    off = plan_reconciliation(replace(request, obsidian_mode=False))
+    assert off.item_skips == (
+        ReconciliationItemSkip("Inbox/Untitled.md", "empty_file"),
+        ReconciliationItemSkip("Untitled 1.md", "empty_file"),
+    )
+    assert len(off.safe_actions) == 5
+    assert off.observation_token != plan.observation_token
+
+    # A bound file is never dropped by the pass: an emptied synced note is an
+    # edit to sync, not a file to skip.
+    bound_blank = replace(request, bindings=(replace(candidate("b8", "Untitled 2.md", blank=True), bound=True, note_digest=BASE_NOTE),))
+    assert plan_reconciliation(bound_blank).item_skips == ()
