@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-13 06:48'
-updated_date: '2026-09-14 17:06'
+updated_date: '2026-09-14 18:35'
 labels:
   - library
   - notes
@@ -45,11 +45,15 @@ Critique #3 (dev 5fd502dbac), assessor B, compact terminal. D14. Task-32360 fixe
 <!-- SECTION:NOTES:BEGIN -->
 Cause PROVEN, and the reported state is only reachable by a resize.
 
-A fresh launch at 60x24 paints this toolbar correctly (two rows, 'Add from files…' whole) -- task-32360's work holds. What reproduces the critique's line exactly is narrowing an already-merged wide list: at 235 the list pane is 138 cells and the two action groups share one row; resize to 60 and the canvas kept painting that merged row inside a 50-cell pane, cutting 'Add from files…' to 'Add from' against the grip. Captured verbatim, grip included: 'New     Sort: Newest     Select       Add from   s' (wave4-caps/layout/layout-03-add-from).
+A fresh launch at 60x24 paints this toolbar correctly on dev (two rows, 'Add from files…' whole) -- task-32360's work holds. What reproduces the critique's line exactly is narrowing an already-merged wide list: at 235 the list pane is 138 cells and the two action groups share one row; resize to 60 and the canvas kept painting that merged row inside a 50-cell pane, cutting 'Add from files…' to 'Add from' against the grip. Captured verbatim, grip included: 'New     Sort: Newest     Select       Add from   s' (wave4-caps/layout/layout-03-add-from).
 
-`_effective_pane_width()` preferred `pane_width`, the screen's contract, over the canvas's own rendered width. That contract LAGS: the screen re-resolves the layout on a resize but the canvas keeps its previous value until a later state sync pushes a new one, so `on_resize` re-decided the toolbar's shape from the stale 138 and never flipped. Inverted: the canvas's own measured width wins, `pane_width` stays the fallback for frames that have no rendered width yet (the first frame of a visit, and the narrow route task-32360 AC#2 measured). This also fixes the other direction -- widening from 60 to 235 used to leave the toolbar in its narrow three-row shape -- and the stale 'Library notes ·' status prefix that came with it.
+**Root cause and where it was fixed.** The canvas learned its pane width only from a state sync (`_build_library_notes_state` passes it at compose); a resize re-resolves the layout on the screen but never told the canvas, so `on_resize` re-decided the toolbar's shape from the width the PREVIOUS compose had. Fixed at that source: `_sync_library_notes_reader_layout_from_shell` now hands the resolved Items width to the canvas through a new `LibraryNotesCanvas.apply_pane_width`, which re-shapes only when the width SHRANK.
 
-Live: same resize sequence now paints 'New  Sort: Newest  Select' / 'Add from files…  Export' / 'New folder' and drops the authority prefix (layout-19-resize-60-after).
+**A wrong first fix, and what caught it.** The first attempt inverted `_effective_pane_width` to prefer the canvas's own measured width. That decides the toolbar from MID-LAYOUT numbers: one 60 -> 170 -> 60 round trip delivers this canvas widths of 110, 106, 46, 48, 68, 40, 1 and 72 (logged, not guessed), and the transients under the 48-cell stack threshold recomposed it -- costing the in-place breakpoint path its widget identity and turning `test_library_note_compact_labels_round_trip_without_recompose` red, a test this branch never touched and which is green on dev. Found by the FAILED-name SET comparison against a detached dev baseline. The shrink-only asymmetry is deliberate and documented at the seam: a shape too wide for its pane paints half words and must be answered this frame; a shape too narrow only leaves space and can ride the next ordinary sync.
 
-Files: Widgets/Library/library_notes_canvas.py, Tests/UI/test_library_notes_w4_layout.py.
+The pin is through the real screen and a real resize, including the state sync that stamps the contract width -- without that sync the harness canvas has never been told a width at all and falls back to measuring itself, which is not the state the defect lives in. RED without the push: 'actions painted off the 50-column canvas: add-from-files Region(x=44, width=19), export Region(x=64, width=10)'. GREEN with it.
+
+Live after the fix: the identical resize sequence paints 'New  Sort: Newest  Select' / 'Add from files…  Export' / 'New folder', and the status line drops its authority prefix as documented (layout-19-resize-60-after, re-verified at layout-28-resize-60-after-v2).
+
+Files: Widgets/Library/library_notes_canvas.py, UI/Screens/library_screen.py, Tests/UI/test_library_notes_w4_layout.py.
 <!-- SECTION:NOTES:END -->

@@ -383,10 +383,13 @@ actions wider than the pane it is in wraps onto as many rows as it needs,
 in reading order — which is what the folder actions do beside an open note
 on a wide terminal, where "New folder  Add to folder  Move note  Remove
 placement" needs one more cell than the list pane has and used to paint as
-"Remove pl". And the toolbar re-shapes itself from the width it is actually
-being painted at: making the terminal narrower no longer leaves the row in
+"Remove pl". And a pane that narrows re-shapes its
+toolbar at once: making the terminal smaller no longer leaves the row in
 the shape the previous, wider size chose, which is what painted "Add from
-files…" as "Add from" against the grip after a resize down to 60 columns.
+files…" as "Add from" against the grip after a resize down to 60 columns. A
+pane that *widens* keeps its shape until the next time the list refreshes —
+a row with room to spare costs nothing, and re-shaping on every resize would
+undo the in-place updates that keep a terminal drag cheap.
 
 ### Edit, Preview, and Info
 
@@ -1537,9 +1540,11 @@ selected rail row, not by the notes view, so the resolver thought the work
 pane was empty; it now takes the stage and Escape returns
 (`layout-17-60x24-new-after`, `layout-18-60x24-escape-back`). task-32557:
 narrowing an already-merged 235-column list to 60 painted "New  Sort:
-Newest  Select  Add from   s" — the canvas re-shaped from the screen's
-contract width, which lags a resize by one sync, instead of from the width
-it was being painted at (`layout-19-resize-60-after`). task-32549: the
+Newest  Select  Add from   s" — the screen re-resolved the pane on the
+resize but never told the canvas, so the toolbar kept deciding its shape
+from the width its last compose had; the resolved width is handed over now,
+and a pane that shrank re-shapes at once (`layout-19-resize-60-after`,
+`layout-28-resize-60-after-v2`). task-32549: the
 three blocked controls state their reason on screen. The label spelling was
 tried first and clipped at 100x30 — "○ Sort unavailable — clear the"
 against the grip (`layout-21-100x30-sort-reason`) — so the reasons went to lines instead:
