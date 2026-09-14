@@ -18,7 +18,14 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
+
+# This script has NO argument parser ON PURPOSE: any invocation re-pins the
+# baseline (an accidental `--help` run executed the pin during ADR-161 task 11
+# -- luckily onto identical counts). Refuse stray argv instead of guessing.
+if len(sys.argv) != 1:
+    sys.exit("refusing: this script takes no arguments (it re-pins the ratchet baseline); pass none to pin")
 
 ROOT = Path(__file__).resolve().parents[2]
 CSS = ROOT / "tldw_chatbook/css"
