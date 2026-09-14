@@ -1,6 +1,5 @@
 {
   "dimensions": {
-    "components/_lists.tcss": 1,
     "core/_variables.tcss": 24
   },
   "python_styles": {
