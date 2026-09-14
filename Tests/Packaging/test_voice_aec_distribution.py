@@ -508,8 +508,8 @@ def _write_synthetic_release_bundle(directory: Path) -> tuple[Path, list[Path]]:
 def test_application_and_companion_versions_are_exactly_locked() -> None:
     checker = _load_script(VERSION_CHECKER_PATH)
 
-    assert checker.check_version_sync(REPO_ROOT) == []
-    assert checker.main([]) == 0
+    assert checker.check_version_sync(REPO_ROOT, app_only=True) == []
+    assert checker.main(["--app-only"]) == 0
 
 
 def test_public_version_tuple_matches_application_metadata() -> None:
@@ -536,18 +536,17 @@ def test_version_checker_rejects_public_tuple_drift(tmp_path: Path) -> None:
     assert "VERSION_TUPLE" in "\n".join(checker.check_version_sync(tmp_path))
 
 
-def test_pyprojects_pin_the_companion_distribution_exactly() -> None:
+def test_app_only_pyprojects_keep_source_versions_and_omit_companion_pin() -> None:
     app = tomllib.loads(APP_PYPROJECT.read_text(encoding="utf-8"))
     companion = tomllib.loads(AEC_PYPROJECT.read_text(encoding="utf-8"))
 
     # APP_VERSION remains the historical attestation fixture's version.
-    current_version = "0.2.0"
-    assert app["project"]["version"] == current_version
+    current_version = app["project"]["version"]
     assert companion["project"]["name"] == PACKAGE_NAME
     assert companion["project"]["version"] == current_version
     assert (
         f"{PACKAGE_NAME}=={current_version}"
-        in app["project"]["optional-dependencies"]["speech_recording"]
+        not in app["project"]["optional-dependencies"]["speech_recording"]
     )
 
 
@@ -565,7 +564,7 @@ def test_pybind11_build_pin_and_reviewed_license_are_exact() -> None:
     assert "PYBIND11_LICENSE.txt" in companion["project"]["license-files"]
 
     checker = _load_script(VERSION_CHECKER_PATH)
-    assert checker.check_version_sync(REPO_ROOT) == []
+    assert checker.check_version_sync(REPO_ROOT, app_only=True) == []
 
 
 @pytest.mark.parametrize(

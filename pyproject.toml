@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.2.1"
+version = "0.2.2"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
@@ -291,7 +291,6 @@ nemo = [
     "torchaudio",  # Required for audio processing
 ]
 speech_recording = [
-    "tldw-voice-aec==0.2.0",  # Native WebRTC AEC3 companion; version-locked to this app release
     "pyaudio>=0.2.14",  # Primary audio backend
     "sounddevice>=0.4.6",  # Fallback audio backend
     "webrtcvad-wheels>=2.0.14",  # Voice activity detection (drop-in `webrtcvad` fork; upstream webrtcvad 2.0.10 imports pkg_resources, which setuptools>=81 removed)

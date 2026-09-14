@@ -738,3 +738,27 @@ preparation rechecks durable archive state; the pair transaction rejects new
 writes into archived conversations after reconciling already-committed identities.
 This composes existing owners and preserves ADR-125 private SQLite connections.
 No release qualification or packaged hard-off authority changes.
+
+
+### App-only distribution without qualified duplex voice (2026-09-13)
+
+The release owner approved publishing application 0.2.1 while speculative duplex
+voice remains unavailable. TASK-32506 found that the native wheels build, but
+physical qualification reports are absent and every packaged platform remains
+unqualified. Requiring the unavailable companion in `speech_recording` would
+prevent installation of ordinary recording support.
+
+An app-only release omits the native companion from every application dependency
+and extra, preserves the ordinary recording dependencies, and retains the existing
+unqualified runtime authority. Application and companion source versions remain
+synchronized. An explicit app-only packaging check requires both absence of the
+companion dependency and an entirely unqualified packaged manifest. It never
+changes acoustic settings, qualification evidence, or runtime admission.
+
+The default native companion release check continues to require the exact pin.
+Companion publishing still requires all existing native, physical, provenance,
+and protected-environment gates. The companion-first publication order applies
+when the app includes that companion dependency; it does not block an explicitly
+checked app-only distribution. Restoring the dependency requires returning to that
+combined-release order. This exception avoids both an uninstallable ordinary
+recording extra and any claim that software-only evidence qualifies duplex voice.

@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "tldw-voice-aec"
-version = "0.2.0"
+version = "0.2.2"
 description = "Pinned WebRTC AEC3 binding for tldw_chatbook"
 requires-python = ">=3.11"
 license = "BSD-3-Clause"

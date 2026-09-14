@@ -4015,3 +4015,75 @@ async def test_escape_cannot_dismiss_an_exit_dialog_that_never_painted(
                 "a second Escape dismissed a dialog that never painted --"
                 " to the user, Escape did nothing twice (task-31741)"
             )
+
+
+@pytest.mark.asyncio
+async def test_enter_on_an_empty_provider_key_advances_with_a_visible_skip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """task-32555 AC#3: Enter in an empty key field skips the provider.
+
+    Live (critique #3, persona Jordan): pick a cloud provider, Tab into the
+    key field, press Enter -- nothing happened, no message, no advance. The
+    key field's own hint now says Enter skips, an empty Enter clears the
+    provider choice and advances, and the Summary reports the provider as
+    not configured (the honest "skipped" -- nothing was staged).
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            _press(app.screen, "#wizard-next")  # Welcome -> Provider
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
+            provider_step = container.steps[container.current_step]
+            assert isinstance(provider_step, ProviderStep)
+            provider_step.select_provider("openai")
+            await pilot.pause(0.2)
+
+            hint = str(
+                app.screen.query_one("#setup-provider-key-status", Static).renderable
+            )
+            assert "Enter skips this step" in hint, hint
+
+            key_input = app.screen.query_one("#setup-provider-api-key", Input)
+            key_input.focus()
+            await pilot.pause()
+            assert app.focused is key_input
+            assert key_input.value == ""
+            await pilot.press("enter")
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_MODEL,
+            )
+
+            for _ in range(12):
+                step = container.steps[container.current_step]
+                if step.config is not None and step.config.id == STEP_SUMMARY:
+                    break
+                previous_step = container.current_step
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot, lambda: container.current_step != previous_step
+                )
+            else:
+                raise AssertionError("never reached the summary step")
+            await _wait_until(
+                pilot,
+                lambda: bool(
+                    str(
+                        app.screen.query_one("#setup-summary-rows", Static).render()
+                    ).strip()
+                ),
+            )
+            rows = str(app.screen.query_one("#setup-summary-rows", Static).render())
+            assert "Provider — no credentials or saved endpoint" in rows, rows

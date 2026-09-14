@@ -42,7 +42,10 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     NoteImportPlan,
     planned_change_count,
 )
-from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
+from tldw_chatbook.Notes.note_import_planner import (
+    PriorImportObservation,
+    _private_source_fingerprint_from_digests,
+)
 from tldw_chatbook.Notes.notes_device_state_schema import (
     LATEST_NOTES_DEVICE_SCHEMA_VERSION,
     NotesDeviceSchemaError,
@@ -2152,7 +2155,7 @@ class NoteImportReceiptRepository:
         self,
         plan: NoteImportPlan,
     ) -> tuple[PriorImportObservation, ...]:
-        """Return latest exact single-note observations for current plan sources."""
+        """Return the latest exact source-level observations for current plan sources."""
 
         return self._prior_observations_for_plan(plan, self.transaction())
 
@@ -2220,9 +2223,14 @@ class NoteImportReceiptRepository:
         if not digest_items:
             return ()
 
+        # digest -> (ordering, session_id, {item rowid: its payload rows}).
+        # task-32541: every payload row of an item is read, not just index 0,
+        # so a source that created several notes is one observation covering
+        # all of them -- rebuilt from the per-record digests the ledger has
+        # always stored, so receipts written before the fix count too.
         latest: dict[
             str,
-            tuple[tuple[int, int], str, list[tuple[object, ...]]],
+            tuple[tuple[int, int], str, dict[int, list[tuple[object, ...]]]],
         ] = {}
         with connection_context as connection:
             digests = tuple(digest_items)
@@ -2233,13 +2241,10 @@ class NoteImportReceiptRepository:
                 rows = connection.execute(
                     f"""
                     SELECT item.source_locator_digest, session.session_id,
-                           item.outcome_count, item.outcome,
-                           (SELECT COUNT(*) FROM import_payload_effects AS counted
-                            WHERE counted.session_id = item.session_id
-                              AND counted.item_id = item.item_id) AS payload_count,
-                           payload.payload_digest, payload.target_note_id,
-                           payload.observed_version, payload.state,
-                           payload.reason_code, payload.retryable,
+                           item.outcome_count, item.outcome, item.selected_action,
+                           payload.payload_index, payload.payload_digest,
+                           payload.target_note_id, payload.observed_version,
+                           payload.state, payload.reason_code, payload.retryable,
                            session.updated_at, session.rowid, item.rowid
                     FROM import_items AS item
                     JOIN import_sessions AS session
@@ -2247,7 +2252,6 @@ class NoteImportReceiptRepository:
                     LEFT JOIN import_payload_effects AS payload
                       ON payload.session_id = item.session_id
                      AND payload.item_id = item.item_id
-                     AND payload.payload_index = 0
                     WHERE item.source_locator_digest IN ({placeholders})
                       AND session.state = ?
                     """,
@@ -2256,18 +2260,23 @@ class NoteImportReceiptRepository:
                 for row in rows:
                     digest = str(row[0])
                     session_id = str(row[1])
-                    updated_at = row[11]
-                    session_rowid = row[12]
-                    if type(updated_at) is not int or type(session_rowid) is not int:
+                    updated_at = row[12]
+                    session_rowid = row[13]
+                    item_rowid = row[14]
+                    if (
+                        type(updated_at) is not int
+                        or type(session_rowid) is not int
+                        or type(item_rowid) is not int
+                    ):
                         raise ImportReceiptError(
                             "Prior import observations could not be ordered safely."
                         )
                     ordering = (updated_at, session_rowid)
                     existing = latest.get(digest)
                     if existing is None or ordering > existing[0]:
-                        latest[digest] = (ordering, session_id, [tuple(row)])
+                        latest[digest] = (ordering, session_id, {item_rowid: [tuple(row)]})
                     elif ordering == existing[0] and existing[1] == session_id:
-                        existing[2].append(tuple(row))
+                        existing[2].setdefault(item_rowid, []).append(tuple(row))
 
         observations: list[PriorImportObservation] = []
         for digest, items in digest_items.items():
@@ -2276,47 +2285,75 @@ class NoteImportReceiptRepository:
             latest_group = latest.get(digest)
             if latest_group is None or len(latest_group[2]) != 1:
                 continue
-            row = latest_group[2][0]
-            (
-                _source_digest,
-                _session_id,
-                outcome_count,
-                outcome,
-                payload_count,
-                payload_digest,
-                target_note_id,
-                observed_version,
-                payload_state,
-                payload_reason_code,
-                payload_retryable,
-                *_ordering,
-            ) = row
+            (item_rows,) = latest_group[2].values()
+            outcome_count = item_rows[0][2]
+            outcome = item_rows[0][3]
+            selected_action = item_rows[0][4]
+            if outcome not in {
+                ImportItemOutcome.IMPORTED.value,
+                ImportItemOutcome.UPDATED.value,
+            }:
+                continue
+            records: dict[int, tuple[str, str, int]] = {}
+            for row in item_rows:
+                (
+                    _source_digest,
+                    _session_id,
+                    _outcome_count,
+                    _outcome,
+                    _selected_action,
+                    payload_index,
+                    payload_digest,
+                    target_note_id,
+                    observed_version,
+                    payload_state,
+                    payload_reason_code,
+                    payload_retryable,
+                    *_ordering,
+                ) = row
+                if (
+                    isinstance(payload_index, bool)
+                    or not isinstance(payload_index, int)
+                    or payload_index in records
+                    or payload_state != ImportEffectState.APPLIED.value
+                    or payload_reason_code is not None
+                    or payload_retryable != 0
+                    or _DIGEST_PATTERN.fullmatch(payload_digest or "") is None
+                    or _SAFE_ID_PATTERN.fullmatch(target_note_id or "") is None
+                    or isinstance(observed_version, bool)
+                    or not isinstance(observed_version, int)
+                    or observed_version < 1
+                ):
+                    records = {}
+                    break
+                records[payload_index] = (payload_digest, target_note_id, observed_version)
+            payload_count = len(records)
             if (
-                outcome_count != 1
-                or outcome
-                not in {
-                    ImportItemOutcome.IMPORTED.value,
-                    ImportItemOutcome.UPDATED.value,
-                }
-                or payload_count != 1
-                or payload_state != ImportEffectState.APPLIED.value
-                or payload_reason_code is not None
-                or payload_retryable != 0
-                or _DIGEST_PATTERN.fullmatch(payload_digest or "") is None
-                or _SAFE_ID_PATTERN.fullmatch(target_note_id or "") is None
-                or isinstance(observed_version, bool)
-                or not isinstance(observed_version, int)
-                or observed_version < 1
+                not records
+                or sorted(records) != list(range(payload_count))
+                or selected_action
+                not in {ImportAction.CREATE_NEW.value, ImportAction.UPDATE_EXISTING.value}
+                or outcome_count
+                != planned_change_count(ImportAction(selected_action), payload_count)
             ):
                 continue
+            first_digest, note_id, note_version = records[0]
+            fingerprint = (
+                first_digest
+                if payload_count == 1
+                else _private_source_fingerprint_from_digests(
+                    records[index][0] for index in range(payload_count)
+                )
+            )
             item = items[0]
             observations.append(
                 _PrivatePriorImportObservation(
                     display_path=item.source.display_path,
                     match_kind=ImportMatchKind.EXACT,
-                    note_id=target_note_id,
-                    note_version=observed_version,
-                    payload_fingerprint=payload_digest,
+                    note_id=note_id,
+                    note_version=note_version,
+                    payload_fingerprint=fingerprint,
+                    payload_count=payload_count,
                 )
             )
         return tuple(observations)

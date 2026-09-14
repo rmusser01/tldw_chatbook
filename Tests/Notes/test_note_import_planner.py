@@ -652,9 +652,15 @@ def test_create_new_requires_membership_coverage_for_every_payload(
 
 
 def test_add_membership_requires_coverage_for_every_payload() -> None:
-    """An update cannot claim placement while omitting a structured payload."""
-    exact = ImportMatch(
-        kind=ImportMatchKind.EXACT,
+    """An update cannot claim placement while omitting a structured payload.
+
+    Posed on a user-confirmed match: since task-32541 a multi-record *repeat*
+    offers Skip and Create only, so the repeat form of this construction is
+    rejected by the classification contract before it reaches the membership
+    rule (pinned just below).
+    """
+    confirmed = ImportMatch(
+        kind=ImportMatchKind.USER_CONFIRMED,
         note_id="note-7",
         note_version=4,
     )
@@ -668,17 +674,50 @@ def test_add_membership_requires_coverage_for_every_payload() -> None:
                     folder_segments=["Project"],
                 )
             ],
-            classification=ImportClassification.CHANGED_REPEAT,
+            classification=ImportClassification.UNCERTAIN_MATCH,
             selected_action=ImportAction.UPDATE_EXISTING,
             allowed_actions=[
                 ImportAction.SKIP,
                 ImportAction.CREATE_NEW,
                 ImportAction.UPDATE_EXISTING,
             ],
-            match=exact,
+            match=confirmed,
             replace_content=True,
             add_membership=True,
         )
+
+
+def test_a_multi_record_repeat_cannot_offer_update_existing() -> None:
+    """task-32541: a repeat of several records has no single note to update,
+    and "Update authorization requires one payload" would reject the item on
+    the next line -- the contract must not demand the action either."""
+    exact = ImportMatch(kind=ImportMatchKind.EXACT, note_id="note-7", note_version=4)
+    values: dict[str, object] = {
+        "payloads": [_payload(), _payload()],
+        "memberships": [
+            ProposedFolderMembership(payload_index=index, folder_segments=["Project"])
+            for index in range(2)
+        ],
+        "classification": ImportClassification.CHANGED_REPEAT,
+        "match": exact,
+    }
+
+    with pytest.raises(ValueError, match="do not match the classification"):
+        _new_item(
+            **values,
+            allowed_actions=[
+                ImportAction.SKIP,
+                ImportAction.CREATE_NEW,
+                ImportAction.UPDATE_EXISTING,
+            ],
+        )
+
+    item = _new_item(
+        **values,
+        allowed_actions=[ImportAction.SKIP, ImportAction.CREATE_NEW],
+    )
+
+    assert item.allowed_actions == (ImportAction.SKIP, ImportAction.CREATE_NEW)
 
 
 def test_update_existing_rejects_a_noop_selection() -> None:
@@ -4110,7 +4149,15 @@ def test_update_capable_item_requires_one_payload_and_a_current_version(
     note_version: int | None,
     payload_count: int,
 ) -> None:
-    with pytest.raises(ValueError, match="one payload and a current note version"):
+    # task-32541: a multi-record repeat no longer *demands* Update existing in
+    # its allowed actions, so that combination is rejected one rule earlier --
+    # by the classification contract rather than the update authorization.
+    expected = (
+        "do not match the classification"
+        if payload_count > 1 and match_kind is ImportMatchKind.EXACT
+        else "one payload and a current note version"
+    )
+    with pytest.raises(ValueError, match=expected):
         _task5_update_capable_item(
             match_kind=match_kind,
             classification=classification,
@@ -5435,3 +5482,52 @@ def test_two_row_csv_plans_two_new_notes(tmp_path: Path) -> None:
     # segment; the count this test exists for (2, not 1) still leads it.
     assert _effect_summary(plan.items[0]).startswith("Content: create 2 new notes")
     assert "CSV note one, CSV note two" in _effect_summary(plan.items[0])
+
+
+# --- task-32541: a structured source is an unchanged repeat by content -------
+
+
+def test_a_two_row_csv_imported_twice_classifies_as_unchanged_repeat(
+    tmp_path: Path,
+) -> None:
+    """Critique #3 (A 61, B 36): the second Import once of an unchanged vault
+    listed ``notes.csv`` under New again ("create 2 new notes") while every
+    ``.md`` was an unchanged repeat. A source-level observation that covers
+    every record the source parses into is compared by content, like a
+    single-note source; only a record-count mismatch still degrades."""
+    source = tmp_path / "notes.csv"
+    source.write_text(
+        "title,content,tags\nCSV note one,hello from csv,csv\nCSV note two,second row,csv\n",
+        encoding="utf-8",
+    )
+    batch = _parse_selection([source], destination=("Imported",))
+    payloads = batch.parsed[0].payloads
+    assert len(payloads) == 2
+    observation = note_import_planner.PriorImportObservation(
+        display_path="notes.csv",
+        match_kind=ImportMatchKind.EXACT,
+        note_id="csv-note-one",
+        note_version=1,
+        payload_fingerprint=note_import_planner._private_source_fingerprint(payloads),
+        payload_count=2,
+    )
+
+    item = _classification_plan(batch, observation).items[0]
+
+    assert item.classification is ImportClassification.UNCHANGED_REPEAT
+    assert item.match == ImportMatch(
+        kind=ImportMatchKind.EXACT, note_id="csv-note-one", note_version=1
+    )
+    assert item.default_action is ImportAction.SKIP
+    assert item.selected_action is ImportAction.SKIP
+
+    changed = dataclass_replace(
+        observation,
+        payload_fingerprint=note_import_planner._private_source_fingerprint(
+            (payloads[0], dataclass_replace(payloads[1], content="edited row")),
+        ),
+    )
+    assert (
+        _classification_plan(batch, changed).items[0].classification
+        is ImportClassification.CHANGED_REPEAT
+    )

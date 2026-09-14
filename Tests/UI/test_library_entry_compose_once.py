@@ -557,13 +557,13 @@ async def test_library_landing_late_sync_cannot_replace_a_new_route_owner(
 
 @pytest.mark.asyncio
 async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_route_replace():
-    """task-32063: the graduation notice is a toast, and only a toast.
+    """task-32063 made the graduation notice a toast and only a toast; task-32555
+    AC#2 then dropped the toast as well (the rail growing is the evidence).
 
     It used to also paint a durable `#library-lifecycle-status` line, and this
     test pinned that the line survived a reconcile and a same-route replace.
-    The line is gone (two surfaces for one event); what has to hold now is
-    that neither recompose repeats the toast or resurrects a canvas line, and
-    that focus still survives both.
+    What has to hold now is that neither recompose raises a toast or resurrects
+    a canvas line, and that focus still survives both.
     """
     app = _build_test_app()
     _seed_conversations(app, [], notes=_two_notes())
@@ -592,7 +592,6 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         # rather than assigning the end state.
         screen._set_library_lifecycle(LibraryLifecycle.STARTER)
         screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
-        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
         focus = await _wait_for_selector(screen, pilot, ".library-notes-row")
@@ -601,7 +600,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
-        assert len(graduation_toasts()) == 1
+        assert len(graduation_toasts()) == 0
         assert "Library tools are now available." not in canvas_line()
 
         generation = screen._library_snapshot_state_generation
@@ -614,7 +613,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         await pilot.pause()
 
         assert reconciled is LibraryEntryReconcileResult.APPLIED
-        assert len(graduation_toasts()) == 1
+        assert len(graduation_toasts()) == 0
         assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
@@ -629,7 +628,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         await pilot.pause()
 
         assert child_replaced is LibraryEntryReconcileResult.APPLIED
-        assert len(graduation_toasts()) == 1
+        assert len(graduation_toasts()) == 0
         assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
@@ -642,7 +641,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         await pilot.pause()
 
         assert replaced is True
-        assert len(graduation_toasts()) == 1
+        assert len(graduation_toasts()) == 0
         assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
@@ -668,7 +667,6 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
         # rather than assigning the end state.
         screen._set_library_lifecycle(LibraryLifecycle.STARTER)
         screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
-        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
         row = await _wait_for_selector(screen, pilot, ".library-notes-row")

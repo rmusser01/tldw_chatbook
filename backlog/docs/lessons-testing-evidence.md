@@ -14222,3 +14222,67 @@ restoration invalidation to navigation keys and actual type-ahead matches fixed
 both picker families. For safety during asynchronous UI replacement, exercise
 real key dispatch as well as direct actions; verify an intentional movement key
 still overrides restoration.
+
+
+## Deliver queued Buddy notifications after the screen stack closes
+
+**TASK-32506, 2026-09-13.** The installed app passed its lifecycle probe locally
+but failed Linux release run 34791909137 during shutdown: a queued ContentsRebuilt
+message read `app.screen` after Textual emptied the stack. The related BuddyChanged
+route could do the same. Delivering both actual messages after the real shutdown
+order reproduced ScreenStackError deterministically. Empty-stack guards fixed both
+paths; all 29 Buddy lifecycle tests passed. A local successful shutdown alone did
+not establish that late queued messages were harmless.
+
+## Run the would-be regression pin on unpatched dev before writing the fix
+
+**task-32538, 2026-09-14.** Critique #3 filed "the chrome strip's word count is
+wrong on a long note: 404 words for 5,407 tokens", with an inferred mechanism
+("404 is the character length of the list's first row title") and a plausible
+stale-count story — the strip keeps the last count fed to it and repaints from
+that on caret moves and resizes, so a count painted for the previously open
+note *could* stick. Nobody had checked the number itself. Live on the seeded
+power profile the strip read `441 words · 1:1` for "Markdown showcase" and
+then `5,427 words · 1:1` for the 37,519-character note opened straight after
+it; `SELECT content` from the profile database gives exactly 5,427 `\S+`
+tokens. The critique's own captures read "5,404 words · 1:1" and "5,407 words
+· 363:22": "404 words" was those numbers with the thousands separator dropped
+in the reading. The decisive artefact was cheap — the two regression pins
+written for the bug PASS on unpatched `origin/dev`, which is proof there is
+nothing to fix, in a form a reviewer can re-run.
+
+**What to do.** Before implementing a fix for a reported-value bug, write the
+pin and run it against the unpatched baseline tree. Green there means the
+report is a reading error or a different route, and the pin still ships — it
+is the evidence that the behaviour is right, and it fails if someone breaks it
+later. Verify the number against the source of truth (the database row, not
+the screen) rather than against the reporter's transcription, and be
+especially suspicious of a report whose stated mechanism ("404 is the length
+of a title") does not survive being checked: "Markdown showcase" is 17
+characters.
+
+
+## Two worktrees running the same app-booting suite at once DEADLOCK, and it reads as "slow"
+
+**task-32536 / task-32555, 2026-09-14.** The branch-vs-dev-baseline comparison
+is normally two pytest runs fired together, one per worktree. For
+`Tests/UI/test_first_run_wizard_live_contract.py` — 95 node ids, each booting a
+real app under `run_test` — that pair sat at **one completed test each for over
+fifteen minutes**, burning 18 s of CPU in ten minutes of wall clock. It looked
+exactly like CPU starvation (the box genuinely was loaded: another session was
+running the `tldw_Server_API` suite at 99 %), so the first instinct was to wait
+it out. Twice. Killing one side and running the first six of the same node ids
+alone finished them in **8.68 s**. Separate worktrees are not separate
+environments here: these tests share a per-user data directory and its instance
+lock, so two app boots serialise on each other and the wait is invisible in
+pytest's dot output.
+
+**What to do.** Run the branch side and the baseline side **sequentially** for
+any suite that boots the app, never as a parallel pair — the whole comparison
+is still faster. Diagnose an apparently-stalled pytest by CPU time, not wall
+clock (`ps -o pid,etime,time`): near-zero CPU accumulation means blocked, not
+starved, and no amount of waiting fixes blocked. And before concluding a long
+file cannot be run, check whether the change is even reachable from it: a
+repo-wide scan showed the new test was the only test anywhere that pressed
+Enter in `#setup-provider-api-key`, which bounded the risk far better than the
+full file would have.
