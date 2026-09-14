@@ -7,6 +7,8 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Never, Protocol
 
+from loguru import logger
+
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
     LastingSyncApplyBlocker,
@@ -714,7 +716,17 @@ class LibraryNotesSyncController:
 
         collected: list[tuple[int, LastingSyncWriteReceipt]] = []
         for row in self._state.roots:
-            for receipt in await self._runtime.write_receipts(row.root_id):
+            try:
+                receipts = await self._runtime.write_receipts(row.root_id)
+            except Exception as error:  # noqa: BLE001 - bounded, metadata only
+                # Fix round 1: one root that cannot answer used to abort the
+                # loop and blank every other root's receipts.
+                logger.warning(
+                    "notes sync receipts unavailable for one root; error_type={}",
+                    type(error).__name__,
+                )
+                continue
+            for receipt in receipts:
                 collected.append(
                     (
                         receipt.completed_at,

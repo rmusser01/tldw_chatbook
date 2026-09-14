@@ -3441,5 +3441,16 @@ async def test_write_receipts_name_path_title_effect_for_completed_operations(
         assert "note.md" not in repr(receipt)
         with pytest.raises(ValueError):
             await owner.write_receipts("root-1", limit=0)
+
+        # Fix round 1: pause_root closes the root's admission, and reading the
+        # receipts through `_admit_task` raised `root_admission_closed` -- so
+        # pausing a root, a first-class control and the very flow the live
+        # walk uses to force a failed Check, blanked its whole receipt
+        # history. Receipts are a read; they must survive the pause.
+        await owner.pause_root("root-1")
+        paused_receipts = await owner.write_receipts("root-1")
+        assert [r.operation_id for r in paused_receipts] == [
+            r.operation_id for r in receipts
+        ]
     finally:
         await owner.shutdown()

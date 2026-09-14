@@ -3354,8 +3354,67 @@ async def test_a_control_that_runs_clears_the_previous_check_failure() -> None:
     )
 
     await controller.sync_now("root-1")
-    assert controller.snapshot.roots[0].failure.endswith("folder is paused")
+    assert controller.snapshot.roots[0].failure.endswith("recovery still open")
+    assert controller.snapshot.roots[0].failed_action == "resolve_cleanup"
 
-    await controller.resume_root("root-1")
+    runtime.request_sync_now = working_sync_now
+    if route == "sync_now":
+        await controller.sync_now("root-1")
+    elif route == "resume_root":
+        # The default stub refuses; an ACCEPTED resume is the live case --
+        # it sets no status line of its own, so the failure's line survived.
+        async def resume(_root_id: str):
+            return NotesSyncControlResult(True, "up_to_date", "sync_now")
 
-    assert controller.snapshot.roots[0].failure == ""
+        runtime.resume_root = resume
+        await controller.resume_root("root-1")
+    elif route == "resolve_cleanup":
+        await controller.resolve_cleanup("root-1", "operation-1")
+    else:
+        await controller.check_root("root-1")
+        await controller.apply_reviewed("root-1", TOKEN)
+
+    row = controller.snapshot.roots[0]
+    assert (row.failure, row.failed_action) == ("", "")
+    # ...and the failure's own status line must not outlive it. Live: Resume
+    # cleared the row but left "Check failed — folder is paused. Next: Resume."
+    # standing beside "✓ Up to date", which is AC#1's contradiction inverted.
+    assert "Check failed" not in controller.snapshot.status_line
+
+
+async def test_one_unreadable_root_does_not_blank_every_root_s_receipts() -> None:
+    """task-32534 AC#3 (fix round 1): the loop used to abort on the first root.
+
+    Reachable with a paused root before the runtime fix, and with any root
+    the runtime cannot answer for after it.
+    """
+    from tldw_chatbook.Notes.notes_sync_runtime import RuntimeWriteReceipt
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot("root-1", "paused", "resume_sync"),
+            NotesSyncRootRuntimeSnapshot("root-2", "up_to_date", "sync_now"),
+        ),
+    )
+
+    async def write_receipts(root_id: str, *, limit: int = 20):
+        if root_id == "root-1":
+            raise RuntimeError("root_admission_closed")
+        return (
+            RuntimeWriteReceipt(
+                "operation-2", "update_file", 1_757_780_000_000_000_000, "b.md", "B"
+            ),
+        )
+
+    runtime.write_receipts = write_receipts
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.refresh_receipts()
+
+    assert [r.relative_path for r in controller.snapshot.write_receipts] == ["b.md"]

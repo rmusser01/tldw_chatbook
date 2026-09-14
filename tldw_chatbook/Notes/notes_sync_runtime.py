@@ -2127,6 +2127,26 @@ class NotesSyncRuntimeOwner:
         validate_notes_sync_opaque_id(root_id, field_name="root_id")
         task = self._admit_task(root_id)
         try:
+            return await self._read_binding_labels(root_id, binding_ids)
+        finally:
+            self._finish_task(root_id, task)
+
+    async def _read_binding_labels(
+        self, root_id: str, binding_ids: tuple[str, ...]
+    ) -> tuple[RuntimeBindingLabel, ...]:
+        """Label bindings without gating on admission.
+
+        task-32534 AC#3 (fix round 1): ``pause_root`` closes a root's
+        admission, so reading its receipts through ``_admit_task`` raised
+        ``root_admission_closed`` and a single paused root blanked the whole
+        Receipts section. This reads only -- ``_register_task`` keeps the
+        store work visible to ``settle()``/shutdown, which is the reason
+        admission gating exists here, without refusing a closed root.
+        """
+
+        self._require_cutover(root_id)
+        task = self._register_task(root_id)
+        try:
             root = await asyncio.to_thread(self._store.get_root, root_id)
             if root.root_id != root_id:
                 raise RuntimeError("root_authority_mismatch")
@@ -2155,7 +2175,9 @@ class NotesSyncRuntimeOwner:
         labels = {
             label.binding_id: label
             for label in (
-                await self.binding_labels(root_id, binding_ids) if binding_ids else ()
+                await self._read_binding_labels(root_id, binding_ids)
+                if binding_ids
+                else ()
             )
         }
         return tuple(
