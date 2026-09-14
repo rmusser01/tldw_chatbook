@@ -97,7 +97,9 @@ without mixing them into the running profile's configuration.
 
 Review the exact restore, retirement, and preservation lists. Preserved items can
 be selected explicitly for inclusion in the safety copy where the review offers
-them. Such a selection preserves their current bytes for recovery; it does not
+them. If review requires related safety-copy files, choose **Select required
+safety-copy files**, then **Review restore** again. Other preserved additions are
+optional. These selections preserve their current bytes for recovery; they do not
 add them to the replacement payload.
 
 Supply and confirm a password for the encrypted rollback copy, even if the incoming

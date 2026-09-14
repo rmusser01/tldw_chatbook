@@ -13,6 +13,69 @@ from Tests.Backup_Recovery.native_package import (
 from Tests.Backup_Recovery.restart_observation import wait_for_restart
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
+_ORDINARY_REOPEN = r"""
+import asyncio,os,sys
+from pathlib import Path
+from Tests.network_guard import install,blocked_attempts
+install()
+for name in ('sounddevice','pyaudio'):sys.modules[name]=None
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+import tldw_chatbook
+assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook'/'__init__.py'
+from textual.app import App
+print('ORDINARY_CLI_IMPORT',flush=True)
+from tldw_chatbook.cli import main_cli_runner
+async def mounted(app):
+ print('ORDINARY_APP_CONSTRUCTED',flush=True)
+ async with app.run_test(size=(120,42)) as pilot:
+  async with asyncio.timeout(20):
+   while not app._ui_ready:await asyncio.sleep(.03)
+  print('ORDINARY_APP_MOUNTED',flush=True)
+  note=app.chachanotes_db.get_note_by_title('Before backup')
+  assert note and note['content']=='Captured native value.'
+  assert app._initial_screen_pushed and app._ui_ready
+  print('ORDINARY_SAVED_NOTE_READ',flush=True)
+ assert not blocked_attempts(),blocked_attempts()
+def headless(app,*args,**kwargs):return asyncio.run(mounted(app))
+App.run=headless
+sys.argv=['tldw-cli']
+main_cli_runner()
+print('ORDINARY_REOPEN_COMPLETE',flush=True)
+"""
+
+
+def assert_ordinary_profile_reopens(home: Path, package: Path, selector: Path, checkpoint: str):
+    """Exercise ordinary CLI admission, actual mount, and captured-note readback."""
+    environment = dict(
+        os.environ,
+        HOME=str(home),
+        USERPROFILE=str(home),
+        TLDW_CONFIG_PATH=str(selector),
+        TLDW_TEST_MODE="1",
+        TLDW_DISABLE_CONFIG_WATCH="1",
+        PYTHONNOUSERSITE="1",
+        PYTHONPATH=os.pathsep.join((str(package), str(Path(__file__).resolve().parents[2]))),
+        TLDW_TEST_INSTALLED_PACKAGE=str(package),
+    )
+    if selector == home / ".config" / "tldw_cli" / "config.toml":
+        environment.pop("TLDW_CONFIG_PATH")
+    log = home / f"ordinary-reopen-{checkpoint}.log"
+    with log.open("w") as output:
+        result = subprocess.run(
+            [sys.executable, "-X", "faulthandler", "-c", _ORDINARY_REOPEN],
+            cwd=home,
+            env=environment,
+            stdout=output,
+            stderr=output,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+    assert result.returncode == 0, log.read_text()[-10000:]
+    assert "ORDINARY_REOPEN_COMPLETE" in log.read_text()
+
 # The seed uses real native stores and proves public Complete capture, captured
 # note bytes, and resumed ordinary writes before archive packaging.
 _SEED = r"""
@@ -143,10 +206,13 @@ assert 'tldw_chatbook.config' not in sys.modules
 print('FRESH_MINIMAL_ENTRY',flush=True)
 def headless(app,*args,**kwargs):
  print('FRESH_HEADLESS_ENTERED',flush=True)
- from Tests.Backup_Recovery.thread_diagnostics import observe_recovery_failures,observe_inventory_failures
+ from contextlib import ExitStack
+ from Tests.Backup_Recovery.thread_diagnostics import observe_recovery_failures,observe_inventory_failures,observe_finalization_failures
  from Tests.Backup_Recovery.loop_diagnostics import observe_loop_profile
- stop_failures=observe_recovery_failures(Path.home()/'fresh-recovery-failures.log')
- stop_inventory=observe_inventory_failures(Path.home()/'fresh-inventory-failures.log')
+ diagnostics=ExitStack()
+ diagnostics.callback(observe_recovery_failures(Path.home()/'fresh-recovery-failures.log'))
+ diagnostics.callback(observe_inventory_failures(Path.home()/'fresh-inventory-failures.log'))
+ diagnostics.callback(observe_finalization_failures(Path.home()/'fresh-finalization-failures.log'))
  stop_loop=None
  async def mounted():
   nonlocal stop_loop
@@ -174,7 +240,7 @@ def headless(app,*args,**kwargs):
    await pilot.pause()
    screen.query_one('#backup-review-restore',Button).focus();await pilot.press('enter')
    async with asyncio.timeout(180 if sys.platform=='win32' else 25):
-    while screen.query_one('#backup-start-restore',Button).disabled:
+    while screen._restore_plan is None:
      text=str(screen.query_one('#backup-restore-preview',Static).render())
      if 'refused' in text:
       print('CONCRETE_UI_REVIEW_BLOCKER',text,flush=True)
@@ -188,8 +254,12 @@ def headless(app,*args,**kwargs):
    by_key={box.name:box for box in boxes}
    assert safety_keys <= by_key.keys(),safety_keys-by_key.keys()
    assert not any(box.value for box in boxes)
-   for key in safety_keys:by_key[key].value=True
+   if safety_keys:
+    assert screen._restore_availability==(False,'rollback_dependency_selection_required')
+    assert screen.query_one('#backup-start-restore',Button).disabled
+    screen.query_one('#backup-select-required-safety',Button).focus();await pilot.press('enter')
    await pilot.pause()
+   assert {box.name for box in boxes if box.value}==safety_keys
    if safety_keys:assert screen.query_one('#backup-start-restore',Button).disabled
    print('EXPLICIT_PERSONA_SAFETY_SELECTION',len(safety_keys),flush=True)
    screen.query_one('#backup-review-restore',Button).focus();await pilot.press('enter')
@@ -231,6 +301,8 @@ def headless(app,*args,**kwargs):
    aborted=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=90 if sys.platform=='win32' else 20)
    assert aborted['result']['aborted'],dict(aborted)
    print('ACTUAL_ABORTED_UNTOUCHED',flush=True)
+   from Tests.Backup_Recovery.test_f9_replacement_workflow import assert_ordinary_profile_reopens
+   await asyncio.to_thread(assert_ordinary_profile_reopens,Path.home(),Path(saved['package']),Path(screen.query_one('#backup-target-config',Input).value),'abort')
    screen.query_one('#backup-open-inspect',Button).focus();await pilot.press('enter')
    for box in boxes:box.value=True
    screen.query_one('#backup-rollback-password',Input).value='test-only-new-safety-password'
@@ -263,7 +335,8 @@ def headless(app,*args,**kwargs):
  try:asyncio.run(mounted())
  finally:
   if stop_loop is not None:stop_loop()
-  stop_inventory();stop_failures();stop_stacks()
+  try:diagnostics.close()
+  finally:stop_stacks()
 App.run=headless
 """
 
@@ -431,3 +504,4 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
         state.get("phase"),
         state.get("result", {}).get("restoration_validated"),
     ) == ("succeeded", "restoration_validated", True), state
+    assert_ordinary_profile_reopens(tmp_path / "home", native_package, selector, "replacement")

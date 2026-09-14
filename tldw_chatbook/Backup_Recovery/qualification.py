@@ -337,7 +337,7 @@ def complete_capture_capability(
 def replacement_capability(plan, *, control_root: Path) -> tuple[bool, str]:
     """Report new replacement availability for one actual reviewed plan."""
     from . import bootstrap
-    from .restore_plan import RestorePlan
+    from .restore_plan import RestorePlan, required_rollback_dependencies
     from .service_storage import work_root
 
     if (
@@ -348,6 +348,8 @@ def replacement_capability(plan, *, control_root: Path) -> tuple[bool, str]:
         and plan.local_snapshot.control_root != Path(control_root)
     ):
         return False, _RELEASE_UNAVAILABLE
+    if required_rollback_dependencies(plan):
+        return False, "rollback_dependency_selection_required"
     paths = tuple(
         path
         for _, path in (

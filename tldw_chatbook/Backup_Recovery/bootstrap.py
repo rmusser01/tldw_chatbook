@@ -15,7 +15,7 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
-from ..Utils.private_paths import _open_verified_parent
+from ..Utils.private_paths import _native_close, _open_verified_parent
 from .profile_paths import default_config_path, effective_config_path, lexical_path
 
 MAX_RECORD = 1048576
@@ -38,7 +38,7 @@ def pinned_directory(root: Path, *, _close: Callable[[int], None] | None = None)
     try:
         yield parent
     finally:
-        (_close or os.close)(parent)
+        (_close or _native_close)(parent)
 
 
 def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD) -> dict:

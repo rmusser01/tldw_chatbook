@@ -1193,6 +1193,12 @@ def atomic_private_write_bytes(
                 temporary_stat.st_dev,
                 temporary_stat.st_ino,
             )
+        if operation is not None:
+            state = raw._check(operation)
+            if state.route == "config" and state.selected == selected:
+                state.config_publication = (
+                    selected, (temporary_stat.st_dev, temporary_stat.st_ino)
+                )
         if existing_stat is None:
             status = PrivatePathStatus.CREATED_PRIVATE
         elif prior_mode != _PRIVATE_FILE_MODE:

@@ -2820,3 +2820,26 @@ rendering), and grep the capture for the expected next state after every
 click before sending the next one — a silent mis-click leaves the app in a
 state the following command misreads, and the capture then documents the
 wrong bug.
+
+## A live-review crash leaves no site behind unless the launch script keeps stderr (critique #3 P0, 2026-09-13)
+
+**What happened.** During the Library ▸ Notes critique #3 the fresh-profile app
+exited once with an unhandled `InvalidSelectValueError`. The profile log has one
+line for it — `event=unhandled_exception component=app
+exception_type=InvalidSelectValueError` (`app.py:18225-18257` persists the
+exception *type* only, by design: the message may quote user or model content)
+— and `faulthandler.log` is empty because nothing faulted. The traceback went
+where Textual always sends it: the process stderr, i.e. the tmux pane. The
+launch script (`notes-crit/launch3.sh`) starts the app as the pane's command,
+so the pane, the server and the traceback died together; the assessor's next
+capture was an empty file. Replaying the keystrokes did not reproduce it, and
+attributing the site afterwards took a 15-minute read-only trace that ended
+INFERRED (the crash is filed with that caveat).
+
+**What to do.** In any live-review launch line, tee the app's stderr to a file
+in the profile directory — `… -m tldw_chatbook.app 2>>"$PROFILE/stderr.log"` —
+before the first capture. A crash then costs one `tail`, not a trace. And when
+a hard exit is observed, capture `tmux capture-pane -p -S -200` from the pane
+*before* relaunching if the server is still up; once `kill-server` or a
+relaunch runs, the scrollback is gone. The product-side half — persisting the
+raising frame in the diagnostic — is task-32533 AC#3.

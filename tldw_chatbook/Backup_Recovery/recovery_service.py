@@ -109,6 +109,14 @@ def owner_label(owner: str) -> str:
 
 
 _ISSUE_MESSAGES = {
+    "invalid_backup_suffix": (
+        "Use a new filename ending in .tldw-backup.zip for an unencrypted backup "
+        "or .tldw-backup.zip.age for an encrypted backup, then review again."
+    ),
+    "rollback_dependency_selection_required": (
+        "Select required safety-copy files, then review restore again. "
+        "The before-replacement copy needs these preserved files to recover your current data."
+    ),
     "admission_timeout": "The application could not pause background work in time. Review the recovery status, let active work finish, then retry.",
     "restore_setup_parent_required": "Choose an existing private Files needing setup directory outside profile and recovery storage. Restored files will remain inactive there.",
     "isolated_destination_parent_overlaps_control": "Choose a folder beneath a separate private restore directory, outside recovery control storage.",
@@ -1064,10 +1072,13 @@ class RecoveryService:
     ):
         """Show current per-volume capture estimates; execution rechecks actual space."""
         from .capture import _capture_options
+        from .capture_service import _validate_backup_suffix
         from .profile_paths import lexical_path
         from .space import _MARGIN, _volume
 
         settings, _, _, _ = _capture_options(options)
+        destination = lexical_path(destination)
+        _validate_backup_suffix(destination, encrypted=settings["encrypted"])
         inventory = self.preview_backup(
             config_paths,
             options=settings,
@@ -1129,6 +1140,7 @@ class RecoveryService:
     ):
         """Capture coherently, resume writers, then verify and publish an archive."""
         from .capture import _capture_options
+        from .capture_service import _validate_backup_suffix
         from .profile_paths import lexical_path
 
         settings, _, limits, _ = _capture_options(options)
@@ -1137,6 +1149,7 @@ class RecoveryService:
         if settings["encrypted"] != (password is not None) or password == b"":
             raise ValueError("encryption_password_required")
         config_paths, destination = tuple(config_paths), lexical_path(destination)
+        _validate_backup_suffix(destination, encrypted=settings["encrypted"])
         available, reason = self.backup_capability(destination, options=settings)
         if not available:
             raise ValueError(reason)

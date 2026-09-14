@@ -701,8 +701,263 @@ def _created_manifest(journal, original, prepared, rows):
     ), receipt.manifest_digest
 
 
-def _created_destination_target(
+def _config_file_relations(original, prepared, document, target):
+    """Join authenticated incoming IDs to exact original/local owner identities."""
+    from .staging import _items
+    from .storage_admission import _CONFIG_CAPTURE_LEAVES
+
+    if original.target is None or not original.target.complete or not target.complete:
+        raise ValueError("local_snapshot_created_scope_unverified")
+    incoming = _items(document, original)
+    files = {row.logical_id: row for row in document.files}
+    result = {}
+    for artifact in prepared.artifacts:
+        source = incoming.get(artifact.logical_id)
+        if (
+            artifact.action != "publish"
+            or artifact.previous is not None
+            or source is None
+            or source.owner not in _CONFIG_CAPTURE_LEAVES
+        ):
+            continue
+        record = files.get(artifact.logical_id)
+        configs = [
+            incoming[key]
+            for key in source.dependencies
+            if key in incoming
+            and incoming[key].owner == "config"
+            and incoming[key].status == "included"
+            and key in files
+        ]
+        if (
+            record is None
+            or record.owner_id != source.owner
+            or artifact.candidate is None
+            or artifact.candidate.kind != "file"
+            or source.path != Path(artifact.target)
+            or len(configs) != 1
+            or source.dependencies != (configs[0].logical_id,)
+            or source.path
+            != configs[0].path.parent / _CONFIG_CAPTURE_LEAVES[source.owner]
+        ):
+            raise ValueError("local_snapshot_created_scope_unverified")
+        selector = configs[0].path
+        matched = []
+        for inventory, status in ((original.target, "unused"), (target, "included")):
+            local_configs = [
+                row
+                for row in inventory.items
+                if row.owner == "config"
+                and row.path == selector
+                and row.status == "included"
+            ]
+            local_files = [
+                row
+                for row in inventory.items
+                if row.path == source.path and row.owner == source.owner
+            ]
+            if len(local_configs) != 1 or len(local_files) != 1:
+                raise ValueError("local_snapshot_created_scope_unverified")
+            config, item = local_configs[0], local_files[0]
+            identity = config.logical_id.split(":")
+            if (
+                len(identity) != 3
+                or identity[0] != "profile"
+                or identity[2] != "config"
+                or item.logical_id != f"profile:{identity[1]}:{source.owner}"
+                or item.status != status
+                or item.dependencies != (config.logical_id,)
+                or status == "unused"
+                and item.metadata is not None
+                or status == "included"
+                and (
+                    item.metadata is None
+                    or item.metadata.kind != "file"
+                    or item.metadata.policy != "private"
+                    or item.metadata.root_id != item.logical_id
+                    or item.metadata.parent_id is not None
+                )
+            ):
+                raise ValueError("local_snapshot_created_scope_unverified")
+            matched.append(item)
+        if matched[0].logical_id in original.safety_scope:
+            raise ValueError("local_snapshot_absence_overlap")
+        result[artifact.logical_id] = (matched[1], selector)
+    return result
+
+
+def _config_file_retirement_scopes(plan):
+    """Return receipt-proven retirements; callers still prove their live phase."""
+    from .storage_admission import _CONFIG_CAPTURE_LEAVES
+
+    if plan.local_snapshot is None:
+        return ()
+    if plan.target is None or not plan.target.complete:
+        raise ValueError("local_snapshot_created_scope_unverified")
+    retirement_keys, retirement_paths = (
+        set(dict(plan.retire)),
+        set(dict(plan.retire).values()),
+    )
+    if not any(
+        item.owner in _CONFIG_CAPTURE_LEAVES
+        and (item.logical_id in retirement_keys or item.path in retirement_paths)
+        for item in plan.target.items
+    ):
+        return ()
+    journal, _ = verify_snapshot_source(plan)
+    original = load_plan(journal)
+    if original.local_snapshot == plan.local_snapshot:
+        raise ValueError("local_snapshot_created_history_unverified")
+    with journal._locked(exclusive=False) as parent:
+        rows = journal._records(parent)
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in rows if row.event == "prepared")
+    )
+    document, _ = _created_manifest(journal, original, prepared, rows)
+    relations = _config_file_relations(original, prepared, document, plan.target)
+    proved = {
+        (item.logical_id, item.path): selector for item, selector in relations.values()
+    }
+    current = {item.logical_id: item for item in plan.target.items}
+    paths = {path for _, path in proved}
+    result = []
+    for key, path in plan.retire:
+        item = current.get(key)
+        if path not in paths and (
+            item is None or item.owner not in _CONFIG_CAPTURE_LEAVES
+        ):
+            continue
+        if (key, path) not in proved:
+            raise ValueError("local_snapshot_created_history_unverified")
+        result.append((key, path, proved[key, path]))
+    return tuple(result)
+
+
+def _created_config_file_targets(
     journal, original, prepared, rows, target, *, session=None
+):
+    """Reobserve finite config files while their originating activation is live."""
+    from ..runtime_policy.recovery import recovery_adapters as runtime_adapters
+    from .config_adapter import recovery_adapters
+    from .generation_witnesses import _witnesses
+    from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
+    from .storage_admission import (
+        _CONFIG_CAPTURE_LEAVES,
+        _contains_owned_path,
+        acquire_storage,
+    )
+
+    config_paths = {
+        item.path for item in target.items if item.owner in _CONFIG_CAPTURE_LEAVES
+    }
+    if not any(
+        row.action == "publish"
+        and row.previous is None
+        and row.candidate is not None
+        and row.candidate.kind == "file"
+        and Path(row.target) in config_paths
+        for row in prepared.artifacts
+    ):
+        return {}
+
+    document, _ = _created_manifest(journal, original, prepared, rows)
+    relations = _config_file_relations(original, prepared, document, target)
+    owners = {
+        owner.owner_id: owner for owner in (*recovery_adapters(), *runtime_adapters())
+    }
+    result = {}
+    for key, (item, selector) in relations.items():
+        lease = acquire_storage(selector) if session is None else None
+        try:
+            root = bootstrap.default_bootstrap_root()
+            before = bootstrap._control_records(root)
+            pending, profiles, associations = before
+            binding = next(
+                (row for row in profiles if row["selector"] == str(selector)), None
+            )
+            generation = binding.get("activation") if binding else None
+            registry = bootstrap._registry(root)
+            if (
+                pending
+                or generation is None
+                or generation["operation_id"] != journal.operation_id
+                or generation["generation"] != prepared.generation
+                or Path(generation["store_root"]) != journal.root.parent / "activation"
+                or [
+                    row["activation"]
+                    for row in associations
+                    if row["selector"] == str(selector)
+                ]
+                != [generation]
+                or any(
+                    Path(row["selector"]).parent == selector.parent
+                    and row is not binding
+                    for row in profiles
+                )
+            ):
+                raise ValueError("local_snapshot_created_scope_unverified")
+            if lease is not None:
+                if generation not in _witnesses(selector, lease):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+            else:
+                session._check()
+                if (
+                    session._control != root / "admission"
+                    or not set(binding["namespaces"]) <= set(session._names)
+                    or not any(
+                        _contains_owned_path(path, selector) for path in session._roots
+                    )
+                ):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+            info = os.stat(item.path, follow_symlinks=False)
+            tokens = {
+                "path:" + str(item.path),
+                "path:" + str(item.path.resolve()),
+                f"inode:{info.st_dev}:{info.st_ino}",
+            }
+            with pinned_directory(selector.parent) as parent:
+                posture = os.fstat(parent)
+                if posture.st_uid != os.geteuid() or posture.st_mode & 0o077:
+                    raise ValueError("local_snapshot_created_scope_unverified")
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077
+                ):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+                if any(
+                    tokens.intersection(entry["historical"])
+                    or any(
+                        bootstrap._overlap(item.path, Path(path))
+                        for path in entry["roots"]
+                    )
+                    or any(
+                        bootstrap._overlap(item.path, Path(token[5:]))
+                        for token in entry["historical"]
+                        if token.startswith("path:")
+                    )
+                    for name, entry in registry.items()
+                    if name not in binding["namespaces"]
+                ):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+                context = DiscoveryContext(selector, item.logical_id.split(":", 2)[1])
+                observed = owners[item.owner].discover({DISCOVERY_CONTEXT_KEY: context})
+                if (
+                    observed != (item,)
+                    or before != bootstrap._control_records(root)
+                    or registry != bootstrap._registry(root)
+                ):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+            result[key] = item.logical_id
+        finally:
+            if lease is not None:
+                lease.close()
+    return result
+
+
+def _created_destination_target(
+    journal, original, prepared, rows, target, *, session=None, config_files=()
 ):
     """Reobserve only committed inactive builtin/eval roots created by this copy."""
     from pydantic import TypeAdapter
@@ -728,6 +983,7 @@ def _created_destination_target(
         for row in prepared.artifacts
         if row.action == "publish"
         and row.previous is None
+        and row.logical_id not in config_files
         and (
             row.logical_id not in originals
             or originals[row.logical_id].path != Path(row.target)
@@ -1271,16 +1527,58 @@ def _preview(journal, proof, archive, target, acknowledged, *, session=None):
     target = _builtin_snapshot_target(
         original, authenticated, document, target, session=session
     )
-    target, created = _created_destination_target(
+    config_files = _created_config_file_targets(
         journal, original, prepared, rows, target, session=session
     )
+    target, created = _created_destination_target(
+        journal,
+        original,
+        prepared,
+        rows,
+        target,
+        session=session,
+        config_files=config_files,
+    )
+    created.update(config_files)
     preserved = _preserved_snapshot_members(snapshot, archive, target)
+    names, profile_map = {}, {}
+    original_names = dict(original.profile_names)
+    for profile in document.profile_ids:
+        config = originals.get(f"profile:{profile}:config")
+        if config is None or config.owner != "config":
+            continue
+        imported = [
+            key.split(":")[1]
+            for key, path in original.restore
+            if path == config.path
+            and key.startswith("profile:")
+            and key.endswith(":config")
+            and len(key.split(":")) == 3
+        ]
+        for key in imported:
+            if key in profile_map and profile_map[key] != profile:
+                raise ValueError("local_snapshot_mapping_invalid")
+            profile_map[key] = profile
+        labels = {original_names[key] for key in imported if key in original_names}
+        if len(labels) > 1:
+            raise ValueError("local_snapshot_mapping_invalid")
+        if labels:
+            names[profile] = labels.pop()
+    selectors = {}
+    for key, path in original.selectors:
+        parts = key.split(":", 2)
+        if len(parts) != 3 or parts[0] != "profile" or parts[1] not in profile_map:
+            raise ValueError("local_snapshot_mapping_invalid")
+        local_key = f"profile:{profile_map[parts[1]]}:{parts[2]}"
+        if local_key in selectors and selectors[local_key] != path:
+            raise ValueError("local_snapshot_mapping_invalid")
+        selectors[local_key] = path
     plan = plan_restore(
         archive,
         mode="replace",
-        destinations={**roots, **dict(original.selectors)},
+        destinations={**roots, **selectors},
         target=target,
-        profile_names=dict(original.profile_names),
+        profile_names=names,
         safety_scope=tuple(item.logical_id for item in preserved.values()),
         acknowledged_credential_issues=acknowledged,
         local_snapshot=snapshot,

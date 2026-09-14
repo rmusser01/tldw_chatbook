@@ -1,0 +1,13 @@
+{
+  "attribution": {
+    "product_tree": "f69a11ecb0720db043d9e89616ff46dc789f8bad",
+    "test_source": "/home/ml-user/Working/chatbook-backup-linux-20260912/source-platform-f69a11ecb0720db043d9e89616ff46dc789f8bad/tldw_chatbook-f69a11ecb0720db043d9e89616ff46dc789f8bad",
+    "installed": "/home/ml-user/Working/chatbook-backup-linux-20260912/runs-python/artifacts-platform-private-f69a11ecb0720db043d9e89616ff46dc789f8bad-20260913-164916/uat-final-default-replacement/pytest/f9-native-package0/installed"
+  },
+  "installed_files": 2865,
+  "run": "/home/ml-user/Working/chatbook-backup-linux-20260912/uat-f69-finalize-4cfby7xc/approved-full-default-aui8chi_",
+  "umask": "077",
+  "selection": "default replacement and later rollback",
+  "result": "PASS",
+  "installed_changed": []
+}

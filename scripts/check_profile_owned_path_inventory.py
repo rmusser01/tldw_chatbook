@@ -436,6 +436,14 @@ def reconcile_inventory(
 
 APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
     ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/destinations.py",
+        "function:resolve_destinations",
+        "literal:~/.local/share/tldw_cli/",
+        2,
+        Disposition.PERSISTED_DEFAULT,
+        "compare shipped database sentinels before mapping isolated or replacement destinations; never open these literal paths",
+    ),
+    ExceptionRule(
         "tldw_chatbook/Backup_Recovery/profile_paths.py",
         "function:database_path",
         "literal:~/.local/share/tldw_cli/",

@@ -1,11 +1,16 @@
 """Concrete configuration source lifetimes; no public maintenance authority."""
 
-from contextlib import contextmanager
-from functools import wraps
 import secrets
+import stat
 import sys
+from contextlib import ExitStack, contextmanager
+from functools import wraps
+from pathlib import Path
 
-from . import bootstrap, profile_paths, storage_admission as storage
+from tldw_chatbook.Utils.platform_files import fcntl, os
+
+from . import bootstrap, profile_paths
+from . import storage_admission as storage
 
 ROUTES = {
     "config",
@@ -106,6 +111,184 @@ def members(source, selected, route, target):
         if path.suffix != ".lock"
     }
     return paths + tuple(temporaries.values()), temporaries
+
+
+def sibling_selector(source, route, selected):
+    """Resolve only installed fixed config siblings, without config IO."""
+    from . import raw_participants as raw
+
+    module = sys.modules.get("tldw_chatbook.config")
+    if module is None:
+        return None
+    if route == "sidebar_state":
+        path, installed = raw._async_source_selection(source, route)
+        leaf = "ui_state.toml"
+    elif route == "emoji" and source is sys.modules.get("tldw_chatbook.Widgets.emoji_picker"):
+        path, installed, leaf = source._recent_emojis_path(), True, "recent_emojis.json"
+    elif route in {"runtime_read", "runtime_state"}:
+        bound = raw.settings_files.binding(source)
+        if bound is None or bound[0] != "runtime.source_state":
+            return None
+        _, path, installed = bound
+        leaf = "runtime_policy.json"
+    else:
+        return None
+    if not installed:
+        return None
+    selector = profile_paths.lexical_path(module._get_effective_config_path())
+    if profile_paths.lexical_path(path) != selected:
+        raise bootstrap.RecoveryRequired("config_companion_scope_changed")
+    return selector if selected == selector.parent / leaf else None
+
+
+def companion_guard(operation, attempt):
+    """Keep exact installed config siblings disjoint until their IO retires."""
+    from . import raw_participants as raw
+    from .native_files import pinned_directory
+    from .service_storage import default_control_root, work_root
+
+    state = raw._states[operation]
+    selected = state.config_anchor or state.selected
+    hold = state.holds[-1]
+    if hold is None:
+        return None
+    root = bootstrap.default_bootstrap_root()
+    guard = ExitStack()
+    try:
+        parent = guard.enter_context(hold.authority._directory())
+        guard.enter_context(hold.authority._lock(
+            parent, "registry.lock", fcntl.LOCK_SH, cancel=attempt.cancel
+        ))
+        attempt.check()
+        pending, profiles = bootstrap._records(root)
+        record = next((row for row in profiles if row["selector"] == str(selected)), None)
+        if record is None or tuple(record["namespaces"]) != hold.names:
+            guard.close()
+            return None
+        if (
+            pending
+            or hold.authority.control_root != root / "admission"
+            or storage._scope(root, selected, selected, authority=hold.authority) != hold.names
+            or (
+                sibling_selector(state.source, state.route, state.selected) != selected
+                if state.config_anchor is not None
+                else binding(state.source) != ("config", selected, True)
+                or state.route not in {"config", "config_snapshot"}
+            )
+            or not state.pinned
+        ):
+            raise bootstrap.RecoveryRequired("config_companion_scope_changed")
+        registry = bootstrap._registry(root)
+        directory = guard.enter_context(pinned_directory(selected.parent))
+        info = os.fstat(directory)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise bootstrap.RecoveryRequired("config_companion_parent_unsafe")
+        controls = (root, default_control_root(), work_root(default_control_root()))
+        foreign = [entry for name, entry in registry.items() if name not in hold.names]
+        for member in state.paths:
+            if member.parent != selected.parent or any(
+                bootstrap._overlap(member, control) for control in controls
+            ):
+                raise bootstrap.RecoveryRequired("config_companion_scope_changed")
+            tokens = {"path:" + str(member), "path:" + str(member.resolve())}
+            try:
+                member_info = os.stat(member, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if not stat.S_ISREG(member_info.st_mode) or member_info.st_nlink != 1:
+                    raise bootstrap.RecoveryRequired("config_companion_scope_changed")
+                tokens.add(f"inode:{member_info.st_dev}:{member_info.st_ino}")
+            if any(
+                tokens.intersection(entry["historical"])
+                or any(bootstrap._overlap(member, Path(path)) for path in entry["roots"])
+                or any(
+                    bootstrap._overlap(member, Path(token[5:]))
+                    for token in entry["historical"] if token.startswith("path:")
+                )
+                for entry in foreign
+            ):
+                raise bootstrap.RecoveryRequired("config_companion_scope_changed")
+        # Existing parent posture is verified, never delegated for creation.
+        state.directories = ()
+        state.companion_roots = tuple(Path(path) for path in record["roots"])
+        return guard
+    except BaseException:
+        guard.close()
+        raise
+
+
+def verified_companion_parent(source, path):
+    """Only a current proven owner operation uses a verify-only parent seam."""
+    from . import raw_participants as raw
+
+    operation = getattr(raw._local, "operation", None)
+    if operation is None:
+        return False
+    state = raw._check(operation)
+    return (
+        state.source is source
+        and state.companion_guard is not None
+        and (
+            state.route in {"config", "config_snapshot"}
+            or state.route == "runtime_state" and state.config_anchor is not None
+        )
+        and state.selected == profile_paths.lexical_path(path)
+    )
+
+
+def verified_user_data_directory(source):
+    """Observe an existing bound profile directory without root-selection writes."""
+    from . import raw_participants as raw
+    from .native_files import pinned_directory
+
+    operation = getattr(raw._local, "operation", None)
+    if operation is None:
+        return None
+    state = raw._check(operation)
+    if state.source is not source or state.companion_guard is None:
+        return None
+    if source._CONFIG_CACHE_SOURCE != state.selected or source._CONFIG_CACHE is None:
+        raise bootstrap.RecoveryRequired("config_directory_selection_unavailable")
+    selected = profile_paths.user_data_dir(source._CONFIG_CACHE)
+    associated = False
+    owned_parent = False
+    for root in state.companion_roots:
+        if root == state.selected:
+            continue
+        info = os.stat(root, follow_symlinks=False)
+        if (
+            root.parent == selected and (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))
+            or stat.S_ISDIR(info.st_mode) and (root == selected or root in selected.parents)
+        ):
+            associated = True
+            owned_parent = stat.S_ISDIR(info.st_mode) and root in selected.parents
+            break
+    if not associated:
+        raise bootstrap.RecoveryRequired("config_directory_selection_changed")
+    missing = False
+    try:
+        os.stat(selected, follow_symlinks=False)
+    except FileNotFoundError:
+        if not owned_parent:
+            raise
+        missing = True
+    with ExitStack() as parents:
+        for directory in ((selected.parent,) if missing else (selected.parent, selected)):
+            fd = parents.enter_context(pinned_directory(directory))
+            info = os.fstat(fd)
+            current = os.stat(directory, follow_symlinks=False)
+            if (
+                info.st_uid != os.geteuid() or info.st_mode & 0o077
+                or (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino)
+            ):
+                raise bootstrap.RecoveryRequired("config_directory_selection_changed")
+        # Retain the installed default/fallback ambiguity check at both edges.
+        if profile_paths.user_data_dir(source._CONFIG_CACHE) != selected:
+            raise bootstrap.RecoveryRequired("config_directory_selection_changed")
+        raw._check(operation)
+        # Creation still belongs to the fully admitted config_data operation.
+        return None if missing else selected
 
 
 @contextmanager

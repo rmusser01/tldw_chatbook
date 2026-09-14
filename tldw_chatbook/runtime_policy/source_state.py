@@ -18,6 +18,7 @@ from tldw_chatbook.Utils.private_paths import (
 
 from .types import RuntimeSourceState
 from ..Backup_Recovery import raw_participants as raw
+from ..Backup_Recovery import config_participants as config_files
 
 POLICY_FRESHNESS_WINDOW = timedelta(minutes=5)
 
@@ -225,6 +226,10 @@ class RuntimeSourceStateStore:
             result = atomic_private_write_text(
                 self.path,
                 payload,
-                application_owned_directory=self.application_owned_directory,
+                application_owned_directory=(
+                    None if self.application_owned_directory == self.path.parent
+                    and config_files.verified_companion_parent(self, self.path)
+                    else self.application_owned_directory
+                ),
             )
             _report_runtime_policy_posture(result, operation="write")

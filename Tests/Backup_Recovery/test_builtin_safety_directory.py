@@ -365,16 +365,19 @@ def test_builtin_safety_requires_explicit_finite_member_closure(
         )
     else:
         plan = plan_for(i.logical_id for i in members if i is not missing)
-    candidate = stage_restore(archive, plan, tmp_path / "builtin-stage", Event())
     before = {
         i.path: i.path.read_bytes() for i in plan.target.items if i.status == "included"
     }
-    expected_error = (
-        "safety_scope_capability_unavailable"
-        if omitted == "foreign_owner"
-        else "safety_scope_incomplete"
-    )
-    with pytest.raises(ValueError, match=expected_error):
+    if omitted != "foreign_owner":
+        pending = bootstrap._records(tmp_path / "bootstrap")[0]
+        with pytest.raises(ValueError, match="^rollback_dependency_selection_required$"):
+            stage_restore(archive, plan, tmp_path / "builtin-stage", Event())
+        assert not (tmp_path / "builtin-stage").exists()
+        assert bootstrap._records(tmp_path / "bootstrap")[0] == pending
+        assert all(path.read_bytes() == data for path, data in before.items())
+        return
+    candidate = stage_restore(archive, plan, tmp_path / "builtin-stage", Event())
+    with pytest.raises(ValueError, match="safety_scope_capability_unavailable"):
         replacement.replace(
             plan,
             candidate,

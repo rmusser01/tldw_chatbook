@@ -102,6 +102,9 @@ def complete_builtin_case(tmp_path, monkeypatch, helper_resource_root, request):
 
 @pytest.fixture
 def later_case(complete_builtin_case, tmp_path, monkeypatch):
+    # The reviewed fixture selector points here; a real application import
+    # requires its configured data base to exist before loading user storage.
+    (tmp_path / "live" / "data").mkdir(mode=0o700)
     _complete_original(complete_builtin_case, tmp_path, monkeypatch, False)
     selector = tmp_path / "live/config.toml"
     profile = next(
@@ -476,6 +479,17 @@ _Assets._root = lambda self, config: root/'live/package-assets'
 from Tests.Backup_Recovery.test_builtin_later_snapshot import _current,test_later_execution_restores_old_core_and_preserves_current_files
 from tldw_chatbook.Backup_Recovery.journal import Journal
 from tldw_chatbook.Backup_Recovery.plan_records import load_plan
+from tldw_chatbook.Backup_Recovery import storage_admission as storage
+# Importing test helpers starts normal config admission. This child now enters
+# recovery-only execution, with no app or active operation to hand off that lease.
+startup_key=(os.getpid(),str(bootstrap.default_bootstrap_root()))
+assert set(storage._startups)=={startup_key}
+startup=storage._startups[startup_key]
+assert storage._live_leases=={startup}
+assert not storage._operations and not storage._raw_operations and not storage._pending_acquisitions
+assert len(storage._holds)==1 and next(iter(storage._holds.values())).names==('profile',)
+storage._startups.pop(startup_key).close()
+assert not storage._live_leases and not storage._holds and not storage._retiring_holds
 original = load_plan(Journal(root/'control',operation))
 test_later_execution_restores_old_core_and_preserves_current_files((operation,original,_current(root)),root)
 print('FRESH_NATIVE_LATER_COMPLETE')

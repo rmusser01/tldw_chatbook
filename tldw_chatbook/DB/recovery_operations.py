@@ -207,7 +207,70 @@ _AGENT_RUNS_SCHEMA = (
 )
 
 
+# AgentRuns v21 catalogs measured from the merged installed constructor and its
+# real v18 and v19/v20 upgrades. Keep the exact v18 catalog, never relabel bytes.
+_AGENT_WORKTREES_TABLE = "CREATE TABLE agent_worktrees (\n    run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),\n    workspace_id TEXT NOT NULL,\n    binding_id TEXT NOT NULL,\n    locator_fingerprint TEXT NOT NULL,\n    repo_root TEXT NOT NULL,\n    repo_identity TEXT NOT NULL,\n    git_common_dir TEXT NOT NULL,\n    git_common_identity TEXT NOT NULL,\n    child_path TEXT NOT NULL,\n    child_identity TEXT NOT NULL,\n    branch TEXT NOT NULL,\n    base_sha TEXT NOT NULL,\n    execution_id TEXT NOT NULL,\n    writer_state TEXT NOT NULL DEFAULT 'held'\n        CHECK(writer_state IN ('held', 'drained', 'uncertain')),\n    mutation_state TEXT NOT NULL DEFAULT 'unresolved'\n        CHECK(mutation_state IN ('unresolved', 'applying', 'merging', 'discarding',\n            'applied', 'merged', 'discarded_cleanup_pending', 'uncertain')),\n    operation_id TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n)"
+_AGENT_WORKTREES_INDEX = "CREATE INDEX idx_agent_worktrees_scope\n    ON agent_worktrees(workspace_id, binding_id, run_id)"
+_AGENT_RUNS_V21_TABLES = (
+    (
+        "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    -- v21 (ADR-147, TASK-32477): preset routing -- the\n                    -- provider this definition pins ('' = inherit the\n                    -- caller's provider at spawn) and its sampling-param\n                    -- overrides as a JSON object string ('{}' = none).\n                    provider TEXT NOT NULL DEFAULT '',\n                    params_json TEXT NOT NULL DEFAULT '{}',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    max_wall_seconds REAL,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                )",
+        "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    ),\n                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered\n                    -- past dev's v16-v20 via #2641 and #2665): the\n                    -- resolved-target snapshot -- where this run's agent\n                    -- ACTUALLY went after preset routing resolved\n                    -- (provider, model, base_url, and the merged params as\n                    -- a raw JSON object string). Written once at spawn\n                    -- (Task 6); read back verbatim on resume/continuation\n                    -- (Task 8). NULL for every pre-v21 row and for runs\n                    -- spawned without routing resolution.\n                    resolved_provider TEXT,\n                    resolved_model TEXT,\n                    resolved_base_url TEXT,\n                    resolved_params_json TEXT\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id))",
+    ),
+    (
+        "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                , max_wall_seconds REAL, provider TEXT NOT NULL DEFAULT '', params_json TEXT NOT NULL DEFAULT '{}')",
+        "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    )\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id), resolved_provider TEXT, resolved_model TEXT, resolved_base_url TEXT, resolved_params_json TEXT)",
+    ),
+    (
+        "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    max_wall_seconds REAL,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                , provider TEXT NOT NULL DEFAULT '', params_json TEXT NOT NULL DEFAULT '{}')",
+        "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    )\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id), resolved_provider TEXT, resolved_model TEXT, resolved_base_url TEXT, resolved_params_json TEXT)",
+    ),
+)
+
+
+def _agent_runs_v21_catalog(definitions, runs):
+    """Compose literal installed variants while retaining unchanged v18 objects."""
+    rows = []
+    for statement in _AGENT_RUNS_SCHEMA[0][1]:
+        if statement.startswith("CREATE TABLE agent_definitions "):
+            rows.append(definitions)
+        elif statement.startswith("CREATE TABLE agent_runs "):
+            rows.extend((runs, _AGENT_WORKTREES_TABLE))
+        else:
+            rows.append(statement)
+            if statement.startswith("CREATE INDEX idx_agent_runs_parent"):
+                rows.append(_AGENT_WORKTREES_INDEX)
+    return tuple(rows)
+
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (21, _agent_runs_v21_catalog(definitions, runs))
+    for definitions, runs in _AGENT_RUNS_V21_TABLES
+)
+_AGENT_RUNS_MIGRATION_18_21 = (
+    _AGENT_WORKTREES_TABLE,
+    _AGENT_WORKTREES_INDEX,
+    "ALTER TABLE agent_definitions ADD COLUMN max_wall_seconds REAL",
+    "ALTER TABLE agent_definitions ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE agent_definitions ADD COLUMN params_json TEXT NOT NULL DEFAULT '{}'",
+    "ALTER TABLE agent_runs ADD COLUMN resolved_provider TEXT",
+    "ALTER TABLE agent_runs ADD COLUMN resolved_model TEXT",
+    "ALTER TABLE agent_runs ADD COLUMN resolved_base_url TEXT",
+    "ALTER TABLE agent_runs ADD COLUMN resolved_params_json TEXT",
+    "INSERT INTO schema_version (version) VALUES (19)",
+    "INSERT INTO schema_version (version) VALUES (20)",
+    "INSERT INTO schema_version (version) VALUES (21)",
+)
+
+
 class _AgentRunsAdapter(_SQLiteDeclaration):
+    def schema_policy(self) -> SchemaPolicy:
+        return SchemaPolicy(
+            self.owner_id,
+            self.versions,
+            self.schemas,
+            ((18, 21, _AGENT_RUNS_MIGRATION_18_21),),
+        )
+
     def validate(self, candidate: Path) -> tuple[str, ...]:
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -888,7 +951,6 @@ _SUBSCRIPTIONS_SCHEMA = (
 )
 
 
-
 def _briefing_relocation_authorizer(read_authorizer):
     """Permit only the installed locator update in a disposable candidate."""
 
@@ -1227,7 +1289,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18,),
+            (18, 21),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,

@@ -25,11 +25,13 @@ from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Literal, Sequence, cast
 from typing import Generic, TypeVar
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+    from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
     from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
@@ -82,6 +84,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCatalogEntry,
     ToolOutcome,
     ToolResult,
+    ToolReviewValue,
     ToolSchema,
     definition_from_row,
 )
@@ -160,6 +163,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleActivityStatus,
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleProviderSelection,
     ProjectInstructionActivationEvent,
     RawCliPresentation,
 )
@@ -200,6 +204,7 @@ from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderCallSignals,
     ConsoleProviderGateway,
+    ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
     ProviderProprietaryThinkingEvidence,
     ProviderThinkingDelta,
@@ -569,6 +574,10 @@ def console_run_budget() -> RunBudget:
         unable to run an agent.
     """
     try:
+        from tldw_chatbook.Agents.agent_models import (
+            DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT,
+            coerce_denial_circuit_breaker_limit,
+        )
         from tldw_chatbook.config import (
             DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
             DEFAULT_CONSOLE_AGENT_MAX_STEPS,
@@ -620,7 +629,22 @@ def console_run_budget() -> RunBudget:
             return UNLIMITED_TOOL_CALL_DEADLINE_SECONDS
         return resolved
 
+    def _denial_limit() -> int:
+        raw = os.environ.get("TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT", "").strip()
+        if raw:
+            return coerce_denial_circuit_breaker_limit(raw)
+        try:
+            raw = get_cli_setting(
+                "agents",
+                "denial_circuit_breaker_limit",
+                DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT,
+            )
+        except Exception:  # noqa: BLE001
+            raw = DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT
+        return coerce_denial_circuit_breaker_limit(raw)
+
     return RunBudget(
+        denial_circuit_breaker_limit=_denial_limit(),
         max_steps=_int(
             "agent_max_steps",
             DEFAULT_CONSOLE_AGENT_MAX_STEPS,
@@ -695,14 +719,20 @@ def intersect_console_run_budget(
             ceiling(maximum.max_tool_result_chars, live.max_tool_result_chars)
         ),
         max_model_turns=min(maximum.max_model_turns, live.max_model_turns),
-        max_total_tokens=int(
-            ceiling(maximum.max_total_tokens, live.max_total_tokens)
-        ),
+        max_total_tokens=int(ceiling(maximum.max_total_tokens, live.max_total_tokens)),
         max_tool_call_seconds=float(
             ceiling(maximum.max_tool_call_seconds, live.max_tool_call_seconds)
         ),
         max_model_retries=min(maximum.max_model_retries, live.max_model_retries),
-        budget_warning_fraction=min(maximum.budget_warning_fraction, live.budget_warning_fraction),
+        budget_warning_fraction=min(
+            maximum.budget_warning_fraction, live.budget_warning_fraction
+        ),
+        denial_circuit_breaker_limit=int(
+            ceiling(
+                maximum.denial_circuit_breaker_limit,
+                live.denial_circuit_breaker_limit,
+            )
+        ),
     )
 
 
@@ -2070,6 +2100,69 @@ class AgentLiveSnapshot:
     steps: tuple[AgentLiveStep, ...] = ()
     subagents: tuple[SubAgentSummary, ...] = ()
     setup_started_at: float | None = None
+    turn_usage: AgentLiveTurnUsage | None = None
+
+
+LiveUsageSource = Literal["provider", "local"]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLiveTurnUsage:
+    """Published live output count for one active model call, not final billing.
+
+    Attributes:
+        output_tokens: Latest published provider count or local approximation.
+        source: ``provider`` for an explicit nonnegative output count, including
+            zero; otherwise ``local`` for cumulative streamed UTF-8 bytes / 4,
+            rounded up. Provider counts take precedence once observed.
+        started_at: Call-start time in ``time.monotonic()`` seconds.
+        sequence: Adapter-issued increasing call identifier, shared by all
+            events for this call; distinguishes successive calls in one run.
+    """
+
+    output_tokens: int
+    source: LiveUsageSource
+    started_at: float
+    sequence: int
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLiveUsageEvent:
+    """Transient adapter observation attributed to an exact run and model call.
+
+    Attributes:
+        kind: ``started`` opens call state, ``text`` adds streamed text,
+            ``provider_usage`` supplies a cumulative count, and ``finished``
+            removes call state. Consumers reject events for stale sequences.
+        run_id: Owning primary or child run identifier from the run scope.
+        agent_kind: Primary or subagent attribution captured with ``run_id``.
+        sequence: Increasing identifier allocated once per adapter model call,
+            not once per event; every event in that call uses the same value.
+        observed_at: Observation time in ``time.monotonic()`` seconds, used for
+            call start and publication throttling, not a wall-clock timestamp.
+        text: Delta for ``text`` events, including visible thinking when emitted;
+            empty for other kinds. The bridge counts bytes without retaining it.
+        provider_output_tokens: Cumulative output count for ``provider_usage``
+            events, otherwise ``None``; only nonnegative integers are accepted.
+    """
+
+    kind: Literal["started", "text", "provider_usage", "finished"]
+    run_id: str
+    agent_kind: str
+    sequence: int
+    observed_at: float
+    text: str = ""
+    provider_output_tokens: int | None = None
+
+
+@dataclass(slots=True)
+class _LiveTurnUsageAccumulator:
+    sequence: int
+    started_at: float
+    received_utf8_bytes: int = 0
+    provider_output_tokens: int | None = None
+    last_published_at: float | None = None
+    published: AgentLiveTurnUsage | None = None
 
 
 @dataclass
@@ -2949,6 +3042,29 @@ def reset_session_stalls(*args: Any, **kwargs: Any) -> None:
 
     _impl(*args, **kwargs)
 
+#: ADR-147 Task 6B: per-call sampling kwarg (Task 6's ``_CHAT_CALL_PARAM_MAP``
+#: values, Agents/agent_service.py) -> ``ConsoleProviderResolution`` field of
+#: the same meaning. ``stream_chat`` carries sampling on the RESOLUTION (the
+#: gateway maps fields onto ``chat_api_call`` kwargs in
+#: ``_chat_api_kwargs_from_prepared``: ``temp=resolution.temperature`` etc.),
+#: so honoring these kwargs means overlaying them onto the resolution handed
+#: to the gateway -- forward, never rename.
+_PER_CALL_SAMPLING_RESOLUTION_FIELDS = {
+    "temp": "temperature",
+    "topp": "top_p",
+    "minp": "min_p",
+    "topk": "top_k",
+    "max_tokens": "max_tokens",
+    "seed": "seed",
+    "presence_penalty": "presence_penalty",
+    "frequency_penalty": "frequency_penalty",
+    "reasoning_effort": "reasoning_effort",
+    "reasoning_summary": "reasoning_summary",
+    "verbosity": "verbosity",
+    "thinking_effort": "thinking_effort",
+    "thinking_budget_tokens": "thinking_budget_tokens",
+}
+
 
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
@@ -3032,6 +3148,7 @@ class _StreamingModelAdapter:
         generation_token: int | None = None,
         capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
         trace_request: PreparedConsoleRequest | None = None,
+        live_usage_sink: Callable[[AgentLiveUsageEvent], None] | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -3078,6 +3195,43 @@ class _StreamingModelAdapter:
         # sniff answers a different question -- what to do with the
         # STREAMED TEXT -- and would be the wrong authority for lifetime).
         self._thread_loop = threading.local()
+        self._live_usage_sink = live_usage_sink
+        self._live_usage_sequence = 0
+        self._live_usage_sequence_lock = threading.Lock()
+        self._failed_live_usage_sequences: set[int] = set()
+
+    @contextlib.contextmanager
+    def run_scope(self, run_id: str, agent_kind: str):
+        """Attribute model calls on this agent thread to an exact run."""
+        previous = getattr(self._thread_loop, "run_scope", None)
+        marker = (run_id, agent_kind)
+        self._thread_loop.run_scope = marker
+        try:
+            yield
+        finally:
+            if getattr(self._thread_loop, "run_scope", None) == marker:
+                self._thread_loop.run_scope = previous
+
+    def _next_live_usage_sequence(self) -> int:
+        with self._live_usage_sequence_lock:
+            self._live_usage_sequence += 1
+            return self._live_usage_sequence
+
+    def _emit_live_usage(self, event: AgentLiveUsageEvent) -> None:
+        with self._live_usage_sequence_lock:
+            if event.sequence in self._failed_live_usage_sequences:
+                if event.kind == "finished":
+                    self._failed_live_usage_sequences.discard(event.sequence)
+                return
+        sink = self._live_usage_sink
+        if sink is None:
+            return
+        try:
+            sink(event)
+        except BaseException:  # noqa: BLE001 - telemetry cannot affect execution
+            with self._live_usage_sequence_lock:
+                self._failed_live_usage_sequences.add(event.sequence)
+            logger.warning("live usage callback failed; telemetry disabled for event")
 
     @property
     def _submit_loop(self) -> asyncio.AbstractEventLoop:
@@ -3174,8 +3328,111 @@ class _StreamingModelAdapter:
         streaming=False,
         tools=None,
         continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
-        **_ignored,
+        **per_call_kwargs,
     ) -> dict:
+        attributed = getattr(self._thread_loop, "run_scope", None)
+        usage_sequence = self._next_live_usage_sequence() if attributed else None
+        if attributed is not None and usage_sequence is not None:
+            usage_run_id, usage_agent_kind = attributed
+            self._thread_loop.live_usage_sequence = usage_sequence
+            self._emit_live_usage(
+                AgentLiveUsageEvent(
+                    "started",
+                    usage_run_id,
+                    usage_agent_kind,
+                    usage_sequence,
+                    time.monotonic(),
+                )
+            )
+        try:
+            return self._chat_call_impl(
+                messages_payload=messages_payload,
+                model=model,
+                api_endpoint=api_endpoint,
+                streaming=streaming,
+                tools=tools,
+                continuation_groups=continuation_groups,
+                **per_call_kwargs,
+            )
+        finally:
+            if attributed is not None and usage_sequence is not None:
+                try:
+                    self._emit_live_usage(
+                        AgentLiveUsageEvent(
+                            "finished",
+                            usage_run_id,
+                            usage_agent_kind,
+                            usage_sequence,
+                            time.monotonic(),
+                        )
+                    )
+                finally:
+                    with self._live_usage_sequence_lock:
+                        self._failed_live_usage_sequences.discard(usage_sequence)
+
+    def _chat_call_impl(
+        self,
+        *,
+        messages_payload,
+        model=None,
+        api_endpoint=None,
+        streaming=False,
+        tools=None,
+        continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
+        **per_call_kwargs,
+    ) -> dict:
+        """Stream one turn, honoring ADR-147 per-call routing kwargs.
+
+        Task 6 emits a spawned child's resolved target onto every call:
+        ``api_endpoint`` (raw provider id, possibly ``custom-ep:<slug>``),
+        ``model``, ``api_base_url``, and the 13 sampling kwargs mapped by
+        ``_PER_CALL_SAMPLING_RESOLUTION_FIELDS``. An ``api_endpoint`` naming
+        a DIFFERENT provider re-resolves through the gateway's own send
+        seam (``resolve_for_send``) so the bytes stream from the child's
+        provider; a call on the parent's provider overlays only what it
+        carries onto a per-call copy of the parent resolution. A call
+        carrying none of these behaves exactly as before, on
+        ``self._resolution`` itself -- which is never mutated, since the
+        adapter is shared across concurrent children. An unknown/unready
+        per-call provider raises through the same channel as a stream
+        failure, never a silent fallback to the parent. A routed call on a
+        continuation-pinned turn raises the typed ``ContinuationConflictError``
+        from request preparation (the restore target pins the parent's
+        provider/model/base_url) -- loud, through that same channel.
+        """
+        attributed = getattr(self._thread_loop, "run_scope", None)
+        usage_sequence = getattr(self._thread_loop, "live_usage_sequence", None)
+        if attributed is not None:
+            usage_run_id, usage_agent_kind = attributed
+        sampling_overlays = {
+            field: per_call_kwargs.pop(kwarg)
+            for kwarg, field in _PER_CALL_SAMPLING_RESOLUTION_FIELDS.items()
+            if per_call_kwargs.get(kwarg) is not None
+        }
+        api_base_url = per_call_kwargs.pop("api_base_url", None)
+        # Any keys still in per_call_kwargs stay ignored, exactly as before.
+        # Same-target decision keys on the parent's RAW selection identity,
+        # not the flattened execution key: a child explicitly routed to the
+        # built-in family of a custom-ep parent (e.g. `llama_cpp` under
+        # `custom-ep:qwen-local`) is a DIFFERENT target and must resolve the
+        # built-in provider independently, while an inheriting child names
+        # the raw slug and reuses this resolution (qodo PR-2651 High).
+        # Plain providers leave ``selected_provider`` empty and fall through
+        # to the historical execution_key/provider chain unchanged.
+        parent_endpoint = (
+            getattr(self._resolution, "selected_provider", "")
+            or getattr(self._resolution, "execution_key", "")
+            or getattr(self._resolution, "provider", "")
+            or ""
+        )
+        requested_endpoint = str(api_endpoint or "").strip()
+        # "agent" is build_console_first_request_plan's no-identity
+        # fallback, not a provider id: it names THIS resolution by
+        # construction.
+        if requested_endpoint == "agent":
+            requested_endpoint = ""
+        rerouted = bool(requested_endpoint) and requested_endpoint != parent_endpoint
+
         transport_messages = _serialize_project_instruction_rows_for_transport(
             messages_payload, native_tools=self._native_tools
         )
@@ -3256,6 +3513,34 @@ class _StreamingModelAdapter:
                 reasoning_replay=None,
                 local_structured_thinking=False,
             )
+        # ADR-147 Task 6B: per-call sampling/base-url kwargs overlay the
+        # call-local resolution (model already handled above). Only the
+        # dispatch/stream/usage paths read ``effective_resolution``; a
+        # rerouted call re-resolves entirely inside ``_consume``.
+        effective_resolution = call_resolution
+        if (
+            not rerouted
+            and isinstance(call_resolution, ConsoleProviderResolution)
+            and (
+                sampling_overlays
+                or (api_base_url and api_base_url != call_resolution.base_url)
+            )
+        ):
+            # Resolved child params are a complete stack. Clear optional
+            # parent-only knobs that are absent from it; legacy calls with no
+            # sampling kwargs retain their existing resolution behavior.
+            overlays = (
+                dict.fromkeys(_PER_CALL_SAMPLING_RESOLUTION_FIELDS.values())
+                if is_subagent and sampling_overlays
+                else {}
+            )
+            overlays.update(sampling_overlays)
+            if api_base_url and api_base_url != call_resolution.base_url:
+                overlays["base_url"] = str(api_base_url)
+            if overlays:
+                effective_resolution = dataclass_replace(
+                    call_resolution, **overlays
+                )
         call_continuation_target = self._continuation_target
         if is_subagent and call_continuation_target is not None:
             call_continuation_target = dataclass_replace(
@@ -3266,6 +3551,7 @@ class _StreamingModelAdapter:
         native_calls: list[dict] = []
         terminal_metadata: ProviderTurnMetadata | None = None
         call_signals: ConsoleProviderCallSignals | None = None
+        live_provider_usage_enabled = True
         gateway_signals: (
             ConsoleProviderStreamSignals | ConsoleProviderCallSignals | None
         ) = self._provider_stream_signals
@@ -3278,7 +3564,18 @@ class _StreamingModelAdapter:
 
         @agent_async_worker_guard(self)
         async def _consume() -> None:
-            nonlocal any_streamed, terminal_metadata
+            nonlocal any_streamed, terminal_metadata, effective_resolution, live_provider_usage_enabled
+            if rerouted:
+                # Task 6B: the child names a provider other than the
+                # parent's -- re-resolve through the gateway's send seam
+                # BEFORE anything prepares or streams, so the whole turn
+                # (request preparation included) speaks to the child.
+                effective_resolution = await self._resolve_routed_resolution(
+                    provider=requested_endpoint,
+                    model=model,
+                    api_base_url=api_base_url,
+                    sampling_overlays=sampling_overlays,
+                )
             # Forwarding `tools=` only when it is non-None (rather than
             # always passing the keyword, even as None) keeps every
             # pre-Task-5 gateway fake elsewhere in the test suite — whose
@@ -3315,7 +3612,7 @@ class _StreamingModelAdapter:
                 if not callable(prepare_request):
                     raise ValueError("Capture On agent gateway cannot prepare requests")
                 dispatch_messages = prepare_request(
-                    call_resolution,
+                    effective_resolution,
                     self._trace_request_factory.build(
                         semantic_messages,
                         tools=tools or (),
@@ -3336,7 +3633,7 @@ class _StreamingModelAdapter:
                 stream_kwargs.pop("tools", None)
             elif continuation_groups and callable(prepare_request):
                 dispatch_messages = prepare_request(
-                    call_resolution,
+                    effective_resolution,
                     build_console_request(
                         semantic_messages,
                         tools=tools or (),
@@ -3360,7 +3657,7 @@ class _StreamingModelAdapter:
                 # The constructor sidecar belongs to the primary turn. A
                 # child has its own history and must never consume it.
                 dispatch_messages = prepare_request(
-                    call_resolution,
+                    effective_resolution,
                     transport_messages,
                     tools=tools,
                     route=route,
@@ -3379,6 +3676,14 @@ class _StreamingModelAdapter:
                 stream_kwargs.pop("tools", None)
             if gateway_signals is not None:
                 stream_kwargs["signals"] = gateway_signals
+            emission_synthetic: bool | None = None
+
+            def observe_emission(synthetic: bool) -> None:
+                nonlocal emission_synthetic
+                emission_synthetic = synthetic
+
+            if isinstance(self._gateway, ConsoleProviderGateway):
+                stream_kwargs["emission_observer"] = observe_emission
             owner_session_id = self._store.session_id_for_message(
                 self._assistant_message_id
             )
@@ -3389,7 +3694,7 @@ class _StreamingModelAdapter:
                     and not self._store.session_is_ephemeral(owner_session_id)
                 ),
                 may_emit_thinking=bool(
-                    getattr(call_resolution, "may_emit_thinking", False)
+                    getattr(effective_resolution, "may_emit_thinking", False)
                 ),
             )
             from tldw_chatbook.Chat.stream_stall_watchdog import (
@@ -3398,7 +3703,7 @@ class _StreamingModelAdapter:
 
             async for chunk in watch_content_stalls(
                 self._gateway.stream_chat(
-                    call_resolution,
+                    effective_resolution,
                     dispatch_messages,
                     route=route,
                     route_actor_id=route_actor_id,
@@ -3407,14 +3712,32 @@ class _StreamingModelAdapter:
                     **stream_kwargs,
                 ),
                 _stall_timeout_seconds(),
-                provider=call_resolution.provider,
+                provider=effective_resolution.provider,
             ):
+                synthetic = emission_synthetic is True
+                emission_synthetic = None
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
                 if isinstance(
                     chunk,
                     (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
                 ):
+                    if (
+                        isinstance(chunk, ProviderThinkingDelta)
+                        and attributed is not None
+                    ):
+                        thinking_text = getattr(chunk, "text", None)
+                        if isinstance(thinking_text, str) and thinking_text:
+                            self._emit_live_usage(
+                                AgentLiveUsageEvent(
+                                    "text",
+                                    usage_run_id,
+                                    usage_agent_kind,
+                                    usage_sequence,
+                                    time.monotonic(),
+                                    text=thinking_text,
+                                )
+                            )
                     call_capture.observe(chunk)
                     if not is_subagent:
                         update = self._thinking_capture.observe(chunk)
@@ -3442,6 +3765,47 @@ class _StreamingModelAdapter:
                         break
                     continue
                 visible = gate.feed(chunk)
+                if (
+                    isinstance(chunk, str)
+                    and chunk
+                    and attributed is not None
+                    and not synthetic
+                ):
+                    self._emit_live_usage(
+                        AgentLiveUsageEvent(
+                            "text",
+                            usage_run_id,
+                            usage_agent_kind,
+                            usage_sequence,
+                            time.monotonic(),
+                            text=chunk,
+                        )
+                    )
+                if (
+                    live_provider_usage_enabled
+                    and call_signals is not None
+                    and attributed is not None
+                ):
+                    try:
+                        partial_usage = call_signals.usage_snapshot()
+                        partial_count = self._provider_output_count(partial_usage)
+                        if partial_count is not None:
+                            self._emit_live_usage(
+                                AgentLiveUsageEvent(
+                                    "provider_usage",
+                                    usage_run_id,
+                                    usage_agent_kind,
+                                    usage_sequence,
+                                    time.monotonic(),
+                                    provider_output_tokens=partial_count,
+                                )
+                            )
+                    except Exception:  # noqa: BLE001 — optional observation only
+                        live_provider_usage_enabled = False
+                        logger.warning(
+                            "live provider usage observation failed; "
+                            "telemetry disabled for call"
+                        )
                 if visible and not is_subagent:
                     self._thinking_capture.observe_answer(visible)
                     self._store.append_stream_chunk(self._assistant_message_id, visible)
@@ -3549,23 +3913,29 @@ class _StreamingModelAdapter:
         # turn completes with the usage simply missing, and the cause is
         # logged.
         usage: dict[str, Any] | None = None
+        raw_usage_payload: object = None
+        provider_count: int | None = None
         try:
-            usage_payload = (
+            raw_usage_payload = (
                 terminal_metadata.usage if terminal_metadata is not None else None
             )
+            if raw_usage_payload is None and call_signals is not None:
+                raw_usage_payload = call_signals.usage_snapshot()
             usage = _openai_usage_from_provider_call(
-                usage_payload,
-                provider=call_resolution.provider,
-                model=call_resolution.model or "",
+                raw_usage_payload,
+                provider=effective_resolution.provider,
+                model=effective_resolution.model or model or "",
             )
             if usage is None and call_signals is not None:
                 usage = _openai_usage_from_provider_call(
                     call_signals.usage_snapshot(),
-                    provider=call_resolution.provider,
-                    model=call_resolution.model or "",
+                    provider=effective_resolution.provider,
+                    model=effective_resolution.model or model or "",
                 )
+            provider_count = self._provider_output_count(raw_usage_payload)
         except Exception as exc:  # noqa: BLE001 — observability is never fatal
             usage = None
+            provider_count = None
             logger.warning(
                 "usage accounting failed after a successful provider turn; "
                 "completing the turn without usage (exception_type={})",
@@ -3573,10 +3943,92 @@ class _StreamingModelAdapter:
             )
         if usage is not None:
             response["usage"] = usage
+        if attributed is not None and provider_count is not None:
+            self._emit_live_usage(
+                AgentLiveUsageEvent(
+                    "provider_usage",
+                    usage_run_id,
+                    usage_agent_kind,
+                    usage_sequence,
+                    time.monotonic(),
+                    provider_output_tokens=provider_count,
+                )
+            )
         call_envelope = call_capture.settle(
             "stopped" if stream_cut() else "complete"
         ).envelope
-        return _StreamingProviderResponse(response, terminal_metadata, call_envelope)
+        result = _StreamingProviderResponse(response, terminal_metadata, call_envelope)
+        return result
+
+    @staticmethod
+    def _provider_output_count(usage: object) -> int | None:
+        if not isinstance(usage, Mapping):
+            return None
+        for key in ("output_tokens", "completion_tokens"):
+            value = usage.get(key)
+            if type(value) is int and value >= 0:
+                return value
+        return None
+
+    async def _resolve_routed_resolution(
+        self,
+        *,
+        provider: str,
+        model: str | None,
+        api_base_url: str | None,
+        sampling_overlays: Mapping[str, Any],
+    ) -> ConsoleProviderResolution:
+        """Re-resolve a per-call provider target through the gateway's send seam.
+
+        Runs inside ``_consume`` on the run's loop because
+        ``resolve_for_send`` is async (the direct-llama path probes
+        reachability). The seam is custom-ep aware per ADR-146, so a
+        ``custom-ep:<slug>`` id resolves through its registry entry's family
+        and credential. Re-resolving per call -- never caching -- matches
+        Console's per-send discipline: a credential or readiness change
+        between turns takes effect on the very next call.
+
+        Args:
+            provider: Raw per-call provider id (possibly ``custom-ep:<slug>``).
+            model: Per-call model, or None to fall back to the provider's
+                configured default.
+            api_base_url: Per-call endpoint override, or None.
+            sampling_overlays: Provided sampling values keyed by
+                ``ConsoleProviderSelection`` field name.
+
+        Returns:
+            The child's ready, model-pinned resolution.
+
+        Raises:
+            RuntimeError: If the gateway cannot re-resolve sends, or the
+                target does not resolve ready with a model -- never a
+                silent fallback to the parent resolution.
+        """
+        resolve_for_send = getattr(self._gateway, "resolve_for_send", None)
+        if not callable(resolve_for_send):
+            # RuntimeError, not TypeError: no argument has a wrong type --
+            # the gateway lacks a capability routing needs.
+            raise RuntimeError(  # noqa: TRY004
+                f"sub-agent provider routing to '{provider}' needs a gateway "
+                "that resolves sends; this gateway cannot"
+            )
+        resolved = await resolve_for_send(
+            ConsoleProviderSelection(
+                provider=provider,
+                base_url=str(api_base_url) if api_base_url else None,
+                base_url_is_pinned=bool(api_base_url),
+                explicit_model=str(model) if model else None,
+                **sampling_overlays,
+            )
+        )
+        if not getattr(resolved, "ready", False) or not getattr(resolved, "model", None):
+            visible_copy = getattr(resolved, "visible_copy", "") or (
+                f"provider '{provider}' did not resolve a ready model"
+            )
+            raise RuntimeError(
+                f"sub-agent provider routing failed for '{provider}': {visible_copy}"
+            )
+        return resolved
 
     @staticmethod
     def _is_subagent(messages_payload) -> bool:
@@ -4181,6 +4633,11 @@ class ConsoleFirstRequestPlan:
     messages: list[dict]
     api_endpoint: str
     profile_context_snapshot: ProfileContextSnapshot
+    # Raw selection id before family flattening (``custom-ep:<slug>`` when
+    # the session's provider names a registry endpoint; otherwise equals
+    # ``api_endpoint``). Spawn resolution uses it as ``parent_provider`` so
+    # an inheriting child snapshots the endpoint, not the execution family.
+    selected_provider: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -4279,14 +4736,10 @@ def build_console_first_request_plan(
         turn_bundle_block: Exact automatic context rider for the next request.
         install_skill_enabled: Whether the skill installer is available.
         run_skill_script_enabled: Whether skill scripts are available.
-        worktree_merge_enabled: Whether a run-entry confirm surface exists to
-            approve merge_agent_worktree/discard_agent_worktree (TASK-28238
-            phase 2 Task 7 ruling) -- the two preview call sites,
-            `build_project_instruction_preview_request` and
-            `build_personal_context_preview_snapshot`, intentionally omit
-            this today since no production confirm surface exists yet; the
-            future UI-card task must thread it there too for preview/live
-            parity.
+        worktree_merge_enabled: Whether the actual worktree confirmation
+            surface is available. Both Console preview paths and live dispatch
+            pass the same surface gate to this shared planner so worktree tool
+            disclosure matches the live first request.
         agent_messages: Exact conversation messages before optional riders.
         agent_definitions: Named sub-agent definitions available this turn.
         fleet_max_live: Maximum simultaneously live agents for this run.
@@ -4370,6 +4823,13 @@ def build_console_first_request_plan(
         or getattr(resolution, "provider", "")
         or "agent"
     )
+    # Raw selection identity (custom-ep:<slug>) rides alongside the flattened
+    # execution key: spawn resolution and the adapter's same-target decision
+    # must never conflate a registry endpoint with its execution family
+    # (qodo PR-2651 High). Falls back to api_endpoint for fakes/plain ids.
+    selected_provider = (
+        str(getattr(resolution, "selected_provider", "") or "") or api_endpoint
+    )
     run_log = build_run_log_request_plan()
     direct_prompt = compose_agent_system_prompt(
         session_system_prompt,
@@ -4437,7 +4897,9 @@ def build_console_first_request_plan(
         run_log_active=run_log.requested,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
-        progress_available=progress_inbox_exists,
+        # Live fleet construction opens an inbox before the first request.
+        # Reserve that schema without allocating anything for a preview.
+        progress_available=progress_inbox_exists or fleet_max_live > 1,
         worktree_merge_enabled=worktree_merge_enabled,
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
@@ -4542,6 +5004,7 @@ def build_console_first_request_plan(
         messages=messages,
         api_endpoint=api_endpoint,
         profile_context_snapshot=profile_snapshot,
+        selected_provider=selected_provider,
     )
 
 
@@ -4685,6 +5148,7 @@ class ConsoleAgentBridge:
         # default, and every pre-existing construction site -- i.e. all test
         # harnesses) means this bridge never wires a hooks engine at all.
         ensure_run_hooks: Callable[[], Any] | None = None,
+        app_config: Mapping[str, Any] | None = None,
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
@@ -4705,11 +5169,21 @@ class ConsoleAgentBridge:
             self._store.register_progress_message_store(message_store)
         self._gateway = provider_gateway
         self._clock = clock
+        self._live_usage_lock = threading.Lock()
+        self._live_turn_usage: dict[str, _LiveTurnUsageAccumulator] = {}
+        self._live_usage_owners: dict[str, tuple[str, str, str]] = {}
+        self._live_usage_closed = False
         self._raw_shell_marker_lock = threading.Lock()
         self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
         self._ensure_run_hooks = ensure_run_hooks
+        # ADR-147: forwarded to every AgentService this bridge builds; None
+        # (every production site) leaves the service on its live
+        # ``load_settings()`` fallback. Tests inject a fake-key mapping so
+        # the spawn resolver's readiness gate does not depend on host
+        # credentials.
+        self._app_config = app_config
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -4998,6 +5472,9 @@ class ConsoleAgentBridge:
         skills_context: Mapping[str, Any] | None = None,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
+        worktree_merge_enabled: bool = False,
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         profile_provider: Any | None = None,
@@ -5062,8 +5539,9 @@ class ConsoleAgentBridge:
                 self._skills_service is not None and request_skill_install_enabled
             ),
             run_skill_script_enabled=script_tool_enabled,
-            fork_chat_enabled=bool(fork_chat_tool is not None),
-            new_chat_enabled=bool(new_chat_tool is not None),
+            fork_chat_enabled=fork_chat_enabled,
+            new_chat_enabled=new_chat_enabled,
+            worktree_merge_enabled=worktree_merge_enabled,
             agent_messages=agent_messages,
             agent_definitions=runtime_definitions,
             fleet_max_live=fleet_max_live,
@@ -5109,6 +5587,7 @@ class ConsoleAgentBridge:
     def build_personal_context_preview_snapshot(
         self,
         *,
+        session_id: str | None = None,
         workspace_id: str | None,
         ephemeral: bool,
         resolution: Any,
@@ -5118,6 +5597,8 @@ class ConsoleAgentBridge:
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
         local_provider: Any | None = None,
+        virtual_cli_provider: Any | None = None,
+        raw_shell_provider: Any | None = None,
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         profile_provider: Any | None = None,
@@ -5127,6 +5608,9 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
+        worktree_merge_enabled: bool = False,
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         profile_context_service: Any | None = None,
     ) -> ProfileContextSnapshot:
         """Build the exact reserved profile snapshot for disposable Next Send."""
@@ -5146,6 +5630,8 @@ class ConsoleAgentBridge:
             )
 
             script_tool_enabled = sandbox_supported()
+        run_budget = console_run_budget()
+        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(self._db, run_budget)
         plan = build_console_first_request_plan(
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
@@ -5154,6 +5640,8 @@ class ConsoleAgentBridge:
             mcp_provider=mcp_provider,
             builtin_gate=builtin_gate,
             local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
             library_provider=library_provider,
             library_authority=library_authority,
             profile_provider=profile_provider,
@@ -5172,8 +5660,18 @@ class ConsoleAgentBridge:
                 self._skills_service is not None and request_skill_install_enabled
             ),
             run_skill_script_enabled=script_tool_enabled,
+            fork_chat_enabled=fork_chat_enabled,
+            new_chat_enabled=new_chat_enabled,
+            worktree_merge_enabled=worktree_merge_enabled,
             agent_messages=agent_messages,
+            agent_definitions=runtime_definitions,
+            fleet_max_live=fleet_max_live,
+            run_budget=run_budget,
             profile_context_service=profile_context_service,
+            progress_inbox_exists=(
+                session_id is not None
+                and self._session_progress_inbox(session_id) is not None
+            ),
         )
         return plan.profile_context_snapshot
 
@@ -5204,14 +5702,16 @@ class ConsoleAgentBridge:
         # PR2a Task 5: `(calls, run_id)` -- forwarded straight to
         # `AgentService(review_tool_calls=...)`, which binds each run's own
         # id in before handing it to `LoopDeps`.
-        review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
-        | None = None,
+        review_tool_calls: (
+            Callable[[list[ToolCall], str], dict[str, ToolReviewValue]] | None
+        ) = None,
         on_steer_ready: Callable[[Callable[[str], str | None]], None] | None = None,
         # TASK-28227: fired once the run's mailbox registers, with a bound
         # `redirect(text) -> refusal | None` -- the Redirect button's and
         # /redirect's hook, exactly like on_steer_ready is /steer's.
         on_redirect_ready: Callable[[Callable[[str], str | None]], None] | None = None,
         change_roots: Sequence[Path] | None = None,
+        worktree_repo_authority: RunAdmittedWorkspaceRoot | None = None,
         change_root_aliases: Sequence[str] = (),
         change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
         turn_skill_bindings: tuple[str, ...] = (),
@@ -5975,6 +6475,10 @@ class ConsoleAgentBridge:
         # one key, so an earlier turn's surviving child -- which writes
         # under its OWN run id -- can never land in it.
         primary_live_key = uuid4().hex
+        adapter._live_usage_sink = functools.partial(
+            self._observe_live_usage,
+            conversation_id=conversation_id,
+        )
         child_change_state = _ChildChangeState(
             owner_key=primary_live_key,
             survivor_key=assistant_message_id,
@@ -6509,6 +7013,7 @@ class ConsoleAgentBridge:
                 on_bound=functools.partial(
                     self._remember_run_log_authority,
                     session_id=session_id,
+                    conversation_id=conversation_id,
                     access_scope=scratch_lease,
                 ),
             )
@@ -6581,7 +7086,9 @@ class ConsoleAgentBridge:
             runtime_capacity=self.runtime_capacity,
             work_origin=work_origin,
             work_chain_id=work_chain_id,
+            worktree_repo_authority=worktree_repo_authority,
             clock=self._clock,
+            app_config=self._app_config,
             on_step=on_step,
             # TASK-25903: hands the controller a steer(text) bound to THIS
             # run once its mailbox registers -- run ids are minted inside
@@ -6609,7 +7116,15 @@ class ConsoleAgentBridge:
             revoke_approvals=revoke_approvals,
             on_tool_terminal=on_tool_terminal,
             on_tool_result_terminal=on_tool_result_terminal,
-            on_run_terminal=on_run_terminal,
+            on_run_terminal=lambda run_id: self._on_live_run_terminal(
+                run_id, on_run_terminal
+            ),
+            run_model_scope=functools.partial(
+                self._live_usage_run_scope,
+                adapter,
+                conversation_id,
+                primary_live_key,
+            ),
             persist_provider_continuation=(
                 self._store.persist_provider_continuation_event
             ),
@@ -6726,6 +7241,10 @@ class ConsoleAgentBridge:
                 # attribute (e.g. resolution=object() in existing tests),
                 # which keeps them on the fence path unchanged.
                 api_endpoint=first_request_plan.api_endpoint,
+                # Raw selection identity for spawn resolution: an inheriting
+                # child of custom-ep:<slug> must snapshot the endpoint (and
+                # its registry base URL), not the flattened execution family.
+                parent_raw_provider=first_request_plan.selected_provider,
                 should_cancel=should_cancel,
                 supersede_run_id=supersede_run_id,
                 continuation_owner_message_id=assistant_message_id,
@@ -7988,6 +8507,10 @@ class ConsoleAgentBridge:
             if self._message_store is not None:
                 self._message_store.close()
             self._fleet_coordinators.clear()
+        with self._live_usage_lock:
+            self._live_usage_closed = True
+            self._live_turn_usage.clear()
+            self._live_usage_owners.clear()
 
     def _conversation_fleet_coordinator(
         self,
@@ -8193,16 +8716,16 @@ class ConsoleAgentBridge:
     # -- rail reads -----------------------------------------------------
 
     def live_primary_run_id(self, conversation_id: str) -> str | None:
-        """task-31386: the primary run last seen stepping in ``conversation_id``.
+        """task-31386: the primary run last bound or stepping in ``conversation_id``.
 
-        In-memory only (memoised by ``on_step``), so a run from a previous
+        In-memory only (memoised at log binding and by ``on_step``), so a run from a previous
         process is unknown here; callers fall back to the durable lookup.
 
         Args:
             conversation_id: The conversation to look up.
 
         Returns:
-            The run id, or None when no primary step has been seen.
+            The run id, or None when no primary binding or step has been seen.
         """
         return self._live_primary_runs.get(conversation_id)
 
@@ -8243,6 +8766,14 @@ class ConsoleAgentBridge:
             self._live_primary_keys.get(conversation_id, ""),
             AgentLiveSnapshot(),
         )
+        primary_run_id = self._live_primary_runs.get(conversation_id)
+        if primary_run_id is not None:
+            snapshot = dataclass_replace(
+                snapshot,
+                turn_usage=self._live_usage_snapshot(
+                    primary_run_id, conversation_id=conversation_id
+                ),
+            )
         handles = self._conversation_fleet_handles(conversation_id)
         if not handles:
             return snapshot
@@ -8305,11 +8836,144 @@ class ConsoleAgentBridge:
                 on its ``FleetHandle``/its ``agent_runs`` row.
 
         Returns:
-            That run's last published snapshot, or ``None`` when this
-            bridge has never seen a step for it (never ran here, ran in a
-            previous process, or its slot has since been pruned).
+            That run's last published step snapshot, or a running snapshot
+            carrying pre-step live usage. Returns ``None`` when neither is
+            available in this process or the slot has since been pruned.
         """
-        return (self._live.get(conversation_id) or {}).get(run_id)
+        snapshot = (self._live.get(conversation_id) or {}).get(run_id)
+        usage = self._live_usage_snapshot(run_id, conversation_id=conversation_id)
+        if snapshot is None:
+            return (
+                AgentLiveSnapshot(status="running", turn_usage=usage)
+                if usage is not None
+                else None
+            )
+        return dataclass_replace(snapshot, turn_usage=usage)
+
+    def _live_usage_snapshot(
+        self, run_id: str, *, conversation_id: str | None = None
+    ) -> AgentLiveTurnUsage | None:
+        with self._live_usage_lock:
+            owner = self._live_usage_owners.get(run_id)
+            if conversation_id is not None and (
+                owner is None or owner[0] != conversation_id
+            ):
+                return None
+            if (
+                conversation_id is not None
+                and owner is not None
+                and owner[1] == AGENT_KIND_PRIMARY
+                and self._live_primary_keys.get(conversation_id) != owner[2]
+            ):
+                return None
+            accumulator = self._live_turn_usage.get(run_id)
+            return accumulator.published if accumulator is not None else None
+
+    @contextlib.contextmanager
+    def _live_usage_run_scope(
+        self,
+        adapter: _StreamingModelAdapter,
+        conversation_id: str,
+        primary_live_key: str,
+        run_id: str,
+        agent_kind: str,
+    ):
+        owner = (conversation_id, agent_kind, primary_live_key)
+        with self._live_usage_lock:
+            registered = not self._live_usage_closed
+            if registered:
+                self._live_usage_owners[run_id] = owner
+        try:
+            with adapter.run_scope(run_id, agent_kind):
+                yield
+        finally:
+            with self._live_usage_lock:
+                if registered and self._live_usage_owners.get(run_id) == owner:
+                    self._live_usage_owners.pop(run_id, None)
+                    self._live_turn_usage.pop(run_id, None)
+
+    def _on_live_run_terminal(
+        self,
+        run_id: str,
+        callback: Callable[[str], object] | None,
+    ) -> None:
+        with self._live_usage_lock:
+            self._live_usage_owners.pop(run_id, None)
+            self._live_turn_usage.pop(run_id, None)
+        if callback is not None:
+            callback(run_id)
+
+    def _clear_live_usage(self, run_id: str) -> None:
+        with self._live_usage_lock:
+            self._live_turn_usage.pop(run_id, None)
+
+    def _observe_live_usage(
+        self,
+        event: AgentLiveUsageEvent,
+        *,
+        conversation_id: str | None = None,
+    ) -> None:
+        """Fold a content-bearing event into bounded scalar active-run state."""
+        with self._live_usage_lock:
+            if self._live_usage_closed:
+                return
+            owner = self._live_usage_owners.get(event.run_id)
+            if (
+                owner is None
+                or owner[0] != conversation_id
+                or owner[1] != event.agent_kind
+                or (
+                    event.agent_kind == AGENT_KIND_PRIMARY
+                    and self._live_primary_keys.get(conversation_id) != owner[2]
+                )
+            ):
+                return
+            current = self._live_turn_usage.get(event.run_id)
+            if event.kind == "started":
+                if current is not None and event.sequence <= current.sequence:
+                    return
+                self._live_turn_usage[event.run_id] = _LiveTurnUsageAccumulator(
+                    sequence=event.sequence, started_at=event.observed_at
+                )
+                current = self._live_turn_usage[event.run_id]
+            elif current is None or current.sequence != event.sequence:
+                return
+            if event.kind == "finished":
+                self._live_turn_usage.pop(event.run_id, None)
+                return
+            if event.kind == "text":
+                current.received_utf8_bytes += len(event.text.encode("utf-8"))
+            elif event.kind == "provider_usage":
+                value = event.provider_output_tokens
+                if type(value) is int and value >= 0:
+                    current.provider_output_tokens = value
+            value: int | None
+            source: LiveUsageSource
+            if current.provider_output_tokens is not None:
+                value = current.provider_output_tokens
+                source = "provider"
+            elif current.received_utf8_bytes:
+                value = (current.received_utf8_bytes + 3) // 4
+                source = "local"
+            else:
+                value = None
+                source = "local"
+            if value is None:
+                return
+            if (
+                current.last_published_at is None
+                or event.observed_at - current.last_published_at >= 1.0
+            ):
+                current.published = AgentLiveTurnUsage(
+                    value, source, current.started_at, current.sequence
+                )
+                current.last_published_at = event.observed_at
+            if (
+                conversation_id is not None
+                and event.agent_kind == AGENT_KIND_PRIMARY
+                and self._live_primary_keys.get(conversation_id) == owner[2]
+            ):
+                self._live_primary_runs[conversation_id] = event.run_id
 
     def _publish_live(
         self,
@@ -8360,9 +9024,6 @@ class ConsoleAgentBridge:
         reason `prune_terminal` is not: this turn's own children must stay
         readable until it ends.
         """
-        slots = self._live.get(conversation_id)
-        if not slots:
-            return
         keep = {
             handle.run_id
             for handle in self._conversation_fleet_handles(conversation_id)
@@ -8371,8 +9032,22 @@ class ConsoleAgentBridge:
         primary_key = self._live_primary_keys.get(conversation_id)
         if primary_key is not None:
             keep.add(primary_key)
-        for key in [k for k in slots if k not in keep]:
-            slots.pop(key, None)
+        slots = self._live.get(conversation_id)
+        if slots:
+            for key in [k for k in slots if k not in keep]:
+                slots.pop(key, None)
+                self._clear_live_usage(key)
+        with self._live_usage_lock:
+            for run_id, owner in list(self._live_usage_owners.items()):
+                if owner[0] != conversation_id:
+                    continue
+                owner_is_current_primary = (
+                    owner[1] == AGENT_KIND_PRIMARY and owner[2] == primary_key
+                )
+                if owner_is_current_primary or run_id in keep:
+                    continue
+                self._live_usage_owners.pop(run_id, None)
+                self._live_turn_usage.pop(run_id, None)
 
     def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
         """Read-only view of the REAL, live fleet for one conversation.
@@ -8664,6 +9339,32 @@ class ConsoleAgentBridge:
             )
         return record
 
+    def run_log_target_token(
+        self, conversation_id: str
+    ) -> tuple[str | None, str | None]:
+        """Return process-local turn/run identity; never reads the database."""
+        return (
+            self._live_primary_keys.get(conversation_id),
+            self._live_primary_runs.get(conversation_id),
+        )
+
+    def resolve_run_log_target(
+        self, conversation_id: str, drill_id: str | None
+    ) -> str | None:
+        """Resolve a log selection using metadata only. Call from a worker."""
+        if not conversation_id:
+            return None
+        if drill_id:
+            record = self._db.get_run_metadata(drill_id)
+            if (
+                record is not None
+                and record.get("conversation_id") == conversation_id
+                and record.get("agent_kind") == AGENT_KIND_SUBAGENT
+            ):
+                return drill_id
+            return None
+        return self.latest_primary_run_id(conversation_id)
+
     def latest_primary_run_id(self, conversation_id: str) -> str | None:
         """Return the most recent non-superseded PRIMARY run's id, if any.
 
@@ -8695,6 +9396,7 @@ class ConsoleAgentBridge:
         *,
         session_id: str,
         access_scope: Callable[[], ContextManager[Path]],
+        conversation_id: str | None = None,
     ) -> None:
         """Remember one live Console run-log root without persisting it."""
         authority = _ConsoleRunLogAuthority(
@@ -8704,6 +9406,8 @@ class ConsoleAgentBridge:
         )
         with self._run_log_authority_lock:
             self._run_log_authorities[str(run_id)] = authority
+        if conversation_id is not None:
+            self._live_primary_runs[conversation_id] = str(run_id)
 
     def forget_session_file_authority(self, session_id: str) -> None:
         """Forget every scratch-adjacent run-log locator for a closed Chat."""
@@ -8751,45 +9455,71 @@ class ConsoleAgentBridge:
             rather than a lookup error); its ``parent_run_id`` when it is
             a recorded sub-agent run.
         """
-        record = self.subagent_run(run_id)
+        record = self._db.get_run_metadata(run_id)
         parent_run_id = record.get("parent_run_id") if record else None
         return parent_run_id or run_id
 
-    def run_log_available(self, run_id: str) -> bool:
-        """Whether an on-disk run log exists for ``run_id``.
+    def run_log_available(
+        self, run_id: str, *, cancelled: Callable[[], bool] | None = None
+    ) -> bool:
+        """Confirm a complete matching record using bounded metadata chunks.
 
-        TASK-870 (AC#6/#7): gates the Console's "View full log" affordance
-        -- present only when this is ``True``, absent (not merely disabled)
-        otherwise, so the button can never dangle on a run that has nothing
-        to show (logging disabled, no root resolvable, or a run so short it
-        never wrote a single record).
-
-        Review finding B: ``run_id`` may name a sub-agent run, whose
-        records live inside its PRIMARY's log directory rather than one of
-        its own (see ``_owning_run_id_for_log``). For a primary run this is
-        exactly the pre-fix check (directory exists and holds a segment
-        file); for a sub-agent, that same directory check only proves the
-        PRIMARY logged something -- this additionally confirms at least one
-        record in it actually carries the sub-agent's own run id, so the
-        affordance never appears for a sub-agent that itself never
-        produced a single logged step even though its primary did.
-
-        Args:
-            run_id: The run's id (``AgentRunsDB`` run id, matches
-                ``RunLogRecord.run_id``).
-
-        Returns:
-            ``True`` when a log exists for ``run_id`` -- its own directory
-            for a primary run, or at least one tagged record within its
-            owning primary's directory for a sub-agent run.
+        Call from a worker: a child's first record may follow many chunks.
+        Each chunk reacquires the captured owner's lease so revocation stops
+        an ongoing probe before the next chunk. No bodies are retained.
         """
-        from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+        owner = self._owning_run_id_for_log(run_id)
+        authority = self._run_log_authority_for(owner)
+        cursor = None
+        while True:
+            if cancelled is not None and cancelled():
+                return False
+            page = self._read_run_log_page(
+                run_id, owner, authority, cursor=cursor, metadata_only=True
+            )
+            if page is None:
+                return False
+            if page.slices:
+                return True
+            if page.next_cursor is None:
+                return False
+            cursor = page.next_cursor
 
-        owner_run_id = self._owning_run_id_for_log(run_id)
-        authority = self._run_log_authority_for(owner_run_id)
+    def load_run_log_page(
+        self, run_id: str, *, cursor: RunLogPageCursor | None = None
+    ) -> RunLogPage | None:
+        """Load one bounded page under the owning primary's scratch lease."""
+        owner = self._owning_run_id_for_log(run_id)
+        return self._read_run_log_page(
+            run_id, owner, self._run_log_authority_for(owner), cursor=cursor
+        )
+
+    def _read_run_log_page(
+        self,
+        run_id: str,
+        owner: str,
+        authority: _ConsoleRunLogAuthority | None,
+        *,
+        cursor: RunLogPageCursor | None,
+        metadata_only: bool = False,
+    ) -> RunLogPage | None:
+        from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+        from tldw_chatbook.Agents.run_log_paging import (
+            load_record_metadata_page,
+            load_record_page,
+        )
+        from tldw_chatbook.Chat.console_scratch_space import (
+            ConsoleScratchSpaceUnavailable,
+        )
+
         if self._store is not None and authority is None:
-            return False
+            return None
         try:
+            if (
+                authority is not None
+                and self._run_log_authority_for(owner) is not authority
+            ):
+                return None
             access_scope = (
                 authority.access_scope
                 if authority is not None
@@ -8797,18 +9527,18 @@ class ConsoleAgentBridge:
             )
             with access_scope():
                 log_dir = resolve_existing_log_dir(
-                    owner_run_id,
-                    root=(authority.root if authority is not None else None),
+                    owner, root=authority.root if authority is not None else None
                 )
                 if log_dir is None:
-                    return False
-                if owner_run_id == run_id:
-                    return True
-                from tldw_chatbook.Agents.run_log_search import load_records
-
-                return any(record.run_id == run_id for record in load_records(log_dir))
-        except Exception:  # noqa: BLE001 -- stale authority fails closed
-            return False
+                    return None
+                loader = (
+                    load_record_metadata_page if metadata_only else load_record_page
+                )
+                return loader(
+                    log_dir, cursor=cursor, run_id=run_id if owner != run_id else None
+                )
+        except (OSError, ConsoleScratchSpaceUnavailable):
+            return None
 
     def load_run_log_text(self, run_id: str) -> str:
         """Render ``run_id``'s full, untruncated run log for display.

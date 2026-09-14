@@ -164,6 +164,193 @@ def test_publication_reserves_events_before_changing_targets(tmp_path, monkeypat
     assert "publication_started" not in events
 
 
+def test_large_restore_observer_preserves_calls_errors_and_restores_originals(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import tldw_chatbook.Backup_Recovery as package
+    from Tests.Backup_Recovery.thread_diagnostics import observe_large_restore
+
+    token = object()
+    failure = ValueError("private-exception-text")
+    received = []
+    path = tmp_path / "timings.json"
+
+    def original(*args, **kwargs):
+        received.append((args, kwargs))
+        return token
+
+    def failing(*args, **kwargs):
+        raise failure
+
+    staging = SimpleNamespace(require_capacity=original, _copy=failing, stage_restore=original)
+    publication = SimpleNamespace(publish_candidate=original, finalize_candidate=original)
+    owner = SimpleNamespace(validate=original)
+    monkeypatch.setattr(package, "staging", staging)
+    monkeypatch.setattr(package, "publication", publication)
+    monkeypatch.setattr(package, "recovery_files", SimpleNamespace(_RawDeclaration=owner))
+    stop = observe_large_restore(path)
+    try:
+        assert staging.require_capacity(token, private_argument=token) is token  # nosec B101
+        assert received == [((token,), {"private_argument": token})]  # nosec B101
+        with pytest.raises(ValueError) as caught:
+            staging._copy(token)
+        assert caught.value is failure  # nosec B101
+        assert staging.stage_restore() is token  # nosec B101
+        assert publication.publish_candidate() is token  # nosec B101
+        assert publication.finalize_candidate() is token  # nosec B101
+    finally:
+        stop()
+    data = json.loads(path.read_text())
+    assert data["calls"]["copy"]["failed"] == 1  # nosec B101
+    assert data["calls"]["copy"]["completed"] == 1  # nosec B101
+    assert data["calls"]["copy"]["active"] == 0  # nosec B101
+    assert [row["phase"] for row in data["phases"]] == [  # nosec B101
+        "stage_started", "stage_finished", "publication_started", "publication_finished",
+        "finalization_started", "finalization_finished",
+    ]
+    assert "private" not in path.read_text()  # nosec B101
+    assert staging.require_capacity is original and staging._copy is failing  # nosec B101
+    assert owner.validate is original and publication.publish_candidate is original  # nosec B101
+
+
+def test_large_restore_observer_is_bounded_and_records_in_progress_call(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import tldw_chatbook.Backup_Recovery as package
+    from Tests.Backup_Recovery.thread_diagnostics import observe_large_restore
+
+    path = tmp_path / "timings.json"
+    active = []
+
+    def copy():
+        active.append(json.loads(path.read_text())["calls"]["copy"]["active"])
+
+    def noop():
+        pass
+    staging = SimpleNamespace(require_capacity=noop, _copy=copy, stage_restore=noop)
+    monkeypatch.setattr(package, "staging", staging)
+    monkeypatch.setattr(package, "publication", SimpleNamespace(publish_candidate=noop, finalize_candidate=noop))
+    monkeypatch.setattr(package, "recovery_files", SimpleNamespace(_RawDeclaration=SimpleNamespace(validate=noop)))
+    stop = observe_large_restore(path)
+    try:
+        staging._copy()
+        for _ in range(2000):
+            staging.require_capacity()
+    finally:
+        stop()
+    data = json.loads(path.read_text())
+    assert active == [1]  # nosec B101
+    assert data["calls"]["require_capacity"]["completed"] == 2000  # nosec B101
+    assert data["calls"]["require_capacity"]["elapsed_seconds"] >= 0  # nosec B101
+    assert len(data["calls"]) == 6 and len(data["phases"]) <= 12  # nosec B101
+    assert path.stat().st_size < 4096  # nosec B101
+
+
+def _large_restore_script(script):
+    return (
+        "import sys\nfrom pathlib import Path\n"
+        "from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_large_restore\n"
+        "stop_stacks=observe_threads(Path.home()/'large-isolated-stacks.log',interval=30)\n"
+        "stop_timings=None\ntry:\n"
+        " stop_timings=observe_large_restore(Path.home()/'large-isolated-timings.log')\n"
+        " print('LARGE_ISOLATED_STARTED',flush=True)\n"
+        + indent(script, " ")
+        + "\nfinally:\n"
+        " _large_pending_error=sys.exc_info()[1]\n _large_cleanup_error=None\n"
+        " for _large_stop in (stop_timings,stop_stacks):\n"
+        "  if _large_stop is None:continue\n"
+        "  try:_large_stop()\n"
+        "  except BaseException as _large_error:\n"
+        "   if _large_cleanup_error is None:_large_cleanup_error=_large_error\n"
+        " if _large_pending_error is None and _large_cleanup_error is not None:raise _large_cleanup_error\n"
+        "print('LARGE_ISOLATED_COMPLETED',flush=True)\n"
+    )
+
+
+@pytest.mark.parametrize("write_failure,stack_failure", [(True, False), (False, True), (True, True)])
+def test_large_child_preserves_original_error_across_observer_cleanup(
+    tmp_path, monkeypatch, write_failure, stack_failure
+):
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostics
+    from tldw_chatbook.Backup_Recovery import staging
+
+    stopped = []
+    original_copy = staging._copy
+    original_error = ValueError("original restore failure")
+
+    def stop_stacks():
+        stopped.append(True)
+        if stack_failure:
+            raise RuntimeError("stack observer cleanup failure")
+
+    real_write = diagnostics._write
+
+    def write(path, records):
+        if write_failure:
+            raise OSError("diagnostic output unavailable")
+        real_write(tmp_path / "timings.log", records)
+
+    monkeypatch.setattr(diagnostics, "_write", write)
+    monkeypatch.setattr(diagnostics, "observe_threads", lambda *a, **k: stop_stacks)
+    with pytest.raises(ValueError) as caught:
+        # Execute only the fixed test harness and literal test body.
+        exec(_large_restore_script("raise original_error"), {"original_error": original_error})  # noqa: S102 # nosec B102
+    assert caught.value is original_error  # nosec B101
+    assert stopped == [True] and staging._copy is original_copy  # nosec B101
+
+
+@pytest.mark.parametrize("stack_failure", [False, True])
+def test_large_child_cleans_stack_observer_if_timing_setup_fails(monkeypatch, stack_failure):
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostics
+
+    stopped = []
+    original_error = ValueError("timing setup failure")
+
+    def stop_stacks():
+        stopped.append(True)
+        if stack_failure:
+            raise RuntimeError("stack observer cleanup failure")
+
+    def start_timings(path):
+        raise original_error
+
+    monkeypatch.setattr(diagnostics, "observe_threads", lambda *a, **k: stop_stacks)
+    monkeypatch.setattr(diagnostics, "observe_large_restore", start_timings)
+    with pytest.raises(ValueError) as caught:
+        exec(_large_restore_script("raise AssertionError('body ran')"))  # noqa: S102 # nosec B102
+    assert caught.value is original_error and stopped == [True]  # nosec B101
+
+
+@pytest.mark.parametrize("write_failure", [False, True])
+def test_large_child_still_fails_for_observer_error_without_restore_error(
+    tmp_path, monkeypatch, write_failure
+):
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostics
+    from tldw_chatbook.Backup_Recovery import staging
+
+    stopped = []
+    original_copy = staging._copy
+
+    def stop_stacks():
+        stopped.append(True)
+        if not write_failure:
+            raise RuntimeError("stack observer cleanup failure")
+
+    def write(path, records):
+        raise OSError("diagnostic output unavailable")
+
+    if write_failure:
+        monkeypatch.setattr(diagnostics, "_write", write)
+    else:
+        real_write = diagnostics._write
+        monkeypatch.setattr(diagnostics, "_write", lambda path, rows: real_write(tmp_path / "timings.log", rows))
+    monkeypatch.setattr(diagnostics, "observe_threads", lambda *a, **k: stop_stacks)
+    expected = "large_restore_diagnostic_write_failed" if write_failure else "stack observer cleanup failure"
+    with pytest.raises(RuntimeError, match=expected):
+        exec(_large_restore_script("pass"))  # noqa: S102 # nosec B102
+    assert stopped == [True] and staging._copy is original_copy  # nosec B101
+
+
 def test_large_collection_completes_actual_isolated_publication(tmp_path):
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
     from Tests.Backup_Recovery.test_isolated_restore import _RESTORE
@@ -180,12 +367,5 @@ def test_large_collection_completes_actual_isolated_publication(tmp_path):
     script = script.replace("'root':dest/'config',", "'external':dest/'research','root':dest/'config',")
     script += "\nassert len(list((dest/'research').glob('note*.txt')))==1800\n"
     script += "assert (dest/'research'/'note1799.txt').read_bytes()==b'[general]\\nusers_name=\"original\"\\n'\n"
-    script = (
-        "from pathlib import Path\n"
-        "from Tests.Backup_Recovery.thread_diagnostics import observe_threads\n"
-        "stop_stacks=observe_threads(Path.home()/'large-isolated-stacks.log',interval=30)\n"
-        "print('LARGE_ISOLATED_STARTED',flush=True)\ntry:\n"
-        + indent(script, " ")
-        + "\nfinally:stop_stacks()\nprint('LARGE_ISOLATED_COMPLETED',flush=True)\n"
-    )
+    script = _large_restore_script(script)
     _run(tmp_path, "complete", "large-isolated", script=script, timeout=180)

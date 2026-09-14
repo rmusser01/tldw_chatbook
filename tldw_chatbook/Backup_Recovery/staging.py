@@ -375,6 +375,10 @@ def stage_restore(
     reader._check(cancel)
     if type(plan) is not RestorePlan or plan.archive_digest != archive.digest:
         raise ValueError("archive_plan_mismatch")
+    from .restore_plan import required_rollback_dependencies
+
+    if required_rollback_dependencies(plan):
+        raise ValueError("rollback_dependency_selection_required")
     if isolated_profiles and plan.mode != "isolated":
         raise ValueError("isolated_plan_required")
     doc = _document(archive)

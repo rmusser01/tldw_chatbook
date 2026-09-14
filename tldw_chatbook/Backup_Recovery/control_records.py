@@ -12,6 +12,7 @@ from tldw_chatbook.Utils.platform_files import os
 
 from .admission import Admission, AdmissionTimeout, fcntl
 from .bootstrap import (
+    MAX_RECORDS,
     RecoveryRequired,
     _activation_witness,
     _binding,
@@ -19,9 +20,11 @@ from .bootstrap import (
     _fingerprint,
     _key,
     _overlap,
+    _paths,
     _read,
     _records,
     _registry,
+    _strings,
 )
 from .native_files import (
     create_private_directory,
@@ -753,15 +756,205 @@ def _recovery_pending(root, journal, prepared):
     return record
 
 
+def _recovery_profile(record):
+    """Apply ordinary profile shape checks to an interrupted pair's records."""
+    value = _Profile.model_validate(record).model_dump(exclude_none=True)
+    if (
+        type(record.get("version")) is not int
+        or not _paths([value["selector"]])
+        or not _strings(value["namespaces"])
+        or not _paths(value["roots"])
+        or "activation" in value
+        and value["activation"]["namespaces"] != value["namespaces"]
+    ):
+        raise ValueError("invalid_profile")
+    return value
+
+
+def _checked_activation_pair(
+    journal, prepared, plan, records, parent, name, pending, registry
+):
+    """Validate one exact interrupted operation without changing either record."""
+    from .activation import ActivationStore
+
+    update = _ActivationUpdate.model_validate(_read(parent, name))
+    selector = Path(update.selector)
+    key = _key(update.selector)
+    after_profile = _recovery_profile(update.after[0])
+    after_association = update.after[1]
+    witness = after_profile.get("activation")
+    if (
+        not _paths([update.selector])
+        or name != "activation-update-" + key + ".json"
+        or update.operation_id != journal.operation_id
+        or update.selector not in pending.selectors
+        or after_profile["selector"] != update.selector
+        or after_profile["fingerprint"] != _fingerprint(selector)
+        or after_association
+        != {"version": 1, "selector": update.selector, "activation": witness}
+        or not _operation_activation_generation(
+            journal.root.parent, journal.operation_id, witness, selector
+        )
+        or after_profile["namespaces"] != witness["namespaces"]
+        or after_profile["roots"]
+        != sorted(
+            {
+                path
+                for scope in witness["namespaces"]
+                for path in registry[scope]["roots"]
+            }
+        )
+    ):
+        raise ValueError("activation_recovery_context_invalid")
+    if update.before[0] is not None:
+        previous = _recovery_profile(update.before[0])
+        if (
+            previous["selector"] != update.selector
+            or _replacement_activation_names(
+                journal,
+                prepared,
+                records,
+                plan,
+                selector,
+                previous,
+                registry,
+            )
+            != after_profile["namespaces"]
+            or previous["roots"]
+            != sorted(
+                {
+                    path
+                    for scope in previous["namespaces"]
+                    for path in registry[scope]["roots"]
+                }
+            )
+        ):
+            raise ValueError("activation_recovery_context_invalid")
+        old = previous.get("activation")
+    else:
+        old = None
+    if update.before[1] != (
+        None
+        if old is None
+        else {"version": 1, "selector": update.selector, "activation": old}
+    ):
+        raise ValueError("activation_pair_inconsistent")
+    store = ActivationStore(Path(witness["store_root"]))
+    with pinned_directory(
+        store._generation(witness["generation"])
+    ) as generation_parent:
+        if (
+            store._required(generation_parent, witness["generation"]).owners
+            != witness["owners"]
+        ):
+            raise ValueError("activation_recovery_context_invalid")
+    for index, prefix in ((1, "activation-"), (0, "profile-")):
+        target = prefix + key + ".json"
+        temporary = "activation-stage-" + key + "-" + str(1 - index) + ".json"
+        try:
+            current = _read(parent, target)
+        except FileNotFoundError:
+            current = None
+        if current not in (update.before[index], update.after[index]):
+            raise ValueError("activation_record_changed")
+        try:
+            staged = _read(parent, temporary)
+        except FileNotFoundError:
+            staged = None
+        if staged is not None and staged != update.after[index]:
+            raise ValueError("activation_record_changed")
+    return update
+
+
+def _config_recovery_profiles(journal, prepared, plan, records):
+    """Observe prior profile ownership for exact pending activation pairs.
+
+    The caller holds this journal's lock. No repair, registration, or ordinary
+    bootstrap-read exception is performed here.
+    """
+    root = Path(prepared.publication.bootstrap_root)
+    pending = _recovery_pending(root, journal, prepared)
+    registry = _registry(root)
+    with pinned_directory(root) as parent:
+        info = os.fstat(parent)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ValueError("bootstrap_not_private")
+        names = os.listdir(parent)
+        if len(names) > MAX_RECORDS:
+            raise ValueError("too_many_records")
+        updates = {}
+        staged_names = set()
+        for name in sorted(names):
+            if not name.startswith("activation-update-"):
+                continue
+            update = _checked_activation_pair(
+                journal, prepared, plan, records, parent, name, pending, registry
+            )
+            key = _key(update.selector)
+            updates["profile-" + key + ".json"] = update
+            staged_names.update(
+                "activation-stage-" + key + "-" + str(index) + ".json"
+                for index in (0, 1)
+            )
+        if not updates:
+            raise ValueError("activation_recovery_context_invalid")
+        profiles = []
+        for name in names:
+            if name in ("admission", "unbound-owner", "projection-dependencies"):
+                continue
+            if name.startswith("activation-update-") or name in staged_names:
+                # These exact records were read and authenticated above.
+                continue
+            record = _read(parent, name)
+            if name.startswith("profile-"):
+                value = _recovery_profile(record)
+                if name != "profile-" + _key(value["selector"]) + ".json":
+                    raise ValueError("invalid_profile")
+                if name not in updates:
+                    profiles.append(value)
+            elif name.startswith("pending-"):
+                value = _Pending.model_validate(record)
+                if (
+                    not _strings(value.namespaces)
+                    or not _paths(value.selectors)
+                    or not _paths([value.control_root])
+                    or name != "pending-" + _key(value.operation_id) + ".json"
+                ):
+                    raise ValueError("invalid_pending")
+            elif name.startswith("activation-"):
+                if (
+                    set(record) != {"version", "selector", "activation"}
+                    or not _paths([record["selector"]])
+                    or name != "activation-" + _key(record["selector"]) + ".json"
+                ):
+                    raise ValueError("invalid_activation_association")
+                _activation_witness(record["activation"])
+            else:
+                raise ValueError("unknown_record")
+        # Include a prior profile even if the current file has not yet appeared.
+        # Newly added destination namespaces do not become foreign-scope waivers.
+        profiles.extend(
+            _recovery_profile(update.before[0])
+            for update in updates.values()
+            if update.before[0] is not None
+        )
+        return profiles
+
+
 def _recover_activation_pairs(journal, prepared, session):
     """Finish exact local before/after pairs; ordinary readers never repair them."""
-    from .activation import ActivationStore
     from .plan_records import load_plan
-    from .publication import _finalization_session
+    from .publication import _finalization_session, _recorded_config_scopes
 
     plan = load_plan(journal)
     root = Path(prepared.publication.bootstrap_root)
-    _finalization_session(session, prepared.publication, prepared)
+    with journal._locked(exclusive=False) as parent:
+        config_scopes = _recorded_config_scopes(
+            journal, journal._records(parent), plan=plan
+        )
+    _finalization_session(
+        session, prepared.publication, prepared, config_scopes=config_scopes
+    )
     pending = _recovery_pending(root, journal, prepared)
     registry = _registry(root)
     with (
@@ -772,80 +965,17 @@ def _recover_activation_pairs(journal, prepared, session):
             name for name in os.listdir(parent) if name.startswith("activation-update-")
         )
         for name in names:
-            update = _ActivationUpdate.model_validate(_read(parent, name))
-            selector = Path(update.selector)
-            key = _key(update.selector)
-            after_profile = _Profile.model_validate(update.after[0]).model_dump(
-                exclude_none=True
+            update = _checked_activation_pair(
+                journal,
+                prepared,
+                plan,
+                journal._records(journal_parent),
+                parent,
+                name,
+                pending,
+                registry,
             )
-            after_association = update.after[1]
-            witness = after_profile.get("activation")
-            if (
-                name != "activation-update-" + key + ".json"
-                or update.operation_id != journal.operation_id
-                or update.selector not in pending.selectors
-                or after_profile["selector"] != update.selector
-                or after_profile["fingerprint"] != _fingerprint(selector)
-                or after_association
-                != {"version": 1, "selector": update.selector, "activation": witness}
-                or not _operation_activation_generation(
-                    journal.root.parent, journal.operation_id, witness, selector
-                )
-                or after_profile["namespaces"] != witness["namespaces"]
-                or after_profile["roots"]
-                != sorted(
-                    {
-                        path
-                        for scope in witness["namespaces"]
-                        for path in registry[scope]["roots"]
-                    }
-                )
-            ):
-                raise ValueError("activation_recovery_context_invalid")
-            if update.before[0] is not None:
-                previous = _Profile.model_validate(update.before[0]).model_dump(
-                    exclude_none=True
-                )
-                if (
-                    previous["selector"] != update.selector
-                    or _replacement_activation_names(
-                        journal,
-                        prepared,
-                        journal._records(parent=journal_parent),
-                        plan,
-                        selector,
-                        previous,
-                        registry,
-                    )
-                    != after_profile["namespaces"]
-                    or previous["roots"]
-                    != sorted(
-                        {
-                            path
-                            for scope in previous["namespaces"]
-                            for path in registry[scope]["roots"]
-                        }
-                    )
-                ):
-                    raise ValueError("activation_recovery_context_invalid")
-                old = previous.get("activation")
-            else:
-                old = None
-            if update.before[1] != (
-                None
-                if old is None
-                else {"version": 1, "selector": update.selector, "activation": old}
-            ):
-                raise ValueError("activation_pair_inconsistent")
-            store = ActivationStore(Path(witness["store_root"]))
-            with pinned_directory(
-                store._generation(witness["generation"])
-            ) as generation_parent:
-                if (
-                    store._required(generation_parent, witness["generation"]).owners
-                    != witness["owners"]
-                ):
-                    raise ValueError("activation_recovery_context_invalid")
+            key = _key(update.selector)
             intent_identity = os.stat(name, dir_fd=parent, follow_symlinks=False)
             for index, prefix in ((1, "activation-"), (0, "profile-")):
                 target = prefix + key + ".json"
@@ -858,7 +988,9 @@ def _recover_activation_pairs(journal, prepared, session):
                     update.before[index],
                     update.after[index],
                 )
-            _finalization_session(session, prepared.publication, prepared)
+            _finalization_session(
+                session, prepared.publication, prepared, config_scopes=config_scopes
+            )
             _recovery_pending(root, journal, prepared)
             if (
                 _read(parent, name) != update.model_dump()

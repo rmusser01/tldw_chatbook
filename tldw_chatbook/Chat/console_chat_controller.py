@@ -40,6 +40,10 @@ import weakref
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Agents.approval_provenance import (
+    approval_key_unanswered,
+    selected_approval_key,
+)
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteAssetReference,
@@ -267,6 +271,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -326,7 +331,12 @@ from tldw_chatbook.Chat.library_preparation import (
     library_preparation_event_for_outcome,
 )
 from tldw_chatbook.Chat.rag_scope import EffectiveScope
-from tldw_chatbook.Agents.agent_models import WorkOrigin
+from tldw_chatbook.Agents.agent_models import (
+    ApprovalDecision,
+    ToolReviewDecision,
+    ToolReviewValue,
+    WorkOrigin,
+)
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
     PromptQueueMutationResult,
@@ -594,9 +604,18 @@ def build_console_provider_selection_from_settings(
         text = str(value).strip() if value is not None else ""
         return text if text and text.lower() not in {"none", "null"} else None
 
-    provider = provider_config_key(settings.provider) or "llama_cpp"
+    # PR-2668 review (CE-001 class): ``ConsoleProviderSelection.provider`` is
+    # a provider IDENTITY -- the gateway resolves registry entries through
+    # ``entry_for``, whose slugs are dashed, so the config-key normalizer's
+    # underscore rewriting must not reach it (``custom-ep:gpu-box`` mangled to
+    # ``custom_ep:gpu_box`` misses the registry and the send is blocked as an
+    # unsupported provider). Only the ``api_settings`` section lookup below
+    # wants the config-table key.
+    provider = provider_identity_key(settings.provider) or "llama_cpp"
     explicit_model = selected(settings.model)
-    provider_config = section(section(app_config, "api_settings"), provider)
+    provider_config = section(
+        section(app_config, "api_settings"), provider_config_key(provider)
+    )
     configured_model = selected(
         provider_config.get("model")
         or provider_config.get("api_model")
@@ -1684,10 +1703,68 @@ def approval_was_unanswered(row: "MCPPendingCall", decisions: Mapping[str, str])
     Returns:
         Whether the verdict for ``row`` was defaulted by an unresolved round.
     """
-    unresolved = getattr(decisions, "unresolved_keys", ())
-    if not unresolved:
-        return False
-    return (str(getattr(row, "call_id", "") or "") or row.llm_name) in unresolved
+    key = selected_approval_key(
+        decisions, str(getattr(row, "call_id", "") or ""), row.llm_name
+    )
+    return approval_key_unanswered(decisions, key)
+
+
+def _approval_decision_fact(
+    decision: object, *, unanswered: bool = False
+) -> ApprovalDecision | None:
+    if unanswered:
+        return None
+    if decision == "deny":
+        return "denied"
+    if isinstance(decision, str) and decision in {
+        "approve_once",
+        "approve_session",
+        "always_allow",
+    }:
+        return "approved"
+    return None
+
+
+def _review_decision(
+    row: MCPPendingCall,
+    decisions: Mapping[str, str],
+    verdict: str,
+    *,
+    allowing: tuple[str, ...] = ("approve_once", "approve_session", "always_allow"),
+    name_fallback: bool = True,
+) -> ToolReviewDecision:
+    """Attach an answered raw choice to the owner's unchanged verdict."""
+    key = (
+        selected_approval_key(decisions, row.call_id, row.llm_name)
+        if name_fallback
+        else row.call_id or row.llm_name
+    )
+    decision = decisions.get(key)
+    unanswered = approval_key_unanswered(decisions, key)
+    fact = _approval_decision_fact(decision, unanswered=unanswered)
+    if fact == "approved" and decision not in allowing:
+        fact = None
+    if decision == "allow_matching" and decision in allowing and not unanswered:
+        fact = "approved"
+    return ToolReviewDecision(verdict, fact)
+
+
+def _stamp_answer_provenance(
+    stamps: dict[str, str],
+    rows: Sequence[MCPPendingCall],
+    decisions: Mapping[str, str],
+) -> ApprovalDecisions:
+    """Keep unresolved denies attached to the selected name-scoped stamp."""
+    result = ApprovalDecisions(stamps)
+    result.unresolved_keys = frozenset(
+        row.llm_name
+        for row in rows
+        if stamps.get(row.llm_name) == "deny"
+        and decisions.get(selected_approval_key(decisions, row.call_id, row.llm_name))
+        == "deny"
+        and approval_was_unanswered(row, decisions)
+    )
+    return result
 
 
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
@@ -1991,7 +2068,7 @@ def _build_approval_payload(
 def build_mcp_review_hook(
     provider: MCPToolProvider,
     request_mcp_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"]], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Build this run's T4 `review_tool_calls` hook for one composed MCP provider.
 
     Handed to `ConsoleAgentBridge.run_reply` (P5-T6), which forwards it
@@ -2066,7 +2143,9 @@ def build_mcp_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         # I3: clear THIS turn's stamps FIRST, before pending_gate_for/the
         # approval round trip even run -- subsumes the `if not pending`
         # branch's own clear below (every invocation of this hook clears,
@@ -2083,7 +2162,20 @@ def build_mcp_review_hook(
             return {}
         decisions = request_mcp_approvals(pending)
         provider.apply_batch_decisions(run_id, decisions)
-        return {call.llm_name: "proceed" for call in pending}
+        return {
+            call.call_id or call.llm_name: _review_decision(
+                call,
+                decisions,
+                "proceed",
+                allowing=(
+                    "approve_once",
+                    "approve_session",
+                    "always_allow",
+                    "allow_matching",
+                ),
+            )
+            for call in pending
+        }
 
     return review_tool_calls
 
@@ -2097,7 +2189,7 @@ def build_tool_review_hook(
     workspace_id: str | None = None,
     kill_switch: Callable[[], bool] | None = None,
     library_provider: Any | None = None,
-) -> Callable[[list["ToolCall"]], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Build THIS run's run-level `review_tool_calls` hook (P5-T6/task-545).
 
     TASK-631: when ``kill_switch`` reports on, EVERY call in the batch is
@@ -2244,7 +2336,9 @@ def build_tool_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         # PR2a Task 5: every gate mutation below is scoped to `run_id` --
         # the run whose batch this is, supplied by `AgentService` (which
         # binds its own run id into the hook it puts on `LoopDeps`). The
@@ -2464,7 +2558,7 @@ def build_tool_review_hook(
                 return decisions[key]
             return decisions.get(row.llm_name)
 
-        def _stamps_for(rows: "list[MCPPendingCall]") -> dict[str, str]:
+        def _stamps_for(rows: "list[MCPPendingCall]") -> ApprovalDecisions:
             """Name-keyed stamps for `rows`: approvals win, all-denied denies.
 
             TASK-1861. A refusal must NOT be stamped against the name when a
@@ -2506,7 +2600,7 @@ def build_tool_review_hook(
             stamps = dict(approvals)
             for name in denied:
                 stamps.setdefault(name, "deny")
-            return stamps
+            return _stamp_answer_provenance(stamps, rows, decisions)
 
         if mcp_provider is not None:
             mcp_provider.apply_batch_decisions(
@@ -2515,8 +2609,12 @@ def build_tool_review_hook(
                     [r for r in mcp_pending if r.llm_name in mcp_claimed_names]
                 ),
             )
-        for name, decision in _stamps_for(builtin_pending).items():
-            builtin_gate.stamp(run_id, name, decision)
+        builtin_stamps = _stamps_for(builtin_pending)
+        for name, decision in builtin_stamps.items():
+            if approval_key_unanswered(builtin_stamps, name):
+                builtin_gate.stamp(run_id, name, decision, unanswered=True)
+            else:
+                builtin_gate.stamp(run_id, name, decision)
 
         # task-32280: because the runtime turns the refusal below into the
         # call's result and never dispatches it, `MCPToolProvider.invoke` --
@@ -2542,7 +2640,7 @@ def build_tool_review_hook(
         # non-"proceed" verdict string into that call's result without
         # dispatching it, so this is the only layer that can refuse one
         # target while running another.
-        verdicts: dict[str, str] = {
+        verdicts: dict[str, ToolReviewValue] = {
             row.llm_name: "proceed" for row in mcp_pending + builtin_pending
         }
         for row in mcp_pending + builtin_pending:
@@ -2554,7 +2652,31 @@ def build_tool_review_hook(
             # batch. That is fail-closed, and the only honest option when the
             # runtime cannot tell those calls apart.
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
-            verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
+            verdicts[key] = _review_decision(
+                row, decisions, USER_DENIED_REFUSAL.format(name=row.llm_name)
+            )
+        # Settle all name-wide refusals first. Metadata must never add an
+        # exact proceed that bypasses an id-less sibling's refusal fallback.
+        verdicts.update(
+            {
+                row.call_id or row.llm_name: _review_decision(
+                    row,
+                    decisions,
+                    "proceed",
+                    allowing=(
+                        "approve_once",
+                        "approve_session",
+                        "always_allow",
+                        "allow_matching",
+                    )
+                    if row in mcp_pending
+                    else ("approve_once", "approve_session", "always_allow"),
+                )
+                for row in mcp_pending + builtin_pending
+                if verdicts.get(row.call_id or row.llm_name, verdicts[row.llm_name])
+                == "proceed"
+            }
+        )
         verdicts.update(lesson_refusals)
         issue_lesson_approval = getattr(
             library_provider, "issue_agent_lesson_approval", None
@@ -2569,9 +2691,21 @@ def build_tool_review_hook(
                     verdicts[row.call_id] = AGENT_LESSON_APPROVAL_REQUIRED
                     lesson_issue_failed = True
                 else:
-                    verdicts[row.call_id] = "proceed"
+                    verdicts[row.call_id] = _review_decision(
+                        row,
+                        decisions,
+                        "proceed",
+                        allowing=("approve_once",),
+                        name_fallback=False,
+                    )
             elif decision == "deny":
-                verdicts[row.call_id] = AGENT_LESSON_DENIED
+                verdicts[row.call_id] = _review_decision(
+                    row,
+                    decisions,
+                    AGENT_LESSON_DENIED,
+                    allowing=("approve_once",),
+                    name_fallback=False,
+                )
             else:
                 verdicts[row.call_id] = AGENT_LESSON_APPROVAL_REQUIRED
         if lesson_issue_failed:
@@ -2590,7 +2724,7 @@ def build_tool_review_hook(
 def build_local_review_hook(
     provider: "LocalToolProvider",
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"]], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Build this run's review_tool_calls hook for the local provider.
 
     Identical discipline to build_mcp_review_hook (see its docstring for
@@ -2617,7 +2751,9 @@ def build_local_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         # I3: clear THIS turn's stamps FIRST -- see build_mcp_review_hook.
         # PR2a Task 5: scoped to `run_id`, so the clear cannot reach a
         # concurrent sibling run's live verdicts.
@@ -2663,7 +2799,9 @@ def build_local_review_hook(
         stamps = dict(approvals)
         for name in denied:
             stamps.setdefault(name, "deny")
-        provider.apply_batch_decisions(run_id, stamps)
+        provider.apply_batch_decisions(
+            run_id, _stamp_answer_provenance(stamps, pending, decisions)
+        )
         reviewed_call_ids = {row.call_id for row in pending if row.call_id}
         provider.apply_promotion_decisions(
             run_id,
@@ -2678,7 +2816,9 @@ def build_local_review_hook(
         # -- the only thing that otherwise records a local refusal -- never
         # runs for a hook-level denied call. Record at the point the denial
         # becomes final, through the provider's own audit seam.
-        verdicts: dict[str, str] = {row.llm_name: "proceed" for row in pending}
+        verdicts: dict[str, ToolReviewValue] = {
+            row.llm_name: "proceed" for row in pending
+        }
         for row in pending:
             if _decision_for(row) != "deny":
                 continue
@@ -2688,7 +2828,18 @@ def build_local_review_hook(
             if not approval_was_unanswered(row, decisions):
                 provider.record_user_denial(row.llm_name)
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
-            verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
+            verdicts[key] = _review_decision(
+                row, decisions, USER_DENIED_REFUSAL.format(name=row.llm_name)
+            )
+        # Preserve settled name-wide refusal fallback before adding facts.
+        verdicts.update(
+            {
+                row.call_id or row.llm_name: _review_decision(row, decisions, "proceed")
+                for row in pending
+                if verdicts.get(row.call_id or row.llm_name, verdicts[row.llm_name])
+                == "proceed"
+            }
+        )
         return verdicts
 
     return review_tool_calls
@@ -2697,10 +2848,12 @@ def build_local_review_hook(
 def build_managed_skill_promotion_review_hook(
     gate: "ManagedSkillProposalGate",
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Build the primary-only approval hook for read-only skill proposals."""
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         gate.clear(run_id)
         pending = [
             row
@@ -2724,13 +2877,17 @@ def build_managed_skill_promotion_review_hook(
             [call for call in calls if call.call_id in reviewed_call_ids],
             decisions,
         )
-        verdicts: dict[str, str] = {}
+        verdicts: dict[str, ToolReviewValue] = {}
         for row in pending:
             key = row.call_id or row.llm_name
-            verdicts[key] = (
+            verdicts[key] = _review_decision(
+                row,
+                decisions,
                 "proceed"
                 if decisions.get(key) == "approve_once"
-                else USER_DENIED_REFUSAL.format(name=row.llm_name)
+                else USER_DENIED_REFUSAL.format(name=row.llm_name),
+                allowing=("approve_once",),
+                name_fallback=False,
             )
         return verdicts
 
@@ -2740,7 +2897,7 @@ def build_managed_skill_promotion_review_hook(
 def build_virtual_cli_review_hook(
     provider: "VirtualCliProvider",
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Gate each selected virtual command while exposing one model tool.
 
     Approval rows are command-specific Hub entries but verdict stamps are
@@ -2748,7 +2905,9 @@ def build_virtual_cli_review_hook(
     response remain independently addressable.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         provider.apply_batch_decisions(run_id, {})
         pending = [
             row
@@ -2759,7 +2918,21 @@ def build_virtual_cli_review_hook(
             return {}
         decisions = request_approvals(pending)
         provider.apply_batch_decisions(run_id, decisions, pending)
-        return {(row.call_id or row.llm_name): "proceed" for row in pending}
+        return {
+            row.call_id or row.llm_name: _review_decision(
+                row,
+                decisions,
+                "proceed",
+                allowing=(
+                    "approve_once",
+                    "approve_session",
+                    "always_allow",
+                    "allow_matching",
+                ),
+                name_fallback=False,
+            )
+            for row in pending
+        }
 
     return review_tool_calls
 
@@ -2767,10 +2940,12 @@ def build_virtual_cli_review_hook(
 def build_raw_shell_review_hook(
     provider: "RawShellToolProvider",
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Gate model-authored host-shell calls independently by native call id."""
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         authority_generation = provider.authority_generation
         provider.apply_batch_decisions(run_id, {})
         pending = [
@@ -2787,14 +2962,18 @@ def build_raw_shell_review_hook(
             pending,
             authority_generation=authority_generation,
         )
-        verdicts: dict[str, str] = {}
+        verdicts: dict[str, ToolReviewValue] = {}
         for row in pending:
             key = row.call_id or row.llm_name
             decision = decisions.get(key)
-            verdicts[key] = (
+            verdicts[key] = _review_decision(
+                row,
+                decisions,
                 "proceed"
-                if decision in {"approve_once", "approve_session"}
-                else USER_DENIED_REFUSAL.format(name=row.llm_name)
+                if decision in ("approve_once", "approve_session")
+                else USER_DENIED_REFUSAL.format(name=row.llm_name),
+                allowing=("approve_once", "approve_session"),
+                name_fallback=False,
             )
         return verdicts
 
@@ -2802,8 +2981,8 @@ def build_raw_shell_review_hook(
 
 
 def build_combined_review_hook(
-    hooks: list[Callable[[list["ToolCall"]], dict[str, str]]],
-) -> Callable[[list["ToolCall"]], dict[str, str]]:
+    hooks: list[Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]],
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Fan one batch through every provider's hook; merge verdict maps.
 
     Each hook gates only the calls its provider owns (pending_gate_for
@@ -2837,8 +3016,10 @@ def build_combined_review_hook(
         verdict map into one.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
-        verdicts: dict[str, str] = {}
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
+        verdicts: dict[str, ToolReviewValue] = {}
         first_exc: Exception | None = None
         for hook in hooks:
             try:
@@ -12477,6 +12658,25 @@ class ConsoleChatController:
         Only dirty fields exposed by the calling surface and supported by the
         target survive a switch. A remembered exact target draft takes precedence
         over carried values from the provider/model being left.
+
+        Args:
+            state: The draft being switched away from; never mutated.
+            provider: Exact target provider IDENTITY. Registry entries use
+                the dashed ``custom-ep:<slug>`` spelling (config-table keys
+                such as ``custom_ep:<slug>`` are canonicalized back to it);
+                every other provider is a plain config key.
+            model: Literal target model ID, or ``None`` to take the target
+                provider's default model.
+            app_config: The live application configuration snapshot the
+                target's default chain resolves against.
+            exposed_fields: Exact field names the calling surface can carry;
+                dirty drafts outside this set are dropped.
+
+        Returns:
+            A new ``ConsoleSettingsDraftState`` rebased onto the target:
+            ``settings.provider`` carries the target's canonical identity
+            spelling, remembered drafts stay keyed by provider identity, and
+            the input ``state`` is left untouched.
         """
 
         target_defaults = build_target_default_console_session_settings(
@@ -12485,10 +12685,17 @@ class ConsoleChatController:
             model,
         )
         target_provider = provider_config_key(target_defaults.provider)
+        # CE-001: ``settings.provider`` and the remembered-draft keys are
+        # provider IDENTITY values, not config-table lookup keys -- a dashed
+        # ``custom-ep:<slug>`` id canonicalized here would arrive at the
+        # provider Select as an illegal underscored value and crash the app.
+        # Registry ids keep their dashed spelling; config-key lookups below
+        # still use ``target_provider``.
+        target_provider_id = provider_identity_key(target_defaults.provider)
         target_model = normalize_console_model_value(target_defaults.model)
-        target_key = (target_provider, target_model)
+        target_key = (target_provider_id, target_model)
         current_key = (
-            provider_config_key(state.settings.provider),
+            provider_identity_key(state.settings.provider),
             normalize_console_model_value(state.settings.model),
         )
         remembered_target = next(
@@ -12528,7 +12735,10 @@ class ConsoleChatController:
         if inherited_dirty_fields:
             target_defaults = build_target_default_console_session_settings(
                 app_config,
-                target_provider,
+                # Identity spelling: the dashed registry id must resolve
+                # through entry_for, which the mangled key does not for
+                # hyphenated slugs (CE-001).
+                target_provider_id,
                 target_model,
                 excluded_model_profile_fields=inherited_dirty_fields,
             )
@@ -12602,7 +12812,7 @@ class ConsoleChatController:
 
         unsupported_provider_fields = FULL_MODEL_DEFAULT_FIELDS - supported_fields
         settings_changes: dict[str, object | None] = {
-            "provider": target_provider,
+            "provider": target_provider_id,
             "model": target_model,
             "character_label": state.settings.character_label,
             "system_prompt": state.settings.system_prompt,
@@ -12957,9 +13167,6 @@ class ConsoleChatController:
     ) -> ConsoleChatSession | None:
         """Delete a session only after its runtime-owned work was drained."""
 
-        # ADR-150: session-scoped chat-create remember grants die with the session.
-        self._chat_create_session_grants.pop(session_id, None)
-
         state = self._session_close_states.pop(ticket.close_id, None)
         if state is None or state[0] != ticket:
             raise RuntimeError("Console session close ticket is stale.")
@@ -12967,6 +13174,8 @@ class ConsoleChatController:
             raise RuntimeError("Console session close generation changed.")
         _stored_ticket, owns_active_stream, repair_session, previous_active_id = state
         session_id = ticket.session_id
+        # ADR-150: session-scoped chat-create remember grants die with the session.
+        self._chat_create_session_grants.pop(session_id, None)
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)
         self._clear_project_instruction_delivery(session_id)
@@ -17448,8 +17657,23 @@ class ConsoleChatController:
             run_id, {"question": _REVOCATION_STAMPS["question"]}
         )["question"]
 
+    @property
+    def worktree_confirmation_enabled(self) -> bool:
+        """Only the real disposable worktree surface enables new tool disclosure."""
+        return self.app is not None and self.set_pending_worktree_merge is not None
+
+    def capture_worktree_recovery_intent(self, session_id: str):
+        """Capture pure owning-session selection before worker validation."""
+        from .console_worktree_recovery import capture_intent
+
+        return capture_intent(self, session_id)
+
     def request_worktree_merge_confirm(
-        self, payload: dict[str, Any], *, session_id: str | None = None
+        self,
+        payload: dict[str, Any],
+        *,
+        session_id: str | None = None,
+        operation_cancel_event: threading.Event | None = None,
     ) -> dict[str, bool]:
         """WORKER THREAD: ask the user to confirm merging/discarding an
         agent worktree before ``AgentService`` mutates anything.
@@ -17507,13 +17731,21 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
-        round_cancel_event = self._bind_round_cancel_signal(session_id)
+        if operation_cancel_event is not None and session_id is None:
+            return {"allow": False}
+        round_cancel_event = (
+            operation_cancel_event
+            if operation_cancel_event is not None
+            else self._bind_round_cancel_signal(session_id)
+        )
         visit_cancel_event = self._bind_visit_cancel_signal()
         owning_run_id = current_run_id()
         merge_round_state: dict[str, Any] = {
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
+            # The payload's run_id is the recovered child, not the requester.
+            "run_id": owning_run_id or None,
             "cancel_event": round_cancel_event,
             "visit_event": visit_cancel_event,
         }
@@ -17593,10 +17825,10 @@ class ConsoleChatController:
             return
         with self._pending_worktree_merge_lock:
             round_state = self._pending_worktree_merge_rounds.get(request_id)
-        if round_state is None:
-            return
-        round_state["decision"]["allow"] = bool(allow)
-        round_state["event"].set()
+            if round_state is None or round_state["event"].is_set():
+                return
+            round_state["decision"]["allow"] = bool(allow)
+            round_state["event"].set()
 
     def pending_worktree_merge_ids(self) -> list[str]:
         """Return the request ids of every currently-armed worktree-merge
@@ -20099,6 +20331,33 @@ class ConsoleChatController:
                 turn_context=configuration,
                 publish_mcp_counts=False,
             )
+            preview_admitted_roots = capture_run_admitted_workspace_roots(
+                session=session,
+                registry=getattr(self.app, "workspace_registry_service", None),
+                project_selection=project_selection,
+            )
+            virtual_cli_provider, _virtual_cli_review_hook = (
+                self._compose_virtual_cli_provider(
+                    session_id=session.id,
+                    turn_context=configuration,
+                    project_root=(
+                        project_selection.root if project_selection else None
+                    ),
+                    project_root_identity=(
+                        project_selection.root_identity if project_selection else None
+                    ),
+                    admitted_roots=preview_admitted_roots,
+                )
+            )
+            raw_shell_provider, _raw_shell_review_hook = (
+                self._compose_raw_shell_provider(
+                    session_id=session.id,
+                    turn_context=configuration,
+                    project_root=(
+                        project_selection.root if project_selection else None
+                    ),
+                )
+            )
             model = str(
                 getattr(resolution, "model", "")
                 or provider_selection.explicit_model
@@ -20133,6 +20392,7 @@ class ConsoleChatController:
         try:
             return await asyncio.to_thread(
                 build_preview,
+                session_id=session.id,
                 workspace_id=session.workspace_id,
                 ephemeral=session.ephemeral,
                 resolution=resolution,
@@ -20146,6 +20406,8 @@ class ConsoleChatController:
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 local_provider=local_provider,
+                virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_authority,
                 profile_provider=profile_provider,
@@ -20155,6 +20417,15 @@ class ConsoleChatController:
                 scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
                 turn_bundle_block=turn_bundle_block,
+                worktree_merge_enabled=self.worktree_confirmation_enabled,
+                fork_chat_enabled=(
+                    self.set_pending_chat_create is not None
+                    and self.complete_agent_chat_create is not None
+                ),
+                new_chat_enabled=(
+                    self.set_pending_chat_create is not None
+                    and self.complete_agent_chat_create is not None
+                ),
                 request_skill_install_enabled=True,
                 request_skill_script_enabled=(
                     self.set_pending_skill_script is not None
@@ -20330,6 +20601,15 @@ class ConsoleChatController:
                 scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
                 turn_bundle_block=turn_bundle_block,
+                worktree_merge_enabled=self.worktree_confirmation_enabled,
+                fork_chat_enabled=(
+                    self.set_pending_chat_create is not None
+                    and self.complete_agent_chat_create is not None
+                ),
+                new_chat_enabled=(
+                    self.set_pending_chat_create is not None
+                    and self.complete_agent_chat_create is not None
+                ),
                 request_skill_install_enabled=True,
                 request_skill_script_enabled=(
                     self.set_pending_skill_script is not None
@@ -22271,13 +22551,46 @@ class ConsoleChatController:
         from tldw_chatbook.Agents.run_hooks import summarize_hook_arguments
 
         session_id = payload.get("session_id") or state.get("session_id")
+        run_id = (
+            state.get("run_id")
+            if kind == "worktree_merge"
+            else payload.get("run_id") or state.get("run_id")
+        )
         if kind == "approval":
             calls = [
                 {
                     "name": row.get("llm_name") or row.get("tool_name") or "",
-                    "args_summary": summarize_hook_arguments(row.get("arguments") or {}),
+                    "args_summary": summarize_hook_arguments(
+                        row.get("arguments") or {}
+                    ),
                 }
                 for row in payload.get("calls", ())
+            ]
+        elif kind == "worktree_merge":
+            action = payload.get("action") or payload.get("mode")
+            arguments = {
+                key: payload[key]
+                for key in (
+                    "handle_id",
+                    "run_id",
+                    "action",
+                    "mode",
+                    "branch",
+                    "worktree",
+                    "source",
+                    "destination",
+                )
+                if key in payload
+            }
+            calls = [
+                {
+                    "name": (
+                        "discard_agent_worktree"
+                        if action == "discard"
+                        else "merge_agent_worktree"
+                    ),
+                    "args_summary": summarize_hook_arguments(arguments),
+                }
             ]
         else:
             arguments = (
@@ -22295,7 +22608,7 @@ class ConsoleChatController:
             }]
         engine.notify(
             "ApprovalRequested", session_id=session_id,
-            run_id=payload.get("run_id") or state.get("run_id"),
+            run_id=run_id,
             data={
                 "calls": calls,
                 "session_active": bool(
@@ -26290,6 +26603,31 @@ class ConsoleChatController:
                 project_selection=project_selection,
                 project_authority_guard=project_authority_guard,
             )
+            worktree_repo_authority = None
+            if (
+                project_selection is not None
+                and project_selection.allow_write
+                and len(run_admitted_roots) == 1
+            ):
+                selected_authority = run_admitted_roots[0]
+                kill_switch_reader = self._console_tool_kill_switch_reader()
+
+                def worktree_authority_guard(
+                    write: bool,
+                    authority=selected_authority,
+                    kill_switch=kill_switch_reader,
+                ) -> bool:
+                    if kill_switch is None:
+                        return False
+                    try:
+                        return not kill_switch() and bool(authority.guard(write))
+                    except Exception:  # noqa: BLE001 - mutation gate fails closed
+                        return False
+
+                worktree_repo_authority = replace(
+                    selected_authority,
+                    guard=worktree_authority_guard,
+                )
             (
                 mcp_provider,
                 builtin_gate,
@@ -26609,6 +26947,7 @@ class ConsoleChatController:
                     )
                 ),
                 change_roots=change_roots,
+                worktree_repo_authority=worktree_repo_authority,
                 change_root_aliases=turn_context.change_review_root_aliases,
                 change_review_skipped_roots=(turn_context.change_review_skipped_roots),
                 turn_skill_bindings=skill_bindings,
@@ -26689,8 +27028,7 @@ class ConsoleChatController:
                     functools.partial(
                         self.request_worktree_merge_confirm, session_id=session_id
                     )
-                    if self.set_pending_worktree_merge is not None
-                    or self._interrupt_host.has_retained_decision_target(session_id)
+                    if self.worktree_confirmation_enabled
                     else None
                 ),
                 # PR2a Task 7: the fleet cancels/abandons children on the
@@ -27113,20 +27451,27 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, failed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
+        denial_terminal = getattr(outcome, "denial_count", 0) > 0
         if runtime_written is not None and runtime_written.status in {
             "pending",
             "streaming",
         }:
-            appended_copy = self._without_duplicated_summary(
-                visible_copy, wrapup_summary, runtime_written.content
-            )
-            self.store.append_stream_chunk(
-                runtime_written.id, f"\n\n{appended_copy}"
-            )
+            if not denial_terminal:
+                appended_copy = self._without_duplicated_summary(
+                    visible_copy, wrapup_summary, runtime_written.content
+                )
+                self.store.append_stream_chunk(
+                    runtime_written.id, f"\n\n{appended_copy}"
+                )
             failed = self.store.mark_message_failed(runtime_written.id)
         else:
-            failed = self._append_failed_assistant(session_id, visible_copy)
+            failed = self._append_failed_assistant(
+                session_id,
+                "Agent response failed." if denial_terminal else visible_copy,
+            )
         self._record_run_assistant_message(run_id, failed)
+        if denial_terminal:
+            self._append_failure_system_row(session_id, visible_copy)
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
             session_id=session_id,

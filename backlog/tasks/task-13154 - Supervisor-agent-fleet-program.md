@@ -1,9 +1,10 @@
 ---
 id: TASK-13154
 title: Supervisor agent fleet program
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 13:57'
+updated_date: '2026-09-13 15:40'
 labels: []
 dependencies: []
 ---
@@ -16,10 +17,25 @@ Named sub-agent definitions, background/parallel execution, steering, Console fl
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All six PR-phase subtasks Done
+- [x] #1 All approved fleet outcomes are delivered and verified: definitions, concurrency runtime, fleet panel, cross-turn lifetime, wake and notification, steering and continuation, and phase-four polish; every remaining TASK-13154 child is Done.
+- [x] #2 PR2665 is rebased onto current dev with upstream hooks and chat-creation contracts preserved; all Qodo findings have evidence-backed dispositions and confirmed defects have regression coverage.
+- [x] #3 Affected integration and static checks are verified at the final PR head; review feedback and documented integration blockers are resolved before merge.
 <!-- AC:END -->
 
-## Deferred to later phases (final-review triage, 2026-08-09)
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR. ADR path: backlog/decisions/129-fleet-mailbox-and-wake-reliability.md plus current accounting/admission and implementation decisions. Reason: records-only reconciliation after all implementation children complete. Execute Docs/superpowers/plans/2026-09-12-agent-fleet-program-closeout.md last: verify six historical core deliveries and the seventh polish slice, checked child criteria/reviews, prior and fresh evidence with limits, current authority/remaining optional extensions, independent records and final branch review, then Backlog Done. Do not invent retroactive children or erase unfinished outcomes.
+
+PR2665 integration reopened 2026-09-13 at user request. ADR required: no new ADR for the rebase and contract-preserving review fixes; existing ADR153/154/155 apply. Preserve configured parent merge identity and protected failed-admission checkouts. Execute Docs/superpowers/plans/2026-09-13-agent-orchestration-pr-2665.md; update decisions before any boundary change. Earlier completion evidence remains historical feature-head evidence, not verification of the rebased result.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Historical PR-1 review triage is preserved below; it is not a claim that the remaining work is complete. Current child tasks and the closeout plan reconcile each item.
+
+### Deferred to later phases (final-review triage, 2026-08-09)
 
 The final whole-branch review of PR-1 (named agent definitions) accepted
 these as real but out of scope for the fix wave that landed the review's
@@ -41,3 +57,59 @@ gitignored and does not survive merge.
 - **Owner taste call** — where the Agents category belongs in Settings
   navigation (Troubleshooting vs. Expert) is a placement judgment call, not
   a defect; left for the owner to decide.
+
+Interim reconciliation (2026-09-12, superseded by final closure below): all seven actual TASK13154 children are Done with checked acceptance criteria and implementation notes. This supersedes the historical deferred labels above, while preserving their original review context. The parent remains In Progress, with its acceptance unchecked, because final integration and the broader requested worktree outcomes are unresolved.
+
+Six core deliveries are present in reachable local history: definitions PR1461 f24f8c6921; concurrency PR1477 7625968469; fleet panel PR1498 2ff4c27084; cross-turn lifetime PR1557 d5445a4c10; wake/notification PR1609 b456263894; steering/continuation PR1816 230acdaac0. These are historical ancestry checks recorded at 770a1735d5, not fresh runtime or live-provider tests. PR2631 merged the 25-item audit; PR2641 merged the five subsequent reliability/verification follow-ups at d66908a69. No duplicate historical children were created and wake delivery is counted once.
+
+The seventh polish slice is implemented and independently reviewed locally: approval verification TASK13154.4 (686ca653cc/abf4a0d879), owned Settings DB cleanup and filtered-tool feedback TASK13154.5 (97c3bce2e0/1b9cff9776), researcher/critic/ingest-runner plus retained bulk-reader presets TASK13154.6 (6f05d7399a), and definition caps TASK13154.7 (b46807d547/be709a648f, bbfc233aad, c0d419d420). Named spawn now raises ValueError for agent plus allowed_tools, and the real load-count/no-reread guards are present; the current 122-pass fleet runtime gate covers the explicit disjoint-path and once-per-turn tests. Each child record contains exact scoped evidence and qualifications. Canonical Settings category placement remains unchanged as a product preference.
+
+Current communication is bounded process-local steering and child progress, explicit supervisor collection/relay, explicit finished-child continuation and shared versioned session tasks. This does not claim durable inboxes, arbitrary direct peer routing or progress-triggered wakes. Existing ADR129/131/134/135/136 govern communication, durable accounting, aggregate admission, delivery and scoped progress. Supplemental ADR153 governs best-effort bounded webhook delivery (drops remain possible), ADR154 denial boundaries, ADR156 provider/local live usage, and ADR157/158 capped continuation plus migration order.
+
+Historical interim checkpoint (superseded below): worktree safeguards temporarily refused create/merge/discard and retained existing checkouts/branches. The proposed execution qualification requirement was later withdrawn in favor of the user-approved ordinary local Git scope in ADR155. TASK31210 and TASK31211 retained unchecked functional criteria. TASK18929 was reopened for this wave's ordinary budget-stop continuation regression; two positive worktree continuation tests and a deferred per-chunk usage extraction observation remained final review obligations. No functional recovery, durable inbox, full-suite run or live-provider certification was claimed. Existing dependency/static warnings, the earlier preset-probe user-config read before sandboxed write failure, and the cap Task 1 automatic foreign pytest-cleanup attempt remain explicitly qualified in child/current-status records.
+
+ADR required: no new ADR for this records-only reconciliation. Existing backlog/decisions/129-fleet-mailbox-and-wake-reliability.md and the exact supplemental decision paths in the linked closeout plan govern delivered behavior. The implementation plan was narrowed to allow honest partial reconciliation without prematurely closing the parent. Independent records review and combined branch review are pending. Work remains local on codex/agent-orchestration-remaining; no new PR, push or merge was performed.
+
+Final integration checkpoint: all four broad-review findings were repaired in 7852cf47ba and the single scoped re-review approved all four with no new Critical/Important breakage. TASK18929 and TASK18923 are Done again with their new regression criteria checked. The continuation module now passes 45 cases without teardown errors, and provider/error plus denial/cancel selections pass. The partial records review was also approved. Complete review, evidence qualifications and all 50 controller rulings are durably preserved in Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md. No additional parent child or retroactive completion was invented; no PR/push/merge is implied.
+
+Interim restoration checkpoint (superseded by final closure below): ordinary selected-authority worktree creation, schema20 durable ownership and actual physical-owner drain integration are implemented and independently reviewed (a11db916ff/d63d4f2a19, 4756f88793/94f7110db1, 8efca6ee05/c8e1d119b8/eed41ac5d2). There is no missing external backend. Confirmed apply/merge/discard and the visible Console recovery flow are being completed under Docs/superpowers/specs/2026-09-12-agent-worktree-restoration-design.md; until those outcomes pass review, TASK31210, TASK31211 and this parent remain In Progress. The current evidence and restoration rulings are in Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md. Automatic root deletion remains disabled; ordinary Git has the documented concurrent external metadata-replacement limitation.
+
+Final closure checkpoint (supersedes interim remaining-work labels above): all approved fleet outcomes and the requested worktree restoration are implemented and independently reviewed through e135a085f2. TASK-31210 and TASK-31211 now have all acceptance criteria checked and Done status. Fresh local records verification confirmed all seven actual TASK-13154 children are Done with zero unchecked acceptance criteria and implementation notes; no retroactive children or historical test results were invented.
+
+The restoration includes ordinary selected-authority Git creation, schema 20 durable ownership and positive physical completion, shared confirmed apply/merge/discard, a visible retained card and paged earlier-turn recovery. Final integration found two startup-lifetime gaps; both are corrected and independently re-reviewed. The final fix has11 pre-source RED failures,88 passing affected/capacity cases and2 passing actual card/Git flows. Exact earlier selections and process/guard qualifications are preserved without summing overlapping counts.
+
+Verification is targeted, not a full-suite or live-provider claim. The inherited Requests warning remains; UI-ready passes at 973/973 with zero headroom. Existing ChatScreen size/no-growth guards (including the disclosed 21-line/3-method addition) and eight stale historical diagnostic-label expectations remain failures. The current diagnostic inventory/sink guard passes, and changed-file static comparisons add no diagnostic identities with edited-range formatting passing.
+
+Current communication remains bounded process-local steering/progress, explicit supervisor relay and continuation, and versioned session tasks. Durable inboxes, arbitrary direct peer routing and progress-triggered wakes are optional designs outside this completed scope. Recovery retains uncertain/legacy work and its disclosed baseline checkout; ordinary Git does not promise atomic protection against concurrent external metadata replacement.
+
+ADR check: the existing decisions named above plus ADR-155/158 govern delivery; no new ADR for records-only closure. The complete restoration review, evidence and rulings are in Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md; the earlier remaining-wave review stays linked and preserved. Source and closeout records remain committed locally on codex/agent-orchestration-remaining.
+
+### PR2665 implementation/review closeout —2026-09-13
+
+Rebased84 feature commits onto current dev, corrected all confirmed Qodo and
+integration findings, and published the reviewed candidate. The thirteen review
+threads have individual evidence-backed dispositions and are resolved. ADR148
+(run hooks),153 (amended physical resolver ownership),154,155 and158 apply; no
+new backend or automatic checkout deletion was introduced.
+
+Targeted passing selections:320 recovery/fleet/budget/denial,106 creation/recovery,
+48 real preview parity,98 recovery UI/Settings/CSS,121 context/chat/log,58 hooks,
+40 webhooks,14 durable-worktree/query-plan tests (overlapping counts are not
+summed). No new Ruff diagnostics; edited-range formatting passes. Current-head
+UI latency and all six GGUF platform CI jobs pass. Two inherited overlong task
+filenames were shortened without changing task contents to unblock Windows
+checkout. Generated inventory, CSS, profile paths, unique task IDs, table
+allowlist and all300 index-census rows are verified.
+
+Full evidence, inherited guard failures and explicit OS DNS/ordinary Git limits:
+Docs/superpowers/reviews/2026-09-13-agent-orchestration-pr-2665.md. This closes
+implementation and review; the required remote derived-artifacts gate and actual
+PR merge are still being followed in the active task. No merge is claimed here.
+
+CI follow-up: final-head fast lane1125passed/4failed exposed stale schema18
+expectations after a full runtime schema20 open. Historical fixtures now remove
+later worktree/cap shape; standalone18 pins and all original data/authority
+assertions remain. Full runtime completion uses the current schema and verifies
+empty new ownership/cap authority. Local RED4 → GREEN29 across four migration
+modules; Ruff/format pass. Product and migration scripts are unchanged.
+<!-- SECTION:NOTES:END -->

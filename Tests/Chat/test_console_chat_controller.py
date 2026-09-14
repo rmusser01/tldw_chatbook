@@ -10,6 +10,7 @@ import pytest
 
 from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Agents.agent_models import (
+    normalize_tool_review,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
@@ -3419,7 +3420,9 @@ def test_build_mcp_review_hook_clears_stamps_even_when_nothing_needs_gating():
     calls = [ToolCall(name="local_only_tool", args={}, call_id="1")]
     verdicts = hook(calls, RUN)
 
-    assert verdicts == {}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {}
     assert provider.apply_batch_decisions_calls == [{}]
 
 
@@ -3436,7 +3439,9 @@ def test_build_mcp_review_hook_stamps_decisions_when_gating_needed():
 
     verdicts = hook(calls, RUN)
 
-    assert verdicts == {"mcp__srv__run": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"1": "proceed"}
     # I3: the hook clears at ENTRY (unconditionally, before the round trip)
     # and then stamps the real decisions -- two calls, not one, matching
     # `provider.apply_batch_decisions`'s own REPLACE semantics either way.
@@ -3467,7 +3472,9 @@ def test_build_mcp_review_hook_shares_one_verdict_for_same_name_calls_this_turn(
 
     verdicts = hook(calls, RUN)
 
-    assert verdicts == {"mcp__srv__run": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"1": "proceed", "2": "proceed"}
     assert len(round_trips) == 1  # ONE request_mcp_approvals round trip
     assert len(round_trips[0]) == 2  # ...covering both same-name calls
     # I3: the hook clears at ENTRY (unconditionally, before the round trip)
@@ -3600,7 +3607,9 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     # Exclude ONLY always_allow -- deny is a turn-scoped refusal, not a
     # persistent write, so it must stay offered (spec correction 0e6e8a56d).
     assert row.options == ("approve_once", "approve_session", "deny")
-    assert verdicts == {"write_thing": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"write_thing": "proceed"}
 
 
 def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
@@ -3694,7 +3703,9 @@ def test_review_hook_flags_read_file_path_outside_roots(monkeypatch, tmp_path):
     # Never auto-denied: still offered every normal decision, and still
     # proceeds if the user approves anyway.
     assert row.options == ("approve_once", "approve_session", "deny")
-    assert verdicts == {"read_file": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"read_file": "proceed"}
 
 
 def test_review_hook_does_not_flag_read_file_path_inside_roots(monkeypatch, tmp_path):
@@ -3883,7 +3894,10 @@ def test_allow_resolved_builtin_never_prompts():
         None,
         lambda pending: calls.append(pending) or {},
     )
-    assert hook([_builtin_call("write_thing")], RUN) == {}
+    assert {
+        key: normalize_tool_review(value).verdict
+        for key, value in hook([_builtin_call("write_thing")], RUN).items()
+    } == {}
     assert calls == []  # no card shown
 
 
@@ -3928,7 +3942,10 @@ def test_unknown_names_are_returned_unreviewed():
         None,
         lambda pending: {},
     )
-    assert hook([_builtin_call("some_skill")], RUN) == {}
+    assert {
+        key: normalize_tool_review(value).verdict
+        for key, value in hook([_builtin_call("some_skill")], RUN).items()
+    } == {}
 
 
 def test_mcp_and_builtin_share_one_round_trip():
@@ -3957,7 +3974,9 @@ def test_mcp_and_builtin_share_one_round_trip():
     assert len(round_trips) == 1
     names_asked = {row.llm_name for row in round_trips[0]}
     assert names_asked == {"mcp__srv__run", "write_thing"}
-    assert verdicts == {"mcp__srv__run": "proceed", "write_thing": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"mcp__srv__run": "proceed", "write_thing": "proceed", "1": "proceed"}
     assert mcp_provider.apply_batch_decisions_calls[-1] == {
         "mcp__srv__run": "approve_once"
     }
@@ -4041,7 +4060,9 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
     verdict1 = hook([_builtin_call("write_thing")], RUN)
     assert len(round_trips) == 1
     assert round_trips[0][0].llm_name == "write_thing"
-    assert verdict1 == {"write_thing": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdict1.items()
+    } == {"write_thing": "proceed"}
 
     # Turn 2: `begin_turn()` clears the turn-scoped `_stamps` dict, but the
     # SESSION approval lives on the fake service, not in `_stamps` -- no
@@ -4053,7 +4074,9 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
     # already-session-approved MCP call today (`build_mcp_review_hook`'s
     # own docstring: `run_agent_loop` defaults any unmentioned name to
     # "proceed").
-    assert verdict2 == {}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdict2.items()
+    } == {}
     # And the call genuinely still proceeds: this is the EXACT verdict
     # `BuiltinToolProvider.invoke()` consults on dispatch.
     assert gate.check(tool, RUN) is None
@@ -6582,7 +6605,9 @@ def test_kill_switch_off_changes_nothing():
         verdicts = hook(
             [ToolCall(name="read_file", args={"path": "a"}, call_id="c1")], RUN
         )
-        assert verdicts.get("c1", "proceed") == "proceed", (switch, verdicts)
+        assert (
+            normalize_tool_review(verdicts.get("c1", "proceed")).verdict == "proceed"
+        ), (switch, verdicts)
 
 
 @pytest.mark.unit
@@ -6641,9 +6666,9 @@ def test_unclaimed_names_pass_through_the_hook_unreviewed_switch_off():
     )
 
     assert not prompted, "unclaimed names must not be offered a card"
-    assert verdicts == {}, (
-        f"unclaimed names must pass through unreviewed, got: {verdicts}"
-    )
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {}, f"unclaimed names must pass through unreviewed, got: {verdicts}"
 
 
 class UsageEmittingGateway(StreamingGateway):

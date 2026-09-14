@@ -20,7 +20,7 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard,SetupWizardContainer
 from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 from tldw_chatbook.Backup_Recovery import storage_admission as storage,participants
-from textual.widgets import Button,Input,Static
+from textual.widgets import Button,Input,Select,Static
 from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures
 import tldw_chatbook
 assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook'/'__init__.py'
@@ -63,6 +63,36 @@ async def main():
     retained=[{'owner':p.owner_id,'thread':l.resource_thread.name} for p in tuple(participants._installed_repositories) for l in tuple(p.connections.values()) if p.owner_id=='notifications.client' and l.resource_thread is not threading.main_thread()]
    record('post_home_refresh',retained)
    assert not retained,retained
+   if sys.argv[2]=='handoff':
+    from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
+    from tldw_chatbook.Backup_Recovery.runtime_maintenance import RuntimeMaintenance
+    pane=app.screen.query_one(LibraryNoteWorkPane)
+    assert pane.mode=='list' and pane.query('#library-note-work-empty')
+    saved=app.chachanotes_db.get_note_by_title('First note live backup')
+    assert saved and saved['content']=='First note native value.'
+    assert not RuntimeMaintenance(app).unsaved_editors()
+    # Match the CLI's advertised restart capability; use the real guarded
+    # shutdown, stopping at its request receipt before the external CLI exec.
+    app._recovery_restart_available=True
+    await pilot.press('ctrl+p',*'backup','enter')
+    await until(lambda:isinstance(app.screen,BackupRestoreScreen))
+    screen=app.screen
+    screen.query_one('#backup-open-inspect',Button).focus();await pilot.press('enter')
+    from Tests.Backup_Recovery.test_restore_plan import sealed
+    archive=sealed(Path.home())
+    screen.query_one('#backup-source',Input).value=str(archive.path)
+    screen.query_one('#backup-inspect',Button).focus();await pilot.press('enter')
+    await until(lambda:screen._inspection_id is not None,60)
+    screen.query_one('#backup-restore-mode',Select).value='replace'
+    await pilot.pause()
+    button=screen.query_one('#backup-restart',Button)
+    button.scroll_visible(animate=False);await pilot.pause()
+    button.focus();await pilot.press('enter')
+    await until(lambda:getattr(app,'_recovery_restart_request',None) is not None,60)
+    assert app._shutting_down
+    assert app._recovery_restart_request.target_config==Path(os.environ['TLDW_CONFIG_PATH'])
+    record('saved_note_recovery_handoff',True)
+    return
    await pilot.press('f4','ctrl+p',*'backup','enter')
    await until(lambda:isinstance(app.screen,BackupRestoreScreen))
    screen=app.screen
@@ -101,4 +131,9 @@ print('retired and reopened')
 
 def test_first_run_note_creation_can_capture_live_backup(tmp_path, native_package):
     _run(tmp_path, 'note', 'backup', script=_FIRST_NOTE, timeout=180,
+         installed_package=native_package)
+
+
+def test_saved_closed_library_note_can_handoff_to_recovery(tmp_path, native_package):
+    _run(tmp_path, 'note', 'handoff', script=_FIRST_NOTE, timeout=180,
          installed_package=native_package)

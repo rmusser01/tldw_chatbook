@@ -308,6 +308,10 @@ class _State:
     uncertain: bool = False
     config_failed: bool = False
     config_generation: int | None = None
+    config_publication: tuple[Path, tuple[int, int]] | None = None
+    companion_guard: object | None = None
+    companion_roots: tuple[Path, ...] = ()
+    config_anchor: Path | None = None
 
 
 _states = {}
@@ -349,6 +353,10 @@ def _check(operation, path=None, *, writing=False):
                 raise bootstrap.RecoveryRequired("raw_native_scope_changed")
             if storage._pause is not None and hold is None:
                 raise bootstrap.RecoveryRequired("raw_native_scope_unqualified")
+    if state.config_anchor is not None and config_files.sibling_selector(
+        state.source, state.route, state.selected
+    ) != state.config_anchor:
+        raise bootstrap.RecoveryRequired("config_companion_scope_changed")
     if state.route in {"config_data", "config_default_root", "config_chat_dicts", "config_models"}:
         config_files.selection(state.source, state.route, state.selected)
         if state.source._CONFIG_GENERATION != state.config_generation:
@@ -366,6 +374,10 @@ def _check(operation, path=None, *, writing=False):
         pinned = os.fstat(fd)
         if (info.st_dev, info.st_ino) != (pinned.st_dev, pinned.st_ino):
             raise bootstrap.RecoveryRequired("raw_parent_identity_changed")
+        if state.companion_guard is not None and (
+            info.st_uid != os.geteuid() or info.st_mode & 0o077
+        ):
+            raise bootstrap.RecoveryRequired("config_companion_parent_unsafe")
     return state
 
 
@@ -387,6 +399,9 @@ def _retire(state):
     for path, fd in tuple(state.pins.items()):
         _close_descriptor(state, fd)
         del state.pins[path]
+    if state.companion_guard is not None:
+        state.companion_guard.close()
+        state.companion_guard = None
     for lease in reversed(state.leases):
         lease.close()
     return True
@@ -676,7 +691,21 @@ def _scope(
             + directories
             + ((selected,) if directory_only and not directories else ())
         ) or (selected,)
-        if route in config_files.ROUTES:
+        state.config_anchor = (
+            config_files.sibling_selector(source, route, selected) if installed else None
+        )
+        if route in {"config", "config_snapshot"} or state.config_anchor is not None:
+            attempt.check()
+            state.leases.append(storage.acquire_storage(state.config_anchor or selected))
+            state.holds.append(storage._holds.get(state.leases[-1]._key))
+            state.companion_guard = config_files.companion_guard(operation, attempt)
+            if state.companion_guard is None:
+                state.leases.append(storage.acquire_storage(
+                    admission_paths[0], related_paths=admission_paths[1:]
+                ))
+                state.holds.append(storage._holds.get(state.leases[-1]._key))
+            attempt.check()
+        elif route in config_files.ROUTES:
             # All config members use the selected profile's same native group.
             # Check every member together rather than reopening its control tree
             # once per lock, backup and temporary file on each cached config read.

@@ -99,8 +99,8 @@ def test_installed_validation_failure_reverses_under_the_same_session(
         monkeypatch.setattr(replacement, "_rollback_replacement", checked)
         validate = publication._validate_installed
 
-        def rejected(*args):
-            validate(*args)
+        def rejected(*args, **kwargs):
+            validate(*args, **kwargs)
             raise ValueError("installed owner rejection")
 
         monkeypatch.setattr(publication, "_validate_installed", rejected)
@@ -632,8 +632,8 @@ def test_finish_validation_failure_reverses_with_the_unlocked_password(
         )
         validate = publication._validate_installed
 
-        def rejected(*args):
-            validate(*args)
+        def rejected(*args, **kwargs):
+            validate(*args, **kwargs)
             raise ValueError("installed validation refusal")
 
         monkeypatch.setattr(publication, "_validate_installed", rejected)

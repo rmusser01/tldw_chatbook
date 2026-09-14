@@ -15,7 +15,7 @@ not in `ChatScreen.__init__`.
 Moved from `ChatScreen`, thirteen methods byte-for-byte plus one split:
 
 - `_ensure_console_agent_bridge`, `_console_agent_section_lines`,
-  `_console_agent_fleet_summary_line`, `_console_agent_full_log_run_id`,
+  `_console_agent_fleet_summary_line`, `_capture_run_log_selection`,
   `_console_agent_full_log_available`, `_open_console_agent_run_log_viewer`,
   `_load_console_agent_run_log`, `_show_console_agent_run_log_modal`,
   `_toggle_console_agent_drilldown_from_subagents_click`,
@@ -142,6 +142,7 @@ from typing import Any, Dict, Iterable, TYPE_CHECKING
 
 import re
 import time
+from time import monotonic as _run_log_clock
 
 from loguru import logger
 from textual.message_pump import NoActiveAppError
@@ -165,12 +166,13 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
     InspectorSectionRow,
 )
-from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+from textual.worker import get_current_worker
+
 from ...Widgets.Console.console_transcript import CONSOLE_GENERATING_PLACEHOLDER
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...Agents.fleet_coordinator import FleetHandle
-    from ...Chat.console_agent_bridge import SubAgentSummary
+    from ...Chat.console_agent_bridge import AgentLiveSnapshot, SubAgentSummary
     from ...Chat.console_chat_models import ConsoleChatMessage
     from ...Chat.console_rail_state import ConsoleRailState
     from ..Screens.chat_screen import ChatScreen
@@ -550,10 +552,20 @@ def console_turn_activity_text(
         fleet = _fleet_turn_activity(children, now=now)
         if fleet:
             return fleet
+    usage = getattr(snapshot, "turn_usage", None)
+    usage_label = _live_usage_label(usage)
     if step is None:
-        # Pre-first-token: the model has not come back once yet, so there is
-        # no step to name and no honest base to time from.
-        return CONSOLE_GENERATING_PLACEHOLDER
+        label = CONSOLE_GENERATING_PLACEHOLDER
+        started_at = getattr(usage, "started_at", None)
+        elapsed = (
+            _format_fleet_elapsed(max(0.0, now - started_at))
+            if started_at is not None
+            else ""
+        )
+        segments = (label, elapsed, usage_label)
+        return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
+            segment for segment in segments if segment
+        )
     if step.kind == STEP_TOOL_CALL:
         # `AgentLiveStep.text` for a tool-call step IS the tool name:
         # `agent_runtime` adds every STEP_TOOL_CALL with `tool_name=` and
@@ -568,10 +580,33 @@ def console_turn_activity_text(
         if started_at is not None
         else ""
     )
-    return f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else label
+    segments = (label, elapsed, usage_label if step.kind != STEP_TOOL_CALL else "")
+    return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
+        segment for segment in segments if segment
+    )
 
 
-def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSectionRow:
+def _live_usage_label(usage: Any) -> str:
+    """Format one published current-call scalar with explicit provenance."""
+    if usage is None:
+        return ""
+    output_tokens = getattr(usage, "output_tokens", None)
+    source = getattr(usage, "source", None)
+    if type(output_tokens) is not int or output_tokens <= 0:
+        return ""
+    if source == "provider":
+        return f"{output_tokens} provider output tok"
+    if source == "local":
+        return f"~{output_tokens} local output tok"
+    return ""
+
+
+def _fleet_row_from_handle(
+    handle: "FleetHandle",
+    *,
+    now: float,
+    live_snapshot: AgentLiveSnapshot | None = None,
+) -> InspectorSectionRow:
     """Build one fleet row from a LIVE ``FleetCoordinator`` handle.
 
     ``row_id`` is the handle's own ``handle_id`` -- stable across the
@@ -591,11 +626,11 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
     for a stale row would just make ``AgentService.cancel_subagent`` no-op
     silently on press.
 
-    The secondary line's trailing token segment (PR2b Task 5) reads
-    ``handle.total_tokens`` -- 0, and so omitted, until ``FleetCoordinator.
-    finish()`` records the child's real ``RunOutcome.total_tokens`` spend;
-    a still-running child's spend is not final, so nothing is shown for it
-    rather than a partial, growing-then-frozen number.
+    While the child is active, ``live_snapshot.turn_usage`` may append the
+    current model call's output-token scalar. That live value clears at the
+    call boundary and is separate from final budget accounting.
+    ``handle.total_tokens`` remains 0 (and omitted) until ``FleetCoordinator.
+    finish()`` records the child's final ``RunOutcome.total_tokens`` spend.
     """
     status = handle.status or "running"
     glyph = _AGENT_STATUS_GLYPHS.get(status, "●")
@@ -607,6 +642,11 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
         if elapsed:
             primary = f"{primary} · {elapsed}"
     secondary = (handle.error or handle.result or handle.task or "").strip()
+    usage_segment = ""
+    if status not in TERMINAL_RUN_STATUSES:
+        usage_segment = _live_usage_label(getattr(live_snapshot, "turn_usage", None))
+        if usage_segment:
+            secondary = f"{secondary} · {usage_segment}" if secondary else usage_segment
     if handle.total_tokens:
         token_segment = _budget_token_label(handle.total_tokens)
         secondary = f"{secondary} · {token_segment}" if secondary else token_segment
@@ -640,7 +680,9 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
         row_id=handle.handle_id,
         primary_text=primary,
         secondary_text=secondary,
-        wrap_secondary=bool(unread and status in TERMINAL_RUN_STATUSES),
+        wrap_secondary=bool(
+            usage_segment or (unread and status in TERMINAL_RUN_STATUSES)
+        ),
         status=status,
         clickable=bool(handle.run_id),
         cancellable=status not in TERMINAL_RUN_STATUSES,
@@ -809,6 +851,12 @@ class ConsoleAgentController:
         #: cluster, so no screen proxy.
         self._console_agent_full_log_cache_run_id: str | None = None
         self._console_agent_full_log_cache_available: bool = False
+        self._console_agent_full_log_cache_bridge: Any = None
+        self._console_agent_full_log_cache_selection: tuple | None = None
+        self._console_agent_full_log_probe_generation = 0
+        self._console_agent_full_log_probe_pending: int | None = None
+        self._console_agent_full_log_probe_worker: Any = None
+        self._console_agent_full_log_retry_at = 0.0
         #: The batched `[N Sub-Agents]` badge-count cache and its two
         #: invalidation keys. Also cluster-private.
         self._console_subagent_counts_cache: Dict[str, int] = {}
@@ -1243,182 +1291,192 @@ class ConsoleAgentController:
             return ""
         return f"{running} other agents running, {pending} waiting for approval."
 
-    def _console_agent_full_log_run_id(self) -> str | None:
-        """Return the run id the "View full log" affordance should target.
+    def _attached_run_log_bridge(self) -> Any:
+        """Read only this screen's attached runtime; never initialize or reattach."""
+        runtime = getattr(self._screen, "_console_runtime_ref", None)
+        return runtime.agent_bridge if runtime is not None else None
 
-        TASK-870: mirrors ``_console_agent_section_lines``'s own
-        drill-vs-overview precedence -- the drilled-into sub-agent run
-        (when drilled in and still valid for the active conversation, the
-        same check that method uses), else the conversation's latest
-        primary run, which is what the top-level overview is summarizing.
-
-        Returns:
-            The relevant run id, or ``None`` when there is nothing to
-            target -- no bridge, no active conversation, a stale drill-in
-            left over from a conversation switch, or a conversation that
-            has never run an agent. Callers must still confirm
-            ``ConsoleAgentBridge.run_log_available`` before showing the
-            affordance for whatever id this returns -- a valid run id does
-            not imply a log was ever written for it.
-        """
-        bridge = self._ensure_console_agent_bridge()
-        if bridge is None:
-            return None
+    def _capture_run_log_selection(self, bridge: Any) -> tuple:
+        """Snapshot UI selection and process-local turn identity without I/O."""
         conversation_id = self._current_console_rail_conversation_id() or ""
-        if not conversation_id:
-            return None
-        drill = self._console_agent_drilldown_run_id
-        if drill:
-            record = bridge.subagent_run(drill)
-            if record is not None and record.get("conversation_id") == conversation_id:
-                return drill
-            return None
-        # getattr tolerates a bare test double that only implements the
-        # older bridge surface (subagent_run/subagent_runs/live_snapshot) --
-        # same idiom _console_agent_section_lines already uses for
-        # historical_snapshot, immediately below this method in this file.
-        latest_primary_run_id = getattr(bridge, "latest_primary_run_id", None)
-        if latest_primary_run_id is None:
-            return None
-        return latest_primary_run_id(conversation_id)
+        token_reader = getattr(bridge, "run_log_target_token", None)
+        token = token_reader(conversation_id) if token_reader else (None, None)
+        return (conversation_id, self._console_agent_drilldown_run_id, token)
 
     def _console_agent_full_log_available(self, *, allow_probe: bool = True) -> bool:
-        """Whether the "View full log" affordance should be shown right now.
-
-        TASK-870 (AC#6/#7): ``True`` only when ``_console_agent_full_log_
-        run_id`` resolves to a run AND that run actually has an on-disk log
-        -- absent (button hidden) for every other case, including a bridge
-        or filesystem lookup that raises, so a resolution failure can never
-        surface as a dangling or erroring button.
-
-        Finding D (review round 2): the underlying check costs a SQLite
-        lookup (``_console_agent_full_log_run_id``, to resolve the target
-        run id) plus a filesystem probe (``bridge.run_log_available``, to
-        confirm a log directory/segment exists -- for a drilled-in
-        sub-agent this can also mean parsing its primary's whole log, see
-        finding B) -- paying that unconditionally on every 0.2s rail tick
-        is real, avoidable I/O for a value that is overwhelmingly the same
-        tick to tick. The filesystem/DB probe result is cached keyed by
-        the resolved run id and only redone when that id changes; when
-        ``allow_probe`` is ``False`` (the periodic sync passes this while
-        the Agent section is collapsed -- see
-        ``_sync_console_agent_section``), this returns the last cached
-        answer WITHOUT even resolving the current run id, so a collapsed
-        section's steady-state tick touches neither disk nor the DB.
-
-        Args:
-            allow_probe: Whether a cache miss may fall through to the
-                SQLite/filesystem lookup. Callers that need a fresh,
-                authoritative answer (the one-shot compose-time render,
-                and the "open the viewer" press-time re-check) should
-                leave this ``True``; the periodic rail sync passes
-                ``section_open`` here.
-
-        Returns:
-            Whether the affordance should be visible for the current
-            target run -- possibly a stale cached value when
-            ``allow_probe`` is ``False`` and the target has since changed
-            unobserved (self-corrects the moment the section reopens).
-        """
+        """Return the cache; resolve metadata and scan logs only in a worker."""
         if not allow_probe:
             return self._console_agent_full_log_cache_available
-        run_id = self._console_agent_full_log_run_id()
-        if run_id == self._console_agent_full_log_cache_run_id:
+        worker = self._console_agent_full_log_probe_worker
+        if (
+            self._console_agent_full_log_probe_pending
+            == self._console_agent_full_log_probe_generation
+            and worker is not None
+            and (worker.is_cancelled or worker.is_finished)
+        ):
+            # A queued worker may be cancelled before its function can settle itself.
+            self._console_agent_full_log_probe_pending = None
+            self._console_agent_full_log_probe_worker = None
+            self._console_agent_full_log_retry_at = 0.0
+        bridge = self._attached_run_log_bridge()
+        if bridge is None:
+            return False
+        selection = self._capture_run_log_selection(bridge)
+        if (
+            selection == self._console_agent_full_log_cache_selection
+            and bridge is self._console_agent_full_log_cache_bridge
+            and (
+                self._console_agent_full_log_cache_available
+                or self._console_agent_full_log_probe_pending
+                == self._console_agent_full_log_probe_generation
+                or _run_log_clock() < self._console_agent_full_log_retry_at
+            )
+        ):
             return self._console_agent_full_log_cache_available
-        if not run_id:
+        self._console_agent_full_log_cache_selection = selection
+        self._console_agent_full_log_cache_run_id = None
+        self._console_agent_full_log_cache_bridge = bridge
+        self._console_agent_full_log_cache_available = False
+        self._console_agent_full_log_probe_generation += 1
+        if selection[0] and bridge is not None:
+            self._console_agent_full_log_probe_pending = (
+                self._console_agent_full_log_probe_generation
+            )
+            self._console_agent_full_log_probe_worker = self.run_worker(
+                partial(
+                    self._probe_console_agent_run_log,
+                    bridge,
+                    selection,
+                    self._console_agent_full_log_probe_generation,
+                ),
+                thread=True,
+                exclusive=True,
+                group="run-log-availability",
+            )
+        return False
+
+    def _run_log_target_matches(self, bridge: Any, selection: tuple) -> bool:
+        return (
+            self._screen.is_mounted
+            and self._attached_run_log_bridge() is bridge
+            and self._capture_run_log_selection(bridge) == selection
+        )
+
+    def _probe_console_agent_run_log(
+        self, bridge: Any, selection: tuple, generation: int
+    ) -> None:
+        worker = get_current_worker()
+        run_id = None
+        try:
+            run_id = bridge.resolve_run_log_target(selection[0], selection[1])
+            available = bool(
+                run_id
+                and not worker.is_cancelled
+                and bridge.run_log_available(
+                    run_id, cancelled=lambda: worker.is_cancelled
+                )
+            )
+        except Exception as error:  # noqa: BLE001 - optional log reads fail closed.
+            logger.error("Run-log availability failed ({})", type(error).__name__)
             available = False
-        else:
-            bridge = self._ensure_console_agent_bridge()
-            if bridge is None:
-                available = False
-            else:
-                try:
-                    available = bool(bridge.run_log_available(run_id))
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        "console agent rail: run_log_available check failed for "
-                        f"run_id={run_id}; hiding the View full log affordance"
-                    )
-                    available = False
+        if worker.is_cancelled:
+            available = None
+        try:
+            self._screen.app.call_from_thread(
+                self._publish_console_agent_log_availability,
+                bridge,
+                selection,
+                run_id,
+                generation,
+                available,
+            )
+        except RuntimeError:
+            return
+
+    def _publish_console_agent_log_availability(
+        self,
+        bridge: Any,
+        selection: tuple,
+        run_id: str | None,
+        generation: int,
+        available: bool | None,
+    ) -> None:
+        if generation != self._console_agent_full_log_probe_generation:
+            return
+        # Always settle this generation, even after selection changed while collapsed.
+        self._console_agent_full_log_probe_pending = None
+        self._console_agent_full_log_probe_worker = None
+        self._console_agent_full_log_retry_at = 0.0
+        if available is None or not self._run_log_target_matches(bridge, selection):
+            return
+        self._console_agent_full_log_retry_at = _run_log_clock() + 1.0
         self._console_agent_full_log_cache_run_id = run_id
         self._console_agent_full_log_cache_available = available
-        return available
+        self._screen._sync_console_agent_section()
 
     def _open_console_agent_run_log_viewer(self) -> None:
-        """Kick off loading the full run log for whatever "View full log" targets.
-
-        TASK-870 (AC#6): re-resolves the target run id at press time
-        (rather than trusting a value cached from the last 0.2s sync) so a
-        drill-in change between sync ticks can never open the wrong run's
-        log. No-ops quietly if there is no current target.
-
-        Finding C (review round 2): the actual filesystem read + record
-        parse + formatting now happens off the UI thread (see
-        ``_load_console_agent_run_log``) -- a run's segments can total
-        many megabytes (4MB per segment, no cap on segment count), and
-        doing that synchronously on the Textual event loop could freeze
-        the whole app for the duration of the read.
-        """
-        run_id = self._console_agent_full_log_run_id()
-        if not run_id:
-            return
-        bridge = self._ensure_console_agent_bridge()
+        """Resolve the captured selection and load its first page off-thread."""
+        bridge = self._attached_run_log_bridge()
         if bridge is None:
             return
-        # Was `self._load_console_agent_run_log(bridge, run_id)` while
-        # that method carried `@work(thread=True)`. Same worker, same
-        # group ("default") and name -- see the loader's own docstring.
+        selection = self._capture_run_log_selection(bridge)
+        if not selection[0]:
+            return
         self.run_worker(
-            partial(self._load_console_agent_run_log, bridge, run_id),
+            partial(self._load_console_agent_run_log, bridge, selection),
             thread=True,
             group="default",
             name="_load_console_agent_run_log",
         )
 
-    def _load_console_agent_run_log(self, bridge: Any, run_id: str) -> None:
-        """Load, filter, and format one run's full log off the UI thread.
-
-        Finding C: the worker half of ``_open_console_agent_run_log_
-        viewer`` -- everything here is filesystem/CPU work (no widget
-        access), so it is safe to run in a real thread. The modal is only
-        ever pushed back on the UI thread, via ``call_from_thread``.
-
-        Wave-4 task 3: this carried ``@work(thread=True)`` before the move.
-        Textual's decorator asserts its target is a ``DOMNode`` and a
-        controller is not one, so the caller now dispatches it through
-        ``run_worker`` with the same thread/group/name ``@work`` supplied.
-
-        Args:
-            bridge: The already-resolved Console agent bridge (resolved on
-                the UI thread by the caller -- lazy bridge construction
-                touches ``self.app_instance``/config and should not run
-                off-thread).
-            run_id: The run id to load, as resolved by the caller at press
-                time.
-        """
+    def _load_console_agent_run_log(self, bridge: Any, selection: tuple) -> None:
+        """Read target metadata and the first bounded page in the same worker."""
+        worker = get_current_worker()
         try:
-            if not bridge.run_log_available(run_id):
+            run_id = bridge.resolve_run_log_target(selection[0], selection[1])
+            if not run_id or worker.is_cancelled:
                 return
-            log_text = bridge.load_run_log_text(run_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"console agent rail: failed to load run log for run_id={run_id}"
+            page = bridge.load_run_log_page(run_id)
+        except Exception as error:  # noqa: BLE001 - optional log reads fail closed.
+            logger.error("Run-log initial page unavailable ({})", type(error).__name__)
+            return
+        if (
+            worker.is_cancelled
+            or page is None
+            or (not page.slices and page.next_cursor is None)
+        ):
+            return
+        try:
+            self._screen.app.call_from_thread(
+                self._show_console_agent_run_log_modal, bridge, selection, run_id, page
             )
+        except RuntimeError:
             return
-        if not log_text:
+
+    def _show_console_agent_run_log_modal(
+        self,
+        bridge: Any,
+        selection: tuple,
+        run_id: str,
+        page: Any,
+    ) -> None:
+        """Publish and guard the modal using only the captured UI selection."""
+        from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+
+        if not self._run_log_target_matches(bridge, selection):
             return
-        self._screen.app.call_from_thread(
-            self._show_console_agent_run_log_modal, run_id, log_text
+        self.push_screen(
+            ConsoleRunLogModal(
+                run_id=run_id,
+                first_page=page,
+                page_loader=lambda cursor: bridge.load_run_log_page(
+                    run_id, cursor=cursor
+                ),
+                target_is_current=lambda: self._run_log_target_matches(
+                    bridge, selection
+                ),
+            )
         )
-
-    def _show_console_agent_run_log_modal(self, run_id: str, log_text: str) -> None:
-        """Push the full-log modal. UI-thread only -- see ``_load_console_agent_run_log``.
-
-        Args:
-            run_id: The run id the loaded text belongs to.
-            log_text: The fully rendered, untruncated log text.
-        """
-        self.push_screen(ConsoleRunLogModal(run_id=run_id, log_text=log_text))
 
     def _progress_owner_id(self) -> str | None:
         """Resolve the opaque progress owner independently of persistence."""
@@ -1651,7 +1709,7 @@ class ConsoleAgentController:
            Task 1-3 and only carry this method.
 
         ``getattr`` guards every optional method the same way
-        ``_console_agent_full_log_run_id`` already does for
+        ``_capture_run_log_selection`` already does for
         ``latest_primary_run_id`` -- a bare test double implementing only
         part of the bridge surface must degrade to "no rows", never raise.
 
@@ -1671,7 +1729,19 @@ class ConsoleAgentController:
         handles = fleet_snapshot(conversation_id) if fleet_snapshot is not None else []
         if handles:
             now = time.monotonic()
-            return tuple(_fleet_row_from_handle(handle, now=now) for handle in handles)
+            live_run_snapshot = getattr(bridge, "live_run_snapshot", None)
+            return tuple(
+                _fleet_row_from_handle(
+                    handle,
+                    now=now,
+                    live_snapshot=(
+                        live_run_snapshot(conversation_id, handle.run_id)
+                        if live_run_snapshot is not None and handle.run_id
+                        else None
+                    ),
+                )
+                for handle in handles
+            )
         historical_snapshot = getattr(bridge, "historical_snapshot", None)
         if historical_snapshot is not None:
             return tuple(

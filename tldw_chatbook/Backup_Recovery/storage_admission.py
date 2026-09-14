@@ -644,6 +644,128 @@ def _contains_capture_path(roots: Iterable[Path], selected: Path) -> bool:
     return any(_contains_owned_path(root, selected) for root in ordered)
 
 
+_CONFIG_CAPTURE_LEAVES = {
+    "ui.state": "ui_state.toml",
+    "ui.emoji_recents": "recent_emojis.json",
+    "runtime.source_state": "runtime_policy.json",
+}
+
+
+def _config_capture_bindings(root, selectors):
+    """Observe every bound selector that can write requested config siblings."""
+    pending, profiles = bootstrap._records(root)
+    requested = {str(lexical_path(path)) for path in selectors}
+    parents = {
+        Path(row["selector"]).parent for row in profiles if row["selector"] in requested
+    }
+    if not parents:
+        return ()
+    if pending:
+        raise bootstrap.RecoveryRequired("capture_config_scope_changed")
+    registry = bootstrap._registry(root)
+    result = []
+    for row in profiles:
+        selector = Path(row["selector"])
+        if selector.parent not in parents:
+            continue
+        if bootstrap._binding(selector, profiles, registry) != row:
+            raise bootstrap.RecoveryRequired("capture_config_scope_changed")
+        with bootstrap.pinned_directory(selector.parent) as parent:
+            info = os.fstat(parent)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise bootstrap.RecoveryRequired("capture_config_parent_unsafe")
+            result.append((row, (info.st_dev, info.st_ino, info.st_mode)))
+    return tuple(result)
+
+
+def _config_capture_sources(root, selectors, bindings):
+    """Derive only installed fixed leaves; foreign registry aliases still refuse."""
+    from .service_storage import default_control_root, work_root
+
+    requested = {str(lexical_path(path)) for path in selectors}
+    registry = bootstrap._registry(root)
+    controls = (root, default_control_root(), work_root(default_control_root()))
+    result = []
+    for row, parent_identity in bindings:
+        if row["selector"] not in requested:
+            continue
+        # Related profiles are held for exclusion, never adopted as ownership.
+        foreign = [
+            entry for name, entry in registry.items() if name not in row["namespaces"]
+        ]
+        selector = Path(row["selector"])
+        if not _contains_capture_path(map(Path, row["roots"]), selector):
+            raise bootstrap.RecoveryRequired("capture_config_scope_changed")
+        for owner, leaf in _CONFIG_CAPTURE_LEAVES.items():
+            path = selector.parent / leaf
+            tokens = {"path:" + str(path), "path:" + str(path.resolve())}
+            try:
+                info = os.stat(path, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077
+                ):
+                    raise bootstrap.RecoveryRequired("capture_config_source_unsafe")
+                tokens.add(f"inode:{info.st_dev}:{info.st_ino}")
+            if any(bootstrap._overlap(path, control) for control in controls) or any(
+                tokens.intersection(entry["historical"])
+                or any(bootstrap._overlap(path, Path(p)) for p in entry["roots"])
+                or any(
+                    bootstrap._overlap(path, Path(token[5:]))
+                    for token in entry["historical"]
+                    if token.startswith("path:")
+                )
+                for entry in foreign
+            ):
+                raise bootstrap.RecoveryRequired("capture_config_scope_changed")
+            result.append((path, owner, selector, parent_identity))
+    return tuple(result)
+
+
+def _config_capture_item(item, inventory, sources):
+    """Require the installed rediscovered file's exact config dependency."""
+    for path, owner, selector, _ in sources:
+        if item.path != path or item.owner != owner:
+            continue
+        if any(
+            row.owner == "config"
+            and row.path == selector
+            and item.dependencies == (row.logical_id,)
+            and item.metadata is not None
+            and item.metadata.kind == "file"
+            and item.metadata.policy == "private"
+            for row in inventory.items
+        ):
+            return True
+    return False
+
+
+def _config_capture_file(sources, selected, owner_id, info):
+    """Read-only discovery checks the exact leaf and its observed private parent."""
+    for path, owner, _, identity in sources:
+        if selected != path or owner_id != owner:
+            continue
+        with bootstrap.pinned_directory(path.parent) as parent:
+            current = os.fstat(parent)
+            leaf = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            if (
+                (current.st_dev, current.st_ino, current.st_mode) != identity
+                or not stat.S_ISREG(leaf.st_mode)
+                or leaf.st_nlink != 1
+                or leaf.st_uid != os.geteuid()
+                or leaf.st_mode & 0o077
+                or (leaf.st_dev, leaf.st_ino) != (info.st_dev, info.st_ino)
+            ):
+                raise bootstrap.RecoveryRequired("capture_config_source_changed")
+        return True
+    return False
+
+
 def _scope(
     root: Path,
     selector: Path,
@@ -1247,6 +1369,7 @@ class _DiscoveryScope:
 
     def __init__(self, session):
         self.session = session
+        self.config_sources = getattr(session, "_config_capture_sources", ())
         self.resources = []
         self.active = True
 
@@ -1479,7 +1602,9 @@ class MaintenanceSession:
         ):
             raise bootstrap.RecoveryRequired("maintenance_session_inactive")
 
-    def _discover_capture_inventory(self, config_paths, selections, approved_scope):
+    def _discover_capture_inventory(
+        self, config_paths, selections, approved_scope, *, config_bindings=None
+    ):
         """Qualify first-use sources from installed discovery under native locks.
 
         Ordinary backup need not rewrite the live client's profile enrollment.
@@ -1499,6 +1624,13 @@ class MaintenanceSession:
         if UNBOUND_NAMESPACE not in self._names:
             raise bootstrap.RecoveryRequired("capture_unbound_admission_required")
         selectors = tuple(lexical_path(path) for path in config_paths)
+        root = self._control.parent
+        bindings = _config_capture_bindings(root, selectors)
+        if (config_bindings is not None and bindings != config_bindings) or any(
+            not set(row["namespaces"]) <= set(self._names) for row, _ in bindings
+        ):
+            raise bootstrap.RecoveryRequired("capture_config_scope_changed")
+        self._config_capture_sources = _config_capture_sources(root, selectors, bindings)
         if any(
             not _contains_capture_path(self._roots, path)
             for path in selectors
@@ -1513,7 +1645,9 @@ class MaintenanceSession:
             if item.status != "included" or item.path is None:
                 continue
             path = lexical_path(item.path)
-            if not _contains_capture_path(self._roots, path):
+            if not _contains_capture_path(self._roots, path) and not _config_capture_item(
+                item, current, self._config_capture_sources
+            ):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
             info = os.stat(path)
             if not stat.S_ISREG(info.st_mode):
@@ -1584,19 +1718,19 @@ class MaintenanceSession:
         for source in sources:
             source = lexical_path(source)
             info = os.stat(source)
-            if not stat.S_ISREG(info.st_mode) or not _contains_capture_path(
-                self._roots, source
+            discovered = (
+                source.resolve(strict=True),
+                info.st_dev,
+                info.st_ino,
+            ) in getattr(self, "_discovered_sources", ())
+            if not stat.S_ISREG(info.st_mode) or (
+                not discovered and not _contains_capture_path(self._roots, source)
             ):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
             bound = _contains_capture_path(
                 (Path(owned) for binding in bindings for owned in binding["roots"]),
                 source,
             )
-            discovered = (
-                source.resolve(strict=True),
-                info.st_dev,
-                info.st_ino,
-            ) in getattr(self, "_discovered_sources", ())
             if not bound and not discovered:
                 raise bootstrap.RecoveryRequired("capture_source_binding_unverified")
             selected.append((source.resolve(strict=True), info.st_dev, info.st_ino))
@@ -1797,12 +1931,14 @@ class _CaptureFileDescriptors:
             self.scope.resources.remove(self)
 
 
-def _check_capture_file_identity(scope, selected, info, *, source_only=False):
+def _check_capture_file_identity(scope, selected, info, *, source_only=False, owner_id=None):
     scope.check()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise bootstrap.RecoveryRequired("capture_file_not_regular")
     if type(scope) is _DiscoveryScope:
-        if not _contains_capture_path(scope.session._roots, selected):
+        if not _contains_capture_path(scope.session._roots, selected) and not _config_capture_file(
+            scope.config_sources, selected, owner_id, info
+        ):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
         return
     if type(scope) is _PreviewScope:
@@ -2056,7 +2192,7 @@ def _consume_recovery_file(
             if private and (info.st_uid != os.geteuid() or info.st_mode & 0o077):
                 raise bootstrap.RecoveryRequired("credential_staging_required")
             if scope is not None:
-                _check_capture_file_identity(scope, selected, info)
+                _check_capture_file_identity(scope, selected, info, owner_id=owner_id)
             chunks = []
             import hashlib
 
@@ -2079,7 +2215,7 @@ def _consume_recovery_file(
                     hasher.update(chunk)
             if scope is not None:
                 after = os.fstat(fd)
-                _check_capture_file_identity(scope, selected, after)
+                _check_capture_file_identity(scope, selected, after, owner_id=owner_id)
                 if private and (after.st_uid != os.geteuid() or after.st_mode & 0o077):
                     raise bootstrap.RecoveryRequired("credential_staging_required")
                 current_parent = os.stat(selected.parent)

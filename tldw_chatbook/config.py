@@ -466,6 +466,8 @@ def _default_stt_provider_for_platform() -> str:
 def application_owned_config_directory(config_path: Path) -> Path | None:
     """Return the app-owned default config parent, never a custom parent."""
 
+    if _config_participants.verified_companion_parent(sys.modules[__name__], config_path):
+        return None
     if os.environ.get("TLDW_CONFIG_PATH"):
         return None
     default_path = lexical_path(DEFAULT_CONFIG_PATH)
@@ -1105,6 +1107,8 @@ MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 2000
 
 # TASK-18600: the Console agent's run budget, exposed in Settings ▸ Console
 # Behavior and resolved per run by `console_agent_bridge.console_run_budget()`.
+# `[agents] denial_circuit_breaker_limit` is resolved separately per run;
+# default 3 stops after a fully settled denied tail, while 0 disables it.
 # These override `Agents.agent_models.RunBudget`'s own dataclass defaults
 # (8 steps / 240s / 30 turns / 0 tokens / 300s per tool call), which stay
 # deliberately conservative for any non-Console caller.
@@ -3850,6 +3854,11 @@ openai_cache_key = false
 # already in flight.
 # child_max_wall_seconds = 1800.0
 #
+# Stop one run after a fully settled batch leaves this many consecutive
+# authoritative tool denials. The default is 3; 0 disables the breaker.
+# denial_circuit_breaker_limit = 3  # Consecutive denied calls; 0 disables.
+# TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT overrides this value for Console runs.
+#
 # TASK-25911: deterministic stale tool-result pruning on the agent send
 # payload -- big old tool outputs shrink to a bounded head plus a note,
 # with no LLM call. OFF by default; the thresholds below are the shipped
@@ -3872,6 +3881,22 @@ openai_cache_key = false
 # every completion (toast, badge, durable mark); the wake turn just never
 # fires.
 # autowake_enabled = true
+#
+# --- Sub-agent routing (ADR-147) ---
+# Default provider/model for spawned sub-agents when neither the spawn call
+# nor the named agent preset routes them. Empty = inherit the parent's.
+# subagent_default_provider = ""
+# subagent_default_model = ""
+#
+# Let the supervisor model pass ad-hoc provider/model args to
+# spawn_subagent. Off by default: routing then comes only from presets and
+# the default above. Ad-hoc args never carry URLs or sampling params.
+# spawn_override_enabled = false
+#
+# Ad-hoc targets the supervisor may pick. One entry per list item: a
+# provider id ("llama_cpp", "custom-ep:qwen-local") or "provider/model-glob"
+# ("llama_cpp/qwen3.8-*"). Presets are user-authored and never gated.
+# spawn_override_allowlist = []
 
 [splash_screen]
 # Splash screen configuration for startup animations
@@ -6596,11 +6621,15 @@ def _write_raw_cli_config_unlocked(
             f"Refusing to write {config_path}: the serialized configuration "
             f"does not parse back as valid TOML ({exc})"
         ) from exc
-    result = atomic_private_write_text(
-        config_path,
-        serialized,
-        application_owned_directory=application_directory,
-    )
+    from .Backup_Recovery.config_binding import preserve_owned_binding
+
+    with preserve_owned_binding(sys.modules[__name__], config_path, serialized) as precondition:
+        result = atomic_private_write_text(
+            config_path,
+            serialized,
+            application_owned_directory=application_directory,
+            target_precondition=precondition,
+        )
     _report_config_path_posture(result)
     _invalidate_config_caches()
     return parsed_back
@@ -9095,6 +9124,9 @@ def get_user_folder_name() -> str:
 @_config_participants.guarded
 def get_user_data_dir() -> Path:
     """Return the secured lexical user-specific data directory."""
+    verified = _config_participants.verified_user_data_directory(sys.modules[__name__])
+    if verified is not None:
+        return verified
     user_folder = get_user_folder_name()
     configured_data_dir = get_cli_setting("paths", "data_dir", None)
     if configured_data_dir is None:

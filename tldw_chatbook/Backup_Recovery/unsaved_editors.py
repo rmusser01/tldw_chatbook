@@ -515,9 +515,11 @@ def _editor(owner: object) -> list[UnsavedEditor]:
             dirty = snapshot.dirty or snapshot.saving or snapshot.in_conflict
         # Library also owns prompt/recipe authoring. That editor has no installed
         # read-only dirty baseline here, so an active authoring canvas refuses.
-        if owner._library_prompts_mutation_in_flight:
+        if owner._prompts_state.mutation_in_flight:
             return [UnsavedEditor("Library prompts", "unknown-editor-state")]
-    elif _exact(owner, "Widgets.Library.library_notes_canvas", "LibraryNotesCanvas"):
+    elif _exact(owner, "Widgets.Library.library_notes_canvas", "LibraryNotesCanvas") or _exact(
+        owner, "Widgets.Library.library_note_work_pane", "LibraryNoteWorkPane"
+    ):
         label = "Database Notes"
         if owner.mode == "editor":
             snapshot = owner.presentation_state.snapshot

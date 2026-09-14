@@ -58,6 +58,54 @@ class RestorePlan:
     local_snapshot: LocalSnapshotSource | None = None
 
 
+def required_rollback_dependencies(plan: RestorePlan) -> tuple[str, ...]:
+    """List unselected local dependencies of the reviewed original-copy scope.
+
+    This is a preflight explanation, not capture authority. Native preparation
+    still verifies exact original paths, whole trees and selected safety sources.
+    """
+    if plan.mode != "replace" or plan.target is None:
+        return ()
+    items = {item.logical_id: item for item in plan.target.items}
+    restored = {path for _, path in plan.restore}
+    retired = {path for _, path in plan.retire}
+    preserved = set(plan.preserve)
+    trees = {}
+    for item in items.values():
+        if item.metadata:
+            trees.setdefault((item.owner, item.metadata.root_id), set()).add(
+                item.logical_id
+            )
+    available = set(plan.safety_scope)
+    available.update(
+        item.logical_id
+        for item in items.values()
+        if item.path is not None
+        and (
+            item.path in retired
+            or any(parent in retired for parent in item.path.parents)
+            or item.path in restored
+            and (
+                item.status == "included"
+                or (item.logical_id, item.path) not in preserved
+            )
+        )
+    )
+    needed = set(available)
+    pending = list(available)
+    while pending:
+        item = items.get(pending.pop())
+        if item is None:
+            continue
+        dependencies = set(item.dependencies)
+        # A preserved declared tree is reviewed as a complete local source.
+        if item.metadata and (item.logical_id, item.path) in preserved:
+            dependencies.update(trees[(item.owner, item.metadata.root_id)])
+        pending.extend(dependencies - needed)
+        needed.update(dependencies)
+    return tuple(sorted(needed - available))
+
+
 def _document(archive):
     verify_sealed(archive)
     return _manifest(archive.manifest_bytes, ArchiveLimits(), encrypted=True)

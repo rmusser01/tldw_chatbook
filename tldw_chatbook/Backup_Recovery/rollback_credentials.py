@@ -52,11 +52,17 @@ class RollbackMaterial:
     root: Path
     session: object
     prepared: object
+    config_scopes: tuple[tuple[Path, Path], ...] = ()
 
     def records(self):
         from .publication import _finalization_session
 
-        _finalization_session(self.session, self.prepared.publication, self.prepared)
+        _finalization_session(
+            self.session,
+            self.prepared.publication,
+            self.prepared,
+            config_scopes=dict(self.config_scopes),
+        )
         limits = ArchiveLimits()
         with self.session._capture_bound_sources(
             (), self.root, limits, limits.expanded_bytes

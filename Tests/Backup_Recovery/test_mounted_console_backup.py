@@ -12,6 +12,7 @@ from Tests.Backup_Recovery.test_home_citation_retirement import _run
 _SCRIPT = r'''
 import asyncio,json,os,sys,threading,zipfile
 from pathlib import Path
+from contextlib import ExitStack
 from Tests.network_guard import install,blocked_attempts
 install()
 import keyring
@@ -24,10 +25,13 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
 from tldw_chatbook.Backup_Recovery import archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
-from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures,observe_startup_refusals
-stop_stacks=observe_threads(Path.home()/'mounted-stacks.log',interval=30)
-stop_failures=observe_recovery_failures(Path.home()/'mounted-recovery-failures.log')
-stop_startup=observe_startup_refusals(Path.home()/'mounted-startup-refusals.log')
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures,observe_startup_refusals,observe_capture_review,observe_runtime_settlement
+diagnostics=ExitStack()
+diagnostics.callback(observe_threads(Path.home()/'mounted-stacks.log',interval=30))
+diagnostics.callback(observe_recovery_failures(Path.home()/'mounted-recovery-failures.log'))
+diagnostics.callback(observe_startup_refusals(Path.home()/'mounted-startup-refusals.log'))
+diagnostics.callback(observe_capture_review(Path.home()/'mounted-capture-review.log'))
+diagnostics.callback(observe_runtime_settlement(Path.home()/'mounted-runtime-settlement.log'))
 import tldw_chatbook
 assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook'/'__init__.py'
 async def main():
@@ -87,7 +91,7 @@ async def main():
   await asyncio.to_thread(service.close)
  assert not blocked_attempts(),blocked_attempts()
 try:asyncio.run(main())
-finally:stop_startup();stop_failures();stop_stacks()
+finally:diagnostics.close()
 print('retired and reopened')
 '''
 

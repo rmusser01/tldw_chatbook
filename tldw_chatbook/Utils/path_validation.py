@@ -81,6 +81,27 @@ ROOT_DENIAL_RECOVERY_HINT = (
 )
 
 
+def validate_browsing_path(value: str | Path) -> Path:
+    """Validate a local picker path without restricting interactive navigation.
+
+    Args:
+        value: Absolute path supplied by the picker navigation boundary.
+
+    Returns:
+        The lexical path, preserving parent segments and symlink aliases.
+        Existence and permissions are checked by the subsequent filesystem call.
+
+    Raises:
+        ValueError: The value has an invalid type, contains NUL, or is relative.
+    """
+    if not isinstance(value, (str, Path)) or "\x00" in str(value):
+        raise ValueError("Invalid browsing path")
+    path = value if isinstance(value, Path) else Path(value)
+    if not path.is_absolute():
+        raise ValueError("Browsing path must be absolute")
+    return path
+
+
 def validate_canonical_directory(value: os.PathLike[str] | str) -> Path:
     """Validate an existing absolute directory without normalizing aliases.
 

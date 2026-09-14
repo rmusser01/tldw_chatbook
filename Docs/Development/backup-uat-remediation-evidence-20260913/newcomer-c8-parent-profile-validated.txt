@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Needs setup
+  Profile: eb5cd86e55774840a50b2d2d9b68beae
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ Restored profiles                                                                                                                                            │
+│                                                                                                                                                              │
+│ Current profile                                                                                                                                              │
+│ /private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/newcomer/home/.config/tldw_cli/config.toml                                                         │
+│ No verified recovery generation for this current profile. Optional features may still require setup.                                                         │
+│  Recovered media details                                                                                                                                     │
+│                                                                                                                                                              │
+│ eb5cd86e55774840a50b2d2d9b68beae                                                                                                                             │
+│ /private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/newcomer/restores/first-note/config/config.toml                                                    │
+│ /private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/newcomer/restores/first-note/data                                                                  │
+│ restoration_validated                                                                                                                                        │
+│ Needs setup                                                                                                                                                ▄ │
+│ Review these features in their settings before enabling them:                                                                                                │
+│ • actor packs / import staging                                                                                                                               │
+│ • agents / history                                                                                                                                           │
+│ • audio / history                                                                                                                                            │
+│ • cache / model catalog                                                                                                                                      │
+│ • chat / attachments                                                                                                                                         │
+│ • chat / dictionaries                                                                                                                                        │
+│ • chat / dictionary history                                                                                                                                  │
+│ • chat / grammars                                                                                                                                            │
+│ • chat / prompt history                                                                                                                                      │
+│ • chat / prompts                                                                                                                                             │
+│ • chat / rag context                                                                                                                                         │
+│ • chatbooks / archives                                                                                                                                       │
+│ • chatbooks / registry                                                                                                                                       │
+│ • chunking / templates                                                                                                                                       │
+│ • collections / archives                                                                                                                                     │
+│ • config                                                                                                                                                     │
+│ • config / history                                                                                                                                           │
+│ • db / agent runs                                                                                                                                            │
+│ • db / chachanotes / primary                                                                                                                                 │
+│ • db / evals                                                                                                                                                 │
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+
+                                Cancel operation                                                                     Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

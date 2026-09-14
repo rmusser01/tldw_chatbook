@@ -128,10 +128,41 @@ def replacement_case(
         from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
 
         declarations = {adapter.owner_id: adapter for adapter in install_adapters()}
+        extra_directories = {
+            item.logical_id: item.path
+            for item in extra_items
+            if item.status == "included_directory"
+        }
+        for item in extra_items:
+            if item.status != "included_directory":
+                continue
+            doc["directories"].append(
+                {
+                    "logical_id": item.logical_id,
+                    "root_id": item.logical_id,
+                    "parent_id": None,
+                    "relative_path": "",
+                    "synthetic": False,
+                    "metadata": {"version": 1, "mode": 0o700, "mtime_ns": 0},
+                }
+            )
+            doc["producer_inventory"].append(
+                {
+                    "logical_id": item.logical_id,
+                    "owner_id": item.owner,
+                    "status": "included_directory",
+                    "dependencies": list(item.dependencies),
+                    "shared_group": None,
+                }
+            )
+            doc["dependency_groups"][0]["members"].append(item.logical_id)
         for item in extra_items:
             if item.status != "included":
                 continue
-            extra_root = "root"
+            extra_root = next(
+                (key for key, path in extra_directories.items() if path == item.path.parent),
+                "root",
+            )
             if item.shared_group:
                 extra_root = "root-" + item.logical_id
                 doc["directories"].append(
@@ -225,6 +256,11 @@ def replacement_case(
         mode="replace",
         destinations={
             **{row["root_id"]: live for row in doc["directories"]},
+            **{
+                item.logical_id: item.path
+                for item in extra_items
+                if item.status == "included_directory"
+            },
             "profile:profile:paths.data_dir": live / "data",
         },
         target=target,
@@ -626,8 +662,12 @@ def test_rollback_output_cannot_be_a_fresh_sibling_inside_owned_root(
 def recovered_originals(live):
     from tldw_chatbook.Backup_Recovery.recovered_media_schema import migrate
 
-    catalog = live / "catalog.sqlite3"
-    payload = live / ("a" * 32 + ".payload")
+    for directory in (live / "data", live / "data" / "Local"):
+        directory.mkdir(mode=0o700, exist_ok=True)
+    recovered = live / "data" / "Local" / "recovered_media"
+    recovered.mkdir(mode=0o700)
+    catalog = recovered / "catalog.sqlite3"
+    payload = recovered / ("a" * 32 + ".payload")
     data = b"\x00test-only-original-image\xff"
     payload.write_bytes(data)
     payload.chmod(0o600)
@@ -640,8 +680,17 @@ def recovered_originals(live):
         connection.commit()
     catalog.chmod(0o600)
     return (
-        StorageItem("recovered.media", "catalog", catalog, "included", ("image",)),
+        StorageItem(
+            "recovered.media",
+            "profile:profile:recovered.media",
+            catalog,
+            "included",
+            ("profile:profile:config", "image"),
+        ),
         StorageItem("recovered.media", "image", payload, "included", ()),
+        StorageItem(
+            "recovered.media", "recovered-root", recovered, "included_directory", ()
+        ),
     )
 
 
@@ -705,11 +754,11 @@ def test_installed_mixed_and_shared_owners_round_trip(
 
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
     extras = recovered_originals if kind == "recovered" else shared_core_originals
-    with replacement_case(
-        tmp_path, monkeypatch, tree=kind == "recovered", extras=extras
-    ) as case:
+    with replacement_case(tmp_path, monkeypatch, extras=extras) as case:
         source = case[4].parent / (
-            "catalog.sqlite3" if kind == "recovered" else "shared.db"
+            "data/Local/recovered_media/catalog.sqlite3"
+            if kind == "recovered"
+            else "shared.db"
         )
         before = state(source)
         output = run_capture(case, tmp_path)
@@ -726,6 +775,8 @@ def test_installed_mixed_and_shared_owners_round_trip(
             receipt = case[2]._records(fd)[-1].evidence
         groups = {row["logical_id"]: row for row in receipt["sqlite_groups"]}
         files = {row.logical_id: row for row in doc.files}
+        if kind == "recovered":
+            groups["catalog"] = groups["profile:profile:recovered.media"]
         if kind == "aliases":
             for short, owner in (
                 ("core", "db.chachanotes.primary"),

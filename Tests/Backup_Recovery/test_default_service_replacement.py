@@ -9,6 +9,9 @@ import pytest
 from Tests.Backup_Recovery.native_package import (
     native_package as native_package,  # noqa: PLC0414
 )
+from Tests.Backup_Recovery.test_f9_replacement_workflow import (
+    assert_ordinary_profile_reopens,
+)
 from Tests.Backup_Recovery.test_later_rollback_credential_ui import (
     test_f9_later_rollback_requires_explicit_credential_review as _roundtrip,
 )
@@ -20,6 +23,9 @@ def test_default_profile_service_replacement_and_later_rollback(
 ):
     _roundtrip(tmp_path, native_package, default_profile=True)
     config_parent = tmp_path / "home" / ".config" / "tldw_cli"
+    assert_ordinary_profile_reopens(
+        tmp_path / "home", native_package, config_parent / "config.toml", "later-rollback"
+    )
     bootstrap = config_parent / "recovery-bootstrap"
     controls = (bootstrap, config_parent / "recovery")
     profiles = [

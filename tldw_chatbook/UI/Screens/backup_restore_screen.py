@@ -95,6 +95,9 @@ class BackupRestoreScreen(Screen):
                 yield Static(self._profile_text(), id="backup-profiles", markup=False)
                 yield Button("Add profile configuration", id="backup-add-profile")
                 yield Static("New backup file")
+                yield Static(
+                    "Use .tldw-backup.zip, or .tldw-backup.zip.age when encrypted."
+                )
                 yield Input(placeholder="Choose a new file", id="backup-destination")
                 yield Button("Choose output file", id="backup-pick-destination")
                 yield Static("Optional additions", classes="destination-section")
@@ -1885,10 +1888,14 @@ class BackupRestoreScreen(Screen):
             if choices:
                 await area.mount(
                     Static(
-                        "Optional additions to the encrypted before-replacement copy. "
-                        "Select preserved files and their declared folders when restored data depends on them. "
+                        "Preserved files for the encrypted before-replacement copy. "
+                        "Required files keep the copy's dependencies complete; other additions are optional. "
                         "These live files stay in place. Review restore again after selecting.",
                         markup=False,
+                    ),
+                    Button(
+                        "Select required safety-copy files",
+                        id="backup-select-required-safety",
                     ),
                     *(
                         Checkbox(Text(f"{owner}: {path}"), name=key, classes="backup-safety-member")
@@ -1902,6 +1909,15 @@ class BackupRestoreScreen(Screen):
                     "Safety-copy sources changed. Select additions and review restore again."
                 )
                 return
+        from tldw_chatbook.Backup_Recovery.restore_plan import (
+            required_rollback_dependencies,
+        )
+
+        required = set(required_rollback_dependencies(plan))
+        if choices:
+            self.query_one("#backup-select-required-safety", Button).disabled = (
+                not required or not required <= {row[0] for row in choices}
+            )
         self._restore_plan = plan
         self._restore_availability = availability
         rows = [
@@ -1930,10 +1946,40 @@ class BackupRestoreScreen(Screen):
                 "Availability: "
                 + ("available" if available else f"unavailable ({reason})")
             )
+            if not available:
+                rows.append(self.service.issue_message(reason))
         self.query_one("#backup-restore-preview", Static).update("\n".join(rows))
         self.query_one("#backup-start-restore", Button).disabled = (
             availability is not None and not availability[0]
         )
+        if (
+            availability == (False, "rollback_dependency_selection_required")
+            and choices
+        ):
+            self.query_one("#backup-select-required-safety", Button).focus()
+
+    @on(Button.Pressed, "#backup-select-required-safety")
+    def _select_required_safety(self):
+        from tldw_chatbook.Backup_Recovery.restore_plan import (
+            required_rollback_dependencies,
+        )
+
+        if self._restore_plan is None:
+            return
+        required = set(required_rollback_dependencies(self._restore_plan))
+        boxes = {
+            box.name: box for box in self.query(".backup-safety-member")
+            if not box.disabled and box.name in {row[0] for row in self._safety_scope_seen}
+        }
+        if not required or not required <= boxes.keys():
+            return
+        for key in required:
+            boxes[key].value = True
+        self._invalidate()
+        self.query_one("#backup-message", Static).update(
+            "Required safety-copy files selected. Review restore again before starting."
+        )
+        self.query_one("#backup-review-restore", Button).focus()
 
     @on(Button.Pressed, "#backup-start-restore")
     def _start_restore(self):

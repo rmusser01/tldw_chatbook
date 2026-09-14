@@ -37,6 +37,7 @@ from .native_files import (
 )
 from .owner_registry import install_adapters
 from .publication import (
+    _config_publication_scopes,
     _descriptor,
     _directory_state,
     _finalization_session,
@@ -44,6 +45,7 @@ from .publication import (
     _plan_digest,
     _publication_scope_path,
     _publication_targets,
+    _recorded_config_scopes,
     _rollback_sources,
     _safety_source_matches,
 )
@@ -111,8 +113,15 @@ def _checked_originals(plan, journal, session):
             or context.descriptor != receipt.descriptor
         ):
             raise ValueError("rollback_plan_changed")
-        _finalization_session(session, context, prepared)
-        _pending(journal, context, targets=_publication_targets(prepared), durable=True)
+        config_scopes = _recorded_config_scopes(journal, records)
+        _finalization_session(session, context, prepared, config_scopes=config_scopes)
+        _pending(
+            journal,
+            context,
+            targets=_publication_targets(prepared),
+            durable=True,
+            config_scopes=config_scopes,
+        )
         if not _matches(receipt.descriptor, receipt.descriptor.path):
             raise ValueError("candidate_receipt_changed")
         recheck_targets(plan)
@@ -163,7 +172,9 @@ def _checked_originals(plan, journal, session):
             if not any(
                 _contains_owned_path(
                     Path(root),
-                    _publication_scope_path(item.path, items=plan.target.items),
+                    _publication_scope_path(
+                        item.path, items=plan.target.items, config_scopes=config_scopes
+                    ),
                 )
                 for binding in bindings
                 for root in binding["roots"]
@@ -568,8 +579,13 @@ def capture_verify_rollback(
             or _Prepared.model_validate(records[-1].evidence) != prepared
         ):
             raise ValueError("rollback_preparation_changed")
-        _finalization_session(session, prepared.publication, prepared)
-        _pending(journal, prepared.publication, durable=True)
+        config_scopes = _recorded_config_scopes(journal, records)
+        _finalization_session(
+            session, prepared.publication, prepared, config_scopes=config_scopes
+        )
+        _pending(
+            journal, prepared.publication, durable=True, config_scopes=config_scopes
+        )
         reader._check(cancel)
         journal._append(
             parent,
@@ -716,7 +732,7 @@ def _preserved_default_controls(plan, document, parent, protected):
     return tuple(controls)
 
 
-def _first_config_container(
+def _first_profile_container(
     selector,
     inventory,
     names,
@@ -727,15 +743,24 @@ def _first_config_container(
     *,
     plan=None,
     document=None,
+    user_data=False,
 ):
-    """Prove a private current container without adopting unknown sibling files."""
+    """Observe one installed container; this helper grants no admission."""
     from .bootstrap import _overlap, default_bootstrap_root
     from .control_records import UNBOUND_NAMESPACE
     from .file_inventory import _inventory_root, inventory_tree
     from .service_storage import default_control_root, is_preserved_service_container
 
-    parent = selector.parent
-    controls = _preserved_default_controls(plan, document, parent, protected)
+    parent = (
+        _first_user_data_root(selector, inventory) if user_data else selector.parent
+    )
+    if parent is None:
+        raise ValueError("replacement_current_scope_unavailable")
+    controls = (
+        ()
+        if user_data
+        else _preserved_default_controls(plan, document, parent, protected)
+    )
     if controls and any(
         item not in inventory.items
         for item in plan.target.items
@@ -764,6 +789,22 @@ def _first_config_container(
         and item.owner in {"research.paste_staging", "collections.archives"}
         and item.metadata is not None
     }
+    if user_data:
+        actor_root = parent / "actor_pack_imports"
+        if any(
+            item.owner == "actor_packs.import_staging"
+            and item.status == "unused"
+            and item.path == actor_root
+            and item.metadata is not None
+            and item.metadata.kind == "directory"
+            and item.metadata.relative_path == ""
+            and item.metadata.parent_id is None
+            for item in inventory.items
+        ):
+            with pinned_directory(actor_root) as fd:
+                if os.listdir(fd):
+                    raise ValueError("replacement_config_container_unverified")
+            unused_scaffolds.add(actor_root)
     actual = {
         item.path
         for item in inventory.items
@@ -790,6 +831,17 @@ def _first_config_container(
                 and Path(path) == default_bootstrap_root() / "unbound-owner"
             )
         )
+    ):
+        raise ValueError("replacement_config_container_unverified")
+    if user_data and any(
+        _overlap(parent, Path(token[5:]))
+        for name, entry in registry.items()
+        if name not in names or any(name in row["namespaces"] for row in profiles)
+        for token in (
+            *entry["historical"],
+            *("path:" + path for path in entry["proposed"]),
+        )
+        if token.startswith("path:")
     ):
         raise ValueError("replacement_config_container_unverified")
     with pinned_directory(parent) as fd:
@@ -822,7 +874,7 @@ def _first_config_container(
             if path not in controls:
                 rows.extend(inventory_tree(path, owner="config", external=False))
         state = [(path, _fingerprint((path,), inventory)) for path in controls]
-    config_lock = selector.with_name(selector.name + ".lock")
+    config_lock = None if user_data else selector.with_name(selector.name + ".lock")
     for item in rows:
         native_lock = item.status == "included" and item.path == config_lock
         if item.status not in {"included", "included_directory"} or not (
@@ -849,7 +901,89 @@ def _first_config_container(
         if not valid:
             raise ValueError("replacement_config_container_unverified")
         state.append((item.path, item.metadata, info.st_dev, info.st_ino, info.st_mode))
+    if user_data:
+        tokens = {f"inode:{dev}:{ino}" for _, _, dev, ino, _ in state}
+        if any(
+            tokens.intersection(entry["historical"])
+            for name, entry in registry.items()
+            if name not in names or any(name in row["namespaces"] for row in profiles)
+        ):
+            raise ValueError("replacement_config_container_unverified")
     return identity, tuple(state)
+
+
+def _first_user_data_root(selector, inventory):
+    """Derive only the installed data directory from the current local selector."""
+    import tomllib
+
+    from .inventory import _ProfileSelectors
+    from .profile_paths import user_data_dir
+
+    if not inventory.complete:
+        raise ValueError("replacement_current_scope_unavailable")
+    with reader._regular(selector) as stream:
+        before = reader._identity(os.fstat(stream.fileno()))
+        encoded = stream.read(16 * 1024**2 + 1)
+        if before != reader._identity(os.fstat(stream.fileno())):
+            raise ValueError("replacement_current_scope_changed")
+    if len(encoded) > 16 * 1024**2:
+        raise ValueError("config_validation_unavailable")
+    selected = user_data_dir(
+        _ProfileSelectors.model_validate(
+            tomllib.loads(encoded.decode("utf-8"))
+        ).model_dump()
+    )
+    if not any(
+        item.path is not None
+        and item.status in {"included", "included_directory"}
+        and item.owner != "config"
+        and (selected in item.path.parents or item.path == selected)
+        for item in inventory.items
+    ):
+        return None
+    return selected
+
+
+def _first_config_container(
+    selector,
+    inventory,
+    names,
+    registry,
+    profiles,
+    selectors,
+    protected,
+    *,
+    plan=None,
+    document=None,
+):
+    """Keep the existing config-container and protected-control proof unchanged."""
+    return _first_profile_container(
+        selector,
+        inventory,
+        names,
+        registry,
+        profiles,
+        selectors,
+        protected,
+        plan=plan,
+        document=document,
+    )
+
+
+def _first_user_data_container(
+    selector, inventory, names, registry, profiles, selectors, protected
+):
+    """Prove the current private installed user-data tree, with no control exception."""
+    return _first_profile_container(
+        selector,
+        inventory,
+        names,
+        registry,
+        profiles,
+        selectors,
+        protected,
+        user_data=True,
+    )
 
 
 def _ensure_first_bindings(
@@ -871,6 +1005,8 @@ def _ensure_first_bindings(
     names_by_selector = {}
     inventories = {}
     containers = {}
+    data_containers = {}
+    proven_data = {}
     for selector in missing:
         reader._check(cancel)
         inventory = _first_binding_inventory(plan, selector)
@@ -914,6 +1050,63 @@ def _ensure_first_bindings(
         name = "backup.source." + hashlib.sha256(str(parent).encode()).hexdigest()
         authority.register(name, (parent,))
         names_by_selector[selector] = tuple(sorted({*names, name}))
+        registry = bootstrap._registry(root)
+    for selector in missing:
+        inventory = inventories[selector]
+        parent = _first_user_data_root(selector, inventory)
+        if parent is None:
+            continue
+        names = names_by_selector[selector]
+        if any(
+            name in row["namespaces"]
+            and any(
+                bootstrap._overlap(parent, Path(path))
+                for path in registry[name]["roots"]
+            )
+            for name in names
+            for row in profiles
+        ):
+            # Preserve already-shared exact scopes; never expand an old binding.
+            continue
+        if parent in proven_data:
+            names = tuple(sorted({*names, proven_data[parent][0]}))
+            names_by_selector[selector] = names
+        covered = any(
+            (Path(path) == parent or Path(path) in parent.parents)
+            and (
+                any(
+                    item.path == Path(path) and item.status == "included_directory"
+                    for item in inventory.items
+                )
+                or Path(path) == selector.parent
+                and selector in containers
+                and not _preserved_default_controls(
+                    plan, document, selector.parent, protected
+                )
+            )
+            for name in names
+            for path in registry[name]["roots"]
+        )
+        if covered:
+            continue
+        data_containers[selector] = _first_user_data_container(
+            selector,
+            inventory,
+            names,
+            registry,
+            profiles,
+            selectors,
+            protected,
+        )
+        if (
+            parent in proven_data
+            and data_containers[selector] != proven_data[parent][1]
+        ):
+            raise ValueError("replacement_data_container_changed")
+        name = "backup.source." + hashlib.sha256(str(parent).encode()).hexdigest()
+        authority.register(name, (parent,))
+        names_by_selector[selector] = tuple(sorted({*names, name}))
+        proven_data[parent] = (name, data_containers[selector])
         registry = bootstrap._registry(root)
     names = tuple(
         sorted(
@@ -960,6 +1153,20 @@ def _ensure_first_bindings(
                 != containers[selector]
             ):
                 raise ValueError("replacement_config_container_changed")
+            if (
+                selector in data_containers
+                and _first_user_data_container(
+                    selector,
+                    inventories[selector],
+                    names_by_selector[selector],
+                    registry,
+                    current_profiles,
+                    selectors,
+                    protected,
+                )
+                != data_containers[selector]
+            ):
+                raise ValueError("replacement_data_container_changed")
             roots = tuple(
                 Path(path)
                 for name in names_by_selector[selector]
@@ -1061,6 +1268,12 @@ def _register_publication_parents(plan, authority, protected, *, document):
 
     registry = bootstrap._registry(authority.control_root.parent)
     _, profiles = bootstrap._records(authority.control_root.parent)
+    config_scopes = _config_publication_scopes(
+        plan,
+        document,
+        authority.control_root.parent,
+        protected=protected,
+    )
     roots = [Path(path) for entry in registry.values() for path in entry["roots"]]
     for key, destination in plan.destinations:
         paths = [
@@ -1073,8 +1286,9 @@ def _register_publication_parents(plan, authority, protected, *, document):
         ) and not _preserved_default_controls(plan, document, destination, protected):
             paths.append(destination)
         if all(
-            any(root == path or root in path.parents for root in roots)
+            any(root == mapped or root in mapped.parents for root in roots)
             for path in paths
+            for mapped in (_publication_scope_path(path, config_scopes=config_scopes),)
         ):
             continue
         parent = _ancestor(destination)
@@ -1101,6 +1315,7 @@ def _register_publication_parents(plan, authority, protected, *, document):
         authority.register(name, (parent,))
         roots.append(parent)
     recheck_targets(plan)
+    return config_scopes
 
 
 def replace(
@@ -1179,7 +1394,7 @@ def replace(
     ):
         raise ValueError("replacement_binding_changed")
     authority = admission_authority(root)
-    _register_publication_parents(
+    config_scopes = _register_publication_parents(
         plan,
         authority,
         (root, control_root, candidate, archive.path),
@@ -1211,7 +1426,11 @@ def replace(
             for bound in registry[name]["roots"]
         )
         for original in affected
-        for path in (_publication_scope_path(original, items=plan.target.items),)
+        for path in (
+            _publication_scope_path(
+                original, items=plan.target.items, config_scopes=config_scopes
+            ),
+        )
     ):
         raise ValueError("replacement_scope_uncovered")
     protected = [Path(bound) for name in names for bound in registry[name]["roots"]]
@@ -1331,7 +1550,10 @@ def _verify_applied_credentials(candidate, journal, *, session, records):
     prepared = _Prepared.model_validate(
         next(row.evidence for row in records if row.event == "prepared")
     )
-    _finalization_session(session, prepared.publication, prepared)
+    config_scopes = _recorded_config_scopes(journal, records)
+    _finalization_session(
+        session, prepared.publication, prepared, config_scopes=config_scopes
+    )
     if not prepared.credential_scopes:
         return
     intent = next((row for row in records if row.event == "credential_intended"), None)
@@ -1375,7 +1597,10 @@ def _apply_replacement_credentials(candidate, journal, *, session, cancel):
         prepared = _Prepared.model_validate(
             next(row.evidence for row in records if row.event == "prepared")
         )
-        _finalization_session(session, prepared.publication, prepared)
+        config_scopes = _recorded_config_scopes(journal, records)
+        _finalization_session(
+            session, prepared.publication, prepared, config_scopes=config_scopes
+        )
         if not any(row.event == "rollback_verified" for row in records):
             raise ValueError("rollback_required")
         if not prepared.credential_scopes:
@@ -1422,7 +1647,9 @@ def _apply_replacement_credentials(candidate, journal, *, session, cancel):
         }
         for key, record in sorted(material.items()):
             reader._check(cancel)
-            _finalization_session(session, prepared.publication, prepared)
+            _finalization_session(
+                session, prepared.publication, prepared, config_scopes=config_scopes
+            )
             if key in applied:
                 if verify_replacement_credential(record, plans[key]) != applied[key]:
                     raise ValueError("credential_application_changed")
@@ -1469,6 +1696,7 @@ def _unlock_recovery(journal, prepared, password, session, cancel):
     require_rollback_password(password)
     with journal._locked(exclusive=False) as parent:
         records = journal._records(parent)
+        config_scopes = _recorded_config_scopes(journal, records)
     proof = _Rollback.model_validate(
         next(row.evidence for row in records if row.event == "rollback_verified")
     )
@@ -1511,7 +1739,13 @@ def _unlock_recovery(journal, prepared, password, session, cancel):
             raise ValueError("rollback_ciphertext_changed")
         from .rollback_credentials import RollbackMaterial
 
-        material = RollbackMaterial(archive, view, session, prepared)
+        material = RollbackMaterial(
+            archive,
+            view,
+            session,
+            prepared,
+            tuple(config_scopes.items()),
+        )
         material.records()
         yield material
 
@@ -1631,11 +1865,15 @@ def _abort_prepublication(journal, plan, cancel, *, execute):
         records = journal._records(parent)
         if _abort_context(journal, plan, records) != context:
             raise ValueError("publication_pending_mismatch")
+        config_scopes = _recorded_config_scopes(journal, records, plan=plan)
         session._check()
         if session._control != root / "admission" or any(
             not any(
                 _contains_owned_path(
-                    bound, _publication_scope_path(path, items=plan.target.items)
+                    bound,
+                    _publication_scope_path(
+                        path, items=plan.target.items, config_scopes=config_scopes
+                    ),
                 )
                 for bound in session._roots
             )
@@ -1664,11 +1902,19 @@ def _abort_prepublication(journal, plan, cancel, *, execute):
                 raise ValueError("candidate_receipt_changed")
             if prepared_row is not None:
                 prepared = _Prepared.model_validate(prepared_row.evidence)
-                _finalization_session(session, context, prepared)
+                _finalization_session(
+                    session, context, prepared, config_scopes=config_scopes
+                )
                 _check_directory_states(prepared, records)
                 if any(value != "staged" for value in _states(prepared).values()):
                     raise ValueError("prepublication_originals_changed")
-            _pending(journal, context, targets=affected, durable=execute)
+            _pending(
+                journal,
+                context,
+                targets=affected,
+                durable=execute,
+                config_scopes=config_scopes,
+            )
 
         prove()
         evidence = {
@@ -1945,7 +2191,13 @@ def recover_replacement(
     with _existing_admission_authority(root)._replacement_recovery(
         journal, 30, cancel=cancel
     ) as session:
-        _finalization_session(session, prepared.publication, prepared)
+        with journal._locked(exclusive=False) as parent:
+            config_scopes = _recorded_config_scopes(
+                journal, journal._records(parent), plan=plan
+            )
+        _finalization_session(
+            session, prepared.publication, prepared, config_scopes=config_scopes
+        )
         with _unlock_recovery(
             journal, prepared, rollback_password, session, cancel
         ) as check_credentials:
@@ -2023,8 +2275,15 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
         records = journal._records(parent)
         if any(row.event == "committed" for row in records):
             raise ValueError("later_rollback_required")
-        _finalization_session(session, context, prepared)
-        _pending(journal, context, targets=_publication_targets(prepared), durable=True)
+        config_scopes = _recorded_config_scopes(journal, records)
+        _finalization_session(session, context, prepared, config_scopes=config_scopes)
+        _pending(
+            journal,
+            context,
+            targets=_publication_targets(prepared),
+            durable=True,
+            config_scopes=config_scopes,
+        )
         _reconcile_moves(journal, parent, prepared, finish=False)
         credential_plan = prepare_credentials(
             check_credentials, journal, parent, prepared, plan, cancel
@@ -2066,7 +2325,9 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
         if not completed:
             for item in reversed(prepared.artifacts):
                 reader._check(cancel)
-                _finalization_session(session, context, prepared)
+                _finalization_session(
+                    session, context, prepared, config_scopes=config_scopes
+                )
                 check_credentials.check(credential_plan)
                 if item.logical_id in alternatives:
                     restore_alternate(
@@ -2196,9 +2457,15 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
                 },
             )
             journal._flush_records(parent)
-        _finalization_session(session, context, prepared)
+        _finalization_session(session, context, prepared, config_scopes=config_scopes)
         _originals_proof(prepared, started, check_credentials, credential_plan)
-        _pending(journal, context, targets=_publication_targets(prepared), durable=True)
+        _pending(
+            journal,
+            context,
+            targets=_publication_targets(prepared),
+            durable=True,
+            config_scopes=config_scopes,
+        )
         with pinned_directory(root) as bootstrap:
             info = os.fstat(bootstrap)
             if (info.st_dev, info.st_ino) != root_identity:

@@ -229,3 +229,332 @@ def test_startup_observer_bounds_direct_refusal_and_thread_local_tracing(tmp_pat
     assert all(row["errors"] == [] and row["return_line"] > 0 for row in records)
     assert all(row["reason"] == "unrecognized_startup_refusal" for row in records)
     assert "synthetic-private-reason" not in path.read_text()
+
+
+def test_capture_observer_reports_metadata_delta_and_original_review(
+    tmp_path, monkeypatch
+):
+    from dataclasses import replace
+
+    import pytest
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_capture_review
+    from tldw_chatbook.Backup_Recovery import capture, capture_service, inventory
+    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
+    from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
+
+    item = StorageItem(
+        "db.agent_runs",
+        "private-logical-secret",
+        tmp_path / "private-path-secret",
+        "included",
+        (),
+    )
+    before = Inventory((item,), True, "before", ())
+    after = Inventory((replace(item, status="unavailable"),), False, "after", ())
+    snapshots = iter((before, after))
+
+    def discover(*args, **kwargs):
+        return next(snapshots)
+
+    error = CaptureReviewRequired(("scope_changed",))
+
+    def run(*args, **kwargs):
+        capture.discover(())
+        raise error
+
+    for module in (capture_service, capture, inventory):
+        monkeypatch.setattr(module, "discover", discover)
+    monkeypatch.setattr(capture_service, "capture", run)
+    path = tmp_path / "capture.log"
+    stop = observe_capture_review(path)
+    try:
+        assert capture_service.discover(()) is before
+        with pytest.raises(CaptureReviewRequired) as caught:
+            capture_service.capture()
+        assert caught.value is error
+    finally:
+        stop()
+    assert all(
+        module.discover is discover for module in (capture_service, capture, inventory)
+    )
+    assert capture_service.capture is run
+    records = json.loads(path.read_text())
+    changed = next(
+        row for row in records if row["event"] == "inventory" and row["scope_changed"]
+    )
+    assert changed["delta"][0]["owner"] == "db.agent_runs"
+    assert changed["delta"][0]["before_status"] == "included"
+    assert changed["delta"][0]["after_status"] == "unavailable"
+    assert changed["delta"][0]["changed_fields"] == ["status"]
+    assert len(changed["delta"][0]["logical_id_sha256"]) == 64
+    assert records[-1]["event"] == "capture_review"
+    assert records[-1]["error"]["frames"][-1]["function"] == "run"
+    assert "private-logical-secret" not in path.read_text()
+    assert "private-path-secret" not in path.read_text()
+
+
+def test_capture_observer_bounds_deltas_and_retained_records(tmp_path, monkeypatch):
+    from Tests.Backup_Recovery.thread_diagnostics import observe_capture_review
+    from tldw_chatbook.Backup_Recovery import capture, capture_service, inventory
+    from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
+
+    count = 0
+
+    def discover(*args, **kwargs):
+        nonlocal count
+        count += 1
+        return Inventory(
+            tuple(
+                StorageItem(
+                    "config", str(i), None, "included" if count % 2 else "unused", ()
+                )
+                for i in range(300)
+            ),
+            True,
+            str(count),
+            (),
+        )
+
+    for module in (capture_service, capture, inventory):
+        monkeypatch.setattr(module, "discover", discover)
+    path = tmp_path / "capture.log"
+    stop = observe_capture_review(path)
+    try:
+        for _ in range(20):
+            assert len(inventory.discover(()).items) == 300
+    finally:
+        stop()
+    records = json.loads(path.read_text())
+    assert len(records) == 8
+    assert len(records[-1]["delta"]) == 64
+    assert records[-1]["delta_truncated"] is True
+
+
+def test_runtime_observer_preserves_false_drain_and_reports_candidate_hook(tmp_path):
+    import asyncio
+
+    import pytest
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    calls = []
+
+    class Owner:
+        def close(self):
+            calls.append("close")
+
+        async def drain(self, deadline):
+            calls.append(deadline)
+            return False
+
+        def resume(self):
+            calls.append("resume")
+
+    owner = Owner()
+    hook = runtime._Hook(owner, Owner.close, Owner.drain, Owner.resume)
+    original = runtime._settle_stage
+    path = tmp_path / "runtime.log"
+    stop = observe_runtime_settlement(path)
+    closed = []
+    try:
+        with pytest.raises(RecoveryRequired, match="runtime_work_not_settled"):
+            asyncio.run(runtime._settle_stage([hook], closed, 42))
+    finally:
+        stop()
+    assert calls == ["close", 42] and closed == [hook]
+    assert runtime._settle_stage is original
+    record = json.loads(path.read_text())[-1]
+    assert record["event"] == "settle_stage_failure"
+    assert record["issue"] == "runtime_work_not_settled"
+    assert record["candidate_hooks"][0].endswith("Owner.drain")
+
+
+def test_runtime_observer_preserves_error_identity_and_hides_text(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    import pytest
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+
+    error = RuntimeError("private-exception-secret")
+
+    async def settle(self, deadline):
+        raise error
+
+    monkeypatch.setattr(runtime.RuntimeMaintenance, "settle_producers", settle)
+    path = tmp_path / "runtime.log"
+    stop = observe_runtime_settlement(path)
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            asyncio.run(runtime.RuntimeMaintenance.settle_producers(object(), 1))
+        assert caught.value is error
+    finally:
+        stop()
+    assert runtime.RuntimeMaintenance.settle_producers is settle
+    record = json.loads(path.read_text())[-1]
+    assert record["event"] == "settle_producers_failure"
+    assert record["issue"] == "unrecognized_runtime_issue"
+    assert "private-exception-secret" not in path.read_text()
+
+
+def test_runtime_observer_snapshots_only_native_policy_and_thread_metadata(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.DB.private_sqlite import SQLITE_OWNER_REGISTRY
+
+    lease = storage.StorageLease(None)
+    lease._attach_sqlite(
+        SQLITE_OWNER_REGISTRY["db.base"], tmp_path / "private-database-secret"
+    )
+    result = object()
+
+    async def resume(self):
+        return result
+
+    monkeypatch.setattr(runtime.RuntimeMaintenance, "resume", resume)
+    path = tmp_path / "runtime.log"
+    stop = observe_runtime_settlement(path)
+    try:
+        instance = SimpleNamespace(
+            pause=None,
+            app=SimpleNamespace(_backup_maintenance_error="runtime_work_not_settled"),
+        )
+        assert asyncio.run(runtime.RuntimeMaintenance.resume(instance)) is result
+    finally:
+        stop()
+        lease.close()
+    assert runtime.RuntimeMaintenance.resume is resume
+    record = json.loads(path.read_text())[-1]
+    assert record["event"] == "runtime_resume"
+    assert any(
+        row["owner"] == "db.base"
+        and row["thread"] == threading.get_ident()
+        and row["count"] >= 1
+        for row in record["storage"]["leases"]
+    )
+    assert "private-database-secret" not in path.read_text()
+
+
+def test_runtime_observer_preserves_cancellation_and_success(tmp_path, monkeypatch):
+    import asyncio
+
+    import pytest
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+
+    error = asyncio.CancelledError()
+
+    async def settle(self, deadline):
+        if deadline == 0:
+            raise error
+        return "settled"
+
+    monkeypatch.setattr(runtime.RuntimeMaintenance, "settle_producers", settle)
+    stop = observe_runtime_settlement(tmp_path / "runtime.log")
+    try:
+        assert (
+            asyncio.run(runtime.RuntimeMaintenance.settle_producers(object(), 1))
+            == "settled"
+        )
+        with pytest.raises(asyncio.CancelledError) as caught:
+            asyncio.run(runtime.RuntimeMaintenance.settle_producers(object(), 0))
+        assert caught.value is error
+    finally:
+        stop()
+    assert runtime.RuntimeMaintenance.settle_producers is settle
+
+
+def test_runtime_observer_never_waits_for_storage_owner(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_runtime_settlement
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    entered, release = threading.Event(), threading.Event()
+    def owner():
+        with storage._lock:
+            entered.set()
+            assert release.wait(5)
+    async def resume(self): return 'unchanged'
+    monkeypatch.setattr(runtime.RuntimeMaintenance, 'resume', resume)
+    path = tmp_path / 'busy.log'
+    stop = observe_runtime_settlement(path)
+    worker = threading.Thread(target=owner)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        instance = SimpleNamespace(pause=None, app=SimpleNamespace(_backup_maintenance_error=None))
+        assert asyncio.run(runtime.RuntimeMaintenance.resume(instance)) == 'unchanged'
+        assert json.loads(path.read_text())[-1]['storage'] == {'available': False}
+    finally:
+        release.set()
+        worker.join(5)
+        stop()
+    assert not worker.is_alive()
+
+
+def test_runtime_observer_write_failure_preserves_refusal_and_restores_all_hooks(tmp_path, monkeypatch):
+    import asyncio
+
+    import pytest
+
+    from Tests.Backup_Recovery import thread_diagnostics as diagnostics
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance as runtime
+
+    error = RuntimeError('private-native-refusal')
+    async def settle(self, deadline): raise error
+    def write(*args): raise OSError('private-output-path')
+    monkeypatch.setattr(runtime.RuntimeMaintenance, 'settle_producers', settle)
+    monkeypatch.setattr(diagnostics, '_write', write)
+    originals = (runtime._settle_stage, runtime.RuntimeMaintenance.retire_local_caches, runtime.RuntimeMaintenance.resume)
+    stop = diagnostics.observe_runtime_settlement(tmp_path / 'error.log')
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            asyncio.run(runtime.RuntimeMaintenance.settle_producers(object(), 1))
+        assert caught.value is error
+    finally:
+        with pytest.raises(RuntimeError, match='^runtime_diagnostic_write_failed$'):
+            stop()
+    assert runtime.RuntimeMaintenance.settle_producers is settle
+    assert (runtime._settle_stage, runtime.RuntimeMaintenance.retire_local_caches, runtime.RuntimeMaintenance.resume) == originals
+
+
+def test_finalization_observer_preserves_original_failure_and_known_reason(tmp_path, monkeypatch):
+    import pytest
+
+    from Tests.Backup_Recovery.thread_diagnostics import observe_finalization_failures
+    from tldw_chatbook.Backup_Recovery import publication
+
+    original = publication.finalize_candidate
+    for index, error in enumerate((ValueError('installed_content_changed'), ValueError('private-finalization-secret'))):
+        def finalize(*args, _error=error, **kwargs): raise _error
+        monkeypatch.setattr(publication, 'finalize_candidate', finalize)
+        path = tmp_path / f'finalization-{index}.log'
+        stop = observe_finalization_failures(path)
+        try:
+            with pytest.raises(ValueError) as caught:
+                publication.finalize_candidate(None, None, None, session=None)
+            assert caught.value is error
+        finally:
+            stop()
+        assert publication.finalize_candidate is finalize
+        record = json.loads(path.read_text())[-1]
+        assert record['issue'] == ('installed_content_changed' if index == 0 else 'unrecognized_finalization_issue')
+        assert record['error']['frames'][-1]['function'] == 'finalize'
+        assert 'private-finalization-secret' not in path.read_text()
+    monkeypatch.setattr(publication, 'finalize_candidate', original)

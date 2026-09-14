@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.agent_models import normalize_tool_review, ToolCall
 from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
 from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 from tldw_chatbook.Chat.console_chat_controller import (
@@ -50,7 +50,10 @@ def test_review_hook_keeps_same_model_tool_calls_independent(tmp_path):
         return {"call-a": "approve_once", "call-b": "deny"}
 
     hook = build_virtual_cli_review_hook(provider, request)
-    assert hook(calls, "run-1") == {"call-a": "proceed", "call-b": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict
+        for key, value in hook(calls, "run-1").items()
+    } == {"call-a": "proceed", "call-b": "proceed"}
 
     with use_run_id("run-1"), use_tool_call_id("call-a"):
         allowed = provider.invoke("virtual_cli", calls[0].args)
@@ -121,6 +124,7 @@ def test_controller_composition_honors_local_master_and_kill_switch(
     controller.app = SimpleNamespace(unified_mcp_service=service)
     turn_context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": local_enabled},
+        tool_policy_profile_id="default",
         scratch_space=None,
     )
 

@@ -89,6 +89,7 @@ class _Restrictions:
         self.deadline = monotonic() + _SECONDS
         self.steps = 0
         self.migrating = False
+        self.migration_owner = None
         self.canvas_schema = False
         self.changing_schema_trust = False
         connection.set_authorizer(self.authorize)
@@ -163,15 +164,35 @@ class _Restrictions:
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
-            # The only installed historical migration is Research's ADD COLUMN
-            # chain. Schema writes are SQLite's own ALTER implementation; callers
-            # cannot submit SQL while this temporary authority is enabled.
+            # Research keeps its existing ADD COLUMN authority. Only fixed
+            # installed statements execute while this temporary gate is open.
             if (
                 action == sqlite3.SQLITE_ALTER_TABLE
                 and first == "main"
                 and second == "research_runs"
             ):
                 return sqlite3.SQLITE_OK
+            if self.migration_owner == "db.agent_runs":
+                allowed = (
+                    action == sqlite3.SQLITE_CREATE_TABLE
+                    and first == "agent_worktrees"
+                    or action == sqlite3.SQLITE_CREATE_INDEX
+                    and first
+                    in {
+                        "idx_agent_worktrees_scope",
+                        "sqlite_autoindex_agent_worktrees_1",
+                    }
+                    and second == "agent_worktrees"
+                    or action == sqlite3.SQLITE_REINDEX
+                    and first == "idx_agent_worktrees_scope"
+                    or action == sqlite3.SQLITE_ALTER_TABLE
+                    and first == "main"
+                    and second in {"agent_definitions", "agent_runs"}
+                    or action == sqlite3.SQLITE_INSERT
+                    and first in {"sqlite_master", "schema_version"}
+                )
+                if allowed:
+                    return sqlite3.SQLITE_OK
             if action == sqlite3.SQLITE_UPDATE and first == "sqlite_master":
                 return sqlite3.SQLITE_OK
         return sqlite3.SQLITE_DENY
@@ -463,8 +484,9 @@ def _validate_candidate(
                 return (issues, None)
             if migrate and version != max(policy.versions):
                 restrictions.migrating = True
-                connection.execute("BEGIN IMMEDIATE")
+                restrictions.migration_owner = installed.owner_id
                 try:
+                    connection.execute("BEGIN IMMEDIATE")
                     while version != max(policy.versions):
                         choices = [
                             (end, sql)
@@ -493,8 +515,11 @@ def _validate_candidate(
                     # this disposable candidate at its original committed state.
                     connection.set_progress_handler(None, 0)
                     restrictions.migrating = True
-                    connection.rollback()
-                    restrictions.migrating = False
+                    try:
+                        connection.rollback()
+                    finally:
+                        restrictions.migrating = False
+                        restrictions.migration_owner = None
             if restrictions.expired():
                 return (
                     ("cancelled" if cancel.is_set() else "sqlite_resource_limit",),

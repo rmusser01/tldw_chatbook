@@ -1,5 +1,8 @@
 """Startup reads distinguish an active registry publisher from abandoned intent."""
 
+# Used only for the fixed native ACL command on this test's temporary lock.
+import subprocess  # nosec B404
+import sys
 import threading
 
 import pytest
@@ -94,7 +97,15 @@ def test_startup_never_repairs_missing_or_unsafe_registry_lock(local_scope, dama
     root, config, _, _ = local_scope
     lock = root / "admission" / "registry.lock"
     if damage == "public":
-        os.chmod(lock, 0o644)
+        if sys.platform == "win32":
+            subprocess.run(  # nosec B603 B607
+                ["icacls", str(lock), "/grant", "*S-1-1-0:(R)"],
+                check=True,
+                capture_output=True,
+            )
+        else:
+            os.chmod(lock, 0o644)
+        assert os.stat(lock).st_mode & 0o044
     elif damage == "hardlink":
         os.link(lock, lock.with_name("alias.lock"))
     else:
@@ -104,3 +115,5 @@ def test_startup_never_repairs_missing_or_unsafe_registry_lock(local_scope, dama
     assert bootstrap.startup_permission(config, root) == (False, "recovery_scope_uncertain")
     if damage == "absent":
         assert not lock.exists()
+    elif damage == "public":
+        assert os.stat(lock).st_mode & 0o044

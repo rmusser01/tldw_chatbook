@@ -1,0 +1,14 @@
+{
+  "complete": true,
+  "issues": [],
+  "statuses": {
+    "intentionally_excluded": 48,
+    "unused": 66,
+    "included": 1935,
+    "included_directory": 14
+  },
+  "configs": [
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/power-interruption/home/.config/tldw_cli/config.toml"
+  ],
+  "problem_items": []
+}

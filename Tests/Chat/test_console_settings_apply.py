@@ -743,6 +743,104 @@ def test_rebase_keyed_a_b_a_drafts_restore_deliberate_a_edits() -> None:
     )
 
 
+def _registry_entry_config() -> dict[str, object]:
+    """App config whose registry resolves the ``custom-ep:gpu-box`` id."""
+    return {
+        "api_settings": {
+            "openai": {"api_url": "https://api.openai.test/v1"},
+        },
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU box",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.9:8080",
+                "models": ["model-a"],
+            }
+        },
+    }
+
+
+def test_rebase_preserves_registry_entry_provider_identity() -> None:
+    """CE-001: rebasing onto a registry entry must keep the dashed provider
+    id -- the Select's option values and the session settings are provider
+    IDENTITY, not ``api_settings`` lookup keys, so the config-key
+    canonicalizer's underscore rewriting must not reach them."""
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="openai", model="gpt-test")),
+        provider="custom-ep:gpu-box",
+        model=None,
+        app_config=_registry_entry_config(),
+        exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+    )
+
+    assert rebased.settings.provider == "custom-ep:gpu-box"
+
+
+def test_remember_model_draft_keeps_registry_entry_provider_identity() -> None:
+    """CE-001: remembered drafts key on the dashed registry id so the rebase
+    target match and the popover's carried-source lookup agree with the
+    identity spellings the live state carries."""
+    remembered = remember_model_draft(
+        _state(
+            ConsoleSessionSettings(provider="custom-ep:gpu-box", model="model-a")
+        )
+    )
+
+    assert [(draft.provider, draft.model) for draft in remembered.model_drafts] == [
+        ("custom-ep:gpu-box", "model-a")
+    ]
+    assert remembered.model_drafts[0].settings.provider == "custom-ep:gpu-box"
+
+
+def test_rebase_keyed_registry_drafts_restore_deliberate_entry_edits() -> None:
+    """CE-001 A-B-A: an entry draft remembered under its dashed identity is
+    restored when the user switches back onto the entry, and the rebased
+    settings keep the dashed id (not the mangled config-key spelling)."""
+    state_entry = _state(
+        ConsoleSessionSettings(
+            provider="custom-ep:gpu-box",
+            model="model-a",
+            temperature=0.13,
+        ),
+        _field(
+            "temperature",
+            0.13,
+            profile_override=0.13,
+            provenance=ConsoleSettingsFieldProvenance.EXPLICIT,
+            dirty=True,
+        ),
+        _field("streaming", True),
+    )
+    remembered_entry = remember_model_draft(state_entry)
+
+    state_openai = _rebase(
+        remembered_entry,
+        provider="openai",
+        model="gpt-test",
+        app_config=_registry_entry_config(),
+        exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+    )
+    assert state_openai.settings.provider == "openai"
+
+    restored_entry = _rebase(
+        remember_model_draft(
+            replace(state_openai, settings=replace(state_openai.settings, model=None))
+        ),
+        provider="custom-ep:gpu-box",
+        model="model-a",
+        app_config=_registry_entry_config(),
+        exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+    )
+
+    assert restored_entry.settings.provider == "custom-ep:gpu-box"
+    assert restored_entry.settings.temperature == 0.13
+    restored_fields = {field.name: field for field in restored_entry.field_drafts}
+    assert restored_fields["temperature"].dirty is True
+    assert restored_fields["temperature"].provenance is (
+        ConsoleSettingsFieldProvenance.EXPLICIT
+    )
+
+
 def test_rebase_exact_key_restores_provenance_exactly_as_remembered() -> None:
     remembered_a = remember_model_draft(
         _state(

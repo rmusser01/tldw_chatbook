@@ -126,6 +126,47 @@ async def test_actual_archive_inspection_survives_navigation(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("credentials", [False, True])
+async def test_invalid_backup_filename_review_explains_suffix_and_disables_create(
+    tmp_path, credentials
+):
+    from textual.app import App
+    from textual.widgets import Button, Checkbox, Input, Static
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
+
+    selected = tmp_path / "config.toml"
+    selected.write_text('[general]\nusers_name="fixture"\n')
+    selected.chmod(0o600)
+    service = RecoveryService(tmp_path / "control")
+
+    class Harness(App):
+        def on_mount(self):
+            self.push_screen(BackupRestoreScreen(service, config_paths=(selected,)))
+
+    app = Harness()
+    try:
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.click("#backup-open-create")
+            screen = app.screen
+            screen.query_one("#backup-destination", Input).value = str(tmp_path / "backup.zip")
+            if credentials:
+                screen.query_one("#backup-credentials", Checkbox).value = True
+                for identifier in ("backup-password", "backup-password-confirm"):
+                    screen.query_one("#" + identifier, Input).value = "disposable-password"
+            await pilot.click("#backup-review")
+            await screen.workers.wait_for_complete()
+            await pilot.pause()
+            message = str(screen.query_one("#backup-message", Static).render())
+            assert ".tldw-backup.zip" in message and ".tldw-backup.zip.age" in message
+            assert screen.query_one("#backup-create", Button).disabled
+            assert service.current() is None
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
 async def test_password_mismatch_stays_in_view_and_inputs_clear_on_back(tmp_path):
     from textual.app import App
     from textual.widgets import Input, Static

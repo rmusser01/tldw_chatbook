@@ -78,10 +78,12 @@ async def test_preserved_builtin_safety_scope_is_explicit_and_target_bound(
             assert expected.issubset(boxes)
             assert not any(b.value for b in boxes.values())
             assert not screen._restore_plan.safety_scope
-            for key in expected:
-                boxes[key].value = True
-            await pilot.pause()
+            assert screen.query_one('#backup-start-restore', Button).disabled
+            assert app.focused is screen.query_one('#backup-select-required-safety', Button)
+            await click(pilot, '#backup-select-required-safety')
+            assert {key for key, box in boxes.items() if box.value} == expected
             assert screen._restore_plan is None
+            assert app.focused is screen.query_one('#backup-review-restore', Button)
             if change_target:
                 screen.query_one("#backup-target-config", Input).value += "-changed"
                 await pilot.pause()

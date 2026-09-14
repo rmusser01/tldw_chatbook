@@ -10,6 +10,7 @@ from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
 )
+from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 
 
@@ -83,8 +84,9 @@ def test_console_visible_control_without_session_is_preserved(text):
     assert composer.draft_text() == text
 
 
+@pytest.mark.parametrize("canvas_type", [LibraryNotesCanvas, LibraryNoteWorkPane])
 @pytest.mark.parametrize("changed", [False, True])
-def test_notes_visible_controls_can_lead_clean_snapshot(changed):
+def test_notes_visible_controls_can_lead_clean_snapshot(changed, canvas_type):
     from textual.widgets import Input, TextArea
 
     from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
@@ -108,7 +110,7 @@ def test_notes_visible_controls_can_lead_clean_snapshot(changed):
         0,
         "",
     )
-    canvas = LibraryNotesCanvas(
+    canvas = canvas_type(
         mode="editor", presentation_state=LibraryNotePresentationState(snapshot, "", "")
     )
     controls = {
@@ -734,3 +736,47 @@ def test_retained_navigation_unknown_nested_shape_refuses(route, snapshot):
         probe_unsaved_editors(screen_state_store=store)[0].reason
         == "unknown-editor-state"
     )
+
+
+@pytest.mark.parametrize("mode,blocked", [("list", False), ("empty", True), ("unknown", True)])
+def test_closed_installed_notes_work_pane_has_no_draft(mode, blocked):
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
+
+    pane = LibraryNoteWorkPane(mode=mode)
+    assert bool(probe_unsaved_editors(editors=(pane,))) is blocked
+    assert pane.mode == mode
+
+
+@pytest.mark.parametrize("state", ["dirty", "saving", "in_conflict"])
+def test_closed_notes_work_pane_preserves_screen_session_refusal(state):
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    screen = LibraryScreen(SimpleNamespace(app_config={}, file_notes_session_owner=None))
+    snapshot = SimpleNamespace(dirty=False, saving=False, in_conflict=False)
+    setattr(snapshot, state, True)
+    screen._library_note_session = SimpleNamespace(snapshot=snapshot)
+    pane = LibraryNoteWorkPane(mode="list")
+    issues = probe_unsaved_editors(editors=(screen, pane))
+    assert any(issue.reason == "needs-user-save-discard" for issue in issues)
+    assert getattr(snapshot, state) is True
+
+
+def test_custom_notes_work_pane_remains_unknown():
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
+
+    class CustomPane(LibraryNoteWorkPane):
+        pass
+
+    assert probe_unsaved_editors(editors=(CustomPane(mode="list"),))[0].reason == "unknown-editor-state"
+
+
+@pytest.mark.parametrize("busy", [False, True])
+def test_installed_library_prompt_mutation_state_is_checked(busy):
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    screen = LibraryScreen(SimpleNamespace(app_config={}, file_notes_session_owner=None))
+    screen._prompts_state.mutation_in_flight = busy
+    assert bool(probe_unsaved_editors(editors=(screen,))) is busy
+    assert screen._prompts_state.mutation_in_flight is busy

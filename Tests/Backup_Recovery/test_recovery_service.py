@@ -16,6 +16,32 @@ from tldw_chatbook.Backup_Recovery.recovery_copies import delete_recovery_copy
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
 
 
+@pytest.mark.parametrize("action", ["review", "create"])
+@pytest.mark.parametrize(
+    ("filename", "encrypted"),
+    [("backup.zip", False), ("backup.tldw-backup.zip.age", False),
+     ("backup.tldw-backup.zip", True)],
+)
+def test_invalid_backup_filename_starts_no_operation(tmp_path, action, filename, encrypted):
+    service = RecoveryService(tmp_path / "control")
+    destination = tmp_path / filename
+    try:
+        with pytest.raises(ValueError, match="^invalid_backup_suffix$"):
+            if action == "review":
+                service.preview_backup_details(
+                    (), options={"encrypted": encrypted}, destination=destination
+                )
+            else:
+                service.start_backup(
+                    (), "unreviewed", destination, options={"encrypted": encrypted},
+                    password=b"disposable-password" if encrypted else None,
+                )
+        assert service.current() is None
+        assert not destination.exists()
+    finally:
+        service.close()
+
+
 def test_service_inspects_real_archive_without_claiming_restore(tmp_path):
     archive = tmp_path / "source.tldw-backup.zip"
     written = write_archive(captured(tmp_path), archive, password=None, cancel=Event())

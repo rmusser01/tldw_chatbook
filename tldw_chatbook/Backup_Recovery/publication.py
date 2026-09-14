@@ -72,11 +72,297 @@ def _plan_digest(plan):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
-def _publication_scope_path(path, *, items=(), prepared=None):
-    """Map only the installed declared SQLite transient relation to its main."""
+def _config_scope_candidates(plan, document):
+    """Identify plans requiring the finite config-file relation, without IO."""
+    from .storage_admission import _CONFIG_CAPTURE_LEAVES
+
+    if plan.mode != "replace" or plan.target is None:
+        return False
+    selected = dict(plan.restore)
+    affected = {path for _, path in (*plan.restore, *plan.retire)} | {
+        item.path for item in plan.target.items if item.logical_id in plan.safety_scope
+    }
+    return any(
+        item.owner in _CONFIG_CAPTURE_LEAVES
+        and item.path is not None
+        and item.path in affected
+        and item.path.name == _CONFIG_CAPTURE_LEAVES[item.owner]
+        for item in plan.target.items
+    ) or any(
+        item.owner_id in _CONFIG_CAPTURE_LEAVES and item.logical_id in selected
+        for item in document.files
+    )
+
+
+def _config_publication_scopes(
+    plan,
+    document,
+    root,
+    *,
+    prepared=None,
+    protected=(),
+    profiles_override=None,
+):
+    """Prove fixed installed config leaves against this local replacement plan.
+
+    The result only projects native exclusion to an existing config anchor.
+    Artifact receipts, native moves and activation still validate every effect.
+    """
+    from . import bootstrap
+    from .storage_admission import _CONFIG_CAPTURE_LEAVES
+
+    if not _config_scope_candidates(plan, document):
+        return {}
+    selected = dict(plan.restore)
+    affected = {path for _, path in (*plan.restore, *plan.retire)} | {
+        item.path for item in plan.target.items if item.logical_id in plan.safety_scope
+    }
+    files = {item.logical_id: item for item in document.files}
+    producers = {item.logical_id: item for item in document.producer_inventory}
+    if profiles_override is None:
+        _, profiles = _records(root)
+    else:
+        profiles = profiles_override
+    registry = _registry(root)
+    config_paths = {
+        selected[key]
+        for key, item in files.items()
+        if item.owner_id == "config" and key in selected
+    }
+    existing = {
+        path
+        for row in profiles
+        if Path(row["selector"]) in config_paths
+        for path in row["roots"]
+    }
+    # Already-owned paths retain their existing publication protocol. This
+    # relation is solely for a fixed leaf beyond those native roots.
+    affected = {
+        path
+        for path in affected
+        if not any(
+            Path(bound) == path or Path(bound) in path.parents for bound in existing
+        )
+    }
+    imported = {}
+    for key, item in files.items():
+        if (
+            item.owner_id not in _CONFIG_CAPTURE_LEAVES
+            or key not in selected
+            or selected[key] not in affected
+        ):
+            continue
+        producer = producers.get(key)
+        if (
+            producer is None
+            or producer.owner_id != item.owner_id
+            or producer.status != "included"
+            or len(producer.dependencies) != 1
+        ):
+            raise ValueError("publication_config_relation_unverified")
+        config = files.get(producer.dependencies[0])
+        if (
+            config is None
+            or config.owner_id != "config"
+            or config.logical_id not in selected
+        ):
+            raise ValueError("publication_config_relation_unverified")
+        selector = selected[config.logical_id]
+        path = selected[key]
+        if path != selector.parent / _CONFIG_CAPTURE_LEAVES[item.owner_id]:
+            raise ValueError("publication_config_relation_unverified")
+        imported[path] = (item.owner_id, selector)
+    retired = {}
+    if plan.local_snapshot is not None and any(
+        path in affected for _, path in plan.retire
+    ):
+        from .later_rollback import _config_file_retirement_scopes
+
+        retired = {
+            path: (key, selector)
+            for key, path, selector in _config_file_retirement_scopes(plan)
+        }
+    scopes = {}
+    for item in plan.target.items:
+        if item.owner not in _CONFIG_CAPTURE_LEAVES or item.path not in affected:
+            continue
+        configs = [
+            row
+            for row in plan.target.items
+            if row.owner == "config"
+            and row.status == "included"
+            and item.dependencies == (row.logical_id,)
+        ]
+        if len(configs) != 1:
+            raise ValueError("publication_config_relation_unverified")
+        selector = configs[0].path
+        if (
+            selector is None
+            or item.path != selector.parent / _CONFIG_CAPTURE_LEAVES[item.owner]
+            or item.status not in {"unused", "included"}
+            or sum(row.path == item.path for row in plan.target.items) != 1
+            or selector not in config_paths
+            or (
+                item.status == "included"
+                and (
+                    item.metadata is None
+                    or item.metadata.kind != "file"
+                    or item.metadata.policy != "private"
+                )
+            )
+        ):
+            raise ValueError("publication_config_relation_unverified")
+        if item.path in imported and imported[item.path] != (item.owner, selector):
+            raise ValueError("publication_config_relation_unverified")
+        if item.path in selected.values() and item.path not in imported:
+            raise ValueError("publication_config_relation_unverified")
+        if (
+            (item.logical_id, item.path) in plan.retire
+            and plan.local_snapshot is not None
+            and retired.get(item.path) != (item.logical_id, selector)
+        ):
+            raise ValueError("publication_config_retirement_unverified")
+        if prepared is None and item.status == "unused" and os.path.lexists(item.path):
+            raise ValueError("publication_config_source_changed")
+        scopes[item.path] = selector
+    if set(imported) - set(scopes):
+        raise ValueError("publication_config_relation_unverified")
+    if not scopes:
+        return scopes
+    for selector in set(scopes.values()):
+        binding = next(
+            (row for row in profiles if row["selector"] == str(selector)), None
+        )
+        if (
+            binding is None
+            or registry is None
+            or any(name not in registry for name in binding["namespaces"])
+            or binding["roots"]
+            != sorted(
+                {
+                    path
+                    for name in binding["namespaces"]
+                    for path in registry[name]["roots"]
+                }
+            )
+            or not any(
+                Path(path) == selector or Path(path) in selector.parents
+                for path in binding["roots"]
+            )
+            or any(
+                Path(row["selector"]) != selector
+                and Path(row["selector"]).parent == selector.parent
+                for row in profiles
+            )
+        ):
+            raise ValueError("publication_config_binding_unverified")
+        if prepared is None:
+            if bootstrap._binding(selector, profiles, registry) != binding:
+                raise ValueError("publication_config_binding_unverified")
+        elif (
+            prepared.publication is None
+            or prepared.publication.plan_digest != _plan_digest(plan)
+            or str(selector) not in prepared.publication.selectors
+            or not set(binding["namespaces"]) <= set(prepared.publication.namespaces)
+        ):
+            raise ValueError("publication_config_binding_unverified")
+        with pinned_directory(selector.parent) as parent:
+            info = os.fstat(parent)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise ValueError("publication_config_parent_unsafe")
+        foreign = [
+            entry
+            for name, entry in registry.items()
+            if name not in binding["namespaces"]
+        ]
+        for path, config in scopes.items():
+            if config != selector:
+                continue
+            if any(_overlap(path, control) for control in (root, *protected)):
+                raise ValueError("publication_config_control_overlap")
+            tokens = {"path:" + str(path), "path:" + str(path.resolve())}
+            try:
+                info = os.stat(path, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077
+                ):
+                    raise ValueError("publication_config_source_unsafe")
+                tokens.add(f"inode:{info.st_dev}:{info.st_ino}")
+            if any(
+                tokens.intersection(entry["historical"])
+                or any(_overlap(path, Path(value)) for value in entry["roots"])
+                or any(
+                    _overlap(path, Path(value[5:]))
+                    for value in entry["historical"]
+                    if value.startswith("path:")
+                )
+                for entry in foreign
+            ):
+                raise ValueError("publication_config_foreign_scope")
+    return scopes
+
+
+def _recorded_config_scopes(journal, records, *, plan=None, bootstrap_root=None):
+    """Read checked evidence under the caller's journal lock, without relocking."""
+    from .plan_records import _load_plan
+
+    checked = _load_plan(journal, records)
+    if plan is not None and _plan_digest(plan) != _plan_digest(checked):
+        raise ValueError("candidate_plan_mismatch")
+    receipt = _CandidateReceipt.model_validate(records[0].evidence)
+    with reader._regular(journal.root / "verified-manifest.json") as stream:
+        encoded = stream.read(ArchiveLimits().manifest_bytes + 1)
+    if hashlib.sha256(encoded).hexdigest() != receipt.manifest_digest:
+        raise ValueError("verified_manifest_changed")
+    document = reader._manifest(encoded, ArchiveLimits(), True)
+    row = next((row for row in records if row.event == "prepared"), None)
+    prepared = _Prepared.model_validate(row.evidence) if row else None
+    from .bootstrap import default_bootstrap_root
+
+    root = (
+        Path(prepared.publication.bootstrap_root)
+        if prepared and prepared.publication
+        else Path(bootstrap_root)
+        if bootstrap_root is not None
+        else default_bootstrap_root()
+    )
+    if bootstrap_root is not None and root != Path(bootstrap_root):
+        raise ValueError("publication_context_unverified")
+    profiles = None
+    if prepared is not None and _config_scope_candidates(checked, document):
+        from .bootstrap import MAX_RECORDS
+
+        with pinned_directory(root) as parent:
+            names = os.listdir(parent)
+        if len(names) > MAX_RECORDS:
+            raise ValueError("too_many_records")
+        if any(name.startswith("activation-update-") for name in names):
+            from .control_records import _config_recovery_profiles
+
+            profiles = _config_recovery_profiles(journal, prepared, checked, records)
+    return _config_publication_scopes(
+        checked,
+        document,
+        root,
+        prepared=prepared,
+        protected=(journal.root.parent, Path(receipt.stage.path)),
+        profiles_override=profiles,
+    )
+
+
+def _publication_scope_path(path, *, items=(), prepared=None, config_scopes=()):
+    """Project only checked config leaves and installed SQLite transients."""
     from .models import StorageItem
     from .owner_registry import install_adapters
 
+    if path in config_scopes:
+        return config_scopes[path]
     if prepared is not None:
         items = []
         for group in prepared.rollback_sources:
@@ -111,7 +397,7 @@ def _publication_scope_path(path, *, items=(), prepared=None):
     return mains.pop()
 
 
-def _finalization_session(session, context, prepared):
+def _finalization_session(session, context, prepared, *, config_scopes=()):
     from .control_records import UNBOUND_NAMESPACE
     from .storage_admission import MaintenanceSession
 
@@ -131,9 +417,9 @@ def _finalization_session(session, context, prepared):
     def covered(path):
         # Scope comes from native admission, not the inode the operation is
         # replacing. All move/parent/content checks still observe live objects.
-        selected = _publication_scope_path(path, prepared=prepared).resolve(
-            strict=False
-        )
+        selected = _publication_scope_path(
+            path, prepared=prepared, config_scopes=config_scopes
+        ).resolve(strict=False)
         return any(
             selected == root or (directory and root in selected.parents)
             for root, directory in session._publication_roots
@@ -242,7 +528,8 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
         context = prepared.publication
         if context is None or context.plan_digest != _plan_digest(plan):
             raise ValueError("publication_context_unverified")
-        _finalization_session(session, context, prepared)
+        config_scopes = _recorded_config_scopes(journal, records)
+        _finalization_session(session, context, prepared, config_scopes=config_scopes)
         if any(
             not _safety_source_matches(row.source) for row in prepared.safety_sources
         ):
@@ -253,6 +540,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
             context,
             targets=_publication_targets(prepared),
             committed=committed,
+            config_scopes=config_scopes,
         )
     root = Path(context.bootstrap_root)
     name = "pending-" + _key(journal.operation_id) + ".json"
@@ -262,7 +550,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
     installed = _validate_installed(journal, candidate, plan, session=session)
     with journal._locked(exclusive=True) as parent:
         records = journal._records(parent)
-        _finalization_session(session, context, prepared)
+        _finalization_session(session, context, prepared, config_scopes=config_scopes)
         with reader._regular(journal.root / "verified-manifest.json") as stream:
             manifest = stream.read(ArchiveLimits().manifest_bytes + 1)
         if hashlib.sha256(manifest).hexdigest() != installed["manifest_digest"]:
@@ -362,7 +650,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
                 },
             )
         journal._flush_records(parent)
-        _finalization_session(session, context, prepared)
+        _finalization_session(session, context, prepared, config_scopes=config_scopes)
         check_installed()
         if (
             catalog_proof
@@ -394,6 +682,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
             targets=_publication_targets(prepared),
             durable=True,
             committed=committed,
+            config_scopes=config_scopes,
         )
         with pinned_directory(root) as bootstrap:
             info = os.fstat(bootstrap)
@@ -430,7 +719,17 @@ def _catalog_proof(journal, prepared, *, register=False):
     return sorted(records, key=lambda row: row["path"])
 
 
-def _pending(journal, context, *, targets=(), durable=False, committed=None, plan=None):
+def _pending(
+    journal,
+    context,
+    *,
+    targets=(),
+    durable=False,
+    committed=None,
+    plan=None,
+    config_scopes=(),
+):
+    raw_targets = tuple(targets)
     pending, _ = _records(Path(context.bootstrap_root))
     expected = {
         "version": 1,
@@ -455,6 +754,7 @@ def _pending(journal, context, *, targets=(), durable=False, committed=None, pla
                 path,
                 items=plan.target.items if plan is not None and plan.target else (),
                 prepared=prepared,
+                config_scopes=config_scopes,
             )
             for path in targets
         )
@@ -475,6 +775,12 @@ def _pending(journal, context, *, targets=(), durable=False, committed=None, pla
         # stores. Every affected store must be fenced, not merely one child.
         for name, entry in registry.items():
             roots = [Path(path) for path in entry["roots"]]
+            if name not in context.namespaces and any(
+                target in config_scopes and _overlap(target, root)
+                for target in raw_targets
+                for root in roots
+            ):
+                raise ValueError("publication_config_foreign_scope")
             if (
                 any(_overlap(target, root) for target in targets for root in roots)
                 and name not in context.namespaces
@@ -990,11 +1296,18 @@ def _prepare(
         }
         if not restored_selectors <= set(context.selectors):
             raise ValueError("publication_selector_mismatch")
+        config_scopes = _recorded_config_scopes(
+            journal,
+            records,
+            plan=plan,
+            bootstrap_root=bootstrap_root,
+        )
         _pending(
             journal,
             context,
             targets=[path for _, path in (*plan.restore, *plan.retire)],
             plan=plan,
+            config_scopes=config_scopes,
         )
         recheck_targets(plan)
         document = _descriptor(candidate, plan)
@@ -1379,7 +1692,8 @@ def _prepare(
         # target or credential mutation. Count publication units: a new tree
         # containing many files is still published with one directory move.
         required_events = (
-            len(records) + 100
+            len(records)
+            + 100
             + 12 * len(artifacts)
             + 8 * len(directory_metadata)
             + 8 * len(document.get("credential_scopes", {}))
@@ -1460,10 +1774,12 @@ def _verify_rollback(journal, path, password, work_root, cancel, coverage):
         prepared = _Prepared.model_validate(records[-1].evidence)
         if prepared.publication is None:
             raise ValueError("publication_context_unverified")
+        config_scopes = _recorded_config_scopes(journal, records)
         _pending(
             journal,
             prepared.publication,
             targets=_publication_targets(prepared),
+            config_scopes=config_scopes,
         )
         previous = {
             item.logical_id: item
@@ -1561,7 +1877,8 @@ def publish_candidate(
             or context.archive_digest != plan.archive_digest
         ):
             raise ValueError("publication_context_unverified")
-        _pending(journal, context)
+        config_scopes = _recorded_config_scopes(journal, records)
+        _pending(journal, context, config_scopes=config_scopes)
         if any(
             not _safety_source_matches(row.source) for row in prepared.safety_sources
         ):
@@ -1622,6 +1939,7 @@ def publish_candidate(
             context,
             targets=_publication_targets(prepared),
             durable=True,
+            config_scopes=config_scopes,
         )
         journal._flush_records(parent)
         for item in prepared.artifacts:
@@ -1799,6 +2117,7 @@ def _validate_installed(journal, candidate, plan, *, session=None):
         ):
             raise ValueError("verified_manifest_changed")
         doc = reader._manifest(manifest, ArchiveLimits(), True)
+        config_scopes = _recorded_config_scopes(journal, records, plan=plan)
         raw_configs = {}
         if plan.local_snapshot is not None:
             from .later_rollback import verify_snapshot_source
@@ -1846,6 +2165,7 @@ def _validate_installed(journal, candidate, plan, *, session=None):
                 context,
                 targets=_publication_targets(prepared),
                 committed=committed,
+                config_scopes=config_scopes,
             )
             states = _states(prepared)
             for item in prepared.artifacts:
@@ -1920,6 +2240,7 @@ def _validate_installed(journal, candidate, plan, *, session=None):
             targets=_publication_targets(prepared),
             durable=True,
             committed=committed,
+            config_scopes=config_scopes,
         )
         journal._flush_records(parent)
         # The existing SQLite seam accepts disposable candidates, never live WAL

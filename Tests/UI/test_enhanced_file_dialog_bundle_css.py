@@ -56,6 +56,28 @@ class _BundleHost(App[None]):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_progress_and_sort_controls_fit_and_paint(size, tmp_path):
+    """App-wide Select width rules must not clip the new sorting controls."""
+    dialog = EnhancedFileOpen(location=tmp_path, context="progress_controls")
+    app = _BundleHost(dialog)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        area = dialog.query_one(_DIALOG_ID).region
+        for selector in (
+            "#listing-sort",
+            "#listing-direction",
+            "#listing-progress",
+            "#cancel",
+        ):
+            region = dialog.query_one(selector).region
+            assert area.contains_region(region), (selector, area, region)
+        painted = "\n".join(strip.text for strip in dialog._compositor.render_strips())
+        assert "Discovery order" in painted
+        assert "entries" in painted
+
+
+@pytest.mark.asyncio
 async def test_filtered_dialog_action_bar_stays_inside_dialog(tmp_path):
     """Import/Cancel sit inside the dialog; the filename input keeps flex room.
 

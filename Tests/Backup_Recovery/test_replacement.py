@@ -22,6 +22,7 @@ def test_outer_replace_publishes_only_after_verified_exact_originals(
 
     def existing_data(live):
         (live / "data").mkdir(mode=0o700)
+        (live / "data" / "Local").mkdir(mode=0o700)
         return ()
 
     with replacement_case(

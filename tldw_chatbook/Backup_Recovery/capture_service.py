@@ -83,11 +83,27 @@ def preview_capture(
 
 def _capture_names(authority, inventory):
     """Reuse existing physical scopes; register only disjoint new local roots."""
+    from .storage_admission import (
+        _config_capture_bindings,
+        _config_capture_item,
+        _config_capture_sources,
+    )
+
+    selectors = tuple(
+        item.path
+        for item in inventory.items
+        if item.owner == "config" and item.path is not None
+    )
+    bindings = _config_capture_bindings(authority.control_root.parent, selectors)
+    siblings = _config_capture_sources(
+        authority.control_root.parent, selectors, bindings
+    )
     registry = bootstrap._registry(authority.control_root.parent)
     roots = {
         item.path.resolve(strict=True)
         for item in inventory.items
         if item.path is not None
+        and not _config_capture_item(item, inventory, siblings)
         and (
             item.status in {"included", "included_directory"}
             # These exact unused trees need bounded control-file reads during
@@ -100,7 +116,9 @@ def _capture_names(authority, inventory):
             and item.metadata.relative_path == ""
         )
     }
-    names = {UNBOUND_NAMESPACE}
+    names = {UNBOUND_NAMESPACE} | {
+        name for row, _ in bindings for name in row["namespaces"]
+    }
     for root in sorted(roots, key=lambda path: (len(path.parts), str(path))):
         covered = False
         narrower = False
@@ -122,6 +140,13 @@ def _capture_names(authority, inventory):
         registry[name] = {"roots": [str(root)]}
         names.add(name)
     return tuple(sorted(names))
+
+
+def _validate_backup_suffix(destination: Path, *, encrypted: bool) -> None:
+    """Reject mismatched archive names before source discovery or capture."""
+    suffix = ".tldw-backup.zip.age" if encrypted else ".tldw-backup.zip"
+    if not destination.name.endswith(suffix):
+        raise ValueError("invalid_backup_suffix")
 
 
 def capture(
@@ -148,9 +173,7 @@ def capture(
     settings, selections, limits, budget = _capture_options(options)
     selectors = _selectors(config_paths, include_known_profiles=include_known_profiles)
     destination = lexical_path(destination)
-    suffix = ".tldw-backup.zip.age" if settings["encrypted"] else ".tldw-backup.zip"
-    if not destination.name.endswith(suffix):
-        raise ValueError("invalid_backup_suffix")
+    _validate_backup_suffix(destination, encrypted=settings["encrypted"])
     _check(cancel)
     install_adapters()
     with _preview_reads(limits=limits, byte_budget=budget):
@@ -189,11 +212,15 @@ def capture(
         }
     )
     authority = admission_authority(bootstrap.default_bootstrap_root())
+    from .storage_admission import _config_capture_bindings
+
+    config_bindings = _config_capture_bindings(authority.control_root.parent, selectors)
     names = _capture_names(authority, inventory)
     _check(cancel)
     with authority.maintenance(names, 60, cancel=cancel) as session:
         session._discover_capture_inventory(
-            selectors, selections, inventory.scope_digest
+            selectors, selections, inventory.scope_digest,
+            config_bindings=config_bindings,
         )
         return _capture_under_maintenance(
             session,

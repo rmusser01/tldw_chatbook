@@ -1,0 +1,17 @@
+{
+  "profile_id": "26c4691935a647c38237112490d51540",
+  "restored_database": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/newcomer/restores/first-note/data/Recovered_first_note/tldw_chatbook_ChaChaNotes.db",
+  "restored_database_sha256": "445cf3feb90c6bdf94955acfdc61979486670cb6c500f5c87174194025abdfa1",
+  "restored_note": [
+    "f8df7474-0275-4422-8d9d-d00268b4edee",
+    "First saved note merged backup",
+    "My first saved note survives backup and restore. MERGED-NOVICE-20260913-F69A."
+  ],
+  "live_note_after_backup": [
+    "f8df7474-0275-4422-8d9d-d00268b4edee",
+    "First saved note merged backup",
+    "My first saved note survives backup and restore. MERGED-NOVICE-20260913-F69A. Live editing resumed after verified backup."
+  ],
+  "live_write_resumed": true,
+  "restored_archive_note_unchanged": true
+}

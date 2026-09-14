@@ -1,0 +1,19 @@
+{
+  "tree": "336c272dab58d2116055d3f335437e5f46af60c7",
+  "wheel_sha256": "d558a7c2c2caa14d2392b68472cdd6f1ed67f2d8925f1a99f5226149c33dce26",
+  "method": "actual keyboard in140x45 tmux; readonly native receipts",
+  "files": {
+    "replacement-336-original-note.json": "89cf362dd9e64baf565c810aef58e08f519179ba4166d5388923016e2ae6eb1a",
+    "replacement-336-complete-backup-readback.json": "ef30317b9fbc6448544804823a11c91118bc7c22c371a66b76e9e28cbf93a737",
+    "replacement-336-installed-verification.json": "813799d8555e4887ae71fd1fa16194785fc6c65ec4804eb84a4e833b95df8c0a",
+    "replacement-336-invalid-suffix-reviewed.txt": "bfe7045df4b6b09783abd4a3f9f3a93e7c2eaa65e5476ba7eac800334b37c9ce",
+    "replacement-336-invalid-suffix-failed.txt": "fa2fdd7b9075435ec4d5a370b5f88fb89fd1befbfff3dbf06f2249602315e546",
+    "replacement-336-complete-backup-result.txt": "dace03f7a276f6d25fe65e3e3d4fca042aafe855454b43b4d50166864845f3b0",
+    "replacement-336-fresh-recovery-handoff.txt": "41a7555fbcce978d28718a8f62512856ad23ce311aa2f45596e5ef0ff2a0b843",
+    "replacement-336-available-review.txt": "4f6d431a7f2e2fa81bc7869ff06b8d8ba6670284bb7713472d2a88045a34a221",
+    "replacement-336-credential-review.txt": "c695356bafdc8a303fd55c0a0aa29a4aee9c3f57df604f4fd7b9e45855554f23",
+    "replacement-336-abort-incomplete.txt": "eed85af0fc35e3817957279a78f6a8554f94beadf7bf2497a356fcd9a5c10d1b",
+    "replacement-336-abort-readonly-state.json": "f7e64f268f6ebcb7611bad796ce929314469d45c0a4a062b7a451a248ba076e9"
+  },
+  "caveat": "Abort attempt inconclusive: a UAT SQLite read after prepared changed its SHM sidecar; clean repeat in progress."
+}
