@@ -405,9 +405,11 @@ async def test_export_selected_states_its_reason_with_nothing_selected() -> None
     """task-32549 AC#2: the select strip's blocked action says why.
 
     Its own row has no cells to spare -- task-32261 already had to hide the
-    in-row counter to keep this action on the pane -- so the reason takes
-    the shared ``.library-disabled-reason`` line the rest of the Library
-    already uses for a blocked control ("○ Server notes").
+    in-row counter to keep this action on the pane -- and a line of its own
+    costs the tree a row at 60x20, which
+    ``test_library_note_60x20_navigator_state_allocation`` caught when this
+    was first written that way. The line under the strip already exists and
+    already carries the count, so it names the blocked action too.
     """
     pane_width = _items_width(WIDE[0], reader_has_item=False)
     app = _CanvasApp(
@@ -423,11 +425,10 @@ async def test_export_selected_states_its_reason_with_nothing_selected() -> None
         await pilot.pause()
         export = app.query_one("#library-notes-export-selected", Button)
         assert export.disabled
-        reason = app.query_one("#library-notes-export-disabled-reason", Static)
+        reason = app.query_one("#library-notes-selection-status", Static)
         assert str(reason.renderable) == (
-            "Export selected unavailable — nothing selected"
+            "0 selected — Export selected unavailable"
         )
-        assert reason.display
         # Select mode replaces the whole toolbar, so the Sort control is not
         # on screen and neither is its reason.
         assert not app.query("#library-notes-sort-disabled-reason")

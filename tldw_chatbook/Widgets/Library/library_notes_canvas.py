@@ -48,6 +48,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
     library_disabled_reason_line,
+    library_selection_count_line,
 )
 from tldw_chatbook.Widgets.Library.library_rail import LibraryRailSearchInput
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -1533,7 +1534,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 yield export_selected
             yield Static(
-                f"{list_state.selected_count} selected",
+                # task-32549: "○ Export selected" said that exporting was
+                # off and nothing about why -- the reason was on a tooltip,
+                # which does not render in a TUI. Named on THIS line rather
+                # than in the label or on a line of its own: the strip above
+                # has no cells to spare (task-32261 had to hide its own
+                # in-row counter to keep this very action on a 42-column
+                # pane), and a new line costs the tree a row at 60x20, which
+                # `test_library_note_60x20_navigator_state_allocation`
+                # caught when this was tried that way.
+                library_selection_count_line(
+                    list_state.selected_count, export_base
+                ),
                 id="library-notes-selection-status",
                 # task-32272: the class, not the id, is what the in-place
                 # toggle patcher looks for -- a new count renderer opts in
@@ -1542,23 +1554,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="library-notes-selection-count",
                 markup=False,
             )
-            # task-32549: "○ Export selected" said that exporting was off
-            # and nothing about why -- the reason was on a tooltip, which
-            # does not render in a TUI. It takes the shared
-            # `.library-disabled-reason` line rather than the label, the
-            # way "○ Server notes" has since task-32257: this strip has no
-            # cells to spare (task-32261 had to hide its own in-row counter
-            # to keep this very action on a 42-column pane), and a 29-cell
-            # reason inside the label re-creates that defect. The line
-            # flips in place with the button in `_apply_library_row_toggle`.
-            export_reason = Static(
-                library_disabled_reason_line(export_base, "nothing selected"),
-                id="library-notes-export-disabled-reason",
-                classes="library-disabled-reason",
-                markup=False,
-            )
-            export_reason.display = export_disabled
-            yield export_reason
         else:
             # task-4023 AC#1 (RC-07): every disabled toolbar action carries
             # the non-colour "○" marker plus an F-018 reason.

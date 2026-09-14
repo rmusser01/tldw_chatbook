@@ -553,3 +553,17 @@ def test_library_disabled_action_label_carries_a_reason():
     assert library_disabled_reason_line("Export selected", "nothing selected.") == (
         "Export selected unavailable — nothing selected"
     )
+
+
+def test_library_selection_count_line_names_the_action_a_zero_blocks():
+    """task-32549: the line under a select strip carries the reason too."""
+    from tldw_chatbook.Library.library_shell_state import (
+        library_selection_count_line,
+    )
+
+    assert library_selection_count_line(0, "Export selected") == (
+        "0 selected — Export selected unavailable"
+    )
+    assert library_selection_count_line(0, "Export") == "0 selected — Export unavailable"
+    assert library_selection_count_line(1, "Export selected") == "1 selected"
+    assert library_selection_count_line(12, "Export selected") == "12 selected"

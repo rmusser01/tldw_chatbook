@@ -177,6 +177,31 @@ def library_disabled_reason_line(label: str, reason: str) -> str:
     return f"{label} unavailable — {reason.rstrip('.')}"
 
 
+def library_selection_count_line(count: int, action_label: str) -> str:
+    """The count under a select strip, naming what a zero count blocks.
+
+    task-32549: "○ Export selected" said that exporting was off and nothing
+    about why. Its own row has no cells for the reason -- task-32261 had to
+    hide that strip's in-row counter to keep this very action on a
+    42-column pane -- and a line of its own costs the tree a row on a
+    20-row terminal (pinned by ``test_library_note_60x20_navigator_state_
+    allocation``, which caught exactly that). The line directly under the
+    strip already exists and already says "0 selected", so the blocked
+    action is named there: same row budget, nothing new on screen.
+
+    Args:
+        count: Rows currently checked.
+        action_label: The blocked action's own label, in whichever
+            spelling this width uses ("Export selected" / "Export").
+
+    Returns:
+        ``"N selected"``, or ``"0 selected — <action> unavailable"``.
+    """
+    if count:
+        return f"{count} selected"
+    return f"0 selected — {action_label} unavailable"
+
+
 def library_disabled_action_label(
     label: str, disabled: bool, *, align: bool = False, reason: str = ""
 ) -> str:
