@@ -1756,4 +1756,10 @@ is not on screen), Export selected's on the count line that was already
 there — a dedicated line for it cost the tree a row at 60x20, which
 `test_library_note_60x20_navigator_state_allocation[selection]` caught —
 and Resolution history's above the sync canvas's pinned bar (`layout-22`,
-`layout-23`, `layout-24`, `layout-25`, `layout-14`).)*
+`layout-23`, `layout-24`, `layout-25`, `layout-14`). Re-walked on the merged
+tree before landing: the wrapped folder row with a note open
+(`layout-32-postmerge-note-open-235`), the 235 -> 60 -> 235 round trip
+(`layout-33`/`layout-34`/`layout-35`/`layout-36-postmerge-*`) and the blocked
+Sort line (`layout-37-postmerge-sort-reason-235`). A pane that widens keeps its
+narrower shape until the next refresh, and that refresh now reads the true
+width -- the grown width is recorded even though it does not re-shape.)*
