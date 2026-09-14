@@ -17467,6 +17467,10 @@ WizardProgress .step-title.active {
 
 /* ===== MODULE: features/_chatbooks.tcss ===== */
 /* _chatbooks.tcss */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 /* Styles for the Chatbooks window */
 
 /* Main window */
@@ -17477,34 +17481,34 @@ ChatbooksWindow {
 /* Main horizontal layout */
 #main-layout {
     layout: horizontal;
-    height: 100%;
+    height: $ds-height-full;
 }
 
 /* Left sidebar */
 #chatbooks-sidebar {
-    width: 30;
+    width: $ds-size-30;
     background: $panel;
     border-right: solid $background-darken-1;
-    padding: 1;
+    padding: $ds-space-1;
     layout: vertical;
 }
 
 .sidebar-title {
     text-style: bold;
     color: $primary;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     text-align: center;
 }
 
 #chatbooks-list {
-    height: 1fr;
+    height: $ds-height-fill;
     background: $boost;
     border: round $background-darken-1;
 }
 
 #chatbooks-list ListItem {
-    padding: 0 1;
-    height: 3;
+    padding: $ds-space-0 $ds-space-1;
+    height: $ds-size-3;
 }
 
 #chatbooks-list ListItem:hover {
@@ -17520,109 +17524,109 @@ ChatbooksWindow {
 
 /* Right content area */
 #content-area {
-    width: 1fr;
+    width: $ds-width-fill;
     layout: vertical;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* Header section */
 #chatbooks-header {
     background: $boost;
     border: round $background-darken-1;
-    padding: 2;
-    margin-bottom: 1;
+    padding: $ds-space-2;
+    margin-bottom: $ds-space-1;
 }
 
 .header-title {
     text-style: bold;
     text-align: center;
     color: $primary;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .header-subtitle {
     text-align: center;
     color: $text-muted;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 #action-buttons {
     layout: horizontal;
     align: center middle;
-    height: 3;
+    height: $ds-size-3;
 }
 
 #action-buttons Button {
-    margin: 0 1;
-    min-width: 20;
+    margin: $ds-space-0 $ds-space-1;
+    min-width: $ds-size-20;
 }
 
 /* Dynamic content area */
 #dynamic-content {
-    height: 1fr;
+    height: $ds-height-fill;
     background: $boost;
     border: round $background-darken-1;
-    padding: 2;
+    padding: $ds-space-2;
     overflow-y: auto;
 }
 
 /* Welcome text */
 .welcome-text {
     color: $text;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 /* Status text */
 .status-text {
     color: $text-muted;
     text-align: center;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 /* Info text */
 .info-text {
     color: $text-muted;
     text-align: center;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 /* Chatbook details */
 .chatbook-details {
     layout: vertical;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 .chatbook-title {
     text-style: bold;
     color: $primary;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .chatbook-desc {
     color: $text;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .chatbook-size {
     color: $text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .chatbook-date {
     color: $text-muted;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 /* Management buttons */
 .management-buttons {
     layout: horizontal;
-    height: 3;
-    margin-top: 2;
+    height: $ds-size-3;
+    margin-top: $ds-space-2;
 }
 
 .management-buttons Button {
-    margin-right: 1;
-    min-width: 12;
+    margin-right: $ds-space-1;
+    min-width: $ds-size-12;
 }
 
 /* Error button variant */
@@ -17639,17 +17643,17 @@ Button.error:hover {
 .templates-list {
     layout: vertical;
     height: auto;
-    max-height: 20;
+    max-height: $ds-size-20;
     overflow-y: auto;
-    margin: 1 0 2 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-2 $ds-space-0;
     background: $panel;
     border: round $background-darken-1;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 .template-item {
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     background: $boost;
     border: round $background-darken-1;
 }
@@ -17662,7 +17666,7 @@ Button.error:hover {
 .template-name {
     text-style: bold;
     color: $primary;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 .template-description {
