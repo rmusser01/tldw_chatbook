@@ -16,7 +16,7 @@
     "console-projection-installed-macos-20260914.json": "e7eb92e1e2646fa597b4ca5c842518de8f7891a6cd3448c5e586247b8bee0e6d",
     "console-projection-static-20260914.json": "8e067ae103bc278fce53a40b749c7512ea7860c327e5e7068683dca087cae02a",
     "config-native-lock-static-20260914.json": "5d268040d7847db66f937b72cf966cdb025484cd3c3337dd87ed43b461809b3c",
-    "windows-support-d3082-review-20260914.md": "52eef61b202bb6491997c716b1980cac7f806e18f2372f7e5d8aea0621618a3a",
+    "windows-support-d3082-review-20260914.md": "29d5debbb7d3a00ff7196b8cfb7fde8187d19e45a64f35cbea6f096d0320221b",
     "windows-acl-failure-metadata-20260914.md": "293b3ba6943a3700ab99d7fcc63b4b60c615b7e9212f5ab57da6b1ea5239a82a"
   },
   "remaining": "Windows57 repeat and original Windows replacement run, actual keyboard later rollback, Linux diagnostic approval; no final acceptance or merge.",

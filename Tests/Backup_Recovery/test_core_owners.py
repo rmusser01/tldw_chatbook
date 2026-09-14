@@ -638,12 +638,13 @@ def test_discovery_custom_paths_and_explicit_core_dependencies(tmp_path):
         (item,) = adapter.discover(config)
         assert item.path == Path(config["database"][adapter.setting_name])
         assert item.logical_id == "profile:selected:" + adapter.owner_id
-        assert item.status == "included"
+        assert item.status == (
+            "unavailable" if adapter.owner_id == "db.chachanotes.primary" else "included"
+        )
         assert "profile:selected:config" in item.dependencies
         assert not classify_entries((item,)).complete
     chacha = core_adapters()[0].discover(config)[0]
-    assert "profile:selected:persona.assets" in chacha.dependencies
-    assert "profile:selected:notes.file_notes" in chacha.dependencies
+    assert chacha.dependencies == ("profile:selected:config",)
 
 
 def test_local_cross_store_dependencies_use_exact_profile_ids(tmp_path):

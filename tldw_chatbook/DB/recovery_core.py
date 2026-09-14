@@ -40,7 +40,10 @@ class _CoreAdapter:
         if self.owner_id == "db.chachanotes.primary" and status == "included":
             from .private_sqlite import connect_private_sqlite
 
-            if not self.validate(path):
+            if self.validate(path):
+                status = "unavailable"
+                dependent_owners = ()
+            else:
                 with closing(connect_private_sqlite("recovery.core.chachanotes", path, read_only=True)) as connection:
                     optional_groups = {
                         "notes.file_notes": "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",

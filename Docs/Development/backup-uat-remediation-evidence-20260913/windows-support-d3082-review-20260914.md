@@ -30,3 +30,6 @@ Native42PASS0skip1.693s. Product31:23PASS8FAIL0skip1850.905s. All21 Console nati
 ## Evidence
 
 Downloaded sanitized originals remain under this directory's backup-platform-* artifact. verification.json and git-blob-verification.json contain check receipts; case-accounting.json preserves all native/product nodes. junit-failures retains complete failure bodies; separate *-stderr.log files decode subprocess stderr without executing embedded scripts. Parent received actionable findings promptly. No source/artifact edits, workflow dispatch, cancellation or deadline changes were performed. This report does not cover replacement34831305822, still running at10:42UTC, or later Canvas/config lock-order/pre-control corrections.
+# Subsequent metadata clarification
+
+Further inspection found that `notes.file_notes`, `persona.assets` and `persona.visual_identity` were already `unused` in both Library observations. Only `db.chachanotes.primary.dependencies` changed; the second observation added edges to those unchanged target records. The failure and artifact counts above remain valid. A separate native concurrent-note-write probe reproduces a first core validation failure retaining guessed optional edges followed by successful later owner reads. The original Windows validation reason was not recorded, so that specific attribution remains qualified.
