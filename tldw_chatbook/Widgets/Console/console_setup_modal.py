@@ -336,11 +336,15 @@ class ConsoleSetupModal(Vertical):
                 )
                 step_row.display = blocking
                 yield step_row
+            # task-32555 AC#1: real button chrome. ``compact=True`` used to
+            # render these as bare text lines (Textual's compact class forces
+            # ``border: none !important``, so no sheet could give them an
+            # edge); the border and the focus outline live in the Console
+            # sheet's ``.console-setup-modal-action`` rules.
             action = Button(
                 self._action_label,
                 id=CONSOLE_SETUP_MODAL_ACTION_ID,
                 classes="console-setup-modal-action",
-                compact=True,
             )
             action.tooltip = self._action_tooltip
             action.display = blocking
@@ -352,7 +356,6 @@ class ConsoleSetupModal(Vertical):
                 CONSOLE_SETUP_NOTES_ACTION_LABEL,
                 id=CONSOLE_SETUP_MODAL_NOTES_ACTION_ID,
                 classes="console-setup-modal-action",
-                compact=True,
             )
             notes_action.tooltip = CONSOLE_SETUP_NOTES_ACTION_TOOLTIP
             notes_action.display = blocking
@@ -361,7 +364,6 @@ class ConsoleSetupModal(Vertical):
                 self._detected_action_label(),
                 id=CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID,
                 classes="console-setup-modal-action console-setup-modal-detected-action",
-                compact=True,
             )
             detected.tooltip = self._detected_action_tooltip()
             detected.display = blocking and self._detected_action is not None

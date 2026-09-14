@@ -884,9 +884,25 @@ automatic-sync setting.
 
 ### Use a note in Console
 1. Open the note and click **Use in Console**.
-2. You land in the Console with the note staged as context and the
+2. The note is linked to your active workspace on the way — a new note
+   belongs to no workspace, and that is what the hand-off needs — so the
+   status line reads "Use in Console complete — Linked to *workspace* ·
+   staged in Console." The line says what actually happened: "Already
+   linked to *workspace* · staged in Console." when the note was a member
+   already, and "Staged in Console." when no linking was needed at all.
+3. You land in the Console with the note staged as context and the
    prompt "Use this note as context and help me work with it." ready to
-   send or rewrite.
+   send or rewrite. On a profile with no provider set up yet, the note is
+   still staged and the Console shows its own setup card; add a provider
+   from there and the staged note is waiting.
+
+If the hand-off cannot be made, the editor's status line is the only
+message, and it names what stopped it and what to do — for example
+"Can't use this note in Console — the workspace registry is unavailable.
+Next: restart Chatbook, then try again." Opening another note, or saving
+this one, clears it. A hand-off that fails leaves no workspace link behind
+— if it linked the note on the way, it removes that link again, and says
+so if it could not.
 
 ### Capture a Console answer as a note
 The return leg of **Use in Console**. In the Console, select an assistant
@@ -1501,3 +1517,35 @@ value after a resize to 100x30; critique #3's own captures read "5,404 words
 thousands separator dropped in the reading. The open path is pinned rather
 than changed (`data-20-strip-short-note-441`,
 `data-21-strip-long-note-235x52`, `data-22-strip-100x30`).)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32536,
+at 235x52 and 100x30 on a no-provider profile and on a 12-note profile): **Use
+in Console** on a note that belongs to no workspace links it to the active one
+and stages it — status "Use in Console complete — Linked to Local Default ·
+staged in Console." — and Console opens on its own Get started card reading
+"notes evidence staged — finish provider setup to use it."
+(`wave4-caps/console-handoff/handoff-10-console-card`,
+`14-fresh-status-after`, `10b`/`14b` at 100x30; `15`/`16` and `15b`/`16b` on
+the seeded profile). The membership write is in
+`tldw_chatbook_workspaces.db`. Opening another note ends the message: the next
+note's status reads "Saved · Next: Keep editing; changes save automatically."
+with an empty transfer row (`17-power-note-switch-clears`), and the list pane
+beside the editor never carried it. Before this the hand-off refused every
+fresh note with a toast about workspace linking AND a status line about
+Console readiness — two messages naming two different blockers, the second of
+which was not the real one.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32536
+fix round 1, 235x52 on the 12-note profile): the completion line names the
+branch it took. On "Grocery plan", already a member, it reads "Saved · Use in
+Console complete — Already linked to Local Default · staged in Console."
+(`wave4-caps/console-handoff/handoff-30-already-linked-status`) and
+`workspace_memberships` stayed at three note rows; on "Ideas backlog", a
+member of nothing, it reads "… Linked to Local Default · staged in Console."
+(`31-fresh-link-status`) and exactly one row appeared; pressing it a second
+time on the same note reads "Already linked …" and wrote nothing
+(`32-second-press-already-linked`, still four rows). Before this every
+closed-gate press claimed "Linked to" — the gate is profile-wide, so that was
+the common case, not an edge. The two hand-off FAILURE paths changed in this
+round (the Console seam missing, and the seam raising) cannot be induced from
+the UI — they are pinned by tests, not walked.)*
