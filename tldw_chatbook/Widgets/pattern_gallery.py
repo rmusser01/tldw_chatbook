@@ -146,6 +146,14 @@ class PatternGalleryScreen(Screen):
                 "assistant: speaks with the chat accent family",
                 classes="pg-msg-assistant",
             )
+            # ADR-161 task 8c: the shared bubble grammar (header band,
+            # body, action strip) -- same classes ChatMessage (Console
+            # transcripts) and ChatMessageEnhanced (Chat window) compose.
+            with Container(classes="pg-msg-frame"):
+                yield Label("user", classes="message-header")
+                yield Static("message body", classes="message-text")
+                with Horizontal(classes="message-actions"):
+                    yield Button("Copy", classes="action-button")
             # ds-primitives
             yield Label("ds-primitives", classes="section-header")
             yield Static("Destination header", classes="ds-destination-header")

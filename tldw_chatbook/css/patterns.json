@@ -81,7 +81,14 @@
     },
     "messages": {
       "owning_sheet": "components/_messages.tcss",
-      "classes": {}
+      "classes": {
+        "message-header": { "status": "canonical" },
+        "message-text": { "status": "canonical" },
+        "message-actions": {
+          "status": "canonical",
+          "note": "ADR-161 task 8c (2026-09-13): the shared grammar of ChatMessage (Console transcripts + tool widgets) and ChatMessageEnhanced (Chat window). The widgets' DEFAULT_CSS copies deleted (ChatMessage's entirely); the strip's Button states and the .delete-button hover live in the owning sheet. The .tts-generating modifier diverges (bundle: thick border + opacity; enhanced widget-local copy adds padding-left) -- documented variant, not merged. Console transcript rows use console-* prefixed feature-local classes, not this family."
+        }
+      }
     },
     "ds_primitives": {
       "owning_sheet": "components/_ds_primitives.tcss",

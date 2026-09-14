@@ -122,16 +122,10 @@
     height: 25;
 }
 
-/* Chat message type-specific styles */
-.chat-message.user {
-    background: $primary-lighten-2;
-    text-align: right;
-}
-
-.chat-message.assistant {
-    background: $surface-lighten-1;
-    text-align: left;
-}
+/* ADR-161 task 8c: `.chat-message.user` / `.chat-message.assistant` were
+ * dead -- zero compose sites (the transcript widgets are ChatMessage /
+ * ChatMessageEnhanced, styled from components/_messages.tcss) -- and were
+ * deleted. */
 
 /* Loading and error states */
 .loading-indicator {

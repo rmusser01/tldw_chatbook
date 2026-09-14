@@ -52,6 +52,14 @@
     color: $ds-chat-user-accent;
 }
 
+/* ADR-161 task 8c: bounding frame for the shared bubble-grammar preview
+   (header 1 + padded body 3 + action strip 3 + the ChatMessage margin
+   slot). Geometry only -- the classes render with their owning sheet's
+   rules. */
+.pg-msg-frame {
+    height: 9;
+}
+
 .-dark-mode .pg-msg-assistant {
     color: $ds-chat-assistant-accent-dark;
 }

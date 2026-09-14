@@ -1,7 +1,13 @@
 /* ========================================
  * COMPONENTS: Messages
- * ======================================== 
- * Message display components
+ * ========================================
+ * Message display components. ADR-161 task 8c: the shared transcript
+ * grammar (the classes composed identically by ChatMessage -- Console
+ * transcripts and tool widgets -- and ChatMessageEnhanced -- the Chat
+ * window) is defined ONLY here: .message-header/.message-text/
+ * .message-actions plus the strip's Button states and the delete-button
+ * hover. The widgets' DEFAULT_CSS copies (identical or bundle-wins
+ * subsets) were deleted; ChatMessage now has no DEFAULT_CSS at all.
  * ======================================== */
 
 ChatMessage {
@@ -81,6 +87,13 @@ ChatMessage.-tool-result > Vertical {
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
+}
+/* The destructive member of the action strip (both message widgets
+   compose the trash button with `action-button delete-button`). Promoted
+   from the two identical DEFAULT_CSS copies (ADR-161 task 8c). */
+.message-actions .delete-button:hover {
+    background: $error;
+    color: white;
 }
 /* Initially hide AI actions until generation is complete */
 ChatMessage.-ai .message-actions.-generating {

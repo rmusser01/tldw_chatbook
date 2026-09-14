@@ -83,7 +83,7 @@ Notes on the schema:
 | status | `components/_status.tcss` | status-label, status-area, status-item (all Canonical) |
 | navigation | `layout/_sidebars.tcss` | sidebar, sidebar-button, sidebar-header, sidebar-listview, sidebar-section-collapsible (Canonical); nav-button (Canonical, owning sheet `components/_navigation.tcss`) |
 | sections | `components/_sections.tcss` | section-title, section-header, subsection-title (all Canonical) |
-| messages | `components/_messages.tcss` | none yet — vocabulary promotes in with the consolidation task |
+| messages | `components/_messages.tcss` | message-header, message-text, message-actions (all Canonical) |
 | ds_primitives | `components/_ds_primitives.tcss` | ds-panel, ds-toolbar, ds-field-row, ds-info-callout, ds-approval-card, ds-destination-header (all DRAFT) |
 
 ## Entry template
@@ -548,17 +548,18 @@ static log readout is a status area, not a transcript.
 #    └─ Horizontal(classes="message-actions")   # Buttons follow the Button contract
 ```
 
-**Class inventory.** (Registry classes land here when the shared grammar
-promotes into `components/_messages.tcss`.)
+**Class inventory.**
 
 - `ChatMessage` type contract — full-width auto-height bubble; variant classes
-  set speaker/tool surfaces.
+  set speaker/tool surfaces (`-user`, `-ai`, `-tool-call`, `-tool-result`).
 - `message-header` — one-row speaker/tool header band.
 - `message-text` — scrollable body text (`.tts-generating` modifier marks
   in-flight speech).
 - `message-actions` — bottom action strip; `.-generating` hides it until
   generation completes. Buttons take the Button type contract
-  (`$ds-focus-bg` / `$ds-focus-fg` on focus).
+  (`$ds-focus-bg` / `$ds-focus-fg` on focus); the strip's own Button rest/
+  hover and the `.delete-button` destructive hover are pinned in the owning
+  sheet.
 
 **States.** §2.7 for the action-strip buttons; the bubbles themselves are
 static containers.
@@ -572,8 +573,34 @@ roleplay semantics use the `$ds-chat-rp-*` pairs.
 
 **Python idiom.** none — hand-compose class strings.
 
-**Lifecycle.** Canonical family (owning sheet `components/_messages.tcss`);
-registry `"classes"` fills when the shared grammar is carved out.
+**Lifecycle.** Canonical family (owning sheet `components/_messages.tcss`).
+
+**Consolidation record (ADR-161 task 8c, 2026-09-13).** The shared grammar
+was deduplicated INTO the owning sheet, which already carried the
+app-tier winners: `ChatMessage`'s entire `DEFAULT_CSS` (every rule an
+identical or strict-subset copy of bundle rules — app CSS outranks
+`DEFAULT_CSS` regardless of specificity) was deleted, as were
+`ChatMessageEnhanced`'s copies of `.message-header`/`.message-text`/
+`.message-actions` (+ strip Button hovers and the delete-button hover,
+which moved here). Probe-verified computed-identical on the mounted
+widgets (user/ai/tool-call bubbles, headers, text, strips). Three
+findings recorded rather than forced:
+1. `.message-text Markdown` (both widgets' DEFAULT_CSS) was **dead** —
+   the Markdown widget *is* `.message-text`; nothing nests one inside
+   it. Deleted, not moved.
+2. `.message-text.tts-generating` **diverges**: the owning sheet's rule
+   (thick accent border + opacity 0.8) wins the border; ChatMessageEnhanced's
+   widget-local copy still contributes `padding-left: 1` on top. Kept as
+   a documented widget-local variant, not merged.
+3. Console transcript rows are **not** shared vocabulary: every console
+   transcript class is `console-*`-prefixed feature-local chrome
+   (`console-transcript-message-*`, `console-message-header`, …) in
+   `components/_agentic_terminal.tcss` — they stay put.
+Also deleted as dead: `features/_chat.tcss`'s `.chat-message.user` /
+`.chat-message.assistant` (zero compose sites). Known dead artifact left
+for a later sweep: `Constants.css_content` — an unreferenced legacy
+CSS string carrying old copies of several family classes; it is never
+registered as a stylesheet, so it cannot affect rendering or governance.
 
 ---
 

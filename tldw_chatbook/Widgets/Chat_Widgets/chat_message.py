@@ -35,71 +35,17 @@ class ChatMessage(Widget):
             self.message_widget = message_widget
             self.button = button
 
-    DEFAULT_CSS = """
-    ChatMessage {
-        width: 100%;
-        height: auto;
-        margin-bottom: 1;
-    }
-    ChatMessage > Vertical {
-        border: round $surface;
-        background: $panel;
-        padding: 0 1;
-        width: 100%;
-        height: auto;
-    }
-    ChatMessage.-user > Vertical {
-        background: $boost; /* Different background for user */
-        border: round $accent;
-    }
-    .message-header {
-        width: 100%;
-        padding: 0 1;
-        background: $surface-darken-1;
-        text-style: bold;
-    }
-    .message-text {
-        padding: 1;
-        width: 100%;
-        height: auto;
-    }
-    .message-text Markdown {
-        width: 100%;
-        background: transparent;
-        margin: 0;
-        padding: 0;
-    }
-    .message-actions {
-        height: auto;
-        width: 100%;
-        padding: 0 1;
-        /* margin-top: 1; */ /* Removed top margin */      
-        border-top: solid $surface-lighten-1;
-        align: right middle; /* Align buttons to the right */
-        display: block; /* Default display state */
-    }
-    .message-actions Button {
-        min-width: 8;
-        height: 1;
-        margin: 0 0 0 1; /* Space between buttons */
-        border: none;
-        background: $surface-lighten-2;
-        color: $text-muted;
-    }
-    .message-actions Button:hover {
-        background: $surface;
-        color: $text;
-    }
-    /* Specific hover style for delete */
-    .message-actions .delete-button:hover {
-        background: $error; /* Use the theme's error color (usually red) */
-        color: white; /* Adjust text color for contrast if needed */
-    }
-    /* Initially hide AI actions until generation is complete */
-    ChatMessage.-ai .message-actions.-generating {
-        display: none;
-    }
-    """
+    # ADR-161 task 8c: this widget's entire DEFAULT_CSS (ChatMessage type
+    # contract, -user/-ai bubble variants, .message-header/.message-text/
+    # .message-actions, and the -ai .message-actions.-generating hide) was
+    # a rule-for-rule subset or identical copy of the app-tier definitions
+    # in tldw_chatbook/css/components/_messages.tcss, which outrank any
+    # DEFAULT_CSS regardless of specificity -- the block only registered
+    # one more stylesheet source per session (parse-cache pressure,
+    # TASK-21115) while contributing nothing to the computed cascade.
+    # Deleted; probe-verified computed-identical on the mounted widgets
+    # (user/ai/tool-call bubbles, headers, text, action strips). The
+    # widget's styling is now solely the messages family's owning sheet.
 
     # Store the raw text content
     message_text = reactive(

@@ -22,11 +22,11 @@ from .consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 
 FIXTURES = Path(__file__).parent / "snapshots" / "pattern_gallery"
 
-#: Tall enough that every family preview (content is ~179 rows at 120
-#: columns after task 8a added the status-item demo rows) is on screen; an
-#: exact fit would risk a scrollbar flickering into the snapshot on
+#: Tall enough that every family preview (content is ~188 rows at 120
+#: columns after task 8c added the bubble-grammar preview) is on screen;
+#: an exact fit would risk a scrollbar flickering into the snapshot on
 #: rounding.
-SIZE = (120, 182)
+SIZE = (120, 191)
 
 
 def _normalize(svg: str) -> str:

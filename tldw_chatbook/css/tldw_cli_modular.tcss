@@ -2195,8 +2195,14 @@ ChangeGitPushModal {
 /* ===== MODULE: components/_messages.tcss ===== */
 /* ========================================
  * COMPONENTS: Messages
- * ======================================== 
- * Message display components
+ * ========================================
+ * Message display components. ADR-161 task 8c: the shared transcript
+ * grammar (the classes composed identically by ChatMessage -- Console
+ * transcripts and tool widgets -- and ChatMessageEnhanced -- the Chat
+ * window) is defined ONLY here: .message-header/.message-text/
+ * .message-actions plus the strip's Button states and the delete-button
+ * hover. The widgets' DEFAULT_CSS copies (identical or bundle-wins
+ * subsets) were deleted; ChatMessage now has no DEFAULT_CSS at all.
  * ======================================== */
 
 ChatMessage {
@@ -2276,6 +2282,13 @@ ChatMessage.-tool-result > Vertical {
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
+}
+/* The destructive member of the action strip (both message widgets
+   compose the trash button with `action-button delete-button`). Promoted
+   from the two identical DEFAULT_CSS copies (ADR-161 task 8c). */
+.message-actions .delete-button:hover {
+    background: $error;
+    color: white;
 }
 /* Initially hide AI actions until generation is complete */
 ChatMessage.-ai .message-actions.-generating {
@@ -7088,16 +7101,10 @@ PersonalContextLinkModal {
     height: 25;
 }
 
-/* Chat message type-specific styles */
-.chat-message.user {
-    background: $primary-lighten-2;
-    text-align: right;
-}
-
-.chat-message.assistant {
-    background: $surface-lighten-1;
-    text-align: left;
-}
+/* ADR-161 task 8c: `.chat-message.user` / `.chat-message.assistant` were
+ * dead -- zero compose sites (the transcript widgets are ChatMessage /
+ * ChatMessageEnhanced, styled from components/_messages.tcss) -- and were
+ * deleted. */
 
 /* Loading and error states */
 .loading-indicator {
@@ -16802,6 +16809,14 @@ FeatureNotAvailableDialog Button {
    the App (no unsuffixed assistant token exists; see core/_variables.tcss). */
 .pg-msg-user {
     color: $ds-chat-user-accent;
+}
+
+/* ADR-161 task 8c: bounding frame for the shared bubble-grammar preview
+   (header 1 + padded body 3 + action strip 3 + the ChatMessage margin
+   slot). Geometry only -- the classes render with their owning sheet's
+   rules. */
+.pg-msg-frame {
+    height: 9;
 }
 
 .-dark-mode .pg-msg-assistant {
