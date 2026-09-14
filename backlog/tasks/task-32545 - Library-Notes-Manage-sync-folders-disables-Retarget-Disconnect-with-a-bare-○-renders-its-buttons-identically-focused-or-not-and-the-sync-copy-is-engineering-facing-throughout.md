@@ -47,7 +47,6 @@ Critique #3 (dev 5fd502dbac), assessor A (B recorded the strings), personas Sam 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-<!-- SECTION:NOTES:BEGIN -->
 All four ACs live at 235x52 and 100x30.
 
 **AC#1 — disabled controls state their reason.** Retarget and Disconnect were a bare grey "○" whose reason existed only in a tooltip. Both now go through `_disabled_action_label` (task-32257's grammar, reused from the import canvas): "○ Retarget unavailable — not in this release". The blocked Check on an offline/passive root gets the same treatment, and its tooltip became a "why" rather than an instruction ("the folder is disconnected" / "another Chatbook has this folder open"). The line under the list reads "Retarget/Disconnect unavailable — not in this release; nothing on disk or in Notes changes."
@@ -59,7 +58,6 @@ All four ACs live at 235x52 and 100x30.
 **AC#4 — guide.** `Docs/User_Guide/library/notes.md`: the Manage sync folders paragraph (disabled reasons, the Receipts section, the footer), the activation receipt wording, the failed-check copy, and a "Verified against" stamp quoting the new labels.
 
 Deviation worth recording: the brief expected these buttons to lack `library-canvas-action`. They had it; the critique's "no focus difference" was the footer, not the paint. Tests: `Tests/UI/test_library_notes_w4_sync_roots.py` (disabled labels, focus + footer, no engineering terms across roots/review/receipt/setup surfaces), plus the sibling pins that asserted the old strings.
-<!-- SECTION:NOTES:END -->
 
 ## Fix round 1 (review 2026-09-14)
 

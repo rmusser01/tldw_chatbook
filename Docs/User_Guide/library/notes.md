@@ -1531,5 +1531,9 @@ sentence standing beside it. The chooser's unavailable line and the setup
 validation message now read "Keeping a folder synced isn't ready on this
 profile yet." The offline-root case (a refused Check keeping its Check
 disabled and growing no Pause) is pinned end-to-end through the controller and
-canvas rather than walked: a missing folder does not make the runtime report
-`offline` — that needs a lease held by a second process.)*
+canvas rather than walked: a folder that goes missing while Chatbook is
+already holding it does not flip to `offline` in that session, because a root
+that already holds its folder never re-checks the path — reaching `offline`
+needs the folder to be gone at the moment the folder is claimed, i.e. a
+restart. (A second Chatbook holding the folder is the different `passive`
+state, whose Check is disabled for its own reason.))*
