@@ -271,6 +271,8 @@ $ds-size-90: 90;
 $ds-size-92: 92;
 $ds-size-94: 94;
 $ds-size-96: 96;
+/* task 11 (ADR-161 §3.10): splash progress-bar cap (single consumer). */
+$ds-splash-progress-cap: 100;
 $ds-size-104: 104;
 $ds-size-110: 110;
 $ds-size-120: 120;
