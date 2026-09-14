@@ -266,6 +266,18 @@ async def test_new_at_60x24_promotes_the_create_view_with_blank_note_focused() -
         assert blank.region.width > 0 and blank.region.height > 0
         assert screen.focused is blank
         assert screen._library_focus_enter_label(blank) == "create note"
+        # task-32546's footer clause is not landing-only (review M7): it
+        # appends the chip on ANY Library surface whose static set has no
+        # "enter" to replace, and this route is a second such surface. Pin
+        # it here so the screen-wide behaviour is pinned somewhere other
+        # than the landing it was written for.
+        assert ("enter", "create note") in (
+            screen._library_footer_shortcuts_for_current_state()
+        )
+        assert not any(
+            key == "enter"
+            for key, _ in screen._library_route_shortcuts_for_current_state()
+        ), "this route gained a static enter chip; the clause under test cannot fire"
 
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-new")
@@ -319,8 +331,11 @@ async def test_notes_toolbar_labels_paint_whole_or_elided_at_sixty_columns() -> 
         for _ in range(3):
             await pilot.pause()
 
+        # The exact shipped spelling, not `endswith(("files…", "…"))`:
+        # the second alternative subsumed the first and the pair passed on
+        # almost any string (review M6).
         add_from = screen.query_one("#library-notes-add-from-files", Button)
-        assert str(add_from.label).endswith(("files…", "…")), str(add_from.label)
+        assert str(add_from.label) == "Add from files…", str(add_from.label)
         offenders = [
             (widget.id, widget.region)
             for widget in screen.query(".library-canvas-action")
@@ -331,6 +346,64 @@ async def test_notes_toolbar_labels_paint_whole_or_elided_at_sixty_columns() -> 
             f"actions painted off the {canvas.region.width}-column canvas: "
             f"{offenders}"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_pane_that_widens_again_records_the_width_it_was_given() -> None:
+    """task-32557, review M1: growth does not re-shape, but it is recorded.
+
+    `apply_pane_width` deliberately re-shapes only on a shrink -- re-shaping
+    on growth costs the in-place breakpoint path its widget identity. It
+    used to return on growth without recording the width either, and
+    `_effective_pane_width` gives `pane_width` priority over the measured
+    width, so 235 -> 60 -> 235 left the canvas composing the 50-cell shape
+    into a 138-cell pane until an unrelated state sync re-stamped it. Dev
+    does not have that state: dev's `pane_width` never moves off its
+    compose value, so dev ends this round trip correctly wide.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        # One ordinary state sync stamps the screen's contract width.
+        screen.query_one("#library-notes-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-select-all")
+        screen.query_one("#library-notes-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        await _wait_for_condition(
+            pilot,
+            lambda: canvas.pane_width > COMPACT[0],
+            message="the wide pane width never reached the canvas",
+        )
+        # Production's own stamped contract, not a number typed here: the
+        # shell hands the canvas the width the reader layout resolved for
+        # the pane INSIDE the rail, which is narrower than the resolver's
+        # answer for the whole terminal.
+        wide_pane = canvas.pane_width
+
+        await pilot.resize_terminal(*COMPACT)
+        for _ in range(3):
+            await pilot.pause()
+        narrow_pane = canvas.pane_width
+        assert narrow_pane < wide_pane, "the shrink never reached the canvas"
+
+        # Back to the wide terminal, with NO state sync in between -- which
+        # is the live sequence: nothing syncs this canvas after a resize.
+        await pilot.resize_terminal(*WIDE)
+        for _ in range(3):
+            await pilot.pause()
+
+        assert canvas.pane_width == wide_pane, (
+            f"the widened pane was dropped: canvas still holds {canvas.pane_width} "
+            f"after {wide_pane} -> {narrow_pane} -> {wide_pane}"
+        )
+        assert canvas._effective_pane_width() == wide_pane
 
 
 # -- task-32546: the landing's "From your Library" rows ------------------
@@ -517,5 +590,8 @@ async def test_the_blocked_sort_reason_fits_every_pane_the_list_is_given(
         await pilot.pause()
         reason = app.query_one("#library-notes-sort-disabled-reason", Static)
         assert str(reason.renderable) == "Sort unavailable — clear the filter"
-        assert reason.region.right <= pane_width
+        # Against the RENDERED canvas, like `assert_every_action_fits` does,
+        # rather than against the number this test handed in (review M6).
+        canvas = app.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        assert reason.region.right <= canvas.region.right
         assert_every_action_fits(app)

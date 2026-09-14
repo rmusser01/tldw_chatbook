@@ -27,7 +27,7 @@ Critique #3 (dev 5fd502dbac), assessor B, persona Sam, the Library landing on th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Landing "From your Library" rows show a shape-based focus cue when focused by Tab, and the footer names the focused row
+- [x] #1 Landing "From your Library" rows show a shape-based focus cue when focused, and the footer names the focused row (re-worded during the landing pass: the original said "when focused by Tab", but Tab from a cold landing walks the TOP TAB BAR -- an ANSI diff over six Tabs moved the reverse-video segment ⌃2 → ⌃3 → ⌃4 and changed nothing else -- so F6 is the route that reaches these rows, and the pins use F6 and `.focus()`)
 - [x] #2 F6 on the landing lands on a visibly marked target
 - [x] #3 A test pins the landing row's focus class and the footer label
 <!-- AC:END -->

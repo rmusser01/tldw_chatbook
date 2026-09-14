@@ -1141,7 +1141,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             self.refresh(recompose=True)
 
     def apply_pane_width(self, pane_width: int) -> None:
-        """Take a freshly resolved Items width, and re-shape if it shrank.
+        """Take a freshly resolved Items width; re-shape only if it shrank.
 
         task-32557: ``pane_width`` used to arrive only with a state sync, so
         after a resize the toolbar kept deciding its shape from the width it
@@ -1151,19 +1151,30 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         against the grip of a 50-column pane. The screen now hands the
         resolved width straight over.
 
-        SHRINKING only, and that asymmetry is the point: a shape too wide
-        for its pane paints half words, which is a correctness defect and
-        has to be answered this frame; a shape too narrow for its pane only
-        leaves space, and can wait for the ordinary sync that recomposes
-        this canvas anyway (compose always reads the current width). Acting
-        on growth too would re-shape on every breakpoint crossing and cost
-        the in-place responsive path its widget identity -- pinned by
+        Only a SHRINK re-shapes, and that asymmetry is the point: a shape
+        too wide for its pane paints half words, which is a correctness
+        defect and has to be answered this frame; a shape too narrow for its
+        pane only leaves space, and can wait for the compose that is coming
+        anyway (compose always reads the current width). Re-shaping on
+        growth too would recompose on every breakpoint crossing and cost the
+        in-place responsive path its widget identity -- pinned by
         ``test_library_note_compact_labels_round_trip_without_recompose``.
+
+        A GROWN width is still RECORDED, without refreshing (review M1).
+        ``_effective_pane_width`` gives this attribute priority over the
+        measured width, so dropping a grown width on the floor left
+        235 -> 60 -> 235 composing the 50-cell shape into a 138-cell pane
+        until an unrelated state sync re-stamped it -- a state dev never
+        reaches, because dev's ``pane_width`` never moves off its compose
+        value. Recording it means the next compose reads the true width.
 
         Args:
             pane_width: The Items width the reader layout just resolved.
         """
-        if pane_width <= 0 or self.pane_width and pane_width >= self.pane_width:
+        if pane_width <= 0:
+            return
+        if self.pane_width and pane_width >= self.pane_width:
+            self.pane_width = pane_width
             return
         before = self._toolbar_decisions(self._effective_pane_width())
         self.pane_width = pane_width
@@ -2153,7 +2164,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     if row_index == 0
                     else f"library-notes-tree-actions-{row_index + 1}"
                 ),
-                classes="ds-toolbar",
+                # The class is how a pin reaches EVERY packed row: Textual
+                # has no attribute selectors, so a selector aimed at
+                # `#library-notes-tree-actions` alone stopped seeing the
+                # overflow row this packer introduced (review M4).
+                classes="ds-toolbar library-notes-tree-action-row",
             )
             container.styles.height = "auto"
             with container:
