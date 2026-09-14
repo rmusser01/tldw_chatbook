@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from textwrap import indent
 
 from Tests.Backup_Recovery.native_package import (
     native_package as native_package,  # noqa: PLC0414 - installed product fixture
@@ -46,6 +47,47 @@ print('ORDINARY_REOPEN_COMPLETE',flush=True)
 """
 
 
+def _observed_ordinary_reopen(script: str) -> str:
+    """Observe only fixed phases and frame metadata in the ordinary child."""
+    prefix = r'''
+import os,time
+from pathlib import Path
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads,_error_metadata,_write
+_started=time.monotonic()
+_log_prefix=Path(os.environ["TLDW_TEST_REOPEN_LOG"])
+_records=[]
+_failed=False
+def _emit(name,records):
+ try:_write(_log_prefix.with_name(_log_prefix.name+"-"+name),records)
+ except OSError:pass
+
+def _phase(name):
+ _records.append({'phase':name,'elapsed_seconds':round(time.monotonic()-_started,6)})
+ del _records[:-16]
+ _emit('ordinary-reopen-phases.json.log',_records)
+_stop=observe_threads(_log_prefix.with_name(_log_prefix.name+'-stacks.log'),interval=10)
+'''
+    for marker in (
+        "ORDINARY_CLI_IMPORT", "ORDINARY_APP_CONSTRUCTED",
+        "ORDINARY_APP_MOUNTED", "ORDINARY_SAVED_NOTE_READ",
+        "ORDINARY_REOPEN_COMPLETE",
+    ):
+        before = f"print('{marker}',flush=True)"
+        if script.count(before) != 1:
+            raise ValueError("ordinary_reopen_diagnostic_boundary_changed")
+        script = script.replace(before, f"_phase('{marker}');{before}")
+    return prefix + "\ntry:\n _phase('child_entry')\n" + indent(script, " ") + r'''
+except BaseException as error:
+ _failed=True
+ _emit('ordinary-reopen-error.json.log',[_error_metadata(error)])
+ raise
+finally:
+ try:_stop()
+ except (OSError,RuntimeError):
+  if not _failed:raise
+'''
+
+
 def assert_ordinary_profile_reopens(home: Path, package: Path, selector: Path, checkpoint: str):
     """Exercise ordinary CLI admission, actual mount, and captured-note readback."""
     environment = dict(
@@ -58,13 +100,14 @@ def assert_ordinary_profile_reopens(home: Path, package: Path, selector: Path, c
         PYTHONNOUSERSITE="1",
         PYTHONPATH=os.pathsep.join((str(package), str(Path(__file__).resolve().parents[2]))),
         TLDW_TEST_INSTALLED_PACKAGE=str(package),
+        TLDW_TEST_REOPEN_LOG=str(home / f"ordinary-reopen-{checkpoint}"),
     )
     if selector == home / ".config" / "tldw_cli" / "config.toml":
         environment.pop("TLDW_CONFIG_PATH")
     log = home / f"ordinary-reopen-{checkpoint}.log"
     with log.open("w") as output:
         result = subprocess.run(
-            [sys.executable, "-X", "faulthandler", "-c", _ORDINARY_REOPEN],
+            [sys.executable, "-X", "faulthandler", "-c", _observed_ordinary_reopen(_ORDINARY_REOPEN)],
             cwd=home,
             env=environment,
             stdout=output,

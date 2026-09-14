@@ -2,6 +2,14 @@
 
 **Acceptance is still in progress.** This report follows the [failed original walkthrough](backup-uat-2026-09-13.md). It does not replace or erase those results. Work remains confined to local backup and recovery on [PR #2642](https://github.com/rmusser01/tldw_chatbook/pull/2642), TASK-32562.
 
+## Current checkpoint
+
+Reviewed product corrections and the dev merge resolution are pushed in `230073f527b66d4528b41aa48bfc44473eaa6c59`; PR2642 is mergeable and unmerged. The three requester-approved actions are applied. Earlier failures below are historical evidence, followed by their corrections and revision-specific repeats.
+
+On this commit, native Windows plain, encrypted, encrypted-credentials and multi-profile roundtrip selections passed in [run34810093007](https://github.com/rmusser01/tldw_chatbook/actions/runs/34810093007). Replacement and rollback selections stop at the same45-second ordinary restart subprocess limit, after successful credential review and Abort, before replacement retry or later rollback. Logs show successful constructor work still progressing; a test-only bounded observer is being verified with the unchanged deadline. Support is still running. Native Linux completed252 checks:251 passed and one Console capture failed with admission_timeout; Settings/Library capture, full default replacement/later rollback and first-note workflows passed. Bounded retirement diagnostics identify one surviving main-thread Notes handle; its exact cache predicate is under investigation.
+
+Fresh immutable installed keyboard UAT uses tree `f41682c6e80122467e91882c8cfa106451e0a84f`. It passed normal onboarding, saving the baseline note, recovery handoff, explicit required safety-file selection, credential-review Abort and normal Console/Library restart. A copied database snapshot confirms the exact original note survives; the live SQLite files were never opened while recovery was pending. After normal Quit and all21 explicit synthetic keyring acknowledgments, review succeeded and replacement completed with restoration validated. Normal reopen, exact incoming-note readback, a new saved note and normal Quit passed. All5,349 installed files remained unchanged. Library overview first showed a5-second source timeout; the Notes view subsequently loaded and saved. Later rollback review then failed before publication with generic backup_operation_failed; read-only diagnosis is in progress.
+
 ## Method
 
 Persona acceptance uses an immutable installed wheel, the ordinary `python -P -m tldw_chatbook` entry point, and keyboard events in real tmux terminals. Fresh first-time profiles traverse the actual six-step wizard. No Textual Pilot, widget-value assignment, test-mode environment, pre-completed onboarding, or product patch is used for a claimed keyboard pass. Synthetic homes and credentials keep these tests separate from personal data.
@@ -97,8 +105,8 @@ Earlier Linux native capture, encrypted controls, replacement, and later rollbac
 
 ## Remaining acceptance work
 
-- Correct restored-profile continuity after ordinary settings writes.
-- Correct and repeat default-profile replacement and later rollback, including normal startup after untouched Abort, replacement and rollback.
+- Complete final native Windows verification of the corrected settings-write continuity.
+- Complete the immutable keyboard replacement/later-rollback repeat, including normal startup after replacement and rollback; the fresh Abort/restart/readback path has passed.
 - Complete affected native Linux/Windows checks and publish final evidence with the PR.
 
 The requester subsequently approved the two exact path-inventory comparison entries, the two-file Linux diagnostic transfer, and configuration-write binding continuity for both default and restored profiles. Their execution and verification are recorded below.
@@ -143,3 +151,5 @@ Independent review found and reproduced a cross-profile race in the first repair
 The approved two literal-comparison inventory entries are applied. The path census passes with 54 occurrences matched by 51 approved exceptions; the persistent diagnostic inventory also passes. Ruff is clean on the new helper/bootstrap and new tests. Bandit reports no findings in the helper/bootstrap/raw/private-path scope and exactly the same three existing config findings as the staged baseline.
 
 The two approved Linux diagnostic files were transferred and their exact hashes verified on the native host. The bounded default replacement diagnostic passed against the preserved `f69a11ec` installed package with all 2,865 installed files unchanged. Its earlier finalization failure did not reproduce; no deadline or product rule was changed. The full default replacement/later-rollback repeat also passed on the preserved Linux build, with all 2,865 installed files unchanged. The bootstrap suite passed 31 checks in 4.01 seconds. Current-build platform/keyboard acceptance remains in progress.
+
+The Windows ordinary-reopen observer passed the full explicit replacement/Abort/reopen workflow in165.12s. A separate full default workflow reached later rollback, then exceeded its existing first-preview15-second test wait; that result remains a failure, and the deadline is unchanged. Runtime Notes-handle metadata passed all three installed mounted capture routes locally in156.02s and six independent observer cases plus a native transaction-preservation probe. Both diagnostic edits are test-only; Ruff passes and Bandit adds no findings.

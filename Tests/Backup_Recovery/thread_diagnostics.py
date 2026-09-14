@@ -339,6 +339,7 @@ def observe_capture_review(path: Path) -> Callable[[], None]:
 def observe_runtime_settlement(path: Path) -> Callable[[], None]:
     """Observe original settlement calls without tracing, waiting or retiring owners."""
     import hashlib
+    import sqlite3
     from collections import Counter
     from itertools import islice
 
@@ -384,8 +385,43 @@ def observe_runtime_settlement(path: Path) -> Callable[[], None]:
                 for hold in islice(storage._holds.values(), 64)
                 for name in hold.names[:64]
             }
+            notes_handles = []
+            current = threading.current_thread()
+            for lease in islice(storage._live_leases, 256):
+                if lease_owner(lease) != "db.chachanotes.primary":
+                    continue
+                participant = getattr(lease, "resource_participant", None)
+                registered = participant in participants._installed_repositories
+                repository = participant.repository() if registered else None
+                row = {
+                    "current_thread": lease.resource_thread is current,
+                    "registered": registered,
+                    "repository_alive": repository is not None,
+                    "close_failed": bool(lease.resource_close_failed),
+                }
+                if repository is not None:
+                    row.update(
+                        exact_type=participants._repository_types().get(type(repository)) == "db.chachanotes.primary",
+                        path_matches=repository.db_path == participant.path,
+                        participant_matches=repository._maintenance_participant is participant,
+                        memory=bool(repository.is_memory_db),
+                        retiring=current in participant.retiring_threads,
+                    )
+                    for connection, owned_lease in islice(participant.connections.items(), 64):
+                        if owned_lease is not lease:
+                            continue
+                        row["current_cache"] = getattr(repository._local, "conn", None) is connection
+                        if lease.resource_thread is current:
+                            try:
+                                row["in_transaction"] = bool(connection.in_transaction)
+                            except sqlite3.Error as error:
+                                row["transaction_error_class"] = type(error).__name__[:80]
+                notes_handles.append(row)
+                if len(notes_handles) == 16:
+                    break
             return {
                 "available": True,
+                "notes_handles": notes_handles,
                 "pending": len(storage._pending_acquisitions),
                 "operations": len(storage._operations),
                 "raw_operations": len(storage._raw_operations),
@@ -448,11 +484,14 @@ def observe_runtime_settlement(path: Path) -> Callable[[], None]:
             raise
 
     def observed_retire(self):
+        record("retire_caches_before")
         try:
-            return original_retire(self)
+            result = original_retire(self)
         except BaseException as error:
             record("retire_caches_failure", error)
             raise
+        record("retire_caches_after")
+        return result
 
     async def observed_resume(self):
         value = self.app._backup_maintenance_error
