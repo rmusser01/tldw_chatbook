@@ -245,10 +245,15 @@ $ds-size-31: 31;
 $ds-size-32: 32;
 $ds-size-34: 34;
 $ds-size-36: 36;
+/* task 11 (ADR-161 §3.10): 38/50 join the size scale -- cross-sheet
+   recurring geometry at migration time (lab/research caps, embeddings/
+   media/lab/research/watchlists widths). */
+$ds-size-38: 38;
 $ds-size-40: 40;
 $ds-size-44: 44;
 $ds-size-45: 45;
 $ds-size-48: 48;
+$ds-size-50: 50;
 $ds-size-60: 60;
 $ds-size-64: 64;
 $ds-size-66: 66;
@@ -263,6 +268,9 @@ $ds-size-104: 104;
 $ds-size-110: 110;
 $ds-size-120: 120;
 $ds-percent-34: 34%;
+/* task 11 (ADR-161 §3.10): 40% joins the scale -- cross-sheet recurring
+   cap (widgets/conversations/lab/media per the spread census). */
+$ds-percent-40: 40%;
 $ds-percent-42: 42%;
 $ds-percent-75: 75%;
 /* task 11 (ADR-161 §3.10): 80% joins the scale -- cross-sheet recurring fill
@@ -18568,6 +18576,10 @@ SnapshotViewModal {
 /* ===== MODULE: features/_lab.tcss ===== */
 /* Lab destination (Models | Speech | Evals).
  *
+ * ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+ * value below is a $ds token (space/size/percent scales), transcribed
+ * value-identically from the raw literals; comments stay load-bearing.
+ *
  * These rules MUST live app-tier, not in LabModeStrip.DEFAULT_CSS: the
  * bundle's global `.is-active` rule (border: round) outranks DEFAULT_CSS
  * regardless of specificity, so a widget-tier override silently loses and
@@ -18584,9 +18596,9 @@ SnapshotViewModal {
 
 #lab-mode-strip Button.lab-mode-chip {
     width: auto;
-    min-width: 0;
-    height: 1;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
 }
 
@@ -18635,45 +18647,45 @@ SnapshotViewModal {
  */
 
 .lab-workbench {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 #lab-rail {
-    width: 1fr;
-    min-width: 24;
-    max-width: 32;
-    height: 100%;
-    min-height: 0;
-    padding: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-24;
+    max-width: $ds-size-32;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-0;
     background: $ds-surface-panel;
     border-right: solid $ds-column-line;
 }
 
 #lab-body {
-    width: 4fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
-    padding: 0 1;
+    width: $ds-fr-4;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* The app-tier global Select rule claims 100% width and a bottom margin.
  * Keep Remote's local variant toolbar balanced; widget-tier BUNDLED_CSS
  * cannot override app-tier geometry in Textual's cascade. */
 #remote-variant-sort {
-    width: 24;
-    min-width: 18;
-    margin-left: 1;
-    margin-bottom: 0;
+    width: $ds-size-24;
+    min-width: $ds-size-18;
+    margin-left: $ds-space-1;
+    margin-bottom: $ds-space-0;
 }
 
 RemoteView.-narrow #remote-variant-sort {
-    width: 100%;
-    min-width: 0;
-    margin-left: 0;
-    margin-bottom: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin-left: $ds-space-0;
+    margin-bottom: $ds-space-0;
 }
 
 /* TASK-1076: was a hard `30` at every terminal width -- the exact anti-
@@ -18689,11 +18701,11 @@ RemoteView.-narrow #remote-variant-sort {
  * largest of the three regions, so the grid is not starved for it.
  */
 #lab-inspector {
-    width: 2fr;
-    min-width: 30;
-    max-width: 50;
-    height: 100%;
-    min-height: 0;
+    width: $ds-fr-2;
+    min-width: $ds-size-30;
+    max-width: $ds-size-50;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
 }
 
 /* Rail rows.
@@ -18707,10 +18719,10 @@ RemoteView.-narrow #remote-variant-sort {
  * for the same reason.
  */
 .lab-rail Button.lab-rail-row {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1 0 2;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-2;
     border: none;
     /* `text-align` alone does NOT left-align a one-line Button label --
        `content-align` positions the label box itself and defaults to
@@ -18768,10 +18780,10 @@ RemoteView.-narrow #remote-variant-sort {
  * between groups -- the second heading otherwise butts against the last row
  * of the first group. */
 .lab-rail-section {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    margin-top: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin-top: $ds-space-1;
     color: $accent;
     text-style: bold;
 }
@@ -18802,19 +18814,19 @@ RemoteView.-narrow #remote-variant-sort {
  * only waste horizontal space.
  */
 #lab-header-row {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-panel;
 }
 
 .lab-header-inline {
     layout: horizontal;
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0;
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
     border: none;
     background: $ds-surface-panel;
 }
@@ -18823,28 +18835,28 @@ RemoteView.-narrow #remote-variant-sort {
    `#lab-header-row`; doubling it would indent Models' title two cells
    further than Speech's. */
 #lab-header-row .lab-header-inline {
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 .lab-header-inline .workbench-header-title {
     width: auto;
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 .lab-header-inline .workbench-header-subtitle {
     display: block;
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin-left: 2;
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-left: $ds-space-2;
 }
 
 .lab-header-inline .workbench-header-status {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin-left: 2;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-left: $ds-space-2;
 }
 
 /* The chip shares the header's single row with the title, subtitle and
@@ -18856,16 +18868,16 @@ RemoteView.-narrow #remote-variant-sort {
  * a convention each mode has to remember. */
 .lab-status-chip {
     width: auto;
-    max-width: 40%;
-    height: 1;
-    padding: 0 1;
+    max-width: $ds-percent-40;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $ds-text-muted;
     text-overflow: ellipsis;
 }
 
 /* The title must survive whatever the chip does. */
 .lab-header-inline .workbench-header-title {
-    min-width: 6;
+    min-width: $ds-size-6;
 }
 
 /* Rail width is per-mode, because label length is per-mode. Speech's rows carry
@@ -18873,16 +18885,16 @@ RemoteView.-narrow #remote-variant-sort {
  * shared floor Textual dropped the overflowing word entirely, rendering
  * "🔤 Speech" and a bare "📚". Measured, not estimated. */
 .lab-mode-stts #lab-rail {
-    min-width: 28;
-    max-width: 34;
+    min-width: $ds-size-28;
+    max-width: $ds-size-34;
 }
 
 /* Evals' rail is a library, not a menu: section headings carry counts and
  * their empty states put two buttons side by side ("+ New dataset" /
  * "Import…"). At the shared floor those wrapped instead. */
 .lab-mode-evals #lab-rail {
-    min-width: 30;
-    max-width: 38;
+    min-width: $ds-size-30;
+    max-width: $ds-size-38;
 }
 
 /* --- Evals panes inside the frame's regions -----------------------------
@@ -18904,8 +18916,8 @@ RemoteView.-narrow #remote-variant-sort {
 #lab-inspector #evals-inspector-pane {
     border: none;
     background: transparent;
-    min-height: 0;
-    padding: 0;
+    min-height: $ds-size-0;
+    padding: $ds-space-0;
 }
 
 /* `#lab-rail` and `#lab-inspector` are VerticalScroll containers that
@@ -18927,7 +18939,7 @@ RemoteView.-narrow #remote-variant-sort {
 /* `#lab-body` is a plain Vertical with no header sibling, so the detail
  * pane genuinely should fill it. */
 #lab-body #evals-detail-pane {
-    height: 100%;
+    height: $ds-height-full;
 }
 
 /* "No datasets" offers authoring and import together. In the old three-pane
@@ -18942,7 +18954,7 @@ RemoteView.-narrow #remote-variant-sort {
 }
 
 #lab-rail .evals-rail-empty-actions Button {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* --- Speech panes, Console grammar ---------------------------------------
@@ -18954,30 +18966,30 @@ RemoteView.-narrow #remote-variant-sort {
  * strip is height 1, and only the text input is allowed to grow.
  */
 .speech-pane {
-    height: 1fr;
-    padding: 0 1;
+    height: $ds-height-fill;
+    padding: $ds-space-0 $ds-space-1;
     overflow-y: auto;
 }
 
 .speech-pane-title {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     text-style: bold;
     color: $ds-status-info;
 }
 
 #speech-playground-actions {
-    height: 1;
-    min-height: 1;
-    margin: 1 0 0 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 /* The only element allowed to take the remaining space -- everything else on
    this screen is one row. */
 .speech-input {
-    height: 1fr;
-    min-height: 5;
-    margin: 1 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-5;
+    margin: $ds-space-1 $ds-space-0;
     border: solid $ds-grid-line;
 }
 
@@ -18986,53 +18998,53 @@ RemoteView.-narrow #remote-variant-sort {
 }
 
 .speech-chip-row {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 /* `width: auto` with a cap, for the reason the Lab status chip carries one:
    an unbounded auto chip starves its neighbours on the same row. */
 .speech-chip {
     width: auto;
-    max-width: 30;
-    height: 1;
-    padding: 0 1;
-    margin-right: 1;
+    max-width: $ds-size-30;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin-right: $ds-space-1;
     color: $ds-text-muted;
     background: $ds-surface-panel;
     text-overflow: ellipsis;
 }
 
 .speech-status-line {
-    height: 1;
-    min-height: 1;
-    margin-top: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-top: $ds-space-1;
     color: $ds-status-warning;
 }
 
 .speech-readiness-line {
     height: auto;
-    min-height: 1;
-    margin-top: 1;
+    min-height: $ds-size-1;
+    margin-top: $ds-space-1;
     color: $ds-status-info;
 }
 
 .speech-detail-line {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
 }
 
 .audio-cpp-runtime-card {
     height: auto;
-    min-height: 1;
-    margin-top: 1;
+    min-height: $ds-size-1;
+    margin-top: $ds-space-1;
 }
 
 .audio-cpp-runtime-status {
     height: auto;
-    min-height: 1;
-    padding: 0 1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $ds-text-primary;
     text-style: bold;
 }
@@ -19040,21 +19052,21 @@ RemoteView.-narrow #remote-variant-sort {
 .audio-cpp-runtime-pending,
 .audio-cpp-runtime-reason {
     height: auto;
-    min-height: 1;
-    padding: 0 1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $ds-text-muted;
 }
 
 .audio-cpp-diagnostics-warning {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $ds-status-warning;
 }
 
 .audio-cpp-diagnostics-lines {
     height: auto;
-    min-height: 1;
-    max-height: 12;
+    min-height: $ds-size-1;
+    max-height: $ds-size-12;
     overflow-y: auto;
     color: $ds-text-muted;
 }
@@ -19067,27 +19079,27 @@ RemoteView.-narrow #remote-variant-sort {
 }
 
 #audio-cpp-runtime-actions {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 #audio-cpp-runtime-actions Button.workbench-action {
     width: auto;
-    min-width: 0;
-    padding: 0 1;
-    margin: 0 2 0 0;
+    min-width: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-2 $ds-space-0 $ds-space-0;
     border: none;
 }
 
 .speech-split-stacked #audio-cpp-runtime-actions {
     layout: vertical;
-    height: 3;
-    min-height: 3;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
 }
 
 .speech-split-stacked #audio-cpp-runtime-actions Button.workbench-action {
-    width: 100%;
-    margin: 0;
+    width: $ds-width-full;
+    margin: $ds-space-0;
     text-align: left;
     content-align: left middle;
 }
@@ -19098,9 +19110,9 @@ RemoteView.-narrow #remote-variant-sort {
  * edge entirely. Console packs its action strip left; so does this. */
 #speech-playground-actions Button.workbench-action {
     width: auto;
-    min-width: 0;
-    padding: 0 1;
-    margin: 0 2 0 0;
+    min-width: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-2 $ds-space-0 $ds-space-0;
     border: none;
 }
 
@@ -19108,10 +19120,10 @@ RemoteView.-narrow #remote-variant-sort {
 /* Reverse-video section head, matching Console's inspector section bars
  * (Sources / Run / Tools) rather than inventing a third heading style. */
 .speech-section-head {
-    height: 1;
-    min-height: 1;
-    margin-top: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-top: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold;
@@ -19122,26 +19134,26 @@ RemoteView.-narrow #remote-variant-sort {
  * 34 rows of content to spend vertically -- filling the height with one tall
  * empty box is what made the first two passes read as sparse. */
 .speech-split {
-    height: 1fr;
+    height: $ds-height-fill;
     /* Reference setup and the runtime card are auto-height siblings. Without
      * a floor they consume the short Lab viewport and Textual compresses the
      * synthesis text/current-result split to one or two unusable rows. The
      * current-result pane needs thirteen rows when the clone-only profile-save
      * action is present; keep that complete action set inside the split and
      * let the outer pane scroll for the runtime/clone setup below it. */
-    min-height: 13;
-    margin-top: 1;
+    min-height: $ds-size-13;
+    margin-top: $ds-space-1;
 }
 
 .speech-split-pane {
-    width: 1fr;
-    height: 100%;
-    min-width: 0;
-    min-height: 0;
+    width: $ds-width-fill;
+    height: $ds-height-full;
+    min-width: $ds-size-0;
+    min-height: $ds-size-0;
 }
 
 #speech-result-pane {
-    margin-left: 2;
+    margin-left: $ds-space-2;
 }
 
 /* Below SPEECH_SPLIT_MIN_WIDTH two columns would be ~20 cells each, so the
@@ -19152,43 +19164,43 @@ RemoteView.-narrow #remote-variant-sort {
 }
 
 .speech-split-stacked #speech-result-pane {
-    margin-left: 0;
-    margin-top: 1;
+    margin-left: $ds-space-0;
+    margin-top: $ds-space-1;
 }
 
 .speech-input {
-    height: 1fr;
-    min-height: 4;
-    margin: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-4;
+    margin: $ds-space-0;
 }
 
 .speech-result-state {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $ds-text-muted;
 }
 
 #speech-result-actions {
-    height: 1;
-    min-height: 1;
-    margin-top: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-top: $ds-space-1;
 }
 
 #speech-result-actions Button.workbench-action {
     width: auto;
-    min-width: 0;
-    padding: 0 1;
-    margin: 0 2 0 0;
+    min-width: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-2 $ds-space-0 $ds-space-0;
     border: none;
 }
 
 /* Result chips stack one per row here, unlike the settings line: they are
    read as a list of facts about one artifact, not scanned across. */
 #speech-result-pane .speech-chip {
-    width: 100%;
-    max-width: 100%;
-    margin: 0;
+    width: $ds-width-full;
+    max-width: $ds-width-full;
+    margin: $ds-space-0;
 }
 
 /* Narrow: stack the one-row rows rather than let them overflow.
@@ -19205,7 +19217,7 @@ RemoteView.-narrow #remote-variant-sort {
 .speech-split-stacked #speech-settings-line {
     layout: vertical;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 /* The Playground inventory is a fixed six actions. Textual's horizontal
@@ -19213,22 +19225,22 @@ RemoteView.-narrow #remote-variant-sort {
  * vertical layout, so reserve the six actual rows rather than clipping the
  * final cross-surface navigation action. */
 .speech-split-stacked #speech-playground-actions {
-    height: 6;
-    min-height: 6;
+    height: $ds-size-6;
+    min-height: $ds-size-6;
 }
 
 .speech-split-stacked #speech-playground-actions Button.workbench-action,
 .speech-split-stacked #speech-result-actions Button.workbench-action {
-    width: 100%;
-    margin: 0;
+    width: $ds-width-full;
+    margin: $ds-space-0;
     text-align: left;
     content-align: left middle;
 }
 
 .speech-split-stacked .speech-chip {
-    width: 100%;
-    max-width: 100%;
-    margin: 0;
+    width: $ds-width-full;
+    max-width: $ds-width-full;
+    margin: $ds-space-0;
 }
 
 /* With the rows stacked, the pane scrolls rather than clipping. */
@@ -19247,8 +19259,8 @@ RemoteView.-narrow #remote-variant-sort {
 }
 
 .speech-split-stacked .speech-input {
-    height: 6;
-    min-height: 6;
+    height: $ds-size-6;
+    min-height: $ds-size-6;
 }
 
 /* The split itself must stop being `1fr` when stacked: at 1fr it resolved to
@@ -19273,20 +19285,20 @@ RemoteView.-narrow #remote-variant-sort {
  * spent four rows on exactly this pairing, which is most of why it was 93
  * rows tall. */
 .speech-param-row {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 .speech-param-label {
-    width: 24;
-    height: 1;
+    width: $ds-size-24;
+    height: $ds-size-1;
     color: $ds-text-muted;
 }
 
 .speech-param-control {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     border: none;
 }
 
@@ -19300,7 +19312,7 @@ RemoteView.-narrow #remote-variant-sort {
     grid-rows: 1;
     grid-gutter: 0 1;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .speech-split-stacked .speech-axis-grid {
@@ -19317,7 +19329,7 @@ RemoteView.-narrow #remote-variant-sort {
     grid-rows: 1;
     grid-gutter: 0 1;
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .speech-split-stacked #speech-result-actions {
@@ -19328,21 +19340,21 @@ RemoteView.-narrow #remote-variant-sort {
  * override marker; the control carries the legacy id so the existing
  * synthesis handler reads it unchanged. */
 .speech-axis-cell {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 .speech-axis-cell .speech-chip {
-    width: 10;
-    max-width: 10;
-    margin: 0;
+    width: $ds-size-10;
+    max-width: $ds-size-10;
+    margin: $ds-space-0;
     background: transparent;
 }
 
 .speech-axis-control {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     border: none;
     background: $ds-surface-panel;
 }
@@ -19353,19 +19365,19 @@ RemoteView.-narrow #remote-variant-sort {
  * neither its value nor its arrow. The child needs the rule too. */
 .speech-axis-control SelectCurrent {
     border: none;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .speech-axis-control SelectCurrent Static {
-    height: 1;
+    height: $ds-size-1;
 }
 
 /* The speed Input has the same inner-border problem in reverse: it is the
  * bordered widget itself. */
 Input.speech-axis-control {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* --- Speech: player, generation status, clip source ------------------- */
@@ -19374,44 +19386,44 @@ Input.speech-axis-control {
  * summary, lifecycle copy, and always-visible actions. */
 .speech-player {
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     border-top: solid $ds-grid-line;
 }
 
 #audio-player-container > .speech-section-head {
-    margin-top: 0;
+    margin-top: $ds-space-0;
 }
 
 .speech-player-status {
-    height: 1;
+    height: $ds-size-1;
     color: $ds-text-primary;
     text-style: bold;
 }
 
 .speech-result-lifecycle {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
 }
 
 .speech-result-provenance {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
 }
 
 .speech-player-transport {
-    height: 1;
+    height: $ds-size-1;
 }
 
 #audio-progress-bar {
-    width: 1fr;
-    height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
 }
 
 .speech-player-time {
     width: auto;
-    min-width: 12;
+    min-width: $ds-size-12;
     content-align: right middle;
     color: $text-muted;
 }
@@ -19424,9 +19436,9 @@ Input.speech-axis-control {
 #audio-cpp-runtime-details,
 #audio-cpp-runtime-diagnostics {
     height: auto;
-    min-height: 1;
-    padding: 0;
-    margin-bottom: 0;
+    min-height: $ds-size-1;
+    padding: $ds-space-0;
+    margin-bottom: $ds-space-0;
     border: none;
     background: transparent;
 }
@@ -19436,9 +19448,9 @@ Input.speech-axis-control {
 #speech-log-group > CollapsibleTitle,
 #audio-cpp-runtime-details > CollapsibleTitle,
 #audio-cpp-runtime-diagnostics > CollapsibleTitle {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
@@ -19453,19 +19465,19 @@ Input.speech-axis-control {
 
 /* One row: what is happening, and how far along. */
 .speech-generation-status {
-    height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .speech-generation-text {
-    width: 1fr;
+    width: $ds-width-fill;
     color: $text-muted;
 }
 
 #generation-progress {
     width: auto;
-    min-width: 20;
-    height: 1;
+    min-width: $ds-size-20;
+    height: $ds-size-1;
 }
 
 /* Diagnostic, so it stays behind a collapsed disclosure rather than
@@ -19477,31 +19489,31 @@ Input.speech-axis-control {
 }
 
 .speech-log {
-    height: 8;
+    height: $ds-size-8;
     background: transparent;
 }
 
 /* The reference-clip / voice-sample picker, mounted only for the providers
    that use one. */
 .speech-source-row {
-    height: 1;
-    margin-top: 1;
+    height: $ds-size-1;
+    margin-top: $ds-space-1;
 }
 
 .speech-source-status {
-    width: 1fr;
+    width: $ds-width-fill;
     color: $text-muted;
 }
 
 .speech-clone-setup-host,
 #speech-clone-setup {
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 #speech-clone-setup {
-    margin-top: 1;
-    padding: 0 1;
+    margin-top: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
     border-top: solid $ds-grid-line;
     background: $ds-surface-panel;
 }
@@ -19510,7 +19522,7 @@ Input.speech-axis-control {
 .speech-clone-privacy,
 .speech-clone-error {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
 }
 
@@ -19524,25 +19536,25 @@ Input.speech-axis-control {
 
 .speech-clone-reference-row,
 .speech-clone-actions {
-    height: 1;
-    min-height: 1;
-    margin-top: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-top: $ds-space-1;
 }
 
 .speech-clone-reference-row Button,
 .speech-clone-actions Button {
     width: auto;
-    min-width: 0;
-    height: 1;
-    padding: 0 1;
-    margin: 0 1 0 0;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     border: none;
 }
 
 .speech-clone-transcript {
-    height: 4;
-    min-height: 3;
-    margin-top: 1;
+    height: $ds-size-4;
+    min-height: $ds-size-3;
+    margin-top: $ds-space-1;
 }
 
 .speech-split-stacked .speech-clone-reference-row,
@@ -19553,8 +19565,8 @@ Input.speech-axis-control {
 
 .speech-split-stacked .speech-clone-reference-row Button,
 .speech-split-stacked .speech-clone-actions Button {
-    width: 100%;
-    margin: 0;
+    width: $ds-width-full;
+    margin: $ds-space-0;
     text-align: left;
     content-align: left middle;
 }
@@ -19565,19 +19577,19 @@ Input.speech-axis-control {
  * the input's top border, the label+value row, the bottom border -- which
  * is what put `save-settings-btn` at y=102 in a 26-row viewport. */
 .speech-setting-row {
-    height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .speech-setting-label {
-    width: 28;
+    width: $ds-size-28;
     color: $text-muted;
 }
 
 .speech-setting-control {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     border: none;
     background: $ds-surface-panel;
 }
@@ -19587,8 +19599,8 @@ Input.speech-axis-control {
    value control only two cells wide at every tested terminal width. */
 .speech-setting-scope {
     width: auto;
-    min-width: 0;
-    margin-left: 1;
+    min-width: $ds-size-0;
+    margin-left: $ds-space-1;
     color: $text-muted;
 }
 
@@ -19597,13 +19609,13 @@ Input.speech-axis-control {
  * top border. */
 .speech-setting-control SelectCurrent {
     border: none;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 Input.speech-setting-control {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* The forms-wide `Input:focus` rule re-adds a border at higher specificity
@@ -19626,7 +19638,7 @@ Input.speech-setting-control:focus {
     height: auto;
     border: none;
     background: transparent;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* The action strip sits OUTSIDE the scroll region: `save-settings-btn`
@@ -19634,92 +19646,92 @@ Input.speech-setting-control:focus {
  * fold. Keeping it above the groups is what makes it reachable regardless
  * of how many are expanded. */
 .speech-settings-pane {
-    height: 1fr;
+    height: $ds-height-fill;
 }
 
 #speech-settings-actions {
-    height: 1;
-    padding: 0 1;
-    margin-bottom: 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 #speech-settings-groups {
-    height: 1fr;
+    height: $ds-height-fill;
     overflow-y: auto;
 }
 
 .studio-tts-scope {
     height: auto;
-    min-height: 2;
-    padding: 0 1;
+    min-height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
     color: $ds-text-muted;
 }
 
 #speech-settings-actions {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 #speech-settings-actions Button.workbench-action,
 #studio-tts-voice-destination-actions Button.workbench-action,
 #voice-blends-actions Button.workbench-action {
     width: auto;
-    min-width: 0;
-    height: 1;
-    padding: 0 1;
-    margin: 0 2 0 0;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-2 $ds-space-0 $ds-space-0;
     border: none;
 }
 
 .studio-tts-settings-stacked #speech-settings-actions {
     layout: vertical;
-    height: 4;
+    height: $ds-size-4;
 }
 
 .studio-tts-settings-stacked #speech-settings-actions Button.workbench-action {
-    width: 100%;
-    margin-right: 0;
+    width: $ds-width-full;
+    margin-right: $ds-space-0;
 }
 
 .studio-tts-setting-row {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 .studio-tts-source {
-    width: 34;
-    min-width: 18;
-    padding-left: 1;
+    width: $ds-size-34;
+    min-width: $ds-size-18;
+    padding-left: $ds-space-1;
     color: $ds-text-muted;
     text-overflow: ellipsis;
 }
 
 .studio-tts-field-error {
     width: auto;
-    min-width: 16;
-    padding-left: 1;
+    min-width: $ds-size-16;
+    padding-left: $ds-space-1;
     color: $ds-status-error;
 }
 
 .studio-tts-settings-stacked .studio-tts-setting-row {
     layout: vertical;
     height: auto;
-    min-height: 3;
-    margin-bottom: 1;
+    min-height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 
 .studio-tts-settings-stacked .studio-tts-setting-row .speech-setting-label,
 .studio-tts-settings-stacked .studio-tts-setting-row .speech-setting-control,
 .studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-source,
 .studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-field-error {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
 }
 
 .studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-source,
 .studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-field-error {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 #studio-tts-chatterbox-options {
@@ -19729,32 +19741,32 @@ Input.speech-setting-control:focus {
 #studio-tts-voice-destination-actions,
 #voice-blends-actions {
     height: auto;
-    min-height: 1;
-    margin: 0 1 1 1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
 }
 
 .studio-tts-settings-stacked #studio-tts-voice-destination-actions {
     layout: vertical;
-    height: 2;
+    height: $ds-size-2;
 }
 
 .studio-tts-settings-stacked #studio-tts-voice-destination-actions Button.workbench-action {
-    width: 100%;
-    margin-right: 0;
+    width: $ds-width-full;
+    margin-right: $ds-space-0;
 }
 
 .studio-tts-helper {
     height: auto;
-    min-height: 1;
-    padding: 0 1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $ds-text-muted;
 }
 
 #tts-adopt-studio-preferences-btn {
     width: auto;
-    min-width: 0;
-    height: 1;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
 }
 
@@ -19769,11 +19781,11 @@ TTSVoiceBundleReviewModal {
 }
 
 .stts-portability-dialog {
-    width: 90%;
-    max-width: 76;
+    width: $ds-percent-90;
+    max-width: $ds-size-76;
     height: auto;
-    max-height: 90%;
-    padding: 1 2;
+    max-height: $ds-percent-90;
+    padding: $ds-space-1 $ds-space-2;
     background: $panel;
     border: round $accent;
     overflow-y: auto;
@@ -19781,14 +19793,14 @@ TTSVoiceBundleReviewModal {
 
 .stts-portability-title {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     text-style: bold;
 }
 
 .stts-portability-copy,
 .stts-portability-recovery {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .stts-portability-recovery {
@@ -19798,14 +19810,14 @@ TTSVoiceBundleReviewModal {
 .stts-portability-actions {
     layout: vertical;
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .stts-portability-actions Button {
-    width: 100%;
-    height: 3;
-    min-width: 0;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-width: $ds-size-0;
+    margin-bottom: $ds-space-1;
 }
 
 /* Portable material controls stay visibly inert without stacking the generic
@@ -19829,8 +19841,8 @@ STTSProfileLibrary #stts-profile-actions #stts-profile-import-btn:disabled {
 }
 
 #stts-bundle-review-facts {
-    height: 9;
-    min-height: 6;
+    height: $ds-size-9;
+    min-height: $ds-size-6;
 }
 
 
@@ -19838,18 +19850,18 @@ STTSProfileLibrary #stts-profile-actions #stts-profile-import-btn:disabled {
  * whatever is expanded below. Inside it they measured at y=40 in a 26-row
  * viewport, after eight collapsible groups. */
 #audiobook-actions {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    margin-bottom: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 #audiobook-actions Button {
     width: auto;
-    min-width: 0;
-    height: 1;
-    padding: 0 1;
-    margin: 0 2 0 0;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-2 $ds-space-0 $ds-space-0;
     border: none;
 }
 
@@ -19859,8 +19871,8 @@ STTSProfileLibrary #stts-profile-actions #stts-profile-import-btn:disabled {
 #llm-view-installed,
 CuratedView,
 InstalledView {
-    min-width: 0;
-    min-height: 0;
+    min-width: $ds-size-0;
+    min-height: $ds-size-0;
     overflow: hidden;
 }
 
@@ -19872,15 +19884,15 @@ InstalledView .installed-header {
 
 CuratedView .curated-header Button,
 InstalledView .installed-header Button {
-    width: 100%;
-    min-width: 0;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 CuratedView .curated-list,
 InstalledView .installed-list {
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     overflow-y: auto;
 }
 
@@ -19891,8 +19903,8 @@ InstalledView .audio-cpp-companions,
 CuratedView .audio-cpp-package-copy,
 InstalledView .audio-cpp-package-copy,
 InstalledView .installed-recovery-status {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
 }
 
@@ -19900,30 +19912,30 @@ CuratedView .audio-cpp-actions,
 InstalledView ModelActivationControls.audio-cpp-actions,
 InstalledView ModelActivationControls.audio-cpp-actions Horizontal {
     layout: vertical;
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
 }
 
 CuratedView .audio-cpp-actions Button,
 InstalledView .audio-cpp-actions Button {
-    width: 100%;
-    min-width: 0;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 InstalledView .installed-recovery-status {
     color: $warning;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 CuratedView .curated-disabled-reason,
 CuratedView .curated-recovery-status,
 InstalledView .model-disabled-reason {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     color: $warning;
 }
 
@@ -19952,18 +19964,18 @@ InstalledView Button:disabled {
  * the terminal width: an open Inspector changes the space this form owns.
  */
 VllmSetupView {
-    width: 100%;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 VllmSetupView #vllm-readiness-state {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     border-left: thick $accent;
     background: $ds-surface-panel;
     color: $ds-text-primary;
@@ -19971,41 +19983,41 @@ VllmSetupView #vllm-readiness-state {
 }
 
 VllmSetupView #vllm-readiness-checklist {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-panel;
 }
 
 VllmSetupView #vllm-readiness-checklist > Label {
-    width: 100%;
-    min-width: 0;
-    height: 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
 }
 
 VllmSetupView .vllm-picker-row {
-    width: 100%;
-    min-width: 0;
-    height: 3;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
 }
 
 VllmSetupView .vllm-picker-row > Input.vllm-picker-input {
-    width: 1fr;
-    min-width: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
 }
 
 VllmSetupView .vllm-picker-row > Button.vllm-picker-button {
     width: auto;
-    min-width: 10;
-    margin-left: 1;
+    min-width: $ds-size-10;
+    margin-left: $ds-space-1;
 }
 
 VllmSetupView > .section-title,
 VllmSetupView > .section_label,
 VllmSetupView > .description {
     height: auto;
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 VllmSetupView #vllm-next-action,
@@ -20013,15 +20025,15 @@ VllmSetupView .vllm-mode-actions,
 VllmSetupView .vllm-profile-actions,
 VllmSetupView .vllm-source-actions,
 VllmSetupView .vllm-console-actions {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
 }
 
 VllmSetupView #vllm-fold-cue {
     display: none;
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
     color: $ds-text-muted;
     text-style: dim;
 }
@@ -20034,8 +20046,8 @@ VllmSetupView Input.vllm-control,
 VllmSetupView Select.vllm-control,
 VllmSetupView TextArea.vllm-control,
 VllmSetupView Collapsible.vllm-control {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
 }
 
 VllmSetupView Button.vllm-focus-target:focus,
@@ -20059,8 +20071,8 @@ VllmSetupView.vllm-wide .vllm-profile-actions > Button.vllm-action-button,
 VllmSetupView.vllm-wide .vllm-source-actions > Button.vllm-action-button,
 VllmSetupView.vllm-wide #vllm-next-action > Button.vllm-action-button,
 VllmSetupView.vllm-medium #vllm-next-action > Button.vllm-action-button {
-    width: 1fr;
-    min-width: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
 }
 
 VllmSetupView.vllm-wide .vllm-mode-actions,
@@ -20069,7 +20081,7 @@ VllmSetupView.vllm-wide .vllm-source-actions,
 VllmSetupView.vllm-wide #vllm-next-action,
 VllmSetupView.vllm-wide .vllm-console-actions,
 VllmSetupView.vllm-medium #vllm-next-action {
-    height: 3;
+    height: $ds-size-3;
 }
 
 /* Medium and compact re-compose complete controls into rows. This uses
@@ -20095,9 +20107,9 @@ VllmSetupView.vllm-compact .vllm-picker-row > Button.vllm-picker-button,
 VllmSetupView.vllm-compact #vllm-next-action > Button.vllm-action-button,
 VllmSetupView.vllm-compact #vllm-browse-local-model-directory-button.vllm-picker-button,
 VllmSetupView.vllm-compact .vllm-console-actions > Button.vllm-action-button {
-    width: 100%;
-    min-width: 0;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 VllmSetupView.vllm-compact .vllm-picker-row {
@@ -20105,11 +20117,11 @@ VllmSetupView.vllm-compact .vllm-picker-row {
 }
 
 VllmSetupView.vllm-compact .vllm-picker-row > Input.vllm-picker-input {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 VllmSetupView.vllm-compact > .section-title {
-    margin-top: 0;
+    margin-top: $ds-space-0;
 }
 
 VllmSetupView.vllm-compact > .description {
