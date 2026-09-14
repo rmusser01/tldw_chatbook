@@ -85,7 +85,8 @@ if mode!='exit_only':
     return execute(query.replace('FROM notes','FROM missing_fixture_notes'),*args,**kwargs)
    app.chachanotes_db.execute_query=missing
   async with initial_screen_observation(app),app.run_test(size=(100,36)) as pilot:
-   async with asyncio.timeout(20):
+   # Windows already bounds the whole child at240s, including receipt and Quit.
+   async with asyncio.timeout(None if sys.platform=='win32' else 20):
     while not getattr(app,'_recovery_open_checked',False):
      if mode=='post_mount_failure' and app._ui_ready:
       await asyncio.sleep(.3);break
