@@ -609,7 +609,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         ``A/fresh/``, the very segments that told two same-named vaults
         apart. Compose cannot know the width (the canvas is measured after
         layout), so the line is composed at the compact floor and widened
-        here, from the Static's own measured width.
+        here, once the pane has a measured width.
         """
         state = self.snapshot
         if state.selection_kind != "folder" or not state.selected_names:
