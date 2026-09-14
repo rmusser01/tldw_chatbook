@@ -589,6 +589,7 @@ from .Prompt_Management.prompt_variables import PromptVariableApplication
 from .UI.tools_settings_messages import IngestUiStyleChanged  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
 from .UI.image_gen_command_provider import ImageGenCommandProvider  # noqa: E402
+from .Widgets.pattern_gallery import PatternGalleryProvider  # noqa: E402
 from tldw_chatbook.Chat_Grammars_Interop import (  # noqa: E402
     ChatGrammarsScopeService,
     LocalChatGrammarsService,
@@ -7572,6 +7573,7 @@ class TldwCli(
         DeveloperProvider,
         ConsoleCommandProvider,
         ImageGenCommandProvider,
+        PatternGalleryProvider,
     }
 
     # T169: "notes-window" removed -- no widget composes that id anymore (the

@@ -298,6 +298,10 @@ CSS_MODULES = [
     "features/_writing.tcss",
     "features/config_search.tcss",
     "features/feature_alerts.tcss",
+    # ADR-161 task 5: the pattern gallery's layout glue (dialog/nav preview
+    # frames, speaker-accent switch). Family styling stays in the owning
+    # component sheets the gallery composes.
+    "features/_pattern_gallery.tcss",
     # 5. Utilities - Helpers and Overrides (can override anything)
     "utilities/_helpers.tcss",
     "utilities/_states.tcss",

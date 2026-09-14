@@ -16794,6 +16794,66 @@ FeatureNotAvailableDialog Button {
     min-width: 12;
 }
 
+/* ===== MODULE: features/_pattern_gallery.tcss ===== */
+/* ========================================
+ * FEATURES: Pattern Gallery (ADR-161)
+ * ========================================
+ * Layout glue ONLY — no family styling here. The gallery must render the
+ * canonical sheets' output, not its own: every family class it composes
+ * (form-*, button-group*, .sidebar*, .section-*, .dialog-*, .status-*,
+ * .ds-*) keeps the rules its owning module already defines.
+ * ======================================== */
+
+#pg-root {
+    padding: $ds-space-inset;
+}
+
+/* Preview frames: canonical containers with no height rule of their own
+   (form-col, bare ListView, status-area) keep Textual's Container default
+   of 1fr, which resolves against the scroll root's viewport and balloons
+   each preview to full screen height. Explicit frame heights pin the
+   previews. Geometry only — no family styling. */
+.pg-frame-forms {
+    height: 44;
+}
+
+.pg-frame-list {
+    height: 3;
+}
+
+.pg-frame-status {
+    height: 12;
+}
+
+/* Structure preview frame for the dialog vocabulary (not a pushed modal). */
+.pg-dialog-frame {
+    height: auto;
+    border: round $ds-grid-line;
+    padding: $ds-space-inset;
+}
+
+/* Bounding box for the sidebar preview: `.sidebar` docks left, so it needs
+   a definite-height container to dock inside rather than the scroll root.
+   28 rows = header 3 + button 3 + toggle 3 + listview 10 + collapsible 6
+   plus the button margins. */
+.pg-nav-frame {
+    height: 28;
+}
+
+/* Speaker accents use the same dark/light-mode switch Textual applies to
+   the App (no unsuffixed assistant token exists; see core/_variables.tcss). */
+.pg-msg-user {
+    color: $ds-chat-user-accent;
+}
+
+.-dark-mode .pg-msg-assistant {
+    color: $ds-chat-assistant-accent-dark;
+}
+
+.-light-mode .pg-msg-assistant {
+    color: $ds-chat-assistant-accent-light;
+}
+
 /* ===== MODULE: utilities/_helpers.tcss ===== */
 /* ========================================
  * UTILITIES: Helpers
