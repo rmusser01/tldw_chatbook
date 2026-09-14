@@ -286,13 +286,16 @@ class FileNotesService:
         replica = self._replica
         if replica is None or self._hidden_tombstones_swept:
             return None
-        self._hidden_tombstones_swept = True
         try:
             for relative_path in replica.list_deleted(self.root_key):
                 if self._hidden_file_still_on_disk(relative_path):
                     replica.forget_file(self.root_key, relative_path)
         except Exception as error:
+            # Not marked done: a transient replica error must not cost the
+            # migration for the life of the service. Retrying is safe --
+            # ``forget_file`` on a row already gone is a no-op.
             return _replica_warning(error)
+        self._hidden_tombstones_swept = True
         return None
 
     @_serialized
