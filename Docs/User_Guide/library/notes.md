@@ -95,7 +95,10 @@ editor's own Back control returns to its list.
   of day it was last changed ("Reading list · Unfiled · 2m · 09:14"), or,
   for two notes written inside the same minute, a short id
   ("Reading list · Unfiled · 2m · #0f3a"). Only the rows that would
-  otherwise be identical carry it. While no note is
+  otherwise be identical carry it. Opening such a note keeps that mark:
+  the editor's heading reads "Reading list · #0f3a" — the same third part
+  its row shows — in Edit, Preview and Info alike, so which of the two you
+  have open stays answerable after the list is out of view. While no note is
   open the list takes the width the empty work area would otherwise waste,
   so long titles are not truncated on a wide terminal; opening a note hands
   that width back. The same rule holds below 64 columns, where there is no
@@ -363,6 +366,22 @@ both stay closed until you choose to reopen one.
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
 | "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. With nothing checked, "Export selected" is blocked, and the count line under the row names it: "0 selected — Export selected unavailable" (task-32549). The reason is on that line rather than in the button, because this row is measured to the cell and a line of its own would cost the list a row; it reverts to the plain count the moment you check something. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
 
+**Keyboard on this toolbar.** `/` focuses the filter and selects whatever is
+already in it, so the next thing you type replaces the old query rather than
+landing in front of it — no need to clear the field first. (Once the filter
+has focus, `/` is an ordinary character; see the **/** row under "Keyboard &
+commands".) From the filter, Tab walks the toolbar in the order it is drawn,
+so the count to any one button depends on whether a filter is showing —
+a filter disables **Sort**, and a disabled control is skipped:
+
+- **Unfiltered**, Tab ×1–4 from the filter reaches **New**, **Sort**,
+  **Select**, **Add from files…**.
+- **Filtered**, Tab ×1–4 reaches **New**, **Select**, **Add from files…**,
+  **Export**.
+
+Read the highlighted control before pressing Enter; the count is not the
+same in both states.
+
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
 solutions with Agent Lessons" above) is the only row showing, so a
@@ -400,7 +419,7 @@ undo the in-place updates that keep a terminal drag cheap.
 |---|---|
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
-| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. An Obsidian callout (`> [!note] Title`) renders as a quoted block headed "Note: Title" rather than printing its `[!note]` marker. The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
+| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. An Obsidian callout renders as a quoted block headed by its type — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says "esc back to notes" because that is what it does. The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
 | **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Once a note has saved in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when the note was last written. It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
@@ -455,6 +474,11 @@ The footer names whichever editor control has focus as an "enter …" chip, so
 focus is never unaccounted for: Tab onto "‹ Notes" and the footer reads
 "enter back to list", onto Save and it reads "enter save note". While the
 body or a field has focus there is no enter chip, because Enter types.
+
+That is true in **Preview** as well, not only in Edit and Info: Tab there
+walks the same six controls — "‹ Notes", Edit, Preview, Info, Save, Use in
+Console — and the footer names each one beside the "pgup/pgdn scroll" it
+already advertised, so an Enter pressed in Preview is never a guess.
 
 When the note body has keyboard focus, only its boundary becomes more
 prominent. The body background and editor size stay unchanged, so focusing
@@ -525,7 +549,12 @@ anything, the blank note is quietly discarded rather than left behind as a
 stray "Untitled" row.
 Pressing "Save" keeps it, and so does typing anything **that is not only
 whitespace** — a title of nothing but spaces, with an empty body and no
-keywords, still counts as blank and is discarded on the way out. That includes naming it "Untitled"
+keywords, still counts as blank and is discarded on the way out. Because
+you did type something there, that discard is not silent: leaving says
+"Empty note discarded", and the note's row leaves the list at once rather
+than lingering as an "Untitled · now" row for a note that is already gone.
+(A note you never touched at all is still discarded without a message —
+nothing was written to lose.) That includes naming it "Untitled"
 yourself: once you have touched the title field the note is yours, and it
 is kept even with an empty body. **From a template…** unfolds eight template
 rows that pre-fill title, body, and keywords instead; each row shows the
@@ -1083,6 +1112,11 @@ written locally, and a note is a local write.
 1. Confirm **Delete** in the note editor.
 2. In the Notes list, find the "✓ deleted · \<title\>" receipt.
 3. Click **Undo** to restore the note, or **Dismiss** to leave it deleted.
+
+Keyboard focus lands on **Undo** as soon as the delete is confirmed, and the
+footer reads "enter undo delete" while it is there, so recovering a note you
+did not mean to delete is a single **Enter** — no hunting for the receipt.
+Tab from there reaches **Dismiss**, which the footer names as well.
 
 ### Recently deleted
 
@@ -1805,6 +1839,54 @@ tree before landing: the wrapped folder row with a note open
 Sort line (`layout-37-postmerge-sort-reason-235`). A pane that widens keeps its
 narrower shape until the next refresh, and that refresh now reads the true
 width -- the grown width is recorded even though it does not re-shape.)*
+
+*Verified against fix/library-notes-w4-editor — 2026-09-14 (tasks 32537,
+32539, 32548, 32550, 32551, 32556; a scratch power profile, at 235x52 and
+100x30, captures under `wave4-caps/editor/`). **task-32537:** with Preview
+open, Tab across ‹ Notes, Edit, Preview, Info, Save and Use in Console adds
+"enter back to list" / "enter edit note" / "enter preview note" / "enter show
+info" / "enter save note" / "enter use in Console" beside "pgup/pgdn scroll".
+The saved captures are the LAST stop of that walk at each size — "enter use in
+Console" beside "pgup/pgdn scroll | esc back to notes" at 235x52
+(`editor-10-32537-preview-tab6-use-in-console-chip-235x52`) and beside the
+compact "pgup/pgdn scroll | esc notes" at 100x30
+(`editor-10-32537-preview-chips-100x30`); all six stops are pinned by
+`Tests/UI/test_library_notes_w4_editor.py::test_preview_tier_names_every_tab_stop`.
+Before this the footer stayed frozen on "pgup/pgdn scroll | esc back to notes"
+through all six (`editor-00-32537-preview-tab6-footer-frozen-235x52`). Escape from Preview
+goes to the LIST, which the "Escape" row already described, so no correction
+was needed there. **task-32539:** after a confirmed delete focus lands on the
+receipt's ┃ Undo ┃ and the footer reads "enter undo delete"
+(`editor-10-32539-focus-on-undo-chip-235x52`,
+`editor-10-32539-focus-on-undo-100x30`); one Enter restores the note. Before
+this nothing was focused at all and the next Tab restarted at the toolbar's
+"New" (`editor-00-32539-post-delete-no-focus-235x52`). **task-32548:** opening
+the second of two "Reading list" notes shows "Reading list · #8a41" in the
+editor heading — the same third part its row carries
+(`editor-10-32548-editor-header-tiebreak-235x52`); it used to read "Reading
+list" alone (`editor-00-32548-editor-header-no-tiebreak-235x52`). At 100x30
+the heading strip is ~46 columns wide and clips the title to "Reading …",
+suffix included, exactly as it clipped before this change
+(`editor-10-32548-editor-header-compact-clipped-100x30`) — the identity is a
+wide-terminal answer for now. **task-32550:** "/" on a list filtered to
+"Reading" selects the stale text, so typing "SCAL" replaces it
+(`editor-10-32550-slash-replaces-filter-235x52`) — that was already true at
+dev 2f97a42c9a and is now pinned rather than changed. The Tab counts are the
+documented ones: "/" then Tab ×4 lands on **Add from files…** unfiltered
+(`editor-10-32550-tab4-unfiltered-add-from-files-235x52`) and on **Export**
+filtered (`editor-10-32550-tab4-filtered-export-235x52`), because a filter
+disables Sort. **task-32551:** the seeded "Markdown showcase" note shows its
+title once — the body's opening `# Markdown showcase` is gone from the
+rendered pane — and its `> [!warning]` callout paints as "▌ Warning …"
+(`editor-10-32551-preview-title-once-callout-235x52`); the title used to
+appear twice (`editor-00-32551-preview-title-twice-callout-ok-235x52`). The
+literal "[note]" marker critique #3 reported does NOT reproduce at this dev:
+task-32249 had already fixed it, and it is pinned so it stays fixed.
+**task-32556:** a new note given a whitespace-only title and then Escape shows
+"Empty note discarded" and leaves no row behind at either size
+(`editor-10-32556-empty-note-discarded-235x52`,
+`editor-10-32556-empty-note-discarded-100x30`); it used to leave silently and
+keep painting "Untitled · now" for a record already `deleted=1`.*
 
 *Verified against fix/library-notes-w4-import-kbd — 2026-09-14 (task-32540,
 task-32553, task-32554, at 235x52 and 100x30 on a scratch power profile with

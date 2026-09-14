@@ -14064,3 +14064,47 @@ that harness the canvas had never been told a pane width at all and fell back to
 measuring itself — not the state the defect lives in. Always run a would-be
 regression pin with the fix disabled, not only against unpatched `dev`: a pin that
 never enters the defective state is green for the wrong reason.
+
+
+## A seam the shared fake does not implement is a seam your pin cannot see (task-32539, 2026-09-14)
+
+**The incident.** After a confirmed Notes delete, focus was nowhere: the next
+Tab restarted at the toolbar's "New", leaving **Undo** — the only recovery
+action on screen — seven stops away. The fix looked like one line: hand the
+delete's `_sync_library_canvas` a `then=` that focuses `#library-notes-delete-
+undo`. The new pin went GREEN, and the app at 235x52 behaved exactly as
+before: receipt painted, nothing focused.
+
+The cause was a THIRD sync. `queue_after_recompose` **replaces**, and in
+production every delete also starts a Trash-reload worker that ends in a
+target-less `_sync_library_canvas`. It landed between the delete's sync and
+its recompose, evicted "focus the Undo", and installed the generic identity
+restore in its place — which had captured "nothing focused". The pin could
+not see any of it because `StaticLibraryNotesScopeService` has no
+`list_deleted_notes`, so `_load_library_notes_trash` returned before its sync
+and that worker never ran in tests at all.
+
+**What to take from it.**
+
+1. **A green pin over a fake that is missing a production seam is not
+   evidence.** Before believing a focus/ordering pin, list what production
+   starts on that gesture (workers, reloads, reconcilers) and check the fake
+   implements each one. Here the missing method was visible in ten seconds:
+   `grep list_deleted_notes Tests/` returned nothing.
+2. **Reproduce the race on the real route rather than widening the shared
+   fake.** Attaching `list_deleted_notes` to the service instance inside the
+   one test kept every other suite's "Recently deleted" state unchanged, and
+   that pin fails on detached `origin/dev` with the exact live string
+   ("focus is 'library-notes-filter'"). A pin that reproduces the live
+   symptom is the one worth keeping.
+3. **"Last writer wins" queues need a not-clobbering rule, once, at the
+   queue.** The media branch of `canvas_sync` had guarded its own default
+   restore this way since task-31567 and the notes branch had not; the fix
+   was to move the rule to the single place every kind queues through — a
+   sync carrying only a DEFAULT restore (`then is None`) no longer overwrites
+   a follow-up an action queued. Two sites with the same rule and one of them
+   missing it is the shape this bug had.
+4. **Live-verify the gesture, not the unit.** Both rounds of this fix passed
+   their tests. Only the tmux walk distinguished them, and only a patched
+   `queue_after_recompose`/`recompose` pair printing what was queued and what
+   ran located the eviction.

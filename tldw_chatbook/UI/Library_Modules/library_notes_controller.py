@@ -587,6 +587,7 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
 from ...Widgets.Library.library_notes_canvas import (
     LIBRARY_NOTE_BACKLINK_DISPLAY_CAP,
     LibraryNotePresentationState,
+    note_title_tiebreak_suffix,
     notes_sort_is_blocked,
     resolve_database_note_status_channels,
 )
@@ -1492,6 +1493,9 @@ class LibraryNotesController:
             status_channels=status_channels,
             backlinks=self._library_notes_backlinks,
             backlinks_status=self._library_notes_backlinks_status,
+            # task-32548: resolved by ``_library_notes_canvas_kwargs`` from
+            # the same projection the list rows are drawn from.
+            title_suffix=self._notes_state.open_note_title_suffix,
         )
     def _library_notes_active_region(
         self,
@@ -1858,6 +1862,10 @@ class LibraryNotesController:
             "load-retry": "#library-note-load-retry",
             "conflict-callout": "#library-note-conflict-copy",
             "delete-cancel": "#library-note-delete-cancel",
+            # task-32539: see the matching pair in
+            # ``_library_notes_semantic_role``.
+            "delete-undo": "#library-notes-delete-undo",
+            "delete-dismiss": "#library-notes-delete-receipt-dismiss",
             "lasting-display-name": "#notes-sync-display-name",
             "lasting-folder-choose": "#notes-sync-folder-choose",
             "lasting-check": "#notes-sync-check",
@@ -3319,6 +3327,17 @@ class LibraryNotesController:
                 values["mode"] = "loading"
             else:
                 values["mode"] = "editor"
+                # task-32548: resolved HERE, where the list's own projection
+                # has just been built, rather than inside
+                # ``_library_note_presentation_state`` -- that runs on every
+                # keystroke in the body, and rebuilding the tree projection
+                # per character is work the editor does not need. The suffix
+                # only changes when the list does, which is when this runs.
+                self._notes_state.open_note_title_suffix = (
+                    note_title_tiebreak_suffix(
+                        tree_projection, self._selected_note_id
+                    )
+                )
                 values["presentation_state"] = self._library_note_presentation_state()
                 values["title_placeholder_only"] = (
                     self._library_note_pending_blank_gc_id is not None
@@ -3874,6 +3893,20 @@ class LibraryNotesController:
             )
             if deleted:
                 self._remove_library_note_source_record(note_id)
+                # task-32556 AC#2: the list is projected from the paged
+                # folder tree, not from these flat source records, and the
+                # create this GC undoes reconciled the row INTO that tree
+                # (``_create_library_note``'s "note_create"). Without the
+                # matching "note_delete" the discarded note kept painting as
+                # an "Untitled · now" row -- a row whose database record is
+                # already deleted=1 -- until the next full tree reload. Same
+                # seam the visible Delete commits through.
+                await self._reconcile_library_notes_tree_mutation(
+                    "note_delete",
+                    {"note_id": note_id},
+                    before=None,
+                    result=True,
+                )
         except Exception:
             logger.opt(exception=True).debug(
                 f"Could not GC untouched blank note {note_id!r}; leaving it in place."
@@ -5639,7 +5672,28 @@ class LibraryNotesController:
                 and self._library_notes_view == "list"
                 and self._library_note_delete_receipt is not None
             ):
-                _sync_library_canvas(self, "notes")
+                # task-32539 AC#1/#2: the confirmation and the editor are both
+                # gone by now, and focus was nowhere at all -- the next Tab
+                # restarted at the toolbar's "New", leaving Undo (the one
+                # recovery action on screen) seven stops away. Park on it.
+                # The navigator footer tier names it, so Undo costs a single
+                # Enter.
+                #
+                # This is the LAST sync of the delete flow, which is why the
+                # intent lives here: ``queue_after_recompose`` REPLACES, so a
+                # follow-up queued by the earlier sync in
+                # ``_delete_library_note_claimed`` was evicted by this one
+                # (the same eviction task-31567 hit on the media receipt).
+                # The condition guarding this branch is exactly "a delete
+                # succeeded and its receipt is showing".
+                _sync_library_canvas(
+                    self,
+                    "notes",
+                    then=partial(
+                        self._focus_library_note_control,
+                        "#library-notes-delete-undo",
+                    ),
+                )
     def _notify_library_note_delete_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed Library note delete.
 

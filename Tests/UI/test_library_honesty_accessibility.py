@@ -579,6 +579,12 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     fake._library_focus_enter_label = MethodType(
         LibraryScreen._library_focus_enter_label, fake
     )
+    # task-32537/32539: the editor, Preview and Notes-list tiers append the
+    # focused control's own Enter action through one shared helper, so the
+    # fake needs it exactly as it needs the two above.
+    fake._with_library_notes_focus_chip = MethodType(
+        LibraryScreen._with_library_notes_focus_chip, fake
+    )
     for name in vars(LibraryScreen):
         if name.startswith("LIBRARY_NOTES_"):
             setattr(fake, name, getattr(LibraryScreen, name))

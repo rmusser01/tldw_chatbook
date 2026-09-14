@@ -952,6 +952,17 @@ _LIBRARY_NOTE_EDITOR_ENTER_LABELS = {
     "library-note-context-delete": "delete note",
 }
 
+#: task-32539 AC#1: the Notes LIST tier is static, so after a confirmed
+#: delete -- where focus now parks on the receipt's Undo -- the footer said
+#: nothing about the one recovery action on screen. Only the receipt's own
+#: controls are listed: every other navigator stop (a note row, the toolbar)
+#: keeps the tier's plain "ctrl+n / / / esc" copy, which is already true of
+#: them.
+_LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS = {
+    "library-notes-delete-undo": "undo delete",
+    "library-notes-delete-receipt-dismiss": "dismiss",
+}
+
 #: task-32545 AC#2: the Manage sync folders rows all render as Buttons, so
 #: every Tab used to leave the footer saying "enter run action" -- true of
 #: any of them and therefore of none. Keyed on the action token in
@@ -4532,7 +4543,38 @@ class LibraryScreen(BaseAppScreen):
         if widget_id.startswith("notes-sync-root-"):
             action = widget_id.removeprefix("notes-sync-root-").rsplit("-", 1)[0]
             return _LIBRARY_SYNC_ROOTS_ENTER_LABELS.get(action, "")
+        navigator_label = _LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS.get(widget_id)
+        if navigator_label:
+            return navigator_label
         return _LIBRARY_NOTE_EDITOR_ENTER_LABELS.get(widget_id, "")
+
+    def _with_library_notes_focus_chip(
+        self, tier: tuple[tuple[str, str], ...]
+    ) -> tuple[tuple[str, str], ...]:
+        """Append the focused control's own Enter action to a Notes tier.
+
+        task-32246 shipped this on the editor tier; task-32537 and
+        task-32539 gave the Preview and Notes-list tiers the same promise,
+        so the three now share one spelling rather than three copies that
+        can drift.
+
+        APPENDED, not prepended: the real footer keeps only the leading
+        chips that fit, and the <=64-column narrow stage fits about one
+        (``test_only_one_context_chip_paints_at_sixty_columns``), so a
+        LEADING "enter …" evicts the exit outright. Naming focus is the
+        smaller promise of the two, so it yields wherever they compete.
+
+        Args:
+            tier: The region's own static ``(key, label)`` entries.
+
+        Returns:
+            ``tier`` unchanged when the focused control has no Enter action
+            worth advertising, otherwise ``tier`` plus one ``enter`` chip.
+        """
+        enter_label = self._library_focus_enter_label()
+        if enter_label:
+            return tier + (("enter", enter_label),)
+        return tier
 
     @staticmethod
     def _review_footer_entries(
@@ -4938,6 +4980,14 @@ class LibraryScreen(BaseAppScreen):
             "library-note-load-retry": "load-retry",
             "library-note-conflict-copy": "conflict-callout",
             "library-note-delete-cancel": "delete-cancel",
+            # task-32539: the delete receipt's two controls had no portable
+            # identity, so ANY later target-less sync of the notes canvas
+            # (the Trash reload that rides every delete is one) recomposed
+            # them and focus was simply gone -- reproduced live at 235x52,
+            # where focus on Undo survived the delete's own sync and not the
+            # trash worker's.
+            "library-notes-delete-undo": "delete-undo",
+            "library-notes-delete-receipt-dismiss": "delete-dismiss",
             "notes-sync-display-name": "lasting-display-name",
             "notes-sync-folder-choose": "lasting-folder-choose",
             "notes-sync-check": "lasting-check",
@@ -8169,14 +8219,24 @@ class LibraryScreen(BaseAppScreen):
                     (("enter", "choose sort"), ("esc", "cancel")),
                     (("enter", "choose sort"), ("esc", "cancel")),
                 )
-            return self._notes_footer_tier(
-                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
-                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT,
+            # task-32539 AC#1: after a confirmed delete focus parks on the
+            # receipt's Undo, which this tier never named.
+            return self._with_library_notes_focus_chip(
+                self._notes_footer_tier(
+                    self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
+                    self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT,
+                )
             )
         if region == "preview":
-            return self._notes_footer_tier(
-                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS,
-                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT,
+            # task-32537 AC#1: Tab moves across the mode buttons in Preview
+            # exactly as it does in Edit, and a blind Enter there fires Use
+            # in Console -- so the tier owes the same focus chip the editor
+            # tier has carried since task-32246.
+            return self._with_library_notes_focus_chip(
+                self._notes_footer_tier(
+                    self.LIBRARY_NOTES_PREVIEW_SHORTCUTS,
+                    self.LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT,
+                )
             )
         if region == "context":
             return self._notes_footer_tier(
@@ -8184,28 +8244,18 @@ class LibraryScreen(BaseAppScreen):
                 self.LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT,
             )
         if region == "editor":
-            tier = self._notes_footer_tier(
-                self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
-                self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
-            )
             # task-32246 AC#2: Tab out of the body lands on a toolbar Button,
             # where typed characters go nowhere. Name it, so focus is never
             # unaccounted for -- the honest-footer rule, applied to the
             # editor the way the create canvas and delete prompt apply it.
-            #
-            # APPENDED, not prepended (fix round 1, review F1). The real
-            # footer keeps only the leading chips that fit, and the
-            # <=64-column narrow stage fits exactly one
-            # (``test_only_one_context_chip_paints_at_sixty_columns``), so a
-            # LEADING "enter …" evicted the exit outright: after the very Tab
-            # this task fixes the footer painted "enter back to list" alone,
-            # and with Save focused it advertised neither an exit nor a way
-            # back. Naming focus is the smaller promise of the two, so it
-            # yields wherever the two compete for the budget.
-            enter_label = self._library_focus_enter_label()
-            if enter_label:
-                return tier + (("enter", enter_label),)
-            return tier
+            # (The append-don't-prepend reasoning now lives on the shared
+            # helper, which the Preview and Notes-list tiers also use.)
+            return self._with_library_notes_focus_chip(
+                self._notes_footer_tier(
+                    self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+                    self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
+                )
+            )
         if region == "create":
             if self._notes_state.create_running:
                 return ()
@@ -20407,7 +20457,19 @@ class LibraryScreen(BaseAppScreen):
                 if title_blank and not any(
                     value.strip() for value in (raw_content, raw_keywords_text)
                 ):
+                    # task-32556 AC#1: a note the user never touched is
+                    # discarded silently on purpose (the guide documents
+                    # that). A title the user actually TYPED -- whitespace,
+                    # so still blank -- is a different event: keystrokes went
+                    # in, the row vanished, and nothing said so. Name it.
+                    typed_a_blank_title = bool(raw_title) and not raw_title.strip()
                     await self._gc_pending_blank_note()
+                    if typed_a_blank_title:
+                        notify = getattr(self.app_instance, "notify", None)
+                        if callable(notify):
+                            notify(
+                                "Empty note discarded", severity="information"
+                            )
                     return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
         before = self._library_note_session.snapshot
         before_saved_revision = before.saved_revision if before is not None else None
@@ -29718,6 +29780,13 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.filter_generation += 1
         self._notes_state.tree_filter_state = None
         if self.is_mounted:
+            # The post-delete focus intent is NOT queued here: this sync is
+            # followed by ``_delete_library_note``'s own trailing sync, and
+            # ``queue_after_recompose`` REPLACES -- queuing it here was
+            # evicted by that one and focus ended up wherever the generic
+            # identity restore put it (measured: the notes filter). The
+            # intent rides the LAST sync of the flow instead. See
+            # task-32539's note there, and task-31567 for the same trap.
             _sync_library_canvas(self, "notes")
 
     def _notify_library_note_delete_warning(self, message: str) -> None:
