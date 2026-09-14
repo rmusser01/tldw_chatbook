@@ -120,8 +120,9 @@ async def test_notes_runtime_pause_settles_admitted_work_and_resumes(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["check_root", "binding_labels"])
 async def test_cancelled_notes_command_keeps_native_worker_owned(
-    tmp_path, monkeypatch, local_root
+    tmp_path, monkeypatch, local_root, method
 ):
     from Tests.Notes.test_notes_sync_runtime import _Adapter, _input, _owner, _store
 
@@ -130,6 +131,7 @@ async def test_cancelled_notes_command_keeps_native_worker_owned(
         store=store, admitted=True, adapter=_Adapter([_input()])
     )
     await owner.start()
+    await owner.check_root("root-1")
     entered, release = threading.Event(), threading.Event()
     connections = []
     original = store.get_root
@@ -143,7 +145,8 @@ async def test_cancelled_notes_command_keeps_native_worker_owned(
         return result
 
     monkeypatch.setattr(store, "get_root", blocked)
-    command = asyncio.create_task(owner.check_root("root-1"))
+    args = ("root-1", ()) if method == "binding_labels" else ("root-1",)
+    command = asyncio.create_task(getattr(owner, method)(*args))
     try:
         assert await asyncio.to_thread(entered.wait, 5)
         owner._maintenance_close_admission()
@@ -160,6 +163,60 @@ async def test_cancelled_notes_command_keeps_native_worker_owned(
         release.set()
         await asyncio.gather(command, return_exceptions=True)
         monkeypatch.setattr(store, "get_root", original)
+        await owner.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("already_admitted", [False, True])
+async def test_notes_binding_labels_obeys_maintenance(
+    tmp_path, local_root, already_admitted
+):
+    from Tests.Notes.test_notes_sync_runtime import _Adapter, _input, _owner, _store
+
+    class EmptyLabelsAdapter(_Adapter):
+        async def build_binding_labels(self, root, plan, binding_ids, *, root_name):
+            if binding_ids:
+                raise AssertionError("this lifecycle fixture requests no labels")
+            return ()
+
+    adapter = EmptyLabelsAdapter([_input()])
+    owner, _coordinator, _watcher = _owner(
+        store=_store(tmp_path), admitted=True, adapter=adapter
+    )
+    await owner.start()
+    await owner.check_root("root-1")
+    command = None
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = adapter.observe_root
+
+    async def blocked(record):
+        observed = await original(record)
+        if asyncio.current_task() is command:
+            entered.set()
+            await release.wait()
+        return observed
+
+    try:
+        if already_admitted:
+            adapter.observe_root = blocked
+            command = asyncio.create_task(owner.binding_labels("root-1", ()))
+            await asyncio.wait_for(entered.wait(), 2)
+        owner._maintenance_close_admission()
+        with pytest.raises(Exception, match="runtime_producer_paused"):
+            await owner.binding_labels("root-1", ())
+        if command is not None:
+            assert not await owner._maintenance_drain(time.monotonic() + 0.02)
+            release.set()
+            await command
+        assert await owner._maintenance_drain(time.monotonic() + 2)
+        adapter.observe_root = original
+        owner._maintenance_resume()
+        await owner.binding_labels("root-1", ())
+    finally:
+        release.set()
+        if command is not None:
+            await asyncio.gather(command, return_exceptions=True)
+        owner._maintenance_resume()
         await owner.shutdown()
 
 

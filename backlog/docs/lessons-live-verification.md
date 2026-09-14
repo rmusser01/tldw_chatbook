@@ -2843,3 +2843,85 @@ a hard exit is observed, capture `tmux capture-pane -p -S -200` from the pane
 *before* relaunching if the server is still up; once `kill-server` or a
 relaunch runs, the scrollback is gone. The product-side half — persisting the
 raising frame in the diagnostic — is task-32533 AC#3.
+
+## "The list is not on screen in editor mode" is a `compose()` claim, not a screen claim
+
+**TASK-32461, Library ▸ Prompts dirty vetoes, 2026-09-14.** Two of the three
+refusals to be wired sit on the prompt-row press and the **Select** button —
+both in the Prompts *list*. `LibraryPromptsCanvas.compose` switches wholesale
+(`if self.mode == "editor": yield from self._compose_editor(); return`), and
+the rows are only built in `_compose_list`, so reading the widget said the list
+and a dirty editor cannot coexist and both seams are defensive-only. The plan
+that followed was "pin them, they are unreachable live". At 235x52 the real
+screen paints the list pane and the editor pane side by side — the Library
+reader shell hosts both — so pressing a row and pressing **Select** on a dirty
+editor are ordinary gestures, and both refusals were captured live in minutes.
+
+**What to do.** Reachability is a property of the composed SCREEN, not of one
+widget's `compose`. Before writing off a seam as unreachable, put the state on
+screen once at the review width and look; a shell that hosts two panes, an
+adaptive reader layout, or a modal over a live canvas all defeat the single-
+widget reading. Write "unreachable" only about a path you tried to reach —
+here exactly one of the three genuinely was (the deep link: every route to it
+is itself vetoed while the editor is dirty), and that one is worth stating
+because it is now evidence, not an assumption.
+
+### Correction: do NOT tee this app's stderr in the tmux launch line
+
+**TASK-32461 fix round 1, 2026-09-14.** Following the entry above, the live
+run was launched as
+`… -m tldw_chatbook.app 2>>"$PROFILE/stderr.log"`. The app started (the pane's
+process was `python3.12`) but the pane rendered **blank** — 52 empty lines from
+`capture-pane` — and `stderr.log` filled with the rendered frames themselves
+(`[25;2H[38;2;163;164;166;48;2;25;29;33m …`). Relaunching the identical command
+without the redirect rendered normally on the first capture. Whatever the
+mechanism (the app writes its paint through a stream that follows the stderr
+redirect when stderr is not a tty), the cost is a silent blank pane that looks
+like a crashed app.
+
+**What to do.** Launch without the redirect, and get the traceback the other
+way when you need it: `tmux capture-pane -p -S -200` from the pane *before*
+relaunching, or start the app under `script`/a wrapper that keeps stderr a tty.
+Verify the first capture actually shows the nav bar before driving anything —
+a blank capture after 25s is this, not a slow start.
+
+## A surviving app is no longer evidence of no crash (task-32533, 2026-09-14)
+
+**What happened.** task-32533 stopped an unhandled widget-handler exception from
+exiting the app: the screen stays and a toast names the site. That is the right
+product behaviour and it silently retires the review signal every live walk had
+relied on — "the app is still up, so nothing crashed". It was already misleading
+during this very task: at 12:42:49 the Notes folder dialog raised
+`InvalidSelectValueError` on a fresh profile, the app kept running and kept
+logging for five more minutes, and the only trace was one line in
+`tldw_cli_app.log`. Whoever was driving would have walked straight past it.
+Worse, the toast is mounted into the current screen's `ToastRack` and repainted
+through that screen — when the raising pump *is* the screen, the notification
+may never appear at all, so the capture can look completely clean.
+
+**What to do.** After every live walk, before writing the verdict:
+
+```
+grep -nE "unhandled_exception|app_stopping" "$PROFILE/data/<users_name>/tldw_cli_app.log"
+```
+
+Zero new lines is the pass, not a live app. Cite the grep in the report the way
+captures are cited. A surviving `unhandled_exception` line now carries
+`raise_*`/`site_*` and `widget_type`/`widget_id`, so it names the site in one
+read — but only if someone looks.
+
+**Which frames mean "a pump's own handler raised".** The keep-alive that creates
+this blind spot is deliberately narrow, and getting the frame list right took
+reading `textual/message_pump.py` rather than guessing: `on_idle` handlers are
+invoked inline in `_process_messages_loop` with no frame of their own, and
+`_pre_process` mount failures — the P0's own path, a `Select` that dies while
+mounting — carry `_dispatch_message` *without* `_process_messages_loop`. So all
+three of `_dispatch_message`, `_flush_next_callbacks` and
+`_process_messages_loop` are needed and none is redundant; matching only
+`_dispatch_message` (the first version) was an accident of which path the P0
+happened to hit, and it silently left `call_after_refresh` and `on_idle`
+failures exiting the app. The App's own pump is excluded (`pump is not self`):
+skipping `super()` there breaks the *application* loop with no return code and
+no `panic()`. Evidence for that one is sharper than the reasoning was — with the
+clause removed, the pin does not fail an assertion, it hangs the pilot for 35 s
+and dies on `WaitForScreenTimeout`, which is the silent vanish itself.

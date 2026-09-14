@@ -411,6 +411,7 @@ from .screen_constants import (
     _LIBRARY_PROMPTS_IMPORT_WORKER_GROUP,
     _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS,
     LIBRARY_PROMPT_DIRTY_VETO_COPY,
+    LIBRARY_PROMPT_ENTRY_DIRTY_VETO_COPY,
     LIBRARY_PROMPT_SAVE_STATUS_COPY,
     LIBRARY_PROMPT_TEXT_MAX_CHARS,
     LIBRARY_PROMPTS_READER_PROFILE,
@@ -1437,6 +1438,10 @@ class LibraryPromptsController:
         ):
             return
         if not await self._flush_library_prompt_save():
+            # task-32461: this veto was silent, so Select read as a dead
+            # button. Same copy as Back/Escape and the rail-row switch --
+            # one blocker, one sentence, everywhere it refuses.
+            self._notify_prompt_dirty_veto()
             return
         self._library_prompt_select_mode = True
         self._sync_library_prompt_selection(None)
@@ -3348,11 +3353,22 @@ class LibraryPromptsController:
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_prompt_editor)
 
-    def _notify_prompt_dirty_veto(self) -> None:
-        """Explain a dirty Prompt navigation veto without exposing content."""
+    def _notify_prompt_dirty_veto(self, *, blocked_target: str = "") -> None:
+        """Explain a dirty Prompt navigation veto without exposing content.
+
+        Args:
+            blocked_target: Name of the item the veto refused to OPEN, for
+                the deep-link seam (task-32461) -- an exit veto leaves it
+                empty and gets the shared copy.
+        """
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(LIBRARY_PROMPT_DIRTY_VETO_COPY, severity="warning")
+            notify(
+                LIBRARY_PROMPT_ENTRY_DIRTY_VETO_COPY.format(target=blocked_target)
+                if blocked_target
+                else LIBRARY_PROMPT_DIRTY_VETO_COPY,
+                severity="warning",
+            )
 
     def _apply_library_prompt_working_copy(
         self,

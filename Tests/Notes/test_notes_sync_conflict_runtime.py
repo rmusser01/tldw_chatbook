@@ -288,6 +288,10 @@ class _Adapter:
         self.close_lease_on_observe: _Lease | None = None
         self.comparison_builds = 0
         self.label_builds = 0
+        self.obsidian_modes: dict[str, bool] = {}
+
+    def remember_obsidian_mode(self, root_id: str, enabled: bool) -> None:
+        self.obsidian_modes[root_id] = enabled
 
     async def observe_root(self, root: NotesSyncRootRecord) -> ReconciliationInput:
         observed = self.inputs[root.root_id]

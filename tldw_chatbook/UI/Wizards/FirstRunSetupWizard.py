@@ -57,6 +57,10 @@ from textual.worker import Worker, get_current_worker
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import get_runtime_config_snapshot
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_RADIO_SELECTED,
+    LIBRARY_GLYPH_RADIO_UNSELECTED,
+)
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     PARAKEET_PRECISIONS,
     active_managed_parakeet_dir,
@@ -128,10 +132,15 @@ class SetupRadioButton(RadioButton):
     TASK-1497: stock ToggleButton renders one constant BUTTON_INNER glyph and
     conveys on/off purely through the glyph's color, which is invisible in a
     monochrome capture and fails WCAG 1.4.1 (use of color). The inner glyph
-    itself switches here — ● selected, ○ unselected — so state survives any
-    palette; a bold text-style on the selected row (see _wizards.tcss) is the
-    second cue. BUTTON_INNER is set as an instance attribute right before the
-    parent property renders, shadowing the class attribute per-state.
+    itself switches here — the Library legend's radio pair — so state survives
+    any palette; a bold text-style on the selected row (see _wizards.tcss) is
+    the second cue. BUTTON_INNER is set as an instance attribute right before
+    the parent property renders, shadowing the class attribute per-state.
+
+    task-32464 fix round 1: the pair used to be two literals here, the same
+    duplication that surface's twin (``ConsoleAccessRadioButton``) carried.
+    Both now read the one definition in ``Library.library_shell_state``, so a
+    legend change cannot pass either of them by.
     """
 
     @property
@@ -143,7 +152,11 @@ class SetupRadioButton(RadioButton):
         # test_selected_and_unselected_glyphs_differ_structurally, so a
         # Textual upgrade that changes the mechanism fails loudly in CI
         # instead of silently regressing to color-only state.
-        self.BUTTON_INNER = "●" if self.value else "○"
+        self.BUTTON_INNER = (
+            LIBRARY_GLYPH_RADIO_SELECTED
+            if self.value
+            else LIBRARY_GLYPH_RADIO_UNSELECTED
+        )
         return super()._button
 
 

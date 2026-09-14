@@ -85,6 +85,7 @@ from ...Chat.local_reasoning import (
     supports_local_reasoning,
 )
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
+from ...Widgets.select_values import assign_select_value
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
     first_configured_endpoint,
@@ -12888,7 +12889,6 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         select_value = self._provider_select_value_for_provider(provider)
-        uses_manual_entry = select_value == PROVIDER_MANUAL_SELECT_VALUE
         # task-15740: the `_syncing_*` flags alone cannot guard these
         # assignments -- `Changed` is a POSTED message, delivered after the
         # `finally` has dropped the flag, so every programmatic repopulation
@@ -12897,9 +12897,18 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_selection = True
         try:
             with provider_select.prevent(Select.Changed):
-                provider_select.value = select_value
+                # TASK-32533: the catalog this value comes from is read again
+                # here, after the select was composed -- registering or removing
+                # a custom endpoint moves one without the other. A value this
+                # select no longer offers falls back to the manual spelling
+                # rather than leaving provider A selected with the manual row
+                # below it describing B (review fix, Minor #4).
+                if not assign_select_value(provider_select, select_value):
+                    select_value = PROVIDER_MANUAL_SELECT_VALUE
+                    assign_select_value(provider_select, select_value)
         finally:
             self._syncing_provider_selection = False
+        uses_manual_entry = select_value == PROVIDER_MANUAL_SELECT_VALUE
         self._syncing_provider_manual = True
         try:
             manual_input.disabled = not uses_manual_entry
@@ -21486,7 +21495,12 @@ class SettingsScreen(BaseAppScreen):
                 Select,
             )
             if provider_select.value != target.provider_id:
-                provider_select.value = target.provider_id
+                # TASK-32533: the target's provider id is validated against
+                # BUILT_IN_TTS_PROVIDER_IDS, but this select is built from the
+                # separate BUILT_IN_TTS_PROVIDER_ORDER display tuple -- the two
+                # are hand-maintained, and a value only one of them lists would
+                # raise InvalidSelectValueError here.
+                assign_select_value(provider_select, target.provider_id)
             focus_selector = (
                 "#settings-speech-audio_cpp-base-url"
                 if target.provider_id == "audio_cpp"
@@ -26759,7 +26773,13 @@ class SettingsScreen(BaseAppScreen):
         if select_value == PROVIDER_MANUAL_SELECT_VALUE:
             self._apply_provider_value_change(provider_id)
             return
-        selector.value = select_value
+        # TASK-32533: the picker rows are rebuilt from a live catalog read on
+        # every refresh; this select's options were fixed at compose time. A row
+        # the select does not offer must not raise here -- apply the provider
+        # directly instead, the way the manual branch above does, so the click
+        # still does what the user asked.
+        if not assign_select_value(selector, select_value):
+            self._apply_provider_value_change(provider_id)
 
     @on(Select.Changed, "#settings-provider-value")
     def handle_provider_value_changed(self, event: Select.Changed) -> None:
@@ -29152,8 +29172,14 @@ class SettingsScreen(BaseAppScreen):
                     revert_select = self.query_one("#settings-provider-value", Select)
                     # task-15740: prevent the posted echo the flag misses.
                     with revert_select.prevent(Select.Changed):
-                        revert_select.value = self._provider_select_value_for_provider(
-                            provider
+                        # TASK-32533: same catalog-vs-composed-options
+                        # disagreement as `_sync_provider_manual_widget`; a
+                        # refusal needs no handling here because the
+                        # `_sync_provider_manual_widget` call below falls the
+                        # select back to the manual spelling.
+                        assign_select_value(
+                            revert_select,
+                            self._provider_select_value_for_provider(provider),
                         )
                 finally:
                     self._syncing_provider_selection = False

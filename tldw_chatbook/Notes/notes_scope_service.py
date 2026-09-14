@@ -1575,9 +1575,15 @@ class NotesScopeService:
         note_id: Any,
         title: str,
         content: str,
+        keywords: Sequence[str] = (),
         user_id: str | None = None,
     ) -> Mapping[str, Any]:
-        """Create one caller-identified local note and verify its authority."""
+        """Create one caller-identified local note and verify its authority.
+
+        Args:
+            keywords: Keywords to attach to the new note, through the same
+                keyword sync every other note write uses (task-32535).
+        """
 
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope is not ScopeType.LOCAL_NOTE:
@@ -1592,6 +1598,10 @@ class NotesScopeService:
         )
         if str(created or "") != str(note_id):
             raise RuntimeError("note_identity_changed")
+        if keywords:
+            self._sync_local_note_keywords(
+                user_id=local_user_id, note_id=note_id, keywords=keywords
+            )
         record = self.local_notes_service.get_note_by_id(local_user_id, note_id)
         if not isinstance(record, Mapping):
             raise RuntimeError("note_verification_failed")

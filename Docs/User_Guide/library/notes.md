@@ -351,7 +351,7 @@ both stay closed until you choose to reopen one.
 | "New" | Opens the **New note** view — the same destination as the rail's **New note** row: **Blank note**, or **From a template…**. (**Ctrl+N** skips the view and makes the blank note itself.) Disabled while another notes operation is running. |
 | "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
-| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
+| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. The folder picker opens with nothing selected, and **Choose** does nothing until you pick a folder. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
 | "Restore folder" | Appears after a folder removal, to put it back. |
 | "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). Disabled while a filter is showing, with "Filter results keep their own order. Clear the filter to sort." |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
@@ -539,7 +539,18 @@ that was the toolbar button's label, never the heading's.)
   folder, direction, and local Library destination, then choose **Check
   changes**. Checking is mutation-free. Review safe actions, attention items,
   skips, filesystem effects, and deletion-like effects before **Activate
-  reviewed root** is enabled.
+  reviewed root** is enabled. Each row reads the same way an Import once row
+  does — the file's path, what will happen to it, and the Library folder it
+  lands in ("Daily/2026-09-06.md · Create a Library note · PowerVault") —
+  under a heading per effect carrying its count ("Create a Library note
+  (56)"). A folder whose files all get the same effect collapses to one
+  summary row you can open ("▶ Archive · 45 files · Create a Library note ·
+  PowerVault"). Files the check leaves alone appear under **Skipped (N)**
+  with the reason on the row (".trash/Old idea.md · Obsidian trash —
+  skipped", "Inbox/Untitled.md · Empty file — nothing to import"). *(This
+  page previously described these rows only as "safe actions, attention
+  items, skips" — superseded by task-32535: before it they read "Safe item
+  N / Create a Library note" with no file name at all.)*
 
 Both folder pickers remember where you were. Each reopens at the directory it
 last picked in *that* flow, so Import once and Keep a folder synced never move
@@ -811,6 +822,18 @@ With it on:
   file is still a working Obsidian link, and importing that file again
   recovers the same link rather than stacking a second identifier on it.
 
+Keep a folder synced offers the same **Obsidian vault** toggle, default-on,
+once the folder you chose holds an `.obsidian/` directory — see "Import once
+vs Keep a folder synced on the same folder" below for the one thing the two
+paths do differently with it. There, turning the toggle **off** lasts only
+until you quit Chatbook: the choice is not stored, so a vault is offered the
+toggle again, on, on the next start, and a later check of that root skips the
+three folders again. The toggle is offered while you are setting the folder up
+and nowhere else — once the root is active, **Manage sync folders** has no
+switch for it — so if you want those folders synced, import them with Import
+once instead. Nothing already synced changes when it comes back on —
+the pass only ever leaves files the sync has never taken alone.
+
 Turn the toggle off to import the vault exactly as any other folder — every
 directory walked, frontmatter left in the body, links left as text. The config
 files inside are then listed one by one, still as **Skipped** ("Not a note file
@@ -876,6 +899,43 @@ stayed as text and are not counted.
    the list beside you does not pick them up — its count and tree stay as they
    were, through a manual check and a source round trip — until you restart
    the app" — fixed by task-32518 below.)
+
+#### Import once vs Keep a folder synced on the same folder
+
+Run over the same Obsidian vault, the two paths now skip the same files for
+the same reasons: `.obsidian/`, `.trash/` and `Templates/` while the
+**Obsidian vault** toggle is on, and an empty or whitespace-only file
+whatever the toggle says. (Keep a folder synced does not remember the toggle
+across a restart — see "Obsidian vaults" above.) Both read the frontmatter, so `title` becomes the
+note's title and `tags`/`aliases` become its keywords. A synced note bounds
+both: a tag or alias longer than 256 characters is dropped (half an alternate
+name is a name nothing has, and the note keeps its other keywords), while a
+`title:` longer than 4,096 characters is cut to the first 4,096 (a title is
+the note's only name, so cutting it keeps the note findable where dropping it
+would silently rename the note to its file name). Neither costs you the note,
+and neither stops the rest of the folder from syncing.
+
+Two things still differ:
+
+- **The frontmatter block stays in a synced note's body**, byte for byte,
+  where Import once removes it. Keeping a folder synced is two-way: editing
+  the note in Chatbook writes the body back to the file on disk, so a
+  stripped block would delete the properties out of your vault on your next
+  edit. **Folder files** keeps the block for the same reason.
+- **Synced notes do not keep the vault's folder tree.** Every synced note
+  sits directly in the sync-managed folder, and the review says so — each
+  row's destination is that folder. Import once reproduces the folder
+  hierarchy. The file's own folder is still visible on every review row, in
+  its path, and in the note's title where the frontmatter names one.
+
+*Verified against fix/library-notes-w4-sync-review — 2026-09-14 at 235x52
+and 100x30 (task-32535: review rows name the file, the effect and the
+destination; a 45-file folder collapses to one summary row; the Obsidian
+toggle appears for a vault and its four skips carry reasons; the frontmatter
+title and keywords are lifted while the block stays in the note body.
+Keeping the vault's folder tree — AC#4 — is NOT delivered: the folder layer
+refuses a manual child of a sync-managed subtree, so every synced note sits
+in the root folder, as this section now says).*
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -1549,3 +1609,22 @@ closed-gate press claimed "Linked to" — the gate is profile-wide, so that was
 the common case, not an edge. The two hand-off FAILURE paths changed in this
 round (the Console seam missing, and the seam raising) cannot be induced from
 the UI — they are pinned by tests, not walked.)*
+
+*Verified against fix/library-notes-w4-crash — 2026-09-14 (task-32533, at
+235x52 and 100x30 on a fresh no-provider scratch profile): a note selected →
+**Add to folder** opens "Add note to folder" with the picker reading its blank
+prompt, and **Choose** with nothing picked leaves the dialog open
+(`wave4-caps/crash/crash-02-add-to-folder-dialog-survives`,
+`crash-03-choose-with-nothing-selected-stays-open`,
+`crash-07-add-to-folder-dialog-100x30`). Opening that dialog used to exit the
+whole app: its blank value was spelled `Select.BLANK`, which is not a `Select`
+attribute on this Textual version, and **Choose** with nothing picked filed the
+note under a folder id of "Select.NULL". An unhandled error inside a panel no
+longer closes the app either — the screen stays open, the failure and where it
+happened go to the log file, and the panel that failed may stop responding or
+disappear until it is reopened. The app surviving is stamped: the same profile
+log holds a real crash that ended the app and, after the fix, the same crash
+carrying its site with the app still logging five minutes later. The error
+notification itself is **not** stamped — no capture in this set shows it
+rendering, and when the pump that raised is the screen it may never render at
+all; the log record is the reliable signal.)*

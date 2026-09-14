@@ -203,6 +203,16 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 LIBRARY_PROMPT_DIRTY_VETO_COPY = (
     "Unsaved Prompt changes — Save or Discard changes first."
 )
+# task-32461: the same veto, refusing a deep link INTO a prompt
+# (``_open_library_item_by_id``, the Search/RAG "Open" and entry-reconcile
+# route) rather than an exit out of one. The controller's ruling: that
+# refusal explains rather than evaporating -- a link that vanishes is the
+# same click-does-nothing defect one layer out -- so it names what it did
+# not open. ``{target}`` is the blocked prompt, in the editor's own
+# unresolved-name shape ("Prompt 7"); nothing is queued for after the save.
+LIBRARY_PROMPT_ENTRY_DIRTY_VETO_COPY = (
+    "Can't open {target} — Save or Discard the open Prompt first."
+)
 # task-32393: the footer's Escape chip while that veto is in force. "esc back to
 # list" is a promise the key will refuse to keep once the editor is dirty, which
 # is the same lie task-31271/31272 closed at the other Library seams -- so the

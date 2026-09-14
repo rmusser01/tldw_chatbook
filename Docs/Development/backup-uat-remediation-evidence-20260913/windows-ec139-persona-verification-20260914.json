@@ -1,0 +1,302 @@
+{
+  "product_selection": "replacement-persona",
+  "selected_product_nodes": [
+    "Tests/Backup_Recovery/test_f9_replacement_workflow.py::test_full_f9_replacement_after_explicit_safety_and_credential_review",
+    "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py"
+  ],
+  "summary_effective_returncode": 1,
+  "revision": "ec139a0241f2de0b8c5da62916e25157f9ac4b35",
+  "artifact": "/private/tmp/uat-windows-ec139-persona/backup-platform-windows-2022-py3.12-replacement-persona-ec139a0241f2de0b8c5da62916e25157f9ac4b35",
+  "verified_artifact_files": 45,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.653,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 21,
+      "counts": {
+        "passed": 2,
+        "error": 19
+      },
+      "seconds": 2853.506,
+      "failures": [
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_mapping_refuses_unproved_graph[source-parent]",
+          "status": "error",
+          "seconds": 603.386,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/6b5d77b5526523fc.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_mapping_refuses_unproved_graph[source-root]",
+          "status": "error",
+          "seconds": 0.001,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/c8ca62f65c067b5b.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_mapping_refuses_unproved_graph[source-core]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/0c0a3129e35b5aa2.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_mapping_refuses_unproved_graph[current-parent]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/ac7d5ed07b59c126.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_mapping_refuses_unproved_graph[current-root]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/dc3120f75a42d546.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_mapping_refuses_unproved_graph[current-core]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/cbadba32619a8026.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_mapping_refuses_unproved_graph[current-config]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/77b2ac32b7185887.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_mapping_refuses_unproved_graph[duplicate-id]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/6d6865ada163bacd.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_mapping_refuses_unproved_graph[foreign-owner]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/fe3cfbc96f46294a.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[mapping-alone]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/831ec07e42699e85.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[ancestor-container]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/c8e94171ed34d45e.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[ancestor-retire]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/cef138a9a1af7954.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[ancestor-not-restored]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/6e19e4d9b3842450.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[restore-inside]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/699281bfb99d3dab.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[candidate-inode]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/3e9e0ae1e206ea4a.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[stale-generation]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/40d0b17087de2756.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[ancestor-file]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/bbba856c2efb1ed2.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[ancestor-missing]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/09605e5ab4557593.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_persona_retirement_keeps_ancestor_exclusion[ancestor-replaced]",
+          "status": "error",
+          "seconds": 0.0,
+          "full_traceback_path": "/private/tmp/uat-windows-ec139-persona/junit-failures/28a2e84c11292d92.txt",
+          "failure_evidence": [
+            "E       AssertionError: rs\\runneradmin\\AppData\\Local\\Temp\\tldw-backup-platform-532\\product-pytest\\persona-negative0\\target\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_ChaChaNotes.db",
+            "E         sqlite3.OperationalError: database is locked",
+            "E       assert 1 == 0"
+          ]
+        }
+      ],
+      "skips": []
+    }
+  },
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "7ee83d426f0bf32efbbf1f9cca240a6cc5252dc71a1be989a57e0369446f25cc",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    }
+  ],
+  "source_files": 16517,
+  "prior_failures_and_skips": {
+    "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_first_note_backup::test_first_run_note_creation_can_capture_live_backup": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_first_note_backup::test_saved_closed_library_note_can_handoff_to_recovery": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_quit]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_edit]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_companions::test_bound_config_companion_operation_contract[unsafe]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_companions::test_bound_config_companion_operation_contract[replaced]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_companions::test_bound_config_companion_operation_contract[missing]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_companions::test_bound_config_companion_operation_contract[unsafe_active]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_config_sibling_capture::test_capture_relation_never_repairs_unsafe_native_sources[symlink]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_large_recovery_records::test_large_collection_completes_actual_isolated_publication": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-emoji]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-runtime]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-sidebar]": {
+      "status": "not_selected_or_not_reached"
+    }
+  }
+}
