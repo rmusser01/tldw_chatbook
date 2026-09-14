@@ -172,6 +172,16 @@ _PRODUCT_SELECTIONS = {
         "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
         "Tests/Backup_Recovery/test_eval_rollback_retention.py",
     ),
+    # Each bounded Windows job retains an installed-wheel workflow. The full
+    # aggregate above remains available and is exactly the union of these jobs.
+    "replacement-persona": (
+        *_PRODUCT_TESTS[3:4],
+        "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
+    ),
+    "replacement-default-evals": (
+        "Tests/Backup_Recovery/test_default_service_replacement.py",
+        "Tests/Backup_Recovery/test_eval_rollback_retention.py",
+    ),
     "rollback": _PRODUCT_TESTS[4:5],
     "support": (_PRODUCT_TESTS[0], *_PRODUCT_TESTS[5:]),
     "support-diagnostic": _SUPPORT_DIAGNOSTIC_TESTS,

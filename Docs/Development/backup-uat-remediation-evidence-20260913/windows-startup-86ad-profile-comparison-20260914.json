@@ -1,0 +1,376 @@
+{
+  "5af738": {
+    "dev": {
+      "elapsed_samples": [
+        13.485,
+        31.906,
+        50.922,
+        60.719
+      ],
+      "all_source_matches": true,
+      "observer_errors": [
+        [],
+        [],
+        [],
+        []
+      ],
+      "last_observed_fields": [
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "acquire_storage",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_records",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/control_records.py",
+          "function": "admission_authority",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Utils/windows_files.py",
+          "function": "open_handle",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Utils/windows_files.py",
+          "function": "security",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_read_canvas_enabled",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "not_in_bounded_lists": true
+        }
+      ],
+      "context_policy_in_any_bounded_list": false
+    },
+    "candidate": {
+      "elapsed_samples": [
+        14.219,
+        28.907,
+        44.157,
+        59.922
+      ],
+      "all_source_matches": true,
+      "observer_errors": [
+        [],
+        [],
+        [],
+        []
+      ],
+      "last_observed_fields": [
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "acquire_storage",
+          "line": 830,
+          "calls": 249,
+          "total_seconds": 36.740284,
+          "self_seconds": 0.002717
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 249,
+          "total_seconds": 35.863526,
+          "self_seconds": 0.012728
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 331,
+          "total_seconds": 23.355687,
+          "self_seconds": 0.015093
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 1275,
+          "total_seconds": 21.242794,
+          "self_seconds": 0.039049
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_records",
+          "line": 251,
+          "calls": 1327,
+          "total_seconds": 9.873794,
+          "self_seconds": 0.004969
+        },
+        {
+          "file": "Backup_Recovery/control_records.py",
+          "function": "admission_authority",
+          "line": 113,
+          "calls": 249,
+          "total_seconds": 10.665866,
+          "self_seconds": 0.003843
+        },
+        {
+          "file": "Utils/windows_files.py",
+          "function": "open_handle",
+          "line": 480,
+          "calls": 133414,
+          "total_seconds": 15.003528,
+          "self_seconds": 4.768285
+        },
+        {
+          "file": "Utils/windows_files.py",
+          "function": "security",
+          "line": 450,
+          "calls": 73454,
+          "total_seconds": 6.93872,
+          "self_seconds": 3.597444
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 2826,
+          "total_seconds": 11.106008,
+          "self_seconds": 0.202762
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_read_canvas_enabled",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "line": 6253,
+          "calls": 75,
+          "total_seconds": 11.029504,
+          "self_seconds": 0.000357
+        }
+      ],
+      "context_policy_in_any_bounded_list": false
+    }
+  },
+  "86ad9993dc": {
+    "dev": {
+      "elapsed_samples": [
+        13.703,
+        31.156,
+        49.047,
+        56.406
+      ],
+      "all_source_matches": true,
+      "observer_errors": [
+        [],
+        [],
+        [],
+        []
+      ],
+      "last_observed_fields": [
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "acquire_storage",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_records",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Backup_Recovery/control_records.py",
+          "function": "admission_authority",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Utils/windows_files.py",
+          "function": "open_handle",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Utils/windows_files.py",
+          "function": "security",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_read_canvas_enabled",
+          "not_in_bounded_lists": true
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "not_in_bounded_lists": true
+        }
+      ],
+      "context_policy_in_any_bounded_list": false
+    },
+    "candidate": {
+      "elapsed_samples": [
+        14.235,
+        28.86,
+        44.828,
+        60.922
+      ],
+      "all_source_matches": true,
+      "observer_errors": [
+        [],
+        [],
+        [],
+        []
+      ],
+      "last_observed_fields": [
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "acquire_storage",
+          "line": 830,
+          "calls": 260,
+          "total_seconds": 34.11445,
+          "self_seconds": 0.003181
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 260,
+          "total_seconds": 34.933508,
+          "self_seconds": 0.013257
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 343,
+          "total_seconds": 31.120406,
+          "self_seconds": 0.015911
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 1331,
+          "total_seconds": 18.87059,
+          "self_seconds": 0.040246
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_records",
+          "line": 251,
+          "calls": 1389,
+          "total_seconds": 25.109659,
+          "self_seconds": 0.00482
+        },
+        {
+          "file": "Backup_Recovery/control_records.py",
+          "function": "admission_authority",
+          "line": 113,
+          "calls": 261,
+          "total_seconds": 35.477477,
+          "self_seconds": 0.004169
+        },
+        {
+          "file": "Utils/windows_files.py",
+          "function": "open_handle",
+          "line": 480,
+          "calls": 138576,
+          "total_seconds": 12.312361,
+          "self_seconds": 4.916801
+        },
+        {
+          "file": "Utils/windows_files.py",
+          "function": "security",
+          "line": 450,
+          "calls": 76625,
+          "total_seconds": 7.126232,
+          "self_seconds": 3.682471
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 2950,
+          "total_seconds": 9.877503,
+          "self_seconds": 0.213865
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_read_canvas_enabled",
+          "line": 2770,
+          "calls": 17,
+          "total_seconds": 13.845775,
+          "self_seconds": 9.4e-05
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "line": 6253,
+          "calls": 79,
+          "total_seconds": 17.258718,
+          "self_seconds": 0.000379
+        }
+      ],
+      "context_policy_in_any_bounded_list": false
+    }
+  },
+  "outcomes": {
+    "5af738": {
+      "dev": "1 passed in57.10s",
+      "candidate": "Timeout; exit1"
+    },
+    "86ad9993dc": {
+      "dev": "1 passed,1 warning in52.87s; call38.66s",
+      "candidate": "Timeout; exit1"
+    }
+  },
+  "limitations": [
+    "Main-thread cProfile with observer overhead; cumulative live snapshots; overlapping inclusive time must not be summed.",
+    "Absence from bounded top20 lists means unreported, not zero calls.",
+    "No matched completed candidate workload; no speed attribution from call-count differences."
+  ]
+}
