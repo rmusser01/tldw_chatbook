@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from math import ceil
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
@@ -17,12 +19,15 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     NotesSyncConflictChoice,
     eligible_conflict_reason,
 )
+from tldw_chatbook.Notes.note_import_discovery import _MESSAGES as _DISCOVERY_MESSAGES
+from tldw_chatbook.Notes.note_import_parsers import _MESSAGES as _PARSE_MESSAGES
 from tldw_chatbook.Notes.notes_sync_models import (
     NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
     NotesSyncActionKind,
     normalize_notes_sync_relative_path,
     validate_notes_sync_digest,
     validate_notes_sync_opaque_id,
+    validate_notes_sync_reason_code,
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     ManagedPlacementEffectKind,
@@ -30,6 +35,30 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationPlan,
     ReconciliationSkipKind,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Notes.notes_sync_runtime import RuntimeBindingLabel
+
+def _row_effect(message: str) -> str:
+    """Return one Import once reason as a review row's effect.
+
+    A row is `path · effect · where`, so it takes the reason's first sentence
+    and leaves the advice that follows it ("Restore these notes in Obsidian
+    to import them.") to Import once's roomier receipt.
+    """
+
+    return message.split(". ")[0].rstrip(".")
+
+
+#: task-32535: DERIVED from Import once's own copy, not re-typed beside it —
+#: the guide now promises both paths skip the same files for the same reasons,
+#: so the two surfaces must not be able to drift.
+_ITEM_SKIP_EFFECTS = {
+    reason: _row_effect(message)
+    for reason, message in _DISCOVERY_MESSAGES.items()
+    if reason.startswith("obsidian_")
+} | {"empty_file": _row_effect(_PARSE_MESSAGES["empty_source"])}
+_DESTINATION_MAX_CHARS = 1024
 
 LastingSyncReviewSource = Literal["setup", "root", "migration"]
 LastingSyncPhase = Literal[
@@ -132,6 +161,14 @@ class LastingSyncSetup:
     )
     validation_message: str = "Choose a display name, folder, and local destination."
     can_check: bool = False
+    obsidian_vault: bool = False
+    """Whether the chosen folder carries Obsidian's own ``.obsidian/`` marker."""
+    obsidian_mode: bool = True
+    """Whether a detected vault's folders and empty files are skipped.
+
+    task-32535: default-on, as Import once offers it. It only means anything
+    for a detected vault -- a plain folder is never treated as one.
+    """
 
     def __post_init__(self) -> None:
         if self.destination not in _DESTINATIONS:
@@ -149,7 +186,15 @@ class LastingSyncSetup:
             )
         ):
             raise ValueError("setup text must be bounded single-line text")
-        if type(self.server_available) is not bool or type(self.can_check) is not bool:
+        if any(
+            type(value) is not bool
+            for value in (
+                self.server_available,
+                self.can_check,
+                self.obsidian_vault,
+                self.obsidian_mode,
+            )
+        ):
             raise TypeError("setup flags must be booleans")
 
     def __repr__(self) -> str:
@@ -158,7 +203,12 @@ class LastingSyncSetup:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class LastingSyncReviewRow:
-    """One path-free, bounded reviewed effect row."""
+    """One bounded reviewed effect row: what file, what happens, where.
+
+    task-32535: ``relative_path`` and ``destination`` name the file and the
+    Library folder it lands in (Import once's row grammar); ``reason`` is the
+    machine reason code behind a skipped row. Absolute paths never appear.
+    """
 
     item_id: str
     category: str
@@ -170,6 +220,9 @@ class LastingSyncReviewRow:
     selected_label: str = ""
     conflict_title: str = ""
     conflict_relative_path: str = ""
+    relative_path: str = ""
+    destination: str = ""
+    reason: str = ""
 
     def __post_init__(self) -> None:
         if (
@@ -177,6 +230,20 @@ class LastingSyncReviewRow:
             or type(self.conflict_relative_path) is not str
         ):
             raise TypeError("conflict labels must be strings")
+        if any(
+            type(value) is not str
+            for value in (self.relative_path, self.destination, self.reason)
+        ):
+            raise TypeError("row labels must be strings")
+        if self.relative_path:
+            object.__setattr__(
+                self,
+                "relative_path",
+                normalize_notes_sync_relative_path(self.relative_path),
+            )
+        if len(self.destination) > _DESTINATION_MAX_CHARS or "\n" in self.destination:
+            raise ValueError("destination must be bounded single-line text")
+        validate_notes_sync_reason_code(self.reason or None)
         if type(self.choices) is not tuple:
             raise TypeError("choices must be a tuple")
         validate_notes_sync_opaque_id(self.item_id, field_name="item_id")
@@ -235,6 +302,18 @@ class LastingSyncReviewRow:
         return "LastingSyncReviewRow(<private>)"
 
 
+def review_group_key(row: LastingSyncReviewRow) -> tuple[str, str]:
+    """Return the heading one review row belongs under.
+
+    task-32535: every skipped row shares one "Skipped" heading whatever its
+    reason, and every other row groups by its effect. Defined here, beside the
+    row, because the canvas groups by it and the review counts by it -- two
+    copies of this rule is how a heading starts disagreeing with its group.
+    """
+
+    return (row.category, "" if row.category == "skipped" else row.effect)
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class LastingSyncReview:
     """One paged mutation-free reconciliation projection."""
@@ -246,6 +325,13 @@ class LastingSyncReview:
     skip_count: int = 0
     managed_count: int = 0
     rows: tuple[LastingSyncReviewRow, ...] = ()
+    group_totals: tuple[tuple[str, str, int], ...] = ()
+    """(category, effect, total) over EVERY page of this review (task-32535).
+
+    `rows` is one page, so a heading counted from it claims a page's count as
+    the group's size -- the task-32250 defect, in the review this task exists
+    to make truthful.
+    """
     page: int = 1
     page_count: int = 1
     stale: bool = False
@@ -280,6 +366,16 @@ class LastingSyncReview:
             raise TypeError("rows must be a tuple of review rows")
         if len(self.rows) > 100:
             raise ValueError("review rows must be bounded to one page")
+        if type(self.group_totals) is not tuple or any(
+            type(entry) is not tuple
+            or len(entry) != 3
+            or type(entry[0]) is not str
+            or type(entry[1]) is not str
+            or type(entry[2]) is not int
+            or entry[2] < 1
+            for entry in self.group_totals
+        ):
+            raise TypeError("group_totals must be (category, effect, count) triples")
         if type(self.stale) is not bool or type(self.activation) is not bool:
             raise TypeError("review flags must be booleans")
         if type(self.can_apply) is not bool:
@@ -611,6 +707,8 @@ def set_setup_value(
         "destination",
         "note_scope_id",
         "direction",
+        "obsidian_vault",
+        "obsidian_mode",
     }:
         raise ValueError("unknown setup field")
     if type(value) is not str:
@@ -619,8 +717,14 @@ def set_setup_value(
         raise ValueError("unknown destination")
     if field == "direction" and value not in _DIRECTIONS:
         raise ValueError("unknown direction")
+    if field.startswith("obsidian_"):
+        if value not in {"on", "off"}:
+            raise ValueError("obsidian flags are 'on' or 'off'")
+        setting: str | bool = value == "on"
+    else:
+        setting = value
 
-    setup = replace(snapshot.setup, **{field: value})  # type: ignore[arg-type]
+    setup = replace(snapshot.setup, **{field: setting})  # type: ignore[arg-type]
     missing: list[str] = []
     if not setup.display_name.strip():
         missing.append("display name")
@@ -653,11 +757,28 @@ def build_reconciliation_review(
     selections: tuple[ConflictSelection, ...] = (),
     stale: bool = False,
     activation: bool = False,
+    labels: Mapping[str, RuntimeBindingLabel] | None = None,
 ) -> LastingSyncReview:
-    """Translate a public reconciliation plan into bounded, path-free rows."""
+    """Translate a public reconciliation plan into bounded rows.
+
+    Args:
+        labels: Binding labels keyed by binding id (``NotesSyncRuntime
+            .binding_labels``). A labelled row names its file and destination
+            folder; an unlabelled one degrades to the effect alone.
+    """
 
     if type(plan) is not ReconciliationPlan:
         raise TypeError("plan must be a ReconciliationPlan")
+    labels = {} if labels is None else dict(labels)
+
+    def named(binding_id: str | None) -> dict[str, str]:
+        label = labels.get(binding_id) if binding_id is not None else None
+        if label is None:
+            return {}
+        return {
+            "relative_path": label.relative_path,
+            "destination": label.destination_folder,
+        }
     if type(selections) is not tuple or any(
         type(selection) is not ConflictSelection for selection in selections
     ):
@@ -683,6 +804,7 @@ def build_reconciliation_review(
                 category="safe",
                 effect=action_effects.get(action.kind, "Review this change"),
                 action_id=action.action_id,
+                **named(action.binding_id),
             )
         )
     managed_binding_ids = frozenset(
@@ -731,6 +853,7 @@ def build_reconciliation_review(
                     if conflict_eligible and attention.binding_id in selected_by_id
                     else ""
                 ),
+                **named(attention.binding_id),
             )
         )
     for group in plan.deletion_groups:
@@ -759,6 +882,16 @@ def build_reconciliation_review(
                 effect=skip_effects[skip.kind],
             )
         )
+    for index, item_skip in enumerate(plan.item_skips):
+        rows.append(
+            LastingSyncReviewRow(
+                item_id=f"item-skip-{index}",
+                category="skipped",
+                effect=_ITEM_SKIP_EFFECTS.get(item_skip.reason_code, "Skipped"),
+                relative_path=item_skip.relative_path,
+                reason=item_skip.reason_code,
+            )
+        )
     for effect in plan.managed_placement_effects:
         label = (
             "Preview explicit filesystem move"
@@ -771,9 +904,11 @@ def build_reconciliation_review(
                 category="managed placement",
                 effect=label,
                 choices=("Apply once", "Leave unchanged"),
+                **named(effect.binding_id),
             )
         )
 
+    group_totals = Counter(review_group_key(row) for row in rows)
     page_size = plan.page_size
     page_count = max(1, ceil(len(rows) / page_size))
     bounded_page = min(max(1, page), page_count)
@@ -793,9 +928,13 @@ def build_reconciliation_review(
         safe_count=len(plan.safe_actions),
         attention_count=len(plan.attention)
         + sum(len(group.items) for group in plan.deletion_groups),
-        skip_count=len(plan.skips),
+        skip_count=len(plan.skips) + len(plan.item_skips),
         managed_count=len(plan.managed_placement_effects),
         rows=tuple(rows[start : start + page_size]),
+        group_totals=tuple(
+            (category, effect, total)
+            for (category, effect), total in group_totals.items()
+        ),
         page=bounded_page,
         page_count=page_count,
         stale=stale,
