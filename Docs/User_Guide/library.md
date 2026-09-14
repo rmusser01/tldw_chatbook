@@ -282,10 +282,12 @@ readable measure rather than stretched across the whole canvas.
   staging canvas adds "esc back to hub". Every hint is a per-key
   "key action" pair — the Notes editor, for example, shows
   "esc back to notes" and nothing else, because the note is already
-  saved and there is no save key to advertise — beside it, whenever a
-  control rather than a text field has focus, the footer also names that
-  control's own Enter action ("enter save note"), in Edit, Preview and
-  the notes list alike. See [Notes](library/notes.md).
+  saved and there is no save key to advertise — beside it, whenever one of
+  the editor's own controls rather than a text field has focus, the footer
+  also names that control's Enter action ("enter save note"), in Edit and
+  Preview alike. In the notes LIST the footer names Enter only for the
+  delete receipt's **Undo** and **Dismiss**; a note row or the filter shows
+  no "enter …" chip. See [Notes](library/notes.md).
   While a text field has focus the footer leads with `typing in field`,
   names the Escape chip for that surface (`esc leave field` where nothing
   else owns the key — a list canvas keeps its own `esc focus rail`), and

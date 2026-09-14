@@ -685,6 +685,30 @@ async def test_a_stuck_pending_callback_does_not_suppress_later_defaults():
 
 
 @pytest.mark.asyncio
+async def test_a_raising_default_still_lets_the_action_intent_run():
+    """Fix-round Important: compose with ``finally``, not a bare sequence.
+
+    A default restore queries widgets that have just been recomposed, so it
+    can raise -- and ``recompose`` logs a failed callback at DEBUG only, so
+    a swallowed intent leaves no trace at all. The sibling seam
+    (``_queue_library_media_viewer_follow_up``) was forced onto ``finally``
+    by review on #2473 for this exact reason.
+    """
+    host = _QueueHost()
+    ran: list[str] = []
+
+    def exploding_default() -> None:
+        ran.append("default")
+        raise RuntimeError("the restore queried a widget that recomposed away")
+
+    host.queue_after_recompose(lambda: ran.append("intent"))
+    host.queue_default_after_recompose(exploding_default)
+    # ``recompose`` swallows and logs the exception; the intent must have run.
+    await host.recompose()
+    assert ran == ["default", "intent"], ran
+
+
+@pytest.mark.asyncio
 async def test_no_list_view_control_borrows_an_editor_enter_label():
     """Review Minor 6: the navigator tier falls THROUGH to the editor table.
 

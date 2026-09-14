@@ -80,8 +80,16 @@ class PostRecomposeCallback:
         the default instead would cost two things this composition keeps --
         the non-focus work in it (the scroll offset), and every later
         default for a canvas whose pending callback never got a recompose
-        to clear it. Same shape as
-        ``preserve_same_id_focus_after_recompose`` below.
+        to clear it.
+
+        ``finally``, not a bare sequence -- the shape Qodo forced onto the
+        sibling seam (``_queue_library_media_viewer_follow_up``) on #2473,
+        NOT the unhardened ``preserve_same_id_focus_after_recompose`` below.
+        A raising default (a restore querying a widget that recomposed away)
+        would otherwise take the action's intent down with it, and
+        ``recompose`` logs a failed callback at DEBUG only, so the intent
+        would vanish without a trace. The exception still propagates to
+        ``recompose``; only the ordering guarantee changes.
 
         Args:
             callback: Zero-argument default follow-up.
@@ -98,8 +106,10 @@ class PostRecomposeCallback:
             _default: Callable[[], None] = callback,
             _pending: Callable[[], None] = pending,
         ) -> None:
-            _default()
-            _pending()
+            try:
+                _default()
+            finally:
+                _pending()
 
         self.queue_after_recompose(default_then_pending)
 
