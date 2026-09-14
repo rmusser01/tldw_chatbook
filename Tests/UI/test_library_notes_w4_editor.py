@@ -27,6 +27,8 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_notes_canvas import render_preview_source
 
 
@@ -579,3 +581,101 @@ async def test_a_background_sync_does_not_evict_the_post_delete_focus_intent():
         # The reload really did land -- otherwise this pins nothing.
         assert screen._notes_state.trash is not None
         assert _chips(screen).get("enter") == "undo delete"
+
+
+# --- task-32539 review, Minor 1+2: the default follow-up COMPOSES ----------
+
+
+#: Enough notes for the Items pane to actually scroll at (170, 48).
+_SCROLLING_NOTES = [
+    {
+        "id": f"n-{index}",
+        "title": f"Note {index:02d}",
+        "content": f"body {index}\n",
+        "version": 1,
+    }
+    for index in range(40)
+]
+
+
+@pytest.mark.asyncio
+async def test_a_pending_follow_up_does_not_cost_the_list_its_scroll_offset():
+    """Review Minor 1: not evicting a pending intent must not mean skipping.
+
+    The editor-owned branch's default follow-up restores the Items pane's
+    scroll offset and nothing else (task-32106) -- it never touches focus.
+    Dropping it whenever some other sync had a callback pending sent the
+    reader's list back to the top mid-sentence, which is the very defect
+    task-32106 fixed. The queue composes instead: the default runs, then
+    the pending intent runs last and still wins on focus.
+    """
+    host = _build_notes_host(notes=_SCROLLING_NOTES)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+        title = screen.query_one("#library-note-title", Input)
+        title.focus()
+        await pilot.pause()
+
+        listing = screen.query_one("#library-notes-list")
+        listing.scroll_to(y=6, animate=False, force=True, immediate=True)
+        await pilot.pause()
+        scrolled = screen.query_one("#library-notes-list").scroll_offset
+        assert scrolled.y > 0, "the Items pane never scrolled; widen the fixture"
+
+        ran: list[str] = []
+        screen.query_one("#library-notes-canvas").queue_after_recompose(
+            lambda: ran.append("intent")
+        )
+
+        # A target-less sync -- the shape a background reload takes.
+        _sync_library_canvas(screen, "notes")
+        for _ in range(3):
+            await pilot.pause()
+
+        assert ran == ["intent"], f"the pending intent was evicted: {ran}"
+        assert title.has_focus, f"the default restore stole focus to {screen.focused!r}"
+        assert screen.query_one("#library-notes-list").scroll_offset == scrolled, (
+            "the pending intent cost the Items pane its scroll offset"
+        )
+
+
+class _Recomposable:
+    """The `super().recompose()` hop the mixin cooperates with."""
+
+    async def recompose(self) -> None:
+        return None
+
+
+class _QueueHost(PostRecomposeCallback, _Recomposable):
+    """A bare host for the real queue, with no children to compose."""
+
+    is_attached = True
+
+
+@pytest.mark.asyncio
+async def test_a_stuck_pending_callback_does_not_suppress_later_defaults():
+    """Review Minor 2: only a recompose clears a pending callback.
+
+    ``_post_recompose_callback`` is cleared in exactly one place --
+    ``recompose()`` -- so a callback queued for a recompose that never
+    arrives used to suppress every later default restore for that canvas,
+    silently and indefinitely. Composition has no such state: each default
+    is folded in ahead of what is already queued, the intent still runs
+    last, and an EXPLICIT follow-up still replaces the lot.
+    """
+    host = _QueueHost()
+    ran: list[str] = []
+    host.queue_after_recompose(lambda: ran.append("intent"))
+    host.queue_default_after_recompose(lambda: ran.append("default-1"))
+    host.queue_default_after_recompose(lambda: ran.append("default-2"))
+    await host.recompose()
+    assert ran == ["default-2", "default-1", "intent"], ran
+    assert not host.has_pending_recompose_callback
+
+    ran.clear()
+    host.queue_default_after_recompose(lambda: ran.append("default"))
+    host.queue_after_recompose(lambda: ran.append("explicit"))
+    await host.recompose()
+    assert ran == ["explicit"], ran

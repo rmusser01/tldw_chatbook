@@ -383,7 +383,9 @@ def _library_note_heading_title(title: str, suffix: str, width: int) -> str:
     return f"{ellipsized} · {suffix}" if suffix else ellipsized
 
 
-def note_title_tiebreak_suffix(projection: Any, note_id: str) -> str:
+def note_title_tiebreak_suffix(
+    projection: LibraryNotesTreeProjection | None, note_id: str
+) -> str:
     """Return the tie-break label one note's own list row carries.
 
     task-32548: ``note_row_tiebreak_labels`` is a list-row projection, so a
@@ -402,7 +404,7 @@ def note_title_tiebreak_suffix(projection: Any, note_id: str) -> str:
         The row's third key (``"#8d61"``, ``"09:16"``), or ``""`` when the
         note is absent, unknown, or does not collide with anything.
     """
-    rows = getattr(projection, "rows", ()) if projection is not None else ()
+    rows = projection.rows if projection is not None else ()
     if not rows or not note_id:
         return ""
     labels = note_row_tiebreak_labels(rows)

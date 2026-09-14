@@ -62,6 +62,47 @@ class PostRecomposeCallback:
         """
         self._post_recompose_callback = callback
 
+    def queue_default_after_recompose(
+        self, callback: Callable[[], None]
+    ) -> None:
+        """Queue a DEFAULT follow-up without evicting an action's intent.
+
+        A default follow-up (the notes/media focus-identity restores, the
+        notes list's scroll-offset restore) is what a sync carries when it
+        named no ``then`` of its own -- best-effort work, not a
+        supersession. ``queue_after_recompose`` REPLACES, so installing one
+        over a pending callback silently dropped the owner's intent
+        (task-31567 lost a receipt's "land on Undo"; task-32539 lost the
+        Notes one to the Trash reload every delete starts).
+
+        So COMPOSE instead of replacing: the default runs first, the
+        pending callback runs last and therefore wins on focus. Skipping
+        the default instead would cost two things this composition keeps --
+        the non-focus work in it (the scroll offset), and every later
+        default for a canvas whose pending callback never got a recompose
+        to clear it. Same shape as
+        ``preserve_same_id_focus_after_recompose`` below.
+
+        Args:
+            callback: Zero-argument default follow-up.
+
+        Returns:
+            None.
+        """
+        pending = self._post_recompose_callback
+        if pending is None:
+            self.queue_after_recompose(callback)
+            return
+
+        def default_then_pending(
+            _default: Callable[[], None] = callback,
+            _pending: Callable[[], None] = pending,
+        ) -> None:
+            _default()
+            _pending()
+
+        self.queue_after_recompose(default_then_pending)
+
     @property
     def has_pending_recompose_callback(self) -> bool:
         """Whether a follow-up is already queued for the next recompose.
