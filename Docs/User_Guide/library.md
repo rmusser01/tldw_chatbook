@@ -1040,3 +1040,19 @@ reading "enter open notes" (`wave4-caps/layout/layout-15-f6-after-2`; before,
 `layout-27-f6-2`). Note for anyone re-walking this: from a cold landing, Tab
 walks the top tab bar rather than the canvas, which is why the original
 twelve-Tab capture set differed only on the nav line.)*
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep). This page's Notes-facing claims were re-checked and
+**none needed correcting** — recorded here because a page nobody stamps is a
+page the next sweep re-does from scratch. Checked: the new-profile rail is
+"Import…, New note and Explore all tools" (`library_rail.py:1076-1080`,
+titles at `library_shell_state.py:610`/`:707`) and the Get started line
+"Find it needs something to search — Import a file first." renders as
+described (`wave4-caps/docs-sweep/docs-01-empty-rail-235x52`); the footer
+Enter-chip rule at "Keyboard & commands" — an Enter action named in Edit and
+Preview, and in the notes LIST only the delete receipt's Undo and Dismiss —
+matches `_LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS` (`library_screen.py:962-964`)
+and is the correction group 6 landed, so it needed nothing further; the
+Chunking Lab row correctly places the pair under **Details ▸ Actions** with
+its Escape route, which is where `file-notes.md` was still wrong and was
+fixed against this page.)*

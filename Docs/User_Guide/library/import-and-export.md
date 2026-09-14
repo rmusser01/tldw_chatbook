@@ -1022,3 +1022,14 @@ button, "Can't save there: The folder /nonexistent/dir does not exist.", and
 accepts nothing; the ingest **Browse…** opens at the folder `[notes]
 sync_directory` names when nothing is remembered. Nothing on this page needed
 correcting.)*
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep). Re-checked for Notes-facing claims; **none needed
+correcting**, recorded here so the next sweep does not repeat the work. The
+export scope lines are exact — "Notes · N items" and "Selected notes · 1
+item" both come from `Library/library_export_scope.py:395-416`, as do the
+"Everything: …" and "Prompts · N items" forms this page quotes — and the
+"Export your notes as a bundle" task's route (rail ▸ Browse ▸ Notes, then
+**Export…** above the list) matches the shipped toolbar. Caveat carried over
+from [Library notes](notes.md): on a brand-new profile there is no Browse
+section to click, which that page's "Getting there" now explains.)*

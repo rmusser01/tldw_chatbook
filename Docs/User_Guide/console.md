@@ -275,10 +275,9 @@ behind a provider-only card. A third action joins them when a loopback
 server is found on this machine — "Use detected \<provider\> (\<host:port\>)",
 naming what it found and where (only `127.0.0.1` and `localhost` are ever
 offered, and the endpoint is shown without credentials or scheme). Every
-action on the card is drawn as a button with
-a rounded edge, one under the other; Tab moves between them and the focused
-one grows heavy side rails, so which one Enter will press is visible
-without reading the text. *(Was "Both actions" — superseded by task-32558
+action on the card is drawn as a button with a rounded edge, one under the
+other; Tab moves between them and the focused one grows heavy side rails, so
+which one Enter will press is visible without reading the text. *(Was "Both actions" — superseded by task-32558
 below: the count contradicted this page's own task-32555 stamp, which names
 three.)*
 
@@ -760,7 +759,8 @@ is the three headless pins, not a capture.
 
 *Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
 wave-4 guide sweep). The Get started card's body said "Both actions" while
-this page's own task-32555 stamp, four paragraphs below, named three: a
+this page's own task-32555 stamp, in the "Verified against" section below,
+named three: a
 detected loopback server adds "Use detected \<provider\> (\<host:port\>)"
 (`Chat/console_onboarding_state.py:101-153`, loopback-only, scheme and
 credentials stripped). Corrected from the source, not from a capture — this

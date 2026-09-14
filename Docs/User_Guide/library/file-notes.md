@@ -246,8 +246,10 @@ headed "Prepare session for commit", with the scope line "Session paths only
 · stages complete file state" and a pipe-separated, title-case keyboard
 guide. All three were real once and all three were rewritten by task-15122
 on 2026-08-11 — superseded by task-32558 below, which read them off the
-shipped widget. Five "Verified against" stamps were added to this page in
-between; each verified what it named, not the chapter around it.)*
+shipped widget. **Fifteen** "Verified against" stamps were added to this
+page in between, across six dates; three of them named this panel and two of
+those three drove it live, end to end. Each verified what it named, not the
+chapter around it.)*
 
 **Trust first.** Press **Trust and check status** and a confirmation dialog
 titled "Trust repository for session changes?" appears (was "Trust Session
