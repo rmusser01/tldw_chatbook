@@ -4,10 +4,10 @@ title: >-
   Library Notes: Import once cannot be completed by keyboard — the picker opens
   with the tree focused, its buttons highlight by colour only, and the selection
   pane's Tab marks nothing before leaking into the rail
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:46'
-updated_date: '2026-09-14 19:31'
+updated_date: '2026-09-14 19:50'
 labels:
   - library
   - notes

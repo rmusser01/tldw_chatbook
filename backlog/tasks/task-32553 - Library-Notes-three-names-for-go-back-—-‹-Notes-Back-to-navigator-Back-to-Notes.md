@@ -3,10 +3,10 @@ id: TASK-32553
 title: >-
   Library Notes: three names for "go back" — ‹ Notes, Back to navigator, Back to
   Notes
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:48'
-updated_date: '2026-09-14 19:31'
+updated_date: '2026-09-14 19:50'
 labels:
   - library
   - notes

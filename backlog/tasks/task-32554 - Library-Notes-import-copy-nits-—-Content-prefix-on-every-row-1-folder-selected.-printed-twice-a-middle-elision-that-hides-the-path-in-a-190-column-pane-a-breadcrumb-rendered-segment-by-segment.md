@@ -4,10 +4,10 @@ title: >-
   Library Notes: import copy nits — "Content:" prefix on every row, "1 folder
   selected." printed twice, a middle-elision that hides the path in a 190-column
   pane, a breadcrumb rendered segment-by-segment
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-13 06:48'
-updated_date: '2026-09-14 19:31'
+updated_date: '2026-09-14 19:50'
 labels:
   - library
   - notes
