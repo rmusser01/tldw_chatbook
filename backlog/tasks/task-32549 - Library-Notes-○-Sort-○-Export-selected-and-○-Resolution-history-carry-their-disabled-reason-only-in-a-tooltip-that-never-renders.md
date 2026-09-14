@@ -3,9 +3,10 @@ id: TASK-32549
 title: >-
   Library Notes: "○ Sort", "○ Export selected" and "○ Resolution history" carry
   their disabled reason only in a tooltip that never renders
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-13 06:47'
+updated_date: '2026-09-14 16:00'
 labels:
   - library
   - notes
@@ -29,3 +30,12 @@ Critique #3 (dev 5fd502dbac), assessor B, persona Sam. D13. Task-32257 fixed Imp
 - [ ] #1 Each of the three controls states its disabled reason as text at the control through the shared _disabled_action_label seam
 - [ ] #2 A test pins the three labels in their disabled states
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce '○ Sort: Newest' while filtered and '○ Export selected' with none selected at 235x52.
+2. Measure whether each reason fits in its control's label at every pane width the control is reachable at.
+3. State each reason on screen through ONE shared seam.
+4. Pin the three disabled states.
+<!-- SECTION:PLAN:END -->

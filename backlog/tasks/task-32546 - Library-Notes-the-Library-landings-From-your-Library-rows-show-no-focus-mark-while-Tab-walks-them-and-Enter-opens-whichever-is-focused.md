@@ -3,9 +3,10 @@ id: TASK-32546
 title: >-
   Library Notes: the Library landing's "From your Library" rows show no focus
   mark while Tab walks them, and Enter opens whichever is focused
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-13 06:47'
+updated_date: '2026-09-14 16:00'
 labels:
   - library
   - notes
@@ -30,3 +31,12 @@ Critique #3 (dev 5fd502dbac), assessor B, persona Sam, the Library landing on th
 - [ ] #2 F6 on the landing lands on a visibly marked target
 - [ ] #3 A test pins the landing row's focus class and the footer label
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce: F6 on the landing toggles the rail search field and library-hub-recent-notes; the recents row changes only its BACKGROUND COLOUR (rgb(30,30,30) -> rgb(28,70,102)), no shape, and the footer never names it.
+2. Add .library-hub-recent:focus with the house left bar, mirroring .library-rail-row:focus (task-32359), in the screen-owned sheet; rebuild the bundle.
+3. Teach _library_focus_enter_label the landing rows and let the landing footer carry the enter chip.
+4. Pin the focus rule and the footer label.
+<!-- SECTION:PLAN:END -->

@@ -3,9 +3,10 @@ id: TASK-32547
 title: >-
   Library Notes: at 60x24 pressing "New" leaves the list on stage and never
   shows the New note view
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-13 06:47'
+updated_date: '2026-09-14 16:00'
 labels:
   - library
   - notes
@@ -30,3 +31,12 @@ Critique #3 (dev 5fd502dbac), assessor B, persona Jordan on a compact terminal. 
 - [ ] #2 Escape from that view returns to the list at the same size
 - [ ] #3 A test at 60x24 pins the promotion
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce at 60x24: New leaves the list on stage, footer says 'enter create | esc notes'.
+2. Trace: _sync_library_notes_reader_layout_from_shell passes reader_has_item=(view != 'list'), but the create view never sets _notes_state.view -- it is carried by _library_selected_row_id == LIBRARY_ROW_CREATE_NOTE. With reader_has_item False the list_first_when_empty rule keeps the list and collapses the work pane.
+3. Fix reader_has_item to include the create view.
+4. Pin at 60x24 through the real shell: Blank note displayed+focused, footer 'enter create', Escape returns to the list.
+<!-- SECTION:PLAN:END -->
