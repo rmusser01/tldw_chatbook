@@ -353,12 +353,12 @@ both stay closed until you choose to reopen one.
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
 | Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
 | "Restore folder" | Appears after a folder removal, to put it back. |
-| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). Disabled while a filter is showing, with "Filter results keep their own order. Clear the filter to sort." |
+| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). While a filter is showing the control cannot own the order, so it renders blocked ("○ Sort: Newest") and the line under the toolbar says why: "Sort unavailable — clear the filter" (task-32549). *(Was: the reason lived in the tooltip "Filter results keep their own order. Clear the filter to sort.", which a terminal never renders — superseded by task-32549.)* |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. With nothing checked, "Export selected" is blocked, and the line under the row says why: "Export selected unavailable — nothing selected" (task-32549). The reason is on that line rather than in the button, because this row is measured to the cell; it appears and disappears as you check and uncheck rows. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
 
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
@@ -376,6 +376,17 @@ keeps its full wording — the status line drops its "Library notes ·"
 prefix, since the source strip above it already says which notes these
 are, and the toolbar moves the action that does not fit onto a row of its
 own. Nothing is ever painted as half a word.
+
+That rule now holds for every toolbar row at every width, not only for the
+browse actions on a narrow terminal (task-32544, task-32557). Any group of
+actions wider than the pane it is in wraps onto as many rows as it needs,
+in reading order — which is what the folder actions do beside an open note
+on a wide terminal, where "New folder  Add to folder  Move note  Remove
+placement" needs one more cell than the list pane has and used to paint as
+"Remove pl". And the toolbar re-shapes itself from the width it is actually
+being painted at: making the terminal narrower no longer leaves the row in
+the shape the previous, wider size chose, which is what painted "Add from
+files…" as "Add from" against the grip after a resize down to 60 columns.
 
 ### Edit, Preview, and Info
 
@@ -516,6 +527,15 @@ template name with the title the note will get. Available templates:
 Brainstorming session, Bug report, Code review, Daily journal entry, Meeting
 notes, Project planning, Research notes, Todo list. The rows stay folded
 until you ask for them, and fold again the next time you open the view.
+
+This view is the task in hand while it is open, and it gets the pane width
+that goes with that (task-32544, task-32547). On a wide terminal it no
+longer shares the canvas with an empty notes list that had kept about 130
+of 235 columns while the view's own status line wrapped inside 52. On a
+terminal too narrow to show both at once — 60 columns, say — the view takes
+the stage outright: before this, pressing **New** there changed the footer
+to "enter create | esc notes" while the list stayed on screen and **Blank
+note** never appeared at all. Escape returns to the list at the same size.
 
 Opening this view parks keyboard focus on **Blank note**, so Enter creates
 a note straight away without tabbing to find it; ↑/↓ move between Blank

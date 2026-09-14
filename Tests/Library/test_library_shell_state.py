@@ -527,3 +527,29 @@ def test_study_decks_and_quizzes_counts_default_to_none():
     quizzes_row = _study_row(shell, "create-quizzes")
     assert decks_row.count is None
     assert quizzes_row.count is None
+
+
+def test_library_disabled_action_label_carries_a_reason():
+    """task-32549: the shared seam can state WHY, not only that.
+
+    The two spellings of one sentence: in the label for a row with the
+    cells for it, and on the shared ``.library-disabled-reason`` line for
+    a row measured to the cell (the Notes select strip, the sync canvas's
+    pinned action bar).
+    """
+    from tldw_chatbook.Library.library_shell_state import (
+        library_disabled_action_label,
+        library_disabled_reason_line,
+    )
+
+    assert library_disabled_action_label("Sort", True, reason="clear the filter") == (
+        "○ Sort unavailable — clear the filter"
+    )
+    # A reason never leaks into the enabled spelling, aligned or not.
+    assert library_disabled_action_label("Sort", False, reason="clear the filter") == (
+        "Sort"
+    )
+    assert library_disabled_action_label("Sort", True) == "○ Sort"
+    assert library_disabled_reason_line("Export selected", "nothing selected.") == (
+        "Export selected unavailable — nothing selected"
+    )

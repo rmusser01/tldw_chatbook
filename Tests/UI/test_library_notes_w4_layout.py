@@ -375,27 +375,14 @@ async def test_f6_on_the_landing_lands_on_a_marked_target() -> None:
 # -- task-32549: three disabled controls state their reason --------------
 
 
-def test_library_disabled_action_label_carries_a_reason() -> None:
-    """task-32549 AC#1: the shared seam can state why, not only that."""
-    from tldw_chatbook.Library.library_shell_state import (
-        library_disabled_action_label,
-        library_disabled_reason_line,
-    )
-
-    assert library_disabled_action_label("Sort", True, reason="clear the filter") == (
-        "○ Sort unavailable — clear the filter"
-    )
-    assert library_disabled_action_label("Sort", False, reason="clear the filter") == (
-        "Sort"
-    )
-    assert library_disabled_reason_line("Export selected", "nothing selected") == (
-        "Export selected unavailable — nothing selected"
-    )
-
-
 @pytest.mark.asyncio
 async def test_sort_states_its_reason_while_a_filter_is_showing() -> None:
-    """task-32549 AC#2: "○ Sort: Newest" said nothing about the filter."""
+    """task-32549 AC#2: "○ Sort: Newest" said nothing about the filter.
+
+    On the shared line rather than in the label, and measured that way:
+    the label spelling painted "○ Sort unavailable — clear the" against the
+    grip on the 42-column pane a 100x30 terminal gives this list.
+    """
     pane_width = _items_width(WIDE[0], reader_has_item=False)
     app = _CanvasApp(
         pane_width=pane_width,
@@ -408,7 +395,8 @@ async def test_sort_states_its_reason_while_a_filter_is_showing() -> None:
         await pilot.pause()
         sort = app.query_one("#library-notes-sort", Button)
         assert sort.disabled
-        assert str(sort.label) == "○ Sort unavailable — clear the filter"
+        reason = app.query_one("#library-notes-sort-disabled-reason", Static)
+        assert str(reason.renderable) == "Sort unavailable — clear the filter"
         assert_every_action_fits(app)
 
 
@@ -471,3 +459,30 @@ async def test_resolution_history_states_its_reason_when_it_is_unreachable() -> 
         assert str(reason.renderable) == (
             "Resolution history unavailable — it starts after this root is activated"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_width", [235, 100, 60])
+async def test_the_blocked_sort_reason_fits_every_pane_the_list_is_given(
+    terminal_width,
+) -> None:
+    """task-32549 AC#2 at the three widths the critique ran at.
+
+    The label spelling of this reason clipped at 100x30 -- the pane there is
+    42 cells and "○ Sort unavailable — clear the filter" needs 41 beside
+    "New" -- which is why it lives on the shared line.
+    """
+    pane_width = _items_width(terminal_width, reader_has_item=False)
+    app = _CanvasApp(
+        pane_width=pane_width,
+        list_state=_list_state(),
+        filter_value="list",
+        tree_projection=_note_selected_projection(),
+        import_receipt_available=True,
+    )
+    async with app.run_test(size=(terminal_width, 30)) as pilot:
+        await pilot.pause()
+        reason = app.query_one("#library-notes-sort-disabled-reason", Static)
+        assert str(reason.renderable) == "Sort unavailable — clear the filter"
+        assert reason.region.right <= pane_width
+        assert_every_action_fits(app)

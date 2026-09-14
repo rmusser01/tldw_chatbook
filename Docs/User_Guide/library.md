@@ -138,7 +138,13 @@ knows more than the source owners do:
   a new profile is never left with silent empty counts and no way to retry.
 - **From your Library** uses cached summaries in the fixed order **Database
   Notes → Media → Conversations**. Missing or unresolved sources are omitted;
-  the order does not imply that items were ranked against each other.
+  the order does not imply that items were ranked against each other. These
+  rows are reachable by keyboard, and Enter opens whichever one has focus —
+  so the focused row carries the same left-edge bar every other focused row
+  on this screen does, and the footer names what Enter will do there ("enter
+  open notes", "enter open media"). Before task-32546 focus here was a
+  change of background colour and nothing else, and the footer never
+  mentioned the row at all.
 - **Quick actions** are **Import…**, **New note**, then **Search**. They use the
   same guarded destinations as the rail.
 

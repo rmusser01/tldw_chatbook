@@ -1600,18 +1600,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 new_label = library_disabled_action_label("New", running)
                 sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
                 sort_disabled = running or sort_blocked
-                # task-32549: "○ Sort: Newest" said that sorting was off and
-                # nothing about why; the reason was on a tooltip, which does
-                # not render in a TUI. Blocked, the control drops the value
-                # it cannot change and states the next step instead -- the
-                # one action of the three this task covers whose row has the
-                # cells for it, now that ``toolbar_action_rows`` wraps a
-                # group that outgrows its pane (task-32544).
-                sort_label = library_disabled_action_label(
-                    "Sort" if sort_blocked else sort_base,
-                    sort_disabled,
-                    reason="clear the filter" if sort_blocked else "",
-                )
+                sort_label = library_disabled_action_label(sort_base, sort_disabled)
                 select_disabled = rendered_count == 0 or running
                 select_label = library_disabled_action_label(
                     "Select", select_disabled
@@ -1747,6 +1736,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 yield from self._compose_tree_actions(
                     operation_running=list_state.operation_running
                 )
+        if notes_sort_is_blocked(
+            tree_projection=self.tree_projection, filter_value=self.filter_value
+        ):
+            # task-32549: "○ Sort: Newest" said that sorting was off and
+            # nothing about why -- the reason was on a tooltip, which does
+            # not render in a TUI. On the shared `.library-disabled-reason`
+            # line rather than in the label, and MEASURED that way: the
+            # label spelling was walked live first and painted "○ Sort
+            # unavailable — clear the" against the grip on the 42-column
+            # pane a 100x30 terminal gives this list
+            # (`wave4-caps/layout/layout-21-100x30-sort-reason`). Same line,
+            # same sentence, as Export selected below and "○ Server notes"
+            # in the sync canvas.
+            yield Static(
+                library_disabled_reason_line("Sort", "clear the filter"),
+                id="library-notes-sort-disabled-reason",
+                classes="library-disabled-reason",
+                markup=False,
+            )
         status_row = Horizontal(id="library-notes-status-row")
         status_row.styles.height = "auto"
         status_row.display = not select_mode
