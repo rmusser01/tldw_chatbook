@@ -282,7 +282,10 @@ readable measure rather than stretched across the whole canvas.
   staging canvas adds "esc back to hub". Every hint is a per-key
   "key action" pair — the Notes editor, for example, shows
   "esc back to notes" and nothing else, because the note is already
-  saved and there is no save key to advertise.
+  saved and there is no save key to advertise — beside it, whenever a
+  control rather than a text field has focus, the footer also names that
+  control's own Enter action ("enter save note"), in Edit, Preview and
+  the notes list alike. See [Notes](library/notes.md).
   While a text field has focus the footer leads with `typing in field`,
   names the Escape chip for that surface (`esc leave field` where nothing
   else owns the key — a list canvas keeps its own `esc focus rail`), and
@@ -584,7 +587,9 @@ you're on:
   list** does on that surface, which is not the same on every editor.
   Notes autosave, so a note edit is already saved when you leave it:
   Escape returns to the list at once, re-focusing its first row, the
-  editor's only footer chip is "esc back to notes", and its status line
+  editor's footer chip is "esc back to notes" (plus the focused control's
+  own "enter …" action, when focus is on a control rather than a field),
+  and its status line
   reads "Next: Keep editing; changes save automatically." Only a
   *blocked* save holds a note open, and it says what to fix — see
   [Notes](library/notes.md). Nothing autosaves in the Prompts or Skills
