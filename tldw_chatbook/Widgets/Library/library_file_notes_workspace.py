@@ -2228,18 +2228,27 @@ class LibraryFileNotesWorkspace(Vertical):
         if channels.safe_next_action:
             content = f"{content} Next: {channels.safe_next_action}."
         detail = self._save_detail.strip()
-        status = self.query_one("#file-notes-save-status", Static)
+        # task-32552: acquire the whole header or render none of it, as
+        # ``_render_session_git_label`` already does. ``is_mounted`` above is
+        # true before ``compose``'s children have all landed, so a call from
+        # the initialize worker -- or from ``_probe_repository``, which this
+        # task added as a second entry point -- could raise ``NoMatches`` out
+        # of a worker and take the app down at teardown. Returning also keeps
+        # the three Statics consistent: the old order updated save status and
+        # then exploded on authority.
+        try:
+            status = self.query_one("#file-notes-save-status", Static)
+            save_detail = self.query_one("#file-notes-save-detail", Static)
+            authority = self.query_one("#file-notes-authority", Static)
+        except NoMatches:
+            return
         self._update_static_content(status, content)
         status.tooltip = detail or None
-        save_detail = self.query_one("#file-notes-save-detail", Static)
         self._update_static_content(
             save_detail, f"Content detail: {detail}" if detail else ""
         )
         save_detail.display = bool(detail)
-        self._update_static_content(
-            self.query_one("#file-notes-authority", Static),
-            channels.authority_git,
-        )
+        self._update_static_content(authority, channels.authority_git)
 
     def on_mount(self) -> None:
         """Start background initialization and polling for this mount."""
