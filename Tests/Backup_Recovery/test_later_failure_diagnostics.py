@@ -120,7 +120,10 @@ def test_later_phase_timing_is_bounded_and_excludes_checkpoint_values(tmp_path):
     assert rows[0]["monotonic_seconds"] <= rows[-1]["monotonic_seconds"]
 
 
-@pytest.mark.parametrize("filename", ["later-child-failure.json.log", "mounted-child-failure.json.log"])
+@pytest.mark.parametrize("filename", [
+    "later-child-failure.json.log", "mounted-child-failure.json.log",
+    "mounted-body-failure.json.log", "mounted-wait-failure.json.log",
+])
 def test_failure_record_is_collected_before_pytest_finalization(tmp_path, filename):
     from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
     from Tests.Backup_Recovery.run_platform_product import _collect_safe_logs
@@ -137,6 +140,153 @@ def test_failure_record_is_collected_before_pytest_finalization(tmp_path, filena
     recorded = next(artifacts.rglob(filename)).read_text()
     assert json.loads(recorded)["error"]["error_class"] == "RuntimeError"
     assert "private-child-message" not in recorded
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("primary,cleanup_fails,write_fails", [
+    ("error", False, False), ("cancel", False, False),
+    ("success", False, False), ("error", True, False),
+    ("error", False, True),
+])
+async def test_mounted_body_failure_is_recorded_before_blocking_service_close(
+    tmp_path, monkeypatch, primary, cleanup_fails, write_fails
+):
+    import time
+    from pathlib import Path
+    from threading import Event
+
+    from Tests.Backup_Recovery import thread_diagnostics
+    from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
+    from Tests.Backup_Recovery.test_mounted_console_backup import _SCRIPT
+
+    original = RuntimeError("private-body") if primary == "error" else asyncio.CancelledError()
+    cleanup = OSError("private-close")
+    entered, release = Event(), Event()
+
+    async def synthetic_body():
+        if primary != "success":
+            raise original
+
+    class Service:
+        def close(self):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("test did not release cleanup")
+            if cleanup_fails:
+                raise cleanup
+
+    def broken_write(*args):
+        raise OSError("private-write")
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    if write_fails:
+        monkeypatch.setattr(thread_diagnostics, "_write", broken_write)
+    tree = ast.parse(_SCRIPT)
+    main = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)
+                and node.name == "main")
+    boundary = next(node for node in main.body if isinstance(node, ast.Try))
+    # Replace only the expensive app body; execute its actual handlers/cleanup.
+    boundary.body = ast.parse("await synthetic_body()").body
+    main.body = [boundary]
+    phase = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name == "phase")
+    namespace = {
+        "asyncio": asyncio, "Path": Path, "time": time, "phases": [],
+        "phase_start": time.monotonic(), "_write": thread_diagnostics._write,
+        "synthetic_body": synthetic_body, "service": Service(),
+        "record_failure": record_failure,
+    }
+    exec(  # noqa: S102  # nosec B102 - fixed test-driver AST, no external code.
+        compile(ast.fix_missing_locations(ast.Module(
+            body=[phase, main], type_ignores=[])), "mounted-body-boundary", "exec"),
+        namespace,
+    )
+    task = asyncio.create_task(namespace["main"]())
+    raised = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        path = tmp_path / "mounted-body-failure.json.log"
+        if primary != "success" and not write_fails:
+            assert path.is_file(), "body failure must survive an unfinished service close"
+            encoded = path.read_text()
+            assert json.loads(encoded)["error"]["error_class"] == type(original).__name__
+            assert "private-" not in encoded
+        else:
+            assert not path.exists()
+        assert [row["phase"] for row in namespace["phases"]] == ["service_close_begin"]
+    finally:
+        release.set()
+        try:
+            await task
+        except BaseException as error:  # noqa: BLE001 - assert exact failure/cancellation below.
+            raised = error
+    assert raised is (cleanup if cleanup_fails else original if primary != "success" else None)
+    assert [row["phase"] for row in namespace["phases"]] == (
+        ["service_close_begin"] if cleanup_fails
+        else ["service_close_begin", "service_close_complete"]
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel,status_fails", [(False, False), (True, False), (False, True)])
+async def test_mounted_wait_failure_is_retained_before_observer_and_app_cleanup(
+    tmp_path, monkeypatch, cancel, status_fails
+):
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.later_failure_diagnostics import record_failure
+    from Tests.Backup_Recovery.test_mounted_console_backup import _SCRIPT
+    from Tests.Backup_Recovery.thread_diagnostics import stop_observer
+
+    original = asyncio.CancelledError() if cancel else TimeoutError("private-wait")
+    cleanup = RuntimeError("private-status")
+    observed = []
+    recorded_errors = []
+    path = tmp_path / "mounted-wait-failure.json.log"
+
+    def retain(path, *, error):
+        # asyncio's Future boundary can reconstruct a worker TimeoutError.
+        recorded_errors.append(error)
+        record_failure(path, error=error)
+
+    class Service:
+        def wait(self, operation, *, timeout):
+            raise original
+
+        def status(self, operation):
+            if status_fails:
+                raise cleanup
+            return {"state": "running", "phase": "capturing", "issues": ()}
+
+    def stop_loop():
+        observed.append(json.loads(path.read_text()) if path.exists() else None)
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    tree = ast.parse(_SCRIPT)
+    # Execute the actual service.wait try, including its observer/status finally.
+    boundary = next(node for node in ast.walk(tree) if isinstance(node, ast.Try)
+                    and any(isinstance(child, ast.Call)
+                            and isinstance(child.func, ast.Attribute)
+                            and child.func.attr == "to_thread"
+                            and child.args and isinstance(child.args[0], ast.Attribute)
+                            and child.args[0].attr == "wait"
+                            for child in ast.walk(node.body[0])))
+    entry = ast.parse("async def entry(): pass").body[0]
+    entry.body = [boundary]
+    namespace = {"asyncio": asyncio, "Path": Path, "record_failure": retain,
+                 "service": Service(), "operation": "test-operation",
+                 "stop_observer": stop_observer, "stop_loop": stop_loop}
+    exec(  # noqa: S102  # nosec B102 - fixed test-driver AST, no external code.
+        compile(ast.fix_missing_locations(ast.Module(
+            body=[entry], type_ignores=[])), "mounted-wait-boundary", "exec"),
+        namespace,
+    )
+    with pytest.raises(type(cleanup if status_fails else original)) as caught:
+        await namespace["entry"]()
+    assert observed and observed[0] is not None, "record wait failure before cleanup begins"
+    assert observed[0]["error"]["error_class"] == type(original).__name__
+    assert "private-" not in json.dumps(observed)
+    assert caught.value is (cleanup if status_fails else recorded_errors[0])
 
 
 @pytest.mark.parametrize("metadata_error", [RuntimeError, asyncio.CancelledError])

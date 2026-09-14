@@ -84,6 +84,9 @@ async def main():
    print('MOUNTED_BEFORE_WAIT',flush=True)
    stop_loop=observe_loop_profile(Path.home()/'mounted-loop-profile.log',delay=2,duration=5)
    try:result=await asyncio.to_thread(service.wait,operation,timeout=240)
+   except BaseException as error:
+    record_failure(Path.home()/'mounted-wait-failure.json.log',error=error)
+    raise
    finally:
     stop_observer(stop_loop)
     state=service.status(operation)
@@ -103,8 +106,13 @@ async def main():
     saved=archive.read(member['payload'])
    assert b'Saved before mounted capture' in saved
    assert b'Saved after mounted capture' not in saved
+ except BaseException as error:
+  record_failure(Path.home()/'mounted-body-failure.json.log',error=error)
+  raise
  finally:
+  phase('service_close_begin')
   await asyncio.to_thread(service.close)
+  phase('service_close_complete')
  assert not blocked_attempts(),blocked_attempts()
 try:asyncio.run(main())
 except BaseException as error:
