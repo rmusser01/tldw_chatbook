@@ -1,19 +1,23 @@
 /* feature_alerts.tcss */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 /* Styling for feature availability alerts */
 
 FeatureNotAvailableDialog {
-    width: 70;
+    width: $ds-size-70;
     height: auto;
     background: $panel;
     border: thick $warning;
     align: center middle;
     layer: dialog;
-    padding: 2 4;
+    padding: $ds-space-2 $ds-size-4;
     opacity: 0.98;
 }
 
 FeatureNotAvailableDialog > Vertical {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
@@ -21,20 +25,20 @@ FeatureNotAvailableDialog .dialog-title {
     text-align: center;
     color: $warning;
     text-style: bold;
-    margin-bottom: 1;
-    padding: 1 0;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-1 $ds-space-0;
 }
 
 FeatureNotAvailableDialog .dialog-message {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     text-align: center;
     color: $text;
 }
 
 FeatureNotAvailableDialog .install-command {
     background: $boost;
-    padding: 1 2;
-    margin: 1 0;
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-1 $ds-space-0;
     border: solid $primary;
     text-align: center;
     color: $text-muted;
@@ -43,11 +47,11 @@ FeatureNotAvailableDialog .install-command {
 FeatureNotAvailableDialog .button-container {
     dock: bottom;
     align: center middle;
-    height: 3;
-    margin-top: 1;
+    height: $ds-size-3;
+    margin-top: $ds-space-1;
 }
 
 FeatureNotAvailableDialog Button {
-    margin: 0 1;
-    min-width: 12;
+    margin: $ds-space-0 $ds-space-1;
+    min-width: $ds-size-12;
 }
