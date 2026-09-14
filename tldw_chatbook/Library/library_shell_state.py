@@ -127,6 +127,18 @@ LIBRARY_GLYPH_OUTCOME_FAILED = "✗"
 #: A settled outcome: this one was never attempted.
 LIBRARY_GLYPH_OUTCOME_SKIPPED = "–"
 
+# task-32464 (controller's ruling, revisitable): radios are CARVED OUT of the
+# checkbox pair rather than folded into it. A radio is a single-choice
+# control; painting it "☑/☐" would promise a multi-select it does not offer,
+# which is a worse lie than the glyph collision with the disabled marker. So
+# the group itself disambiguates: exactly one sibling is "●" at all times,
+# which is what tells the reader it is a chooser, while a bare "○" OUTSIDE a
+# radio group keeps LIBRARY_DISABLED_ACTION_MARKER's blocked meaning.
+#: A radio inside a radio group, chosen.
+LIBRARY_GLYPH_RADIO_SELECTED = "●"
+#: The same radio, not chosen (inside a radio group only).
+LIBRARY_GLYPH_RADIO_UNSELECTED = "○"
+
 # F-018 reason for the list canvases' Select toggle while the rendered
 # list is empty -- previously the only disabled Library action with no
 # reason anywhere at the control ("click does nothing, says nothing",

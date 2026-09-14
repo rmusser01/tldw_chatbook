@@ -15,6 +15,10 @@ from textual.widgets import Button, RadioButton, RadioSet, Static
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleLibraryPolicyDisplayState,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_RADIO_SELECTED,
+    LIBRARY_GLYPH_RADIO_UNSELECTED,
+)
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
@@ -42,7 +46,15 @@ class ConsoleAccessRadioButton(RadioButton):
     state painted 1.42:1 against its track -- indistinguishable in a
     monochrome terminal, in any text capture, and to anyone reading the
     plain-text layer, which is WCAG 1.4.1 (use of colour). The glyph itself
-    switches here: ● selected, ○ unselected.
+    switches here, from the Library legend's radio pair.
+
+    task-32464: that pair used to be two literals here, which is how this
+    surface kept painting the legend's "blocked" glyph on an unselected
+    radio while task-32303 moved the RAG modal's toggles onto the shared
+    constants. Radios stay carved out of the ☑/☐ selection pair (a radio
+    offers one choice, not many -- see ``library_shell_state``), but they
+    read their glyphs from the same one place, so a legend change cannot
+    pass this surface by again.
     """
 
     @property
@@ -50,7 +62,11 @@ class ConsoleAccessRadioButton(RadioButton):
         # BUTTON_INNER is ToggleButton's documented per-instance glyph seam;
         # set immediately before the parent property renders so it shadows
         # the class attribute per state. Same technique as SetupRadioButton.
-        self.BUTTON_INNER = "●" if self.value else "○"
+        self.BUTTON_INNER = (
+            LIBRARY_GLYPH_RADIO_SELECTED
+            if self.value
+            else LIBRARY_GLYPH_RADIO_UNSELECTED
+        )
         return super()._button
 
 

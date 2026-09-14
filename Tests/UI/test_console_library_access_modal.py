@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Awaitable
 
 import pytest
 from textual.widgets import Button, RadioButton, RadioSet, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_RADIO_SELECTED,
+    LIBRARY_GLYPH_RADIO_UNSELECTED,
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
+)
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleLibraryPolicyDisplayState,
 )
@@ -18,6 +25,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicySnapshot,
 )
+from tldw_chatbook.Widgets.Console import console_library_access_modal
 from tldw_chatbook.Widgets.Console.console_library_access_modal import (
     ConsoleLibraryAccessModal,
     ConsoleLibraryPolicySaveOutcome,
@@ -307,3 +315,56 @@ async def test_clean_dismissal_restores_the_library_access_opener(
 
         assert app.screen is not modal
         assert app.screen.focused is app.query_one("#library-access-opener", Button)
+
+
+@pytest.mark.asyncio
+async def test_the_access_radios_paint_the_shared_radio_glyph_pair() -> None:
+    """task-32464 AC#3: the painted radio glyphs come from the legend.
+
+    The Library legend gives "○" one meaning -- blocked or disabled -- and
+    this modal painted it on an unselected radio two sentences away from the
+    Console guide's ☑/☐ paragraph. The controller's ruling keeps ●/○ here (a
+    radio is not a checkbox) and carves radios out of the legend explicitly,
+    so what this surface paints is now pinned BOTH ways: it wears the radio
+    pair, and it must not drift onto the multi-select pair.
+    """
+    snapshot = _snapshot()
+    modal = ConsoleLibraryAccessModal(
+        snapshot=snapshot,
+        state=_state(snapshot),
+        save_policy=_saved,
+        reload_policy=lambda: _async_snapshot(snapshot),
+    )
+    app = _ModalApp(modal)
+
+    async with app.run_test(size=(100, 35)) as pilot:
+        await pilot.pause()
+        chosen = modal.query_one("#library-auto-never", RadioButton)
+        unchosen = modal.query_one("#library-auto-automatic", RadioButton)
+        assert (chosen.value, unchosen.value) == (True, False)
+
+        painted_chosen = chosen.render().plain
+        painted_unchosen = unchosen.render().plain
+        assert LIBRARY_GLYPH_RADIO_SELECTED in painted_chosen, painted_chosen
+        assert LIBRARY_GLYPH_RADIO_UNSELECTED in painted_unchosen, painted_unchosen
+        # A chooser must not promise the multi-select it does not offer.
+        assert LIBRARY_GLYPH_SELECTED not in painted_chosen, painted_chosen
+        assert LIBRARY_GLYPH_UNSELECTED not in painted_unchosen, painted_unchosen
+
+    assert (LIBRARY_GLYPH_RADIO_SELECTED, LIBRARY_GLYPH_RADIO_UNSELECTED) == (
+        "●",
+        "○",
+    )
+
+
+def test_the_access_radio_glyphs_are_not_local_literals() -> None:
+    """task-32464 AC#2: one source of truth, not a third set of literals.
+
+    Value equality cannot catch this on its own -- the ruling keeps the same
+    two characters -- so the pin reads the module's own source. Without it a
+    future legend change would edit the constants and silently pass this
+    surface by, which is exactly how this defect survived task-32303.
+    """
+    source = inspect.getsource(console_library_access_modal)
+    assert '"●"' not in source, "the selected radio glyph is a local literal"
+    assert '"○"' not in source, "the unselected radio glyph is a local literal"
