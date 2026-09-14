@@ -4332,6 +4332,15 @@ class LibraryNotesController:
         if registry is None or not note_id:
             return False
         try:
+            # Wider than the insert on purpose: `unlink_membership` with the
+            # default `role="source"` also prunes this item from the
+            # workspace's RAG scope, which `link_membership` never wrote. The
+            # scope is meant to be a subset of the memberships (the shipped
+            # writer seeds it from them), so an entry naming a note that is no
+            # longer a member would dangle; for a link this hand-off just made
+            # the prune is a no-op, and the row it drops when the scope empties
+            # under `empty_is_scoped=False` reads exactly like the empty
+            # unscoped scope it would otherwise leave behind.
             registry.unlink_membership(workspace_id, item_type="note", item_id=note_id)
         except Exception as error:
             logger.warning(
