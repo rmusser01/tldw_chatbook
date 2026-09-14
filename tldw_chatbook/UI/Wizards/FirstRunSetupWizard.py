@@ -2885,7 +2885,14 @@ class ProviderStep(SetupStep):
         for this provider (a stage needs a ready credential), so clearing
         the choice loses nothing; the highlighted list row re-selects on
         the next interaction if the user comes Back.
+
+        A provider that is ALREADY ready without a typed key (an exported
+        env var, a local server) is the exception -- commit() would stage
+        it, and the key field's hint never offered the skip in that state
+        (``_refresh_auth_readiness`` adds it only under "not ready").
         """
+        if self.selected_provider_key and self._current_provider_readiness().ready:
+            return
         self.selected_provider_key = ""
         self._provider_choice_interacted = False
 

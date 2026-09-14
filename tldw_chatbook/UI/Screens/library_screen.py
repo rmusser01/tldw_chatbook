@@ -20478,7 +20478,7 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_copy(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_copy(event)
 
-    def _open_selected_library_note_handoff(self) -> bool:
+    def _open_selected_library_note_handoff(self) -> tuple[str, str]:
         return self._notes_controller._open_selected_library_note_handoff()
 
     @on(Button.Pressed, '#library-note-context-use-in-console')
