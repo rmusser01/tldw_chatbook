@@ -88,20 +88,8 @@
     margin: 0 $ds-space-inline;
 }
 
-/* Status areas */
-.status-label {
-    margin-top: $ds-space-section;
-    margin-bottom: 0;
-    color: $ds-text-muted;
-}
-
-.status-area {
-    width: 100%;
-    background: $ds-surface-raised;
-    border: round $border;
-    padding: $ds-space-inset;
-    margin-top: $ds-space-stack;
-}
+/* ADR-161 task 8a: .status-label/.status-area moved to their family's
+ * owning sheet components/_status.tcss (byte-identical winners). */
 
 /* Title/Author input fields fix */
 .title-author-row Input {

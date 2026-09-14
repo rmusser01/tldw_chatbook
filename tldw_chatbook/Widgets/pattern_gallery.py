@@ -115,6 +115,11 @@ class PatternGalleryScreen(Screen):
                     yield Label("ready", classes="status-label")
                     yield Label("running", classes="status-label")
                     yield Label("approval-required", classes="status-label")
+                # ADR-161 task 8a: the per-line status entries (wizard
+                # progress lists) -- canonical states completed/active/error.
+                yield Label("validated", classes="status-item completed")
+                yield Label("exporting conversations", classes="status-item active")
+                yield Label("finalize failed", classes="status-item error")
             # navigation
             yield Label("Navigation & sidebars", classes="section-header")
             with Container(classes="pg-nav-frame"):

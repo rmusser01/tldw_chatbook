@@ -24,8 +24,11 @@
     height: 3;
 }
 
+/* 12 rows for the 1fr status-area preview (as before task 8a) + 8 for the
+   three status-item demo rows (1+1, 1+1, 3+1 incl. the app-wide `.error`
+   chrome on the error state). Geometry only — no family styling. */
 .pg-frame-status {
-    height: 12;
+    height: 20;
 }
 
 /* Structure preview frame for the dialog vocabulary (not a pushed modal). */

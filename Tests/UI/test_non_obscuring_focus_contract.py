@@ -46,6 +46,10 @@ FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
 UNIFIED_SIDEBAR = ROOT / "tldw_chatbook/css/components/_unified_sidebar.tcss"
 WIZARDS = ROOT / "tldw_chatbook/css/features/_wizards.tcss"
+#: ADR-161 task 8a: the wizard status-item rules (base + completed/active/
+#: error) promote bare into the status family's owning sheet; the wizard
+#: sheet keeps only Import's scoped `.warning` state.
+STATUS = ROOT / "tldw_chatbook/css/components/_status.tcss"
 EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
 EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
@@ -447,8 +451,9 @@ def assert_wizard_selection_active_contracts(text: str) -> None:
     for selector in (
         ".content-type-card.selected",
         ".preset-card.selected",
-        "ProgressStep .status-item.active",
-        "ImportProgressStep .status-item.active",
+        # ADR-161 task 8a: promoted from ProgressStep/ImportProgressStep
+        # scoped rules (declaration-identical) into components/_status.tcss.
+        ".status-item.active",
         "SmartContentTree Tree > .selected-node",
     ):
         assert_readable_selected_state_contract(css_block(text, selector))
@@ -1318,7 +1323,13 @@ def test_wizard_progress_default_css_matches_active_state_contract():
 
 
 def test_wizard_selection_states_are_readable_without_dominant_fill():
-    assert_wizard_selection_active_contracts(WIZARDS.read_text(encoding="utf-8"))
+    assert_wizard_selection_active_contracts(
+        # The status-item rules live in the status owning sheet since
+        # ADR-161 task 8a; the card/tree selectors stay in the wizards sheet.
+        WIZARDS.read_text(encoding="utf-8")
+        + "\n"
+        + STATUS.read_text(encoding="utf-8")
+    )
 
 
 def test_bundled_wizard_selection_states_match_source_contracts():

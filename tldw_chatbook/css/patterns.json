@@ -48,7 +48,14 @@
     },
     "status": {
       "owning_sheet": "components/_status.tcss",
-      "classes": {}
+      "classes": {
+        "status-label": { "status": "canonical" },
+        "status-area": { "status": "canonical" },
+        "status-item": {
+          "status": "canonical",
+          "note": "ADR-161 task 8a (2026-09-13): promoted bare from the two declaration-identical scoped sets (ProgressStep/ImportProgressStep in features/_wizards.tcss); probe-verified computed-identical in both step contexts. The Import-only warning state stays scoped in the wizard sheet (task-19734)."
+        }
+      }
     },
     "navigation": {
       "owning_sheet": "layout/_sidebars.tcss",

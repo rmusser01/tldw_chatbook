@@ -164,6 +164,10 @@ $ds-control-height: 3;
 $ds-control-height-compact: 1;
 /* Default/minimum height for multi-line text inputs. */
 $ds-textarea-min-height: 5;
+/* Fill the parent's inline axis (ADR-161 task 8a): the tokenized expression
+ * of the recurring `width: 100%` on promoted full-width components (status
+ * areas, message bodies). Raw percentage widths in moved rules map here. */
+$ds-width-full: 100%;
 
 /* ========================================
  * MOTION (ADR-150)

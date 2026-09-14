@@ -54,7 +54,7 @@ Schema:
       "classes": { "<class>": { "status": "canonical" } }
     }
   },
-  "deprecated": { "<class>": { "renames_to": "<class>", "ceiling": 0 } }
+  "deprecated": { "<class>": { "renamed_to": "<class>", "ceiling": 0 } }
 }
 ```
 
@@ -80,7 +80,7 @@ Notes on the schema:
 | buttons | `components/_buttons.tcss` | action-button, button-group, button-group-left, button-group-center, button-group-right, sidebar-toggle (all Canonical) |
 | lists | `components/_lists.tcss` | none — widget contract (ListView/DataTable/OptionList cursor-hover-selected type selectors) |
 | dialogs | `components/_dialogs.tcss` | dialog-title, dialog-buttons (all Canonical) |
-| status | `components/_status.tcss` | none yet — vocabulary promotes in with the consolidation task |
+| status | `components/_status.tcss` | status-label, status-area, status-item (all Canonical) |
 | navigation | `layout/_sidebars.tcss` | sidebar, sidebar-button, sidebar-header, sidebar-listview, sidebar-section-collapsible (Canonical); nav-button (Canonical, owning sheet `components/_navigation.tcss`) |
 | sections | `components/_sections.tcss` | section-title, section-header, subsection-title (all Canonical) |
 | messages | `components/_messages.tcss` | none yet — vocabulary promotes in with the consolidation task |
@@ -186,7 +186,10 @@ CSS anywhere — gained the winner's styling), `settings-label` (color-only
 divergence on the deprecated legacy Tools & Settings window — intended
 consistency change: `$primary` → `$text-muted`, spacing total unchanged),
 `setting-label` (dead CSS, zero compose sites — deleted). All four are
-Deprecated in the registry with ceiling 0.
+Deprecated in the registry: `setting-label`, `settings-label` and
+`form-field-label` at ceiling 0; `field-label` at ceiling 1 — the single
+remaining count is the prose "Title Case field-label convention" comment in
+`UI/Screens/settings_screen.py` (about label wording, not the CSS class).
 
 ---
 
@@ -366,23 +369,26 @@ def compose_status(self):
     yield TextArea("", id="ingest-status", read_only=True, classes="status-area")
 ```
 
-**Class inventory.** (Registry classes land here when the vocabulary promotes
-into `components/_status.tcss`; today the definitions live in
-`components/_forms.tcss`.)
+**Class inventory.**
 
 - `status-label` — muted caption above the area (`$ds-text-muted`).
 - `status-area` — read-only output surface: `$ds-surface-raised` fill, rounded
   border, `$ds-space-inset` padding.
-- `status-item` — per-line status entry; exists today only scoped
-  (`ProgressStep .status-item` in `features/_wizards.tcss`) and joins the
-  family on promotion.
+- `status-item` — per-line status entry (wizard progress lists). States:
+  `.completed` (`$success`), `.active` (`$ds-focus-bg`/`$ds-focus-fg`, bold
+  underline), `.error` (`$error`). The Import wizard's `.warning` state is a
+  documented feature-local scoped compound (`ImportProgressStep
+  .status-item.warning` in `features/_wizards.tcss`, task-19734 — an import
+  that skipped everything is not green), not part of the canonical set.
 
 **States.** Read-only surfaces — no hover/focus/disabled contract of their
 own. Semantic colouring maps to the `$ds-status-*` set (readable error text
 uses `$ds-status-error-readable`, per task-2230).
 
 **Tokens consumed.** Today: `$ds-text-muted`, `$ds-surface-raised`,
-`$ds-space-inset`, `$ds-space-stack`, `$ds-space-section`. Semantic mapping:
+`$ds-space-inset`, `$ds-space-stack`, `$ds-space-section`, `$ds-space-0`,
+`$ds-space-inline`, `$ds-width-full`; state accents `$ds-focus-bg` /
+`$ds-focus-fg` on `.status-item.active`. Semantic mapping:
 the `$ds-status-*` family (`$ds-status-ready`, `$ds-status-running`,
 `$ds-status-info`, `$ds-status-warning`, `$ds-status-error`,
 `$ds-status-error-readable`, …).
@@ -391,8 +397,18 @@ the `$ds-status-*` family (`$ds-status-ready`, `$ds-status-running`,
 optional; hand-composing the two widgets is equally canonical.
 
 **Lifecycle.** Canonical family (owning sheet `components/_status.tcss`,
-currently a header-only stub; the consolidation task fills it and registers
-the classes).
+filled by ADR-161 task 8a).
+
+**Consolidation record (ADR-161 task 8a, 2026-09-13).** `.status-label` /
+`.status-area` moved from `components/_forms.tcss` (byte-identical winners,
+tokenized on arrival; `width: 100%` → `$ds-width-full`, the new shared token
+for full-width promoted components). `.status-item` promoted bare from the
+two declaration-identical scoped sets in `features/_wizards.tcss`
+(`ProgressStep` / `ImportProgressStep`); computed-style probes in both step
+contexts were identical before and after (margin `0 0 1 2` via
+`$ds-space-0 $ds-space-0 $ds-space-stack $ds-space-2`, muted base,
+`$success`/focus/`$error` states), height-1 geometry captured in both runs.
+The `ImportProgressStep .status-item.warning` state stayed feature-scoped.
 
 ---
 

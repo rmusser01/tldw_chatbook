@@ -180,7 +180,7 @@ def test_canonical_owning_sheets_are_bundled() -> None:
 
 
 def test_deprecated_names_ratchet_down() -> None:
-    """Python use sites of Deprecated names may only decrease.
+    """Python and sheet use sites of Deprecated names may only decrease.
 
     Counted with CSS-token boundaries (``(?<![\\w-])name(?![\\w-])``), not
     regex word boundaries: live prefixed variant classes such as
@@ -190,6 +190,12 @@ def test_deprecated_names_ratchet_down() -> None:
     ``field-label``'s word-boundary count at ~76 of pure variant hits) and
     hand the ratchet 76 units of false headroom. Token semantics match the
     integrity test's relocated-class matcher.
+
+    ADR-161 task 8 (Task 7 review, pre-step 3): the scan also covers the
+    hand-written ``.tcss`` sources, comment-stripped, with the same token
+    boundaries and the same ceilings -- a renamed class must not survive as
+    a stylesheet definition any more than as a Python compose site (comment
+    mentions stay legal; ``_sheet_sources`` strips comments).
     """
     for cls, meta in REGISTRY["deprecated"].items():
         count = 0
@@ -201,7 +207,20 @@ def test_deprecated_names_ratchet_down() -> None:
                 )
             )
         ceiling = meta["ceiling"]
-        assert count <= ceiling, f"{cls}: {count} uses > ceiling {ceiling}"
+        assert count <= ceiling, f"{cls}: {count} Python uses > ceiling {ceiling}"
+        sheet_count = 0
+        offenders: list[str] = []
+        for src, css in _sheet_sources().items():
+            hits = len(
+                re.findall(rf"(?<![\w-]){re.escape(cls)}(?![\w-])", css)
+            )
+            if hits:
+                offenders.append(f"{src}x{hits}")
+            sheet_count += hits
+        assert sheet_count <= ceiling, (
+            f"{cls}: {sheet_count} comment-stripped .tcss uses > ceiling "
+            f"{ceiling} (offenders: {offenders})"
+        )
 
 
 def test_catalog_and_gallery_sync() -> None:

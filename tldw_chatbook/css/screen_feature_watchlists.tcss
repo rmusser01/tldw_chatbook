@@ -87,6 +87,7 @@ $ds-space-inset: $ds-space-1;
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
+$ds-width-full: 100%;
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;

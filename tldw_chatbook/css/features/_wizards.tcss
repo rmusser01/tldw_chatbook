@@ -574,24 +574,11 @@ ProgressStep .progress-status {
     margin: 2 0;
 }
 
-ProgressStep .status-item {
-    margin: 0 0 1 2;
-    color: $text-muted;
-}
-
-ProgressStep .status-item.completed {
-    color: $success;
-}
-
-ProgressStep .status-item.active {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-}
-
-ProgressStep .status-item.error {
-    color: $error;
-}
+/* ADR-161 task 8a: ProgressStep/ImportProgressStep status-item rules were
+ * declaration-identical; the shared core (base + completed/active/error)
+ * promotes bare into components/_status.tcss. Import's warning-only state
+ * stays scoped below (task-19734: an import that skipped everything is not
+ * green -- the colour is part of the claim). */
 
 ProgressStep .completion-message {
     text-align: center;
@@ -880,27 +867,6 @@ ImportProgressStep .progress-status {
     margin: 2 0;
 }
 
-ImportProgressStep .status-item {
-    margin: 0 0 1 2;
-    color: $text-muted;
-}
-
-ImportProgressStep .status-item.completed {
-    color: $success;
-}
-
-ImportProgressStep .status-item.active {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-}
-
-ImportProgressStep .status-item.error {
-    color: $error;
-}
-
-/* A type that imported nothing (all skipped) or only partly imported is not
- * green -- the colour is part of the claim (task-19734). */
 ImportProgressStep .status-item.warning {
     color: $warning;
 }
