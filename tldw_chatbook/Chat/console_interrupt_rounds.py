@@ -692,7 +692,7 @@ class InterruptRoundHost:
             if on_outcome is not None:
                 on_outcome("revoked")
             return "revoked"
-        if kind in {"approval", "skill_install", "skill_script"}:
+        if kind in {"approval", "skill_install", "skill_script", "worktree_merge"}:
             with self.lock:
                 notify_hook = not state.get("run_hook_notified", False)
                 state["run_hook_notified"] = True

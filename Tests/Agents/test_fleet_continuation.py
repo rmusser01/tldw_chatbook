@@ -37,23 +37,26 @@ The plan-mandated reds live here:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
+import time
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from Tests.Agents.test_agent_service import fence
+from Tests.Agents.test_agent_service import FleetChat, fence
+from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_fleet_runtime import (
     _JOIN_TIMEOUT,
-    _fs_local_provider,
     _tool_results,
     _wait_until,
-    git_repo,  # noqa: F401  -- pytest fixture, resolved via this import
     make_fleet_service,
 )
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
+    AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
     FENCE_TOOL_RESULT_PREFIX,
     RUN_CANCELLED,
@@ -74,17 +77,24 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
     ToolCatalogEntry,
     ToolResult,
+    ToolReviewDecision,
     ToolSchema,
     definition_fingerprint,
     format_steering_message,
 )
 from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+from tldw_chatbook.Agents.agent_routing import AgentsRoutingConfig
+from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
     DEFAULT_RETAINED_TRANSCRIPTS,
     FleetCoordinator,
 )
 from tldw_chatbook.Chat.local_reasoning import EXCHANGE_CONTINUATION_KEY
+from tldw_chatbook.Agents.tool_catalog import (
+    BuiltinToolProvider,
+    ToolCatalogRegistry,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 # LoopDeps plumbing shared with the Task 1 suite (one `make_deps`, one
@@ -901,9 +911,8 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     assert f"run:{resumed_row['id']}" in sends[0]
 
 
-#: Isolation-capable resume config: spawn + wait + resume, no fs tools
-#: needed (the child never writes -- this test only checks worktree
-#: ADMISSION happens again on resume, not diff content).
+#: Isolation-capable resume config: the parent can address a retained child;
+#: the closed worktree boundary refuses before provider or filesystem work.
 ISO_RESUME_CFG = AgentConfig(
     model="test-model",
     system_prompt="You are helpful.",
@@ -912,16 +921,36 @@ ISO_RESUME_CFG = AgentConfig(
 )
 
 
-def test_resumed_worktree_isolated_child_gets_a_fresh_worktree(db, git_repo):
-    """Finding 7 (Qodo round): `RetainedTranscript` now threads the
-    original child's isolation flag through to a resume -- a resumed
-    isolation="worktree" child must get its OWN fresh worktree (a new
-    run_id, so a new admission is the correct outcome, per the T4
-    refusal machinery `_admit_agent_worktree` already covers), not
-    silently fall back to sharing the tree the way passing a literal
-    ``None`` for isolation used to.
-    """
-    provider = _fs_local_provider(git_repo)
+def _seed_retained_worktree_child(db, coordinator):
+    """Retain an isolated transcript without invoking Git or a provider."""
+    old_run_id = db.create_run(
+        conversation_id="c",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        task="iso task",
+    )
+    db.set_status(old_run_id, RUN_DONE, result="original result")
+    handle = coordinator.reserve(task="iso task", agent=None, isolation="worktree")
+    assert handle is not None
+    coordinator.attach_run(handle.handle_id, old_run_id)
+    history = [
+        {"role": "user", "content": "original task"},
+        {"role": "assistant", "content": "original answer"},
+    ]
+    coordinator.finish(
+        handle.handle_id,
+        RUN_DONE,
+        result="original result",
+        transcript=history,
+    )
+    retained = coordinator.get_retained(handle.handle_id)
+    assert retained is not None and retained.isolation == "worktree"
+    return handle, old_run_id, history
+
+
+def test_resumed_worktree_isolated_child_refuses_without_git_or_fallback(
+    db, monkeypatch
+):
+    """A retained isolated resume fails closed and preserves its history."""
     holder: dict = {}
 
     def resume():
@@ -933,47 +962,46 @@ def test_resumed_worktree_isolated_child_gets_a_fresh_worktree(db, git_repo):
     service, chat, coordinator = make_fleet_service(
         db,
         [
-            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn one answer",
             resume,
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn two answer",
+            "resume refused",
         ],
-        {"iso task": ["done once", "done twice"]},
-        providers=(provider,),
     )
-    run1, outcome1 = _run(service, config=ISO_RESUME_CFG)
-    assert outcome1.status == RUN_DONE
-    finished = _finished_child(coordinator)
-    holder["handle_id"] = finished.handle_id
-    _await_retained(coordinator, finished.handle_id)
-    retained = coordinator.get_retained(finished.handle_id)
-    assert retained.isolation == "worktree", (
-        "the original spawn's isolation was not recorded on retention"
+    original, old_run_id, history = _seed_retained_worktree_child(db, coordinator)
+    holder["handle_id"] = original.handle_id
+    monkeypatch.setattr(
+        "tldw_chatbook.Agents.agent_worktree.create_agent_worktree",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("closed resume boundary must not invoke Git")
+        ),
     )
 
-    run2, outcome2 = _run(service, config=ISO_RESUME_CFG)
-    assert outcome2.status == RUN_DONE
+    run_id, outcome = _run(service, config=ISO_RESUME_CFG)
+    join_fleet_children(service)
 
-    resumed_handle = next(
-        h for h in coordinator.snapshot() if h.handle_id != finished.handle_id
+    assert outcome.status == RUN_DONE
+    assert chat.child_calls.get("iso task") is None
+    assert service._agent_worktrees == {}
+    assert coordinator.get_retained(original.handle_id).messages == tuple(history)
+    assert coordinator.get(original.handle_id).status == RUN_DONE
+    refused_handle = next(
+        handle
+        for handle in coordinator.snapshot()
+        if handle.handle_id != original.handle_id
     )
-    assert resumed_handle.handle_id in service._agent_worktrees, (
-        "the resumed isolated child never got a fresh worktree admission"
-    )
+    assert refused_handle.status == RUN_ERROR and refused_handle.run_id is None
+    refused_row = next(row for row in _subagent_rows(db) if row["id"] != old_run_id)
+    assert refused_row["parent_run_id"] == run_id
+    assert refused_row["resumed_from_run_id"] == old_run_id
+    assert refused_row["status"] == RUN_ERROR
+    assert "no_local_provider" in refused_row["result"]
+    sends = _tool_results(db.get_run(run_id), SEND_TO_AGENT_TOOL_NAME)
+    assert len(sends) == 1 and "no_local_provider" in sends[0]
 
 
-def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
-    db, git_repo, monkeypatch
+def test_refused_isolated_resume_filters_shell_and_settles_without_child_script(
+    db, monkeypatch
 ):
-    """Finding 6 twin (Qodo round): the resume call site's own
-    child_allowed_tools composition (a deliberate duplicate of spawn's,
-    per this module's own "only the launch tail is shared" convention)
-    must exclude shell_exec/virtual_cli exactly like the spawn path does,
-    now that Finding 7 threads `retained.isolation` through instead of a
-    literal None.
-    """
+    """The closed resume path keeps its safe tool projection and settles."""
     from tldw_chatbook.Agents import agent_service as agent_service_module
     from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
     from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
@@ -988,7 +1016,6 @@ def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
 
     monkeypatch.setattr(agent_service_module, "AgentConfig", _spy_agent_config)
 
-    provider = _fs_local_provider(git_repo)
     shell_cli_resume_cfg = AgentConfig(
         model="test-model",
         system_prompt="You are helpful.",
@@ -1012,24 +1039,18 @@ def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
     service, chat, coordinator = make_fleet_service(
         db,
         [
-            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn one answer",
             resume,
-            fence(WAIT_AGENTS_TOOL_NAME, {}),
-            "turn two answer",
+            "resume refused",
         ],
-        {"iso task": ["done once", "done twice"]},
-        providers=(provider,),
     )
-    run1, outcome1 = _run(service, config=shell_cli_resume_cfg)
-    assert outcome1.status == RUN_DONE
-    finished = _finished_child(coordinator)
-    holder["handle_id"] = finished.handle_id
-    _await_retained(coordinator, finished.handle_id)
+    original, _old_run_id, history = _seed_retained_worktree_child(db, coordinator)
+    holder["handle_id"] = original.handle_id
 
-    run2, outcome2 = _run(service, config=shell_cli_resume_cfg)
-    assert outcome2.status == RUN_DONE
+    _run_id, outcome = _run(service, config=shell_cli_resume_cfg)
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+    assert chat.child_calls.get("iso task") is None
+    assert coordinator.get_retained(original.handle_id).messages == tuple(history)
 
     child_configs = [
         cfg for cfg in captured_configs if cfg is not shell_cli_resume_cfg
@@ -1037,6 +1058,7 @@ def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
     resumed_config = child_configs[-1]
     assert RAW_SHELL_TOOL_NAME not in resumed_config.allowed_tools
     assert VIRTUAL_CLI_TOOL_NAME not in resumed_config.allowed_tools
+    assert service._agent_worktrees == {}
 
 
 class _AgentLessonsCatalogProvider:
@@ -1201,6 +1223,7 @@ def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
             name="helper",
             description="a helper",
             instructions="Original instructions.",
+            max_wall_seconds=0.75,
         )
     )
     holder: dict = {}
@@ -1220,24 +1243,62 @@ def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
             resume,
             fence(WAIT_AGENTS_TOOL_NAME, {}),
             "turn two answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn three answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn four answer",
         ],
-        {"helper task": ["helper done", "resumed helper done"]},
+        {
+            "helper task": [
+                "helper done",
+                "resumed helper done",
+                "resumed again",
+                "resumed after removal",
+            ]
+        },
     )
+    controlled_clock = [10.0]
+    service.clock = lambda: controlled_clock[0]
     run1, outcome1 = _run(service)
     assert outcome1.status == RUN_DONE
     finished = _finished_child(coordinator)
     holder["handle_id"] = finished.handle_id
     _await_retained(coordinator, finished.handle_id)
+    # Move beyond the original run's admitted deadline. A continuation that
+    # reused that deadline would be stuck before its first model call; the
+    # successful resumed row below proves a fresh per-run allowance.
+    controlled_clock[0] = 100.0
 
     updated = AgentDefinition(
         name="helper",
         description="a helper",
         instructions="Updated instructions.",
+        max_wall_seconds=0.25,
     )
     db.update_agent_definition(definition_id, updated)
+    real_list_definitions = db.list_agent_definitions
+    resume_roster_reads = 0
+
+    def freeze_resume_roster_then_mutate(*args, **kwargs):
+        nonlocal resume_roster_reads
+        resume_roster_reads += 1
+        if resume_roster_reads > 1:
+            raise AssertionError("continuation re-read definitions after planning")
+        frozen = real_list_definitions(*args, **kwargs)
+        db.update_agent_definition(
+            definition_id,
+            dataclasses.replace(updated, max_wall_seconds=9.0),
+        )
+        return frozen
+
+    db.list_agent_definitions = freeze_resume_roster_then_mutate
 
     run2, outcome2 = _run(service)
     assert outcome2.status == RUN_DONE
+    assert resume_roster_reads == 1
+    db.list_agent_definitions = real_list_definitions
 
     resumed_system = chat.child_calls["helper task"][1]["messages_payload"][0][
         "content"
@@ -1245,23 +1306,57 @@ def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
     assert "Updated instructions." in resumed_system
     assert "Original instructions." not in resumed_system
 
+    second = next(
+        handle
+        for handle in coordinator.snapshot()
+        if handle.run_id is not None and handle.run_id != finished.run_id
+    )
+    holder["handle_id"] = second.handle_id
+    _await_retained(coordinator, second.handle_id)
+    db.update_agent_definition(
+        definition_id,
+        dataclasses.replace(updated, max_wall_seconds=9.0),
+    )
+    controlled_clock[0] = 200.0
+    _run3, outcome3 = _run(service)
+    assert outcome3.status == RUN_DONE
+
+    third = max(coordinator.snapshot(), key=lambda handle: handle.started_at)
+    holder["handle_id"] = third.handle_id
+    _await_retained(coordinator, third.handle_id)
+    db.update_agent_definition(
+        definition_id,
+        dataclasses.replace(updated, max_wall_seconds=None),
+    )
+    controlled_clock[0] = 300.0
+    _run4, outcome4 = _run(service)
+    assert outcome4.status == RUN_DONE
+
     rows = _subagent_rows(db)
-    assert len(rows) == 2
+    assert len(rows) == 4
     old_row = next(r for r in rows if r["resumed_from_run_id"] is None)
-    new_row = next(r for r in rows if r["resumed_from_run_id"] is not None)
+    new_row = next(r for r in rows if r["resumed_from_run_id"] == old_row["id"])
+    newest_row = next(r for r in rows if r["resumed_from_run_id"] == new_row["id"])
+    final_row = next(r for r in rows if r["resumed_from_run_id"] == newest_row["id"])
     assert new_row["agent_definition"] == "helper"
     assert new_row["definition_fingerprint"] == definition_fingerprint(updated)
     assert new_row["definition_fingerprint"] != old_row["definition_fingerprint"]
+    assert old_row["budget"]["max_wall_seconds"] == 0.75
+    assert new_row["budget"]["max_wall_seconds"] == 0.25
+    assert newest_row["budget"]["max_wall_seconds"] == 0.25
+    assert final_row["budget"]["max_wall_seconds"] == 0.25
+    assert all(row["status"] == RUN_DONE for row in rows)
 
 
-def test_a_deleted_definition_refuses_the_resume_and_suggests_a_fresh_spawn(db):
+@pytest.mark.parametrize("remove_mode", ["deleted", "disabled"])
+def test_an_unavailable_definition_refuses_resume_and_suggests_fresh_spawn(
+    db, remove_mode
+):
     """Ruling #1's other half: a deleted/disabled definition refuses
     clearly -- silent downgrade to a generic child would be the only
     WRONG option."""
     definition_id = db.create_agent_definition(
-        AgentDefinition(
-            name="helper", description="a helper", instructions="Help."
-        )
+        AgentDefinition(name="helper", description="a helper", instructions="Help.")
     )
     holder: dict = {}
 
@@ -1288,7 +1383,18 @@ def test_a_deleted_definition_refuses_the_resume_and_suggests_a_fresh_spawn(db):
     holder["handle_id"] = finished.handle_id
     _await_retained(coordinator, finished.handle_id)
 
-    db.soft_delete_agent_definition(definition_id)
+    if remove_mode == "deleted":
+        db.soft_delete_agent_definition(definition_id)
+    else:
+        db.update_agent_definition(
+            definition_id,
+            AgentDefinition(
+                name="helper",
+                description="a helper",
+                instructions="Help.",
+                enabled=False,
+            ),
+        )
 
     run2, outcome2 = _run(service)
     assert outcome2.status == RUN_DONE
@@ -1647,6 +1753,93 @@ def test_a_finished_child_remains_continuable_after_prune_terminal(db):
     assert {"role": "assistant", "content": "first answer"} in resumed_payload
 
 
+def test_resumed_denial_streak_is_fresh_and_seeds_complete_native_batch(db):
+    holder = {}
+
+    def native_denials(prefix, count):
+        return {
+            "role": "assistant",
+            "content": "partial denied batch",
+            "tool_calls": [
+                {
+                    "id": f"{prefix}-{index}",
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "arguments": json.dumps({"expression": f"{index}+1"}),
+                    },
+                }
+                for index in range(count)
+            ],
+        }
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["run_id"], "message": "retry with a fresh streak"},
+        )
+
+    def deny(calls, _run_id):
+        return {
+            call.call_id: ToolReviewDecision("denied", "denied")
+            for call in calls
+            if call.name == "calculator"
+        }
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "denial task"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {
+            "denial task": [
+                native_denials("first", 3),
+                native_denials("second", 2),
+                "fresh run completed",
+            ]
+        },
+        review_tool_calls=deny,
+    )
+
+    def run_openai():
+        return service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=RESUME_CFG,
+            api_endpoint="openai",
+        )
+
+    try:
+        _, first = run_openai()
+    finally:
+        join_fleet_children(service)
+    assert first.status == RUN_DONE
+    original = _finished_child(coordinator)
+    assert original.status == RUN_STUCK
+    holder["run_id"] = original.run_id
+    _await_retained(coordinator, original.handle_id)
+
+    try:
+        _, second = run_openai()
+    finally:
+        join_fleet_children(service)
+    assert second.status == RUN_DONE
+    rows = _subagent_rows(db)
+    resumed = next(row for row in rows if row["resumed_from_run_id"] is not None)
+    assert resumed["resumed_from_run_id"] == original.run_id
+    assert resumed["status"] == RUN_DONE
+    resumed_payload = chat.child_calls["denial task"][1]["messages_payload"]
+    assert [
+        row["tool_call_id"] for row in resumed_payload if row.get("role") == "tool"
+    ] == ["first-0", "first-1", "first-2"]
+    assert len(chat.child_calls["denial task"]) == 3
+
+
 def test_a_cancelled_child_draws_the_honest_not_retained_refusal_not_unknown(db):
     """A REAL finished child with no retained transcript (here: cancelled
     -- the cancel won the finish race, so its own finish-with-transcript
@@ -1859,4 +2052,279 @@ def test_a_resumed_childs_spend_reaches_the_fleet_rollup_at_finish(db):
         "run_count": 2,
         "recorded_run_count": 2,
         "complete": True,
+    }
+
+
+# =========================================================================
+# 5. ADR-147 (Task 8): continuation reuses the persisted resolved-target
+#    snapshot (schema v16) instead of re-resolving the preset live
+# =========================================================================
+
+#: The resolver's app-config fixture, mirroring the Task 6 integration
+#: suite's APP_CFG: one keyless-family custom endpoint with per-entry
+#: params, plus a chat_default the preset's own params must beat.
+ROUTED_APP_CFG = {
+    "custom_endpoints": {
+        "qwen-local": {
+            "display_name": "Qwen Local",
+            "family": "llama_cpp",
+            "base_url": "http://127.0.0.1:8080",
+            "params": {"top_k": 40},
+        }
+    },
+    "chat_defaults": {"temperature": 0.9},
+    "api_settings": {"llama_cpp": {"model": "llama-3-8b"}},
+}
+
+#: A preset ROUTED off the parent's provider (Task 4 fields): spawn
+#: resolves it to custom-ep:qwen-local / qwen3.8-27b with the preset's
+#: params beating chat_defaults and the entry's params riding along.
+IMPLEMENTER = AgentDefinition(
+    name="implementer",
+    description="an implementer",
+    instructions="Implement.",
+    provider="custom-ep:qwen-local",
+    model="qwen3.8-27b",
+    params=(("temperature", 0.2),),
+)
+
+
+@pytest.fixture()
+def _default_routing(monkeypatch):
+    """Pin the ``[agents]`` routing keys to their shipped defaults.
+
+    Same reason as the Task 6 integration suite's autouse pin:
+    ``load_agents_routing_config`` reads live config, so a developer's own
+    config.toml (e.g. a configured ``subagent_default_provider``) would
+    silently re-route these spawns. Requested only by this section's
+    service-level tests; the rest of the file keeps its pre-existing
+    (unpinned) behavior.
+    """
+    monkeypatch.setattr(
+        agent_service, "load_agents_routing_config", AgentsRoutingConfig
+    )
+
+
+def _make_routed_service(db, parent_replies, child_replies):
+    """``make_fleet_service`` with the resolver's app-config injected.
+
+    The production ``AgentService._app_config`` fallback reads the live
+    config.toml; these tests always inject, exactly like the Task 6
+    integration suite's ``_make_service``.
+    """
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(parent_replies, child_replies)
+    coordinator = FleetCoordinator(max_live=3, clock=time.monotonic)
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        fleet_coordinator=coordinator,
+        app_config=ROUTED_APP_CFG,
+    )
+    return service, chat, coordinator
+
+
+def test_continuation_reuses_snapshot_after_preset_edit(db, _default_routing):
+    """THE snapshot-hit path: a retained child's continuation runs where
+    the child ACTUALLY ran (the v16 snapshot frozen at spawn), not where
+    the preset points NOW.
+
+    The between-turns edit here retargets the preset to a custom endpoint
+    that no longer EXISTS: had the continuation re-resolved (and thereby
+    re-validated) the preset live, the resume would have refused with a
+    RoutingError. The snapshot was validated when it was written, so the
+    continuation neither re-resolves nor re-validates.
+    """
+    definition_id = db.create_agent_definition(IMPLEMENTER)
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "keep going"},
+        )
+
+    service, chat, coordinator = _make_routed_service(
+        db,
+        [
+            # -- turn 1
+            fence(
+                SPAWN_TOOL_NAME,
+                {"task": "implement it", "agent": "implementer"},
+            ),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one answer",
+            # -- turn 2
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two answer",
+        ],
+        {"implement it": ["implemented", "continued implementing"]},
+    )
+    _run1, outcome1 = _run(service)
+    assert outcome1.status == RUN_DONE
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    old_run_id = finished.run_id
+    _await_retained(coordinator, finished.handle_id)
+
+    # The spawn froze the routed target onto the run row (Task 6). Params:
+    # the preset's temperature beats the chat_default and the entry's
+    # top_k rides along (the resolver's own top_p fallback is part of the
+    # stack too -- same assertion style as the Task 6 integration suite).
+    snapshot = db.get_run_resolved_target(old_run_id)
+    assert snapshot["provider"] == "custom-ep:qwen-local"
+    assert snapshot["model"] == "qwen3.8-27b"
+    assert snapshot["base_url"] == "http://127.0.0.1:8080"
+    snapshot_params = json.loads(snapshot["params_json"])
+    assert snapshot_params["temperature"] == 0.2
+    assert snapshot_params["top_k"] == 40
+
+    # EDIT the preset between runs: the provider now points at a custom
+    # endpoint that is gone from the registry, and the model is retargeted.
+    db.update_agent_definition(
+        definition_id,
+        AgentDefinition(
+            name="implementer",
+            description="an implementer",
+            instructions="Implement.",
+            provider="custom-ep:gone",
+            model="retargeted-model",
+        ),
+    )
+
+    run2, outcome2 = _run(service)
+    assert outcome2.status == RUN_DONE
+    # The resume was NOT refused (no re-validation of the edited preset).
+    sends = _tool_results(db.get_run(run2), SEND_TO_AGENT_TOOL_NAME)
+    assert sends and "ERROR" not in sends[0]
+
+    # The resumed child's provider call went to the SNAPSHOT target --
+    # endpoint, model, base_url and params all frozen at spawn time.
+    resumed_call = chat.child_calls["implement it"][1]
+    assert resumed_call["api_endpoint"] == "custom-ep:qwen-local"
+    assert resumed_call["model"] == "qwen3.8-27b"
+    assert resumed_call["api_base_url"] == "http://127.0.0.1:8080"
+    assert resumed_call["temp"] == 0.2
+    assert resumed_call["topk"] == 40
+
+    # And the NEW row re-freezes the same target, so a continuation of the
+    # continuation reuses it too.
+    resumed_row = next(
+        r for r in _subagent_rows(db) if r["resumed_from_run_id"] == old_run_id
+    )
+    assert db.get_run_resolved_target(resumed_row["id"]) == snapshot
+    _wait_until(
+        lambda: db.get_run_fresh(resumed_row["id"])["status"] == RUN_DONE,
+        "the resumed child's row never went terminal",
+    )
+
+
+def test_continuation_without_a_snapshot_reroutes_live(db, _default_routing):
+    """The snapshot-MISS path: a pre-v16 row (resolved_* columns NULL --
+    simulated here with an UPDATE) keeps the pre-Task-8 fall-through
+    byte-identical: the resumed child inherits the PARENT's endpoint and
+    takes the definition's CURRENT model (live re-resolution), and the new
+    row stays snapshot-less too."""
+    definition_id = db.create_agent_definition(IMPLEMENTER)
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "keep going"},
+        )
+
+    service, chat, coordinator = _make_routed_service(
+        db,
+        [
+            # -- turn 1
+            fence(
+                SPAWN_TOOL_NAME,
+                {"task": "implement it", "agent": "implementer"},
+            ),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one answer",
+            # -- turn 2
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two answer",
+        ],
+        {"implement it": ["implemented", "continued implementing"]},
+    )
+    _run1, outcome1 = _run(service)
+    assert outcome1.status == RUN_DONE
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    old_run_id = finished.run_id
+    _await_retained(coordinator, finished.handle_id)
+
+    # Simulate the pre-v16 row: no resolved-target snapshot.
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE agent_runs SET resolved_provider = NULL, "
+            "resolved_model = NULL, resolved_base_url = NULL, "
+            "resolved_params_json = NULL WHERE id = ?",
+            (old_run_id,),
+        )
+    assert db.get_run_resolved_target(old_run_id) is None
+
+    # Edit ONLY the model: the legacy path re-resolves the definition live.
+    db.update_agent_definition(
+        definition_id,
+        AgentDefinition(
+            name="implementer",
+            description="an implementer",
+            instructions="Implement.",
+            provider="custom-ep:qwen-local",
+            model="edited-model",
+        ),
+    )
+
+    _run2, outcome2 = _run(service)
+    assert outcome2.status == RUN_DONE
+
+    resumed_call = chat.child_calls["implement it"][1]
+    # Live, exactly as before Task 8: the parent's endpoint (the legacy
+    # continuation path never routed through the preset's provider) ...
+    assert resumed_call["api_endpoint"] == "llama_cpp"
+    # ... and the definition's CURRENT model ...
+    assert resumed_call["model"] == "edited-model"
+    # ... with no snapshot params or base_url applied.
+    assert resumed_call.get("api_base_url") is None
+    assert "temp" not in resumed_call
+    assert "topk" not in resumed_call
+
+    # Legacy in, legacy out: the resumed row carries no snapshot either.
+    resumed_row = next(
+        r for r in _subagent_rows(db) if r["resumed_from_run_id"] == old_run_id
+    )
+    assert db.get_run_resolved_target(resumed_row["id"]) is None
+
+
+def test_get_run_resolved_target_returns_none_without_a_snapshot(db):
+    """The accessor's MISS contract, both halves: a plain run (no routing
+    resolved at spawn -- every pre-v16 row looks like this) and a
+    never-existent id both read as None so callers fall back to live
+    re-resolution; a routed row reads its frozen snapshot back verbatim."""
+    plain = db.create_run(conversation_id="c", agent_kind=AGENT_KIND_PRIMARY)
+    assert db.get_run_resolved_target(plain) is None
+    assert db.get_run_resolved_target("never-existed") is None
+
+    routed = db.create_run(
+        conversation_id="c",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        task="routed child",
+        resolved_provider="custom-ep:qwen-local",
+        resolved_model="qwen3.8-27b",
+        resolved_base_url="http://127.0.0.1:8080",
+        resolved_params_json='{"temperature": 0.2}',
+    )
+    assert db.get_run_resolved_target(routed) == {
+        "provider": "custom-ep:qwen-local",
+        "model": "qwen3.8-27b",
+        "base_url": "http://127.0.0.1:8080",
+        "params_json": '{"temperature": 0.2}',
     }

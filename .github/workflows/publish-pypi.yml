@@ -36,6 +36,9 @@ jobs:
           python -m pip install "setuptools>=77.0"
           python -m pip install -e ".[dev]"
 
+      - name: Check app-only voice release boundary
+        run: python Packaging/check_voice_aec_version_sync.py --app-only
+
       - name: Build distributions
         run: |
           rm -rf dist

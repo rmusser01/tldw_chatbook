@@ -1,0 +1,33 @@
+# Isolation proof: lsof -p 72522 (app process)
+## Real-profile handles (tldw_cli / default_user / .config/tldw): NONE
+## Scratch handles:
+/private/tmp/uat-scratch/data/uat_ce/.instance.lock
+/private/tmp/uat-scratch/data/uat_ce/agent_runs.db
+/private/tmp/uat-scratch/data/uat_ce/agent_runs.db-shm
+/private/tmp/uat-scratch/data/uat_ce/agent_runs.db-wal
+/private/tmp/uat-scratch/data/uat_ce/evals.db
+/private/tmp/uat-scratch/data/uat_ce/evals.db-shm
+/private/tmp/uat-scratch/data/uat_ce/evals.db-wal
+/private/tmp/uat-scratch/data/uat_ce/faulthandler.log
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_ChaChaNotes.db
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_ChaChaNotes.db-shm
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_ChaChaNotes.db-wal
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_library_collections.db
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_library_collections.db-shm
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_library_collections.db-wal
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_library_ingest_jobs.db
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_library_ingest_jobs.db-shm
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_library_ingest_jobs.db-wal
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_media_v2.db
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_media_v2.db-shm
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_media_v2.db-wal
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_notifications.db
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_notifications.db-shm
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_notifications.db-wal
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_subscriptions.db
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_subscriptions.db-shm
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_subscriptions.db-wal
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_workspaces.db
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_workspaces.db-shm
+/private/tmp/uat-scratch/data/uat_ce/tldw_chatbook_workspaces.db-wal
+/private/tmp/uat-scratch/data/uat_ce/tldw_cli_app.log

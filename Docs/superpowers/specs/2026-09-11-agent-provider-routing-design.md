@@ -114,8 +114,8 @@ Each level fills only blanks left by the levels above:
    fnmatch, case-insensitive). A model-only ad-hoc arg swaps the model on
    whatever provider levels 2–4 resolve.
    **Final-provider guard:** whenever ANY ad-hoc arg is present, the final
-   resolved `provider/model` must match the allowlist or the provider must
-   equal the parent's provider — otherwise `provider_not_allowlisted`.
+   resolved `provider/model` must match the allowlist, including when it
+   equals the parent's provider — otherwise `provider_not_allowlisted`.
    (Closes the hole where a model-only arg rides a paid
    `subagent_default_provider` the user never allowlisted.)
 2. **Preset routing fields** — the spawned `AgentDefinition`'s `provider`
@@ -130,7 +130,12 @@ The winner is validated through the existing seams:
 for display/readiness/execution keys (custom-ep aware), then readiness
 (`get_provider_readiness`, `Chat/provider_readiness.py:476` — missing
 credential / no reachable endpoint → `RoutingError`), producing a full
-`ConsoleProviderSelection` for the child. Tool shaping needs no change:
+`ConsoleProviderSelection` for the child. (Readiness gates only NEW
+targets: plain inherit — and any override/preset/default that resolves
+back to the parent's own provider — skips the gate, because the parent's
+send path already owns that provider's readiness; re-checking would also
+refuse every spawn in embedded/headless runs that never configure a
+credential.) Tool shaping needs no change:
 `provider_supports_native_tools` is already evaluated per run inside
 `_make_call_model` (`agent_service.py:1314,1565`). Unknown local models fall
 back to default token-window handling, same as any unlisted model today.
@@ -288,7 +293,7 @@ not move an already-spawned child — snapshot semantics.)
 - The allowlist is the cost/injection guard for ad-hoc routing — bare
   provider entries or `provider/model-glob` entries — strengthened by the
   final-provider guard (resolution level 1): with ad-hoc args present, the
-  child lands only on an allowlisted target or the parent's own provider.
+  child lands only on an allowlisted provider/model target.
   Presets are trusted because the user authored them.
 - No credential material flows through the resolver's outputs beyond what
   the existing gateway already handles; registry entries' `api_key` is
@@ -313,8 +318,8 @@ the master can pick another target or ask the user:
   default, as now) and never raises this error.
 
 Each error names the failing level (override / preset / default). There is
-**no** automatic cross-provider fallback. The rail summary shows each
-child's resolved target (e.g. "qwen-local · qwen3.8-27b").
+**no** automatic cross-provider fallback. The resolved target is persisted
+on the run row; rail display is deferred to TASK-32497.
 
 ## Settings UI
 
@@ -352,7 +357,7 @@ gains an optional `params` section for the same known sampling keys.
   `ConsoleProviderSelection` (provider, model, base_url, **and merged
   params**), the persisted snapshot columns, and that refusals return an
   error result without consuming a fleet slot.
-- **Migration tests** for schema v16: column defaults, legacy rows unchanged.
+- **Migration tests** for schema v21: column defaults, legacy rows unchanged.
 - **Backward-compat regression:** existing preset with `model` but no
   `provider` keeps same-endpoint override behavior; registry entries without
   `params` load unchanged; session defaults from

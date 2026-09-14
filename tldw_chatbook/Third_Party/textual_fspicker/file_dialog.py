@@ -320,6 +320,8 @@ class BaseFileDialog(FileSystemPickerScreen):
         Args:
             event: The event to handle.
         """
+        if event.select.id in {"listing-sort", "listing-direction"}:
+            return
         if self._filters is not None and isinstance(event.value, int):
             self.query_one(DirectoryNavigation).file_filter = self._filters[event.value]
         else:
