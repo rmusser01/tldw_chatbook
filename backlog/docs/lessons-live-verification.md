@@ -2925,3 +2925,23 @@ skipping `super()` there breaks the *application* loop with no return code and
 no `panic()`. Evidence for that one is sharper than the reasoning was — with the
 clause removed, the pin does not fail an assertion, it hangs the pilot for 35 s
 and dies on `WaitForScreenTimeout`, which is the silent vanish itself.
+
+## A scan-filter change turns the files it stops visiting into "Recently deleted" — only a profile that already used the feature shows it (task-32552, 2026-09-13)
+
+**What happened.** task-32552 hid every dot-directory from the Folder files
+walk (`.obsidian` and `.trash` had differed only by whether one held a
+Markdown file). Every test was green on fresh in-memory replicas. The first
+live run on the wave's scratch profile — whose replica had indexed
+`.trash/Old idea.md` on the previous launch — listed that file under
+**Recently deleted**: the reconcile tombstones any replica row the walk no
+longer reports, and a file the walk now skips looks exactly like a file that
+was removed. The file was still on disk (Restore would have said "exists"),
+and it stayed searchable through the replica's FTS.
+
+**What to do.** When a change narrows what an indexed walk visits, run the
+fixed build against a profile that indexed the old set — a fresh fixture
+cannot show the migration — and decide explicitly what the index does with
+the rows it will never see again (here: forget them, `FileNotesReplica.
+forget_file`, never tombstone). Pin it with a replica seeded by hand
+(`Tests/Notes/test_file_notes_service.py::test_a_file_indexed_under_a_dot_
+directory_is_forgotten_not_recently_deleted`).
