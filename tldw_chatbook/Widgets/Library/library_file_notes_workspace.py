@@ -17,6 +17,7 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
@@ -159,6 +160,7 @@ def resolve_file_note_status_channels(
     authority_failure: str = "",
     authority_uncertain: str = "",
     authority_running: str = "",
+    repository_confirmed: bool = False,
 ) -> NotesStatusChannels:
     """Resolve Folder content and Git status without cross-channel masking.
 
@@ -178,6 +180,11 @@ def resolve_file_note_status_channels(
         authority_failure: Bounded detail for a failed authority operation.
         authority_uncertain: Bounded detail for an uncertain authority operation.
         authority_running: Bounded detail for the active authority operation.
+        repository_confirmed: Whether a repository check (``git rev-parse``)
+            has succeeded for this root. task-32543: without it the change
+            count is this session's edit count, never "Git" -- a plain
+            folder read "Git · 1 change" after one edit (critique #3, A 57;
+            B 40, 50), which the solo operator took as "version-controlled".
 
     Returns:
         The independent content, authority, and safe-action status channels.
@@ -229,7 +236,11 @@ def resolve_file_note_status_channels(
         )
     if not status_copy and git_changes:
         change_word = "change" if git_changes == 1 else "changes"
-        status_copy = f"Git · {git_changes} {change_word}"
+        status_copy = (
+            f"Git · {git_changes} {change_word}"
+            if repository_confirmed
+            else f"{git_changes} session {change_word}"
+        )
     if cell_len(status_copy) > 34:
         status_copy = _middle_elide_cells(status_copy, 34)
 
@@ -295,6 +306,47 @@ FILE_TREE_BATCH_SIZE = 100
 
 class _ServiceLockBusy(Exception):
     """An earlier File Notes operation still owns the service lock."""
+
+
+#: task-32552 AC#1: the Folder files editor's own keys -- see
+#: ``FileNotesEditorTextArea`` for why Textual supplies neither.
+_FILE_NOTES_EDITOR_BINDINGS = [
+    Binding("ctrl+end", "cursor_document_end", "End of file", show=False),
+    Binding("ctrl+home", "cursor_document_start", "Start of file", show=False),
+]
+#: task-32552 AC#3: Escape in the editor steps back to the files tree; only
+#: the next Escape (the screen's ``library_notes_files_back``) leaves the
+#: mode. ``LibraryFileNotesWorkspace.check_action`` gates it to the focused
+#: editor, so everywhere else the key falls through to the screen exactly
+#: as before (critique #3, A 58: one press dropped the whole mode).
+_FILE_NOTES_WORKSPACE_BINDINGS = [
+    Binding("escape", "focus_tree", "Files", show=False),
+]
+
+
+class FileNotesEditorTextArea(TextArea):
+    """The Folder files editor, with document-end and document-start keys.
+
+    task-32552 AC#1: the same defect task-32247 fixed in the Library editor
+    (``NoteEditorTextArea``): Textual 8's ``TextArea`` binds ``end``/``home``
+    to the LINE ends and defines no ``ctrl+end`` binding or
+    ``cursor_document_end`` action at all, so Ctrl+End here was not
+    swallowed -- it did not exist, and the text typed after it landed at
+    the click (critique #3, B D9: ``NoteTAILEDITs`` on disk). The four lines
+    are copied rather than the class imported: that editor's priority Tab
+    pair is namespaced to the Library screen and is not this widget's
+    concern.
+    """
+
+    BINDINGS = _FILE_NOTES_EDITOR_BINDINGS
+
+    def action_cursor_document_end(self) -> None:
+        """Move the caret to the end of the file body."""
+        self.move_cursor(self.document.end)
+
+    def action_cursor_document_start(self) -> None:
+        """Move the caret to the start of the file body."""
+        self.move_cursor((0, 0))
 
 
 def _folder_label(path: Path) -> str:
@@ -741,6 +793,8 @@ class LibraryFileNotesWorkspace(Vertical):
 
     ReloadConfirmationChanged = FileNotesReloadConfirmationChanged
 
+    BINDINGS = _FILE_NOTES_WORKSPACE_BINDINGS
+
     DEFAULT_CSS = """
     LibraryFileNotesWorkspace {
         height: 1fr;
@@ -1177,6 +1231,12 @@ class LibraryFileNotesWorkspace(Vertical):
         self._save_task: asyncio.Task[bool] | None = None
         self._git_status_worker: Worker[Any] | None = None
         self._git_action_worker: Worker[Any] | None = None
+        # task-32543: the "repository confirmed" fact behind the header's
+        # "Git · N change(s)" suffix -- one ``git rev-parse`` discovery per
+        # session binding, or process trust already granted for it.
+        self._repository_probe_binding: SessionBinding | None = None
+        self._repository_confirmed = False
+        self._repository_probe_worker: Worker[Any] | None = None
         self._git_status_task: asyncio.Task[SessionGitStatus] | None = None
         self._git_status_task_binding: SessionBinding | None = None
         self._git_status_failure = ""
@@ -1293,7 +1353,7 @@ class LibraryFileNotesWorkspace(Vertical):
         # Textual calls ``compose`` again when this same workspace object is
         # remounted, so constructing it inside ``compose`` would silently
         # replace the user's draft with a new TextArea instance.
-        self._editor_widget = TextArea(
+        self._editor_widget = FileNotesEditorTextArea(
             "",
             id="file-notes-editor",
             read_only=True,
@@ -2049,8 +2109,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self, session_git_count: int | None = None
     ) -> NotesStatusChannels:
         """Project current async inputs through the pure status resolver."""
+        binding = self._session_binding
         if session_git_count is None:
-            binding = self._session_binding
             changes = (
                 () if binding is None else self._session_owner.snapshot(binding).changes
             )
@@ -2106,6 +2166,7 @@ class LibraryFileNotesWorkspace(Vertical):
             authority_running = "Checking folder…"
         return resolve_file_note_status_channels(
             root=self._root,
+            repository_confirmed=self._repository_confirmed_for(binding),
             conflict=self._save_state == "conflict",
             unavailable=self._root is None or self._root_offline is True,
             read_only=opened is not None and not opened.editable,
@@ -2122,27 +2183,87 @@ class LibraryFileNotesWorkspace(Vertical):
             authority_running=authority_running,
         )
 
+    def _repository_confirmed_for(self, binding: SessionBinding | None) -> bool:
+        """Return whether a repository check has succeeded for ``binding``."""
+        if binding is None:
+            return False
+        if self._session_owner.snapshot(binding).trusted_repository is not None:
+            return True
+        return self._repository_probe_binding == binding and self._repository_confirmed
+
+    def _ensure_repository_probe(self) -> None:
+        """Run the one ``git rev-parse`` discovery this binding has not had."""
+        binding = self._session_binding
+        service = self._session_git_service()
+        if (
+            binding is None
+            or service is None
+            or self._repository_probe_binding == binding
+        ):
+            return
+        self._repository_probe_binding = binding
+        self._repository_confirmed = False
+        self._repository_probe_worker = self.run_worker(
+            self._probe_repository(binding, service),
+            name="file-notes-repository-probe",
+            group="file-notes-repository-probe",
+            exclusive=True,
+        )
+
+    async def _probe_repository(
+        self,
+        binding: SessionBinding,
+        service: _SessionGitService,
+    ) -> None:
+        try:
+            discovery = await service.discover(binding)
+        except RuntimeError as error:
+            if type(error) is not RuntimeError or error.args != ("file_notes_maintenance_paused",):
+                raise
+            # A queued probe has not acquired a maintenance lifetime yet.
+            # Let a later ordinary status refresh try this same binding again.
+            if self._repository_probe_binding == binding:
+                self._repository_probe_binding = None
+                self._repository_confirmed = False
+            return
+        if self._repository_probe_binding != binding:
+            return
+        confirmed = discovery.state == "ready"
+        if confirmed != self._repository_confirmed:
+            self._repository_confirmed = confirmed
+            self._render_status_channels()
+
     def _render_status_channels(self, session_git_count: int | None = None) -> None:
         """Render both header channels from one deterministic projection."""
         if not self._active or not self.is_mounted:
             return
+        self._ensure_repository_probe()
         channels = self._status_channels(session_git_count)
         content = channels.content_recovery
         if channels.safe_next_action:
             content = f"{content} Next: {channels.safe_next_action}."
         detail = self._save_detail.strip()
-        status = self.query_one("#file-notes-save-status", Static)
+        # task-32552: acquire the whole header or render none of it, as
+        # ``_render_session_git_label`` already does. ``is_mounted`` above is
+        # true before ``compose``'s children have all landed, so a call from
+        # the initialize worker -- or from ``_probe_repository``, which this
+        # task added as a second entry point -- could raise ``NoMatches`` out
+        # of a worker and take the app down at teardown. Returning also keeps
+        # the three Statics consistent: the old order updated save status and
+        # then exploded on authority.
+        try:
+            status = self.query_one("#file-notes-save-status", Static)
+            save_detail = self.query_one("#file-notes-save-detail", Static)
+            authority = self.query_one("#file-notes-authority", Static)
+        except NoMatches:
+            return
         self._update_static_content(status, content)
         status.tooltip = detail or None
-        save_detail = self.query_one("#file-notes-save-detail", Static)
         self._update_static_content(
             save_detail, f"Content detail: {detail}" if detail else ""
         )
         save_detail.display = bool(detail)
-        self._update_static_content(
-            self.query_one("#file-notes-authority", Static),
-            channels.authority_git,
-        )
+        self._update_static_content(authority, channels.authority_git)
 
     def on_mount(self) -> None:
         """Start background initialization and polling for this mount."""
@@ -6260,6 +6381,49 @@ class LibraryFileNotesWorkspace(Vertical):
         if generation != self._search_generation or not self._active:
             return
         self._rebuild_search_results(tuple(paths))
+
+    @property
+    def editor_focused(self) -> bool:
+        """Whether the file editor holds focus (the footer's Ctrl+End gate)."""
+        return self._editor_widget.has_focus
+
+    @property
+    def editor_returns_to_tree(self) -> bool:
+        """Whether Escape in the editor steps back to the files tree (task-32552)."""
+        return (
+            self.editor_focused
+            and self._path_task == "none"
+            and not self.reload_confirmation_active
+            and self._visible_files_tree() is not None
+        )
+
+    def _visible_files_tree(self) -> Tree[object] | None:
+        """Return the mounted, displayed files or search-results tree, if any."""
+        for tree in (self._tree_widget, self._search_results_widget):
+            if tree.is_mounted and tree.display and tree.region.width > 0:
+                return tree
+        return None
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Gate Escape to the focused editor so it falls through elsewhere.
+
+        Args:
+            action: The action name Textual is about to run.
+            parameters: The action's arguments (unused here).
+
+        Returns:
+            ``False`` to let the key reach the screen's own Escape binding,
+            otherwise ``True``.
+        """
+        if action == "focus_tree":
+            return self.editor_returns_to_tree
+        return True
+
+    def action_focus_tree(self) -> None:
+        """Escape from the editor: return to the files tree, keep the mode."""
+        tree = self._visible_files_tree()
+        if tree is not None:
+            tree.focus()
 
     @on(Tree.NodeExpanded, "#file-notes-tree")
     def _tree_node_expanded(self, event: Tree.NodeExpanded[object]) -> None:

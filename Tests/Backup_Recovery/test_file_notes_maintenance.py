@@ -264,3 +264,78 @@ async def test_admitted_commit_can_publish_uncertainty_while_paused(notes):
     assert not await owner._maintenance_drain(time.monotonic())
     owner._maintenance_resume()
     assert owner.snapshot(binding).commit_recovery.message == "Retained exact recovery"
+
+
+async def _exercise_repository_probe(root, kind):
+    """Run the real workspace/native Git seam in one fixed private profile."""
+    from Tests.Notes.test_file_notes_git_integration import _disposable_repository
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        LibraryFileNotesWorkspace,
+    )
+
+    owner = FileNotesSessionOwner()
+    if kind == "pause_resume":
+        repository = _disposable_repository(root)
+        path = repository.path
+        service = FileNotesGitService(owner, git_executable=repository.git,
+                                      environment=repository.service_environment)
+    else:
+        path = root
+        service = FileNotesGitService(owner)
+    binding = owner.select_root(path)
+    owner.attach_git_service(service)
+    workspace = LibraryFileNotesWorkspace(root=path, replica=None, session_owner=owner)
+    workspace._session_binding = binding
+    workspace._repository_probe_binding = binding
+    try:
+        if kind == "pause_resume":
+            owner._maintenance_close_admission()
+            await workspace._probe_repository(binding, service)
+            assert workspace._repository_probe_binding is None
+            assert not workspace._repository_confirmed_for(binding)
+            assert await owner._maintenance_drain(time.monotonic() + 2)
+            owner._maintenance_resume()
+            workspace._repository_probe_binding = binding
+            await workspace._probe_repository(binding, service)
+            assert workspace._repository_confirmed_for(binding)
+        elif kind == "stale_binding":
+            other = root / "new-root"
+            other.mkdir()
+            newer = owner.select_root(other)
+            workspace._session_binding = newer
+            workspace._repository_probe_binding = newer
+            owner._maintenance_close_admission()
+            await workspace._probe_repository(binding, service)
+            assert workspace._repository_probe_binding == newer
+        else:
+            error = asyncio.CancelledError() if kind == "cancel" else RuntimeError("unexpected Git failure")
+
+            async def failed(_binding):
+                raise error
+
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(service, "discover", failed)
+                with pytest.raises(type(error)) as caught:
+                    await workspace._probe_repository(binding, service)
+            assert caught.value is error
+            assert workspace._repository_probe_binding == binding
+    finally:
+        owner._maintenance_resume()
+        await owner.shutdown_async()
+
+
+@pytest.mark.parametrize("kind", ["pause_resume", "other_error", "cancel", "stale_binding"])
+def test_repository_probe_preserves_maintenance_and_error_lifetimes(tmp_path, kind):
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    script = r"""
+import asyncio,sys
+from pathlib import Path
+from Tests.network_guard import install,blocked_attempts
+install()
+from Tests.Backup_Recovery.test_file_notes_maintenance import _exercise_repository_probe
+asyncio.run(_exercise_repository_probe(Path.home(),sys.argv[1]))
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+    _run(tmp_path, kind, "probe", script=script)

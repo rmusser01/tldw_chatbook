@@ -507,3 +507,43 @@ def test_retired_sync_pairing_cannot_issue_new_device_authority(tmp_path):
 
     with pytest.raises(ValueError, match="notes_pairing_owner_unsupported"):
         review_pairing("notes.sync_bindings", object(), tmp_path, "test")
+
+
+_HIDDEN_TOMBSTONES = _SETUP + r'''
+import hashlib
+route, owner_flag = sys.argv[1:]
+relative = '.hidden/retained.md'
+(folder / '.hidden').mkdir()
+raw = b'Retained hidden original'
+(folder / relative).write_bytes(raw)
+replica.upsert_file(files.root_key, relative, raw,
+ content_hash=hashlib.sha256(raw).hexdigest(), decoded_text=raw.decode(),
+ size=len(raw), mtime_ns=0)
+replica.mark_deleted(files.root_key, relative)
+if owner_flag == 'approved_flag':
+ store.approve(witness['generation'], 'notes.file_notes')
+result = getattr(files, route)()
+assert result.replica_warning and 'activation' in result.replica_warning.lower()
+assert replica.get_restore_bytes(files.root_key, relative) == raw, 'unreviewed scan discarded retained replica bytes'
+assert (folder / relative).read_bytes() == raw
+# Explicit fresh owner pairing is the existing authorization to refresh.
+review = files.preview_recovery()
+assert not review.issues, review.issues
+files.approve_recovery(review)
+result = getattr(files, route)()
+assert replica.get_restore_bytes(files.root_key, relative) is None
+assert (folder / relative).read_bytes() == raw
+assert_unrelated_owners_inactive()
+assert not blocked_attempts()
+db.close_connection(); replica.close()
+print('retired and reopened')
+'''
+
+
+@pytest.mark.parametrize("route", ["scan", "reconcile"])
+@pytest.mark.parametrize("owner_flag", ["inactive", "approved_flag"])
+def test_hidden_replica_tombstone_requires_fresh_pairing_before_sweep(
+    tmp_path, route, owner_flag
+):
+    """Inspection retains recovery bytes until the actual owner review permits refresh."""
+    _run(tmp_path, route, owner_flag, script=_HIDDEN_TOMBSTONES)
