@@ -136,6 +136,65 @@ def test_admission_timing_preserves_results_errors_and_method_identity(tmp_path)
     assert snapshot["calls"]["_groups"]["wall_ns"] > 0
 
 
+@pytest.mark.parametrize("failed", (False, True))
+def test_slowest_completed_group_survives_rolling_window(tmp_path, monkeypatch, failed):
+    """A late fast scan must not erase the slow scan's caller and CPU detail."""
+    from Tests.Backup_Recovery import admission_diagnostics
+
+    clock = [0]
+    real_time = admission_diagnostics.time
+    monkeypatch.setattr(
+        admission_diagnostics,
+        "time",
+        SimpleNamespace(
+            perf_counter_ns=lambda: clock[0],
+            thread_time_ns=real_time.thread_time_ns,
+            process_time_ns=real_time.process_time_ns,
+            monotonic_ns=real_time.monotonic_ns,
+        ),
+    )
+    path_marker = "synthetic-private-root-must-stay-private"
+    failure = OSError(path_marker)
+    registry = SimpleNamespace(
+        entries={path_marker: SimpleNamespace(roots=("/private/" + path_marker,), proposed=())}
+    )
+
+    class Subject:
+        def _groups(self, registry, names):
+            clock[0] += 100 if names else 1
+            if names and failed:
+                raise failure
+            return names
+
+    original = Subject._groups
+    path = tmp_path / "timing.log"
+    stop = _observe(path, [(Subject, "_groups")], interval=60)
+    try:
+        if failed:
+            with pytest.raises(OSError) as caught:
+                Subject()._groups(registry, (path_marker,))
+            assert caught.value is failure
+        else:
+            assert Subject()._groups(registry, (path_marker,)) == (path_marker,)
+        for _ in range(20):
+            assert Subject()._groups(registry, ()) == ()
+    finally:
+        stop()
+    snapshot = json.loads(path.read_text())
+    assert len(snapshot["groups"]) == 16
+    assert all(group["wall_ns"] == 1 for group in snapshot["groups"])
+    slowest = snapshot["slowest_group"]
+    assert slowest["wall_ns"] == snapshot["calls"]["_groups"]["max_ns"] == 100
+    assert slowest["completed"] == 1 and slowest["errors"] == int(failed)
+    assert (
+        slowest["caller"]["function"]
+        == "test_slowest_completed_group_survives_rolling_window"
+    )
+    assert slowest["thread_cpu_ns"] >= 0 and slowest["process_cpu_ns"] >= 0
+    assert path_marker not in path.read_text()
+    assert Subject._groups is original
+
+
 def test_timing_is_written_while_a_real_call_is_still_running(tmp_path):
     import time
 

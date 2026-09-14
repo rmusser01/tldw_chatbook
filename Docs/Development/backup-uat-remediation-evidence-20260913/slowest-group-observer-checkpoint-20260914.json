@@ -1,0 +1,42 @@
+{
+  "base_revision": "ec139a0241f2de0b8c5da62916e25157f9ac4b35",
+  "reviewed_sha256": {
+    "Tests/Backup_Recovery/admission_diagnostics.py": "9f4d3981c40fa44c4ed824b49268bb1e848c8c54d33b00bf9e34af06d2412584",
+    "Tests/Backup_Recovery/test_admission_diagnostics.py": "7050aad9b50ca280151c487e496fa4ff2ba696dff04302bf8d13b66a81c98479"
+  },
+  "scope": "Test-only observer retains one slowest completed detail in addition to the existing rolling16. No added native calls or changed deadlines.",
+  "verification": {
+    "red_missing_detail": {
+      "failed": 2,
+      "seconds": 0.16
+    },
+    "final_root": {
+      "passed": 9
+    },
+    "independent": {
+      "passed": 9,
+      "seconds": 0.26
+    },
+    "independent_nested_tie_concurrent_probes": {
+      "passed": 2,
+      "seconds": 2.58
+    },
+    "original_tests_ast_unchanged": true,
+    "ruff_findings": 0,
+    "bandit_before": {
+      "B101": 47
+    },
+    "bandit_after": {
+      "B101": 58
+    }
+  },
+  "limits": [
+    "Deterministic timing tests verify aggregation/eviction, not native performance.",
+    "The missing88.844second historical caller/CPU detail is not recoverable by this change.",
+    "No existing Windows/Linux run was modified or restarted."
+  ],
+  "preserved_fixture_errors": [
+    "Initial test insertion displaced trailing assertions into the new function, causing2NameErrors; all original test ASTs restored before final success.",
+    "Synthetic private-path marker was renamed from secret to path_marker to accurately reflect its purpose and eliminate BanditB105; exact naming-only delta independently verified."
+  ]
+}

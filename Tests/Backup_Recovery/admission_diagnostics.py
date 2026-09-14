@@ -77,6 +77,7 @@ def _observe(
     lock, stopping = threading.Lock(), threading.Event()
     local = threading.local()
     metrics, groups, originals, failures = {}, [], [], []
+    slowest_group = None
     cpu_samples = []
 
     def instrument(owner, name):
@@ -92,6 +93,7 @@ def _observe(
 
         @functools.wraps(original)
         def measured(*args, **kwargs):
+            nonlocal slowest_group
             detail = None
             if name == "_groups":
                 try:
@@ -185,6 +187,8 @@ def _observe(
                             thread_cpu_ns=thread_elapsed,
                             process_cpu_ns=process_elapsed,
                         )
+                        if slowest_group is None or elapsed > slowest_group["wall_ns"]:
+                            slowest_group = detail
                     elif active is not None:
                         scoped["completed"] += 1
                         scoped["errors"] += failed
@@ -201,6 +205,7 @@ def _observe(
                     "inclusive_wall_times": 1,
                     "calls": metrics,
                     "groups": groups,
+                    "slowest_group": slowest_group,
                     "cpu_samples": cpu_samples,
                 }
             )
