@@ -94,8 +94,12 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: in-flight read, and a flag that DROPPED the newer request was a bug, not a
 #: guard -- PR #2553 review.) **105** on the wave-3 editor-keys branch:
 #: task-32268 adds ``delete_origin_scroll``, Info's scroll offset when the
-#: delete prompt opens, restored on cancel (104 + 1 = 105).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 105
+#: delete prompt opens, restored on cancel (104 + 1 = 105). **106** on
+#: wave 4: task-32536 adds ``failure_line``, the complete one-sentence
+#: blocker ("Can't use this note in Console -- ... Next: ...") that replaced
+#: the two disagreeing messages the critique found, rendered verbatim in
+#: place of the generic "{action} failed" line (105 + 1 = 106).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 106
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_
