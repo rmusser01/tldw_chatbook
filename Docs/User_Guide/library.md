@@ -140,7 +140,13 @@ knows more than the source owners do:
   a new profile is never left with silent empty counts and no way to retry.
 - **From your Library** uses cached summaries in the fixed order **Database
   Notes → Media → Conversations**. Missing or unresolved sources are omitted;
-  the order does not imply that items were ranked against each other.
+  the order does not imply that items were ranked against each other. These
+  rows are reachable by keyboard, and Enter opens whichever one has focus —
+  so the focused row carries the same left-edge bar every other focused row
+  on this screen does, and the footer names what Enter will do there ("enter
+  open notes", "enter open media"). Before task-32546 focus here was a
+  change of background colour and nothing else, and the footer never
+  mentioned the row at all.
 - **Quick actions** are **Import…**, **New note**, then **Search**. They use the
   same guarded destinations as the rail.
 
@@ -1017,3 +1023,13 @@ AC#2, at 235x52 on a profile stamped `starter` with an empty notes database):
 creating and saving the first note grows the rail from the compact Get started
 list to the full Browse / Create / Study / Import-Export rail and raises no
 toast (`wave4-caps/console-handoff/handoff-13-no-toast`).*
+
+*Verified against fix/library-notes-w4-layout — 2026-09-14 (task-32546: the
+landing's "From your Library" rows marked focus with a background colour
+alone — rgb(30,30,30) to rgb(28,70,102), decoded from an ANSI capture — and
+the footer never named them. They take the house left bar now, and F6 from
+the rail search field lands on "█ Notes · Import checklist" with the footer
+reading "enter open notes" (`wave4-caps/layout/layout-15-f6-after-2`; before,
+`layout-27-f6-2`). Note for anyone re-walking this: from a cold landing, Tab
+walks the top tab bar rather than the canvas, which is why the original
+twelve-Tab capture set differed only on the nav line.)*

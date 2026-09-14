@@ -404,7 +404,13 @@ async def test_both_notes_selection_counts_move_together_on_one_toggle():
                 )
             ]
 
-        assert counts() == ["0 selected", "0 selected"]
+        # task-32549: at ZERO the status line also carries the reason
+        # "Export selected" is blocked -- the count line was the only line
+        # with cells to spare. The toolbar counter keeps the bare count.
+        # Both still move together, which is what this pin is for; the
+        # exact shipped spellings are asserted rather than relaxed to a
+        # prefix, so a future divergence in the NUMBER still fails here.
+        assert counts() == ["0 selected", "0 selected — Export selected unavailable"]
 
         row = app.query(".library-notes-row").first(Button)
         app._notes_state.row_selection.toggle("n1")
@@ -417,4 +423,4 @@ async def test_both_notes_selection_counts_move_together_on_one_toggle():
         _apply_library_row_toggle(app, "notes", row, "n1")
         await pilot.pause()
 
-        assert counts() == ["0 selected", "0 selected"]
+        assert counts() == ["0 selected", "0 selected — Export selected unavailable"]
