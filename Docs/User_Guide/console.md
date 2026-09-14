@@ -271,10 +271,16 @@ they are, the empty transcript reads "Ready — type a message to begin."
 A second action, **Write a note in Library**, stays available beside it for
 as long as the card is showing — it needs no provider, and opens Library's
 New note view directly. A local-first user who came for notes is not stuck
-behind a provider-only card. Both actions are drawn as buttons with a
-rounded edge, one under the other; Tab moves between them and the focused
+behind a provider-only card. A third action joins them when a loopback
+server is found on this machine — "Use detected \<provider\> (\<host:port\>)",
+naming what it found and where (only `127.0.0.1` and `localhost` are ever
+offered, and the endpoint is shown without credentials or scheme). Every
+action on the card is drawn as a button with
+a rounded edge, one under the other; Tab moves between them and the focused
 one grows heavy side rails, so which one Enter will press is visible
-without reading the text.
+without reading the text. *(Was "Both actions" — superseded by task-32558
+below: the count contradicted this page's own task-32555 stamp, which names
+three.)*
 
 If you land here with a handoff already staged — e.g. from Library's
 **Use in Console** on a Search/RAG result or on an open note while a

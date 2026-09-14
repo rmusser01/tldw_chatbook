@@ -17,6 +17,18 @@ Press **Ctrl+3** to open Library, then click **Notes** in the rail's
 "Tab Navigation: Switch to Library" works too. To jump straight into writing, click **New note**
 under the rail's "Create" section.
 
+**A brand-new profile has no Browse section yet.** While every Library
+source is empty the rail is three rows — **Import…**, **New note**,
+**Explore all tools** — so there is no **Notes** row to click, and the route
+above has nothing to land on. Three ways in from there: **Ctrl+N** (or the
+bare **n**) makes a blank note and opens its editor; the rail's **New note**
+row opens the New note view; and **Explore all tools** expands the rail to
+its full **Browse** section, whose **Notes (0)** row opens the empty notes
+list. The Browse row then arrives on its own — the rail graduates the moment
+any one Library source holds something, and does not go back. (Was the
+Browse row as the only route — superseded by task-32558 below, which walked
+an empty profile and found no such row.)
+
 ## Layout tour
 
 Library notes uses three side-by-side roles when there is room: Library
@@ -95,10 +107,19 @@ editor's own Back control returns to its list.
   of day it was last changed ("Reading list · Unfiled · 2m · 09:14"), or,
   for two notes written inside the same minute, a short id
   ("Reading list · Unfiled · 2m · #0f3a"). Only the rows that would
-  otherwise be identical carry it. Opening such a note keeps that mark:
-  the editor's heading reads "Reading list · #0f3a" — the same third part
-  its row shows — in Edit, Preview and Info alike, so which of the two you
-  have open stays answerable after the list is out of view. While no note is
+  otherwise be identical carry it. Opening such a note keeps that mark on a
+  wide terminal: the editor's heading reads "Reading list · #0f3a" — the
+  same third part its row shows — in Edit, Preview and Info alike, so which
+  of the two you have open stays answerable after the list is out of view.
+  **On a compact terminal it does not survive the heading strip.** At 100x30
+  that strip carries the back cue and the source name either side of the
+  title, and the title ellipsizes before them: the heading reads
+  "‹ Back to list    Reading … Library notes" and the tie-break is gone, in
+  Edit and Preview alike. The list row still carries it, so the answer is
+  one **‹ Back to list** away rather than on screen. (Was "in Edit, Preview
+  and Info alike" without a width — superseded by task-32558 below, measured
+  at 100x30; widening the heading's title budget is tracked separately.)
+  While no note is
   open the list takes the width the empty work area would otherwise waste,
   so long titles are not truncated on a wide terminal; opening a note hands
   that width back. The same rule holds below 64 columns, where there is no
@@ -371,8 +392,15 @@ already in it, so the next thing you type replaces the old query rather than
 landing in front of it — no need to clear the field first. (Once the filter
 has focus, `/` is an ordinary character; see the **/** row under "Keyboard &
 commands".) From the filter, Tab walks the toolbar in the order it is drawn,
-so the count to any one button depends on whether a filter is showing —
-a filter disables **Sort**, and a disabled control is skipped:
+and a disabled control is skipped — so the count to any one button depends
+on which of them are live, not on the button's position. A filter is one
+cause (it disables **Sort**); the other two are an empty list, which
+disables **Select** ("○ Select" until the first note exists), and a notes
+operation in flight, which disables **New**, **Sort** and **Select**
+together. The two counts below assume a list with notes in it and nothing
+running. (Was "depends on whether a filter is showing" alone — superseded by
+task-32558 below: **Select** is disabled at zero notes, which moves the same
+counts again.)
 
 - **Unfiltered**, Tab ×1–4 from the filter reaches **New**, **Sort**,
   **Select**, **Add from files…**.
@@ -419,7 +447,7 @@ undo the in-place updates that keep a terminal drag cheap.
 |---|---|
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
-| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. An Obsidian callout renders as a quoted block headed by its type — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says "esc back to notes" because that is what it does. The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
+| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. An Obsidian callout renders as a quoted block headed by its type — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
 | **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Once a note has saved in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when the note was last written. It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
@@ -701,9 +729,13 @@ paused; nothing in this release resumes it" — fixed by task-32519 below. Befor
 that it was "so pause only when you can live with a restart" — superseded by
 task-32271 below: the restart was asserted, then walked.)
 **Retarget** and **Disconnect** carry their reason in the control's own label
-— "○ Retarget unavailable — not in this release" — with the same line repeated
-under the list; no files or notes change (task-32545). (Was a bare grey "○"
-whose reason only appeared in a tooltip — superseded by task-32545 below.)
+— "○ Retarget unavailable — not in this release", "○ Disconnect unavailable —
+not in this release" — and one line under the whole root list states it once
+for both, with what it costs you: "Retarget/Disconnect unavailable — not in
+this release; nothing on disk or in Notes changes." (task-32545). (Was a bare
+grey "○" whose reason only appeared in a tooltip — superseded by task-32545
+below. The line under the list was then described as "the same line
+repeated", which it is not — superseded by task-32558 below.)
 
 A paused folder keeps its receipts: reading them is a read, so pausing one
 folder never blanks the list for the others (task-32534).

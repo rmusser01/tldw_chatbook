@@ -20,7 +20,9 @@ commit to its existing upstream, without leaving the app.
 ## Getting there
 
 Open [Library](../library.md) (**Ctrl+3**), pick **Notes** in the rail's
-Browse section, then use the source strip at the top of the canvas: it reads
+Browse section (on a brand-new profile that section is not there yet — see
+"Getting there" in [Library notes](notes.md) for the three routes that are),
+then use the source strip at the top of the canvas: it reads
 **Library notes** | **Folder files**. Click **Folder files** — while the
 workspace loads you'll briefly see "Opening File Notes…". At wide sizes,
 Library navigation and the Folder files tree have separate slim collapse
@@ -236,10 +238,16 @@ states such as checking, pushing, or needing attention also remain visible in
 the work header, so you do not have to leave Edit merely to learn that work is
 still running.
 
-The panel is headed "Prepare session for commit" with the scope line
-"Session paths only · stages complete file state" and the keyboard guide
-"Up/Down Select | Tab Actions | Enter Run | Esc Back". Before anything runs
-it shows "Repository: not checked" / "Status: NOT CHECKED".
+The panel is headed "Review session changes" with the scope line "Review and
+commit only notes changed during this Chatbook session." and the keyboard
+guide "Up/Down select · Tab actions · Enter run · Esc back". Before anything
+runs it shows "Repository: not checked" / "Status: NOT CHECKED". *(Was
+headed "Prepare session for commit", with the scope line "Session paths only
+· stages complete file state" and a pipe-separated, title-case keyboard
+guide. All three were real once and all three were rewritten by task-15122
+on 2026-08-11 — superseded by task-32558 below, which read them off the
+shipped widget. Five "Verified against" stamps were added to this page in
+between; each verified what it named, not the chapter around it.)*
 
 **Trust first.** Press **Trust and check status** and a confirmation dialog
 titled "Trust repository for session changes?" appears (was "Trust Session
@@ -442,11 +450,17 @@ save shortcut. File edits save automatically.
 
 ## Quirks & troubleshooting
 
-- **The "Chunking Lab | Try selected text" strip is not part of this
-  canvas.** It paints under the header on every Library canvas and opens a
-  full-screen developer tool for comparing chunking strategies; Escape does
-  not leave it. See [Library overview](../library.md); demoting it is
-  tracked as task-32064.
+- **The "Chunking Lab / Try selected text" pair is not part of this
+  canvas.** The two buttons live in the Library rail's **Details ▸ Actions**
+  group, under the line "Chunking Lab — compare how text is split for
+  search", and open a full-screen developer tool for comparing chunking
+  strategies; **Escape** there returns to the Library canvas you came from.
+  See [Library overview](../library.md). *(Was "It paints under the header
+  on every Library canvas … Escape does not leave it … demoting it is
+  tracked as task-32064" — superseded by task-32064, which is Done: the
+  strip left the header, the pair moved into Details ▸ Actions, and the Lab
+  gained its Escape route. This page was not updated with it; caught by
+  task-32558 below.)*
 
 - **YAML frontmatter is hidden from the editor and kept exactly as it is on
   disk.** A file that opens with a `---` block (Obsidian properties, for
