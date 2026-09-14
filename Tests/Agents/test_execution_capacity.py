@@ -117,17 +117,21 @@ def test_cleanup_unproven_is_sticky_through_actual_worker_finally():
     capacity = RuntimeCapacity()
     owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
     gate = threading.Event()
+    started = threading.Event()
     workers = []
     observed = []
 
     def tool():
         workers.append(threading.current_thread())
+        started.set()
         assert gate.wait(5)
         return ToolResult(ok=True, content="late")
 
     try:
         result = _call_with_timeout(tool, 0.02, "slow", lambda: False, owner=owner)
         assert not result.ok
+        # Admission may outlast the caller timeout before the tool body starts.
+        assert started.wait(5)
         owner.on_drained(observed.append)
         owner.mark_cleanup_unproven()
         owner.mark_cleanup_unproven()
@@ -137,6 +141,7 @@ def test_cleanup_unproven_is_sticky_through_actual_worker_finally():
         gate.set()
         for worker in workers:
             worker.join(5)
+            assert not worker.is_alive()
     assert observed == [False]
     owner.on_drained(lambda proven: observed.append(proven))
     assert observed == [False, False]
