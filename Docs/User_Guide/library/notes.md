@@ -46,7 +46,9 @@ saving, resolving a conflict, or resizing the terminal does not close it
 again. The automatic close becomes available again only after you clear the
 selected Library note, switch between Library notes and Folder files,
 change the linked Folder files root, leave Notes, or close the open Folder
-files file. Folder files' compact **Back to navigator** action is not a reset.
+files file. Folder files' compact **‹ Files** action is not a reset. (Was
+"**Back to navigator**" — superseded by task-32553 below: one back cue,
+"‹ " plus where it goes, on every Notes and Folder-files surface.)
 
 On a wide terminal the strip above the canvas keeps both source switches —
 **Library notes | Folder files** — whether Library navigation is open or
@@ -145,7 +147,8 @@ editor's own Back control returns to its list.
 - **Add from files…** — asks whether this is an **Import once** or a lasting
   **Keep a folder synced** relationship before reading a source. Both buttons
   sit together, each directly under its own description; the bar below holds
-  only **Back to Notes**.
+  only **‹ Notes**. (Was "**Back to Notes**" — superseded by task-32553
+  below.)
 - **Manage sync folders** — appears when roots or migration candidates exist;
   it shows text-explicit status and the valid action for each root.
 
@@ -743,9 +746,16 @@ yet.
 
 The picker — from **Add another file**, from a folder choice, and from
 **Change selection** — reopens at the directory Import once last picked, or at
-your home directory the first time. Its **File name** field ("File name or
-path") can be typed into directly: press **Enter** to browse into the typed
-path, or click **Select folder** to use the folder being browsed. The field
+your home directory the first time. It opens with that **File name** field
+("File name or path") already focused, so the first thing you type goes into
+it rather than into the file listing: press **Enter** to browse into the typed
+path, or **Select folder** to use the folder being browsed. Its three actions
+— **Open**, **Select folder**, **Cancel** — show heavy bars down their left
+and right edges while focused, so which one Enter would press is visible
+without relying on colour (task-32540). Its path trail across the top shows
+the first folder, then `…`, then the last few, on one line; each crumb's
+tooltip is the absolute path it goes to, and the full location is spelled out
+above it (task-32554). The field
 arrives empty and stays empty as you browse — the "Folder path" field that
 arrives pre-filled with the directory being browsed, and selects that value on
 the click that focuses it, is the Folder files root picker's
@@ -759,8 +769,20 @@ superseded by task-32271 below: Import once and Keep a folder synced open the
 files-or-one-folder dialog, whose field is "File name" and starts empty; only
 Folder files' "Choose File Notes Folder" has the pre-filled "Folder path".)
 Once a folder is picked, the confirmation line shows its full path
-(elided in the middle for long paths, keeping the folder name itself visible),
-not just its name.
+(elided in the middle only when the path is longer than the pane is wide,
+keeping the folder name itself visible), not just its name — and it is the
+only line that states the selection: the status line above it now says what to
+do next ("Check the selection to see what will be imported.") instead of
+repeating the same count (task-32554). (Was "elided in the middle for long
+paths" with the status line also reading "1 folder selected." — superseded by
+task-32554 below, which measured an 89-character path elided to 48 inside a
+190-column pane.)
+
+Picking the folder puts focus back inside Import once, on the confirmation
+itself. From there **Tab** walks **Change selection** → **Clear** → **Check
+selection** → **‹ Notes** and round again: Tab stays inside the Import once
+pane rather than leaving for the Library rail, exactly as it stays inside the
+note editor. **F6** and **Esc** are the ways out (task-32540).
 
 Choose **Check selection** to build a read-only review. The review takes the
 pane while it is open — the Notes list steps aside and comes back when you
@@ -768,7 +790,11 @@ leave. The status line above it states the total ("Review 66 sources before
 import.") before you approve anything.
 
 Each source is one line — path · what will happen · where it lands — with its
-**Skip** and **Create new** controls beside the path. The path gives way
+**Skip** and **Create new** controls beside the path. The middle clause names
+the outcome directly ("Create 1 new note: Monday · keywords daily, focus · 2
+links"); it used to open with a "Content:" label that named the column rather
+than the outcome, and those nine columns came off the end of the line that was
+already being clipped (task-32554). The path gives way
 first if the line is too long (elided in the middle), because the half that
 decides anything is the outcome: the resulting title, its keywords and its
 link count.
@@ -838,7 +864,7 @@ they stay reachable in a narrow pane. **Update existing** works on an unchanged
 repeat too — it replaces the note's content and leaves its folder placement
 alone. The difference between the stored note and the file is shown on the one
 row that would write it: choose **Update existing** with **Replace note
-content** to see it. A row that says "Content: no change." never carries a
+content** to see it. A row that says "No change." never carries a
 diff, because the two answer different questions — whether this *file* changed
 since it was last imported, and whether the *note* now differs from it. Uncertain matches must be confirmed. If
 the imported top-level folder already exists, the review opens with the
@@ -866,7 +892,7 @@ line beneath it ("67 planned changes from 66 reviewed sources."), and a
 unsupported source — keeps its own reason there; only a row you set to Skip
 yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
 **Retry N failures**; a cancelled batch with unfinished items shows **Retry
-unfinished items**. **Back to Notes** may hide a running import without
+unfinished items**. **‹ Notes** may hide a running import without
 stopping it; the list then offers **View import** or **Continue import** until
 it settles. **Last import** reopens the same-session receipt afterward.
 
@@ -950,6 +976,22 @@ stayed as text and are not counted.
    **Obsidian vault** toggle first — see "Obsidian vaults" above.
 4. Click **Import selected items**. You can cancel cooperatively, retry work
    identified by the receipt, or return to Notes and reopen **Last import**.
+
+#### The same import, keyboard only
+
+No step needs the mouse (task-32540). From the notes list:
+
+1. **Tab** to **Add from files…**, **Enter**.
+2. The chooser opens with **Import once** focused — **Enter**.
+3. The picker opens on its path field — **type the folder path** (the listing
+   follows you as you type), then **Tab**, **Tab** to **Select folder** and
+   **Enter**. (**Ctrl+S** does the same thing from anywhere in the dialog.)
+4. Focus lands on the confirmation. **Tab**, **Tab**, **Tab** to **Check
+   selection**, **Enter**.
+5. The review opens with **Import selected items** already focused — **Enter**.
+
+The receipt is then on screen. Tab stays inside Import once throughout —
+**F6** moves between panes and **Esc** leaves.
 
 ### Set up lasting folder sync
 
@@ -1845,3 +1887,46 @@ task-32249 had already fixed it, and it is pinned so it stays fixed.
 (`editor-10-32556-empty-note-discarded-235x52`,
 `editor-10-32556-empty-note-discarded-100x30`); it used to leave silently and
 keep painting "Untitled · now" for a record already `deleted=1`.*
+
+*Verified against fix/library-notes-w4-import-kbd — 2026-09-14 (task-32540,
+task-32553, task-32554, at 235x52 and 100x30 on a scratch power profile with
+the 65-file Obsidian vault): Import once now runs end to end on the keyboard
+alone. Tab reaches **Add from files…** in the notes list
+(`wave4-caps/import-kbd/import-10-add-from-files-focused`); the chooser opens
+with **Import once** focused; the picker opens on its path field, and typing
+`/Users/…/w4-import-kbd/vault` lands in the field rather than in the listing
+(`import-11-picker-field-focused`, `import-12-typed-path-in-field`) — before
+this, the same keystrokes went into the directory listing's type-ahead and
+Enter opened `..` (`import-00-tree-focused`). Its three actions carry heavy
+`┃` rails on focus, visible in a plain-text capture, where before they differed
+only in foreground colour and a label underline
+(`import-13-select-folder-focus-rails`, `import-00b-buttons-colour-only`); the
+breadcrumb reads `/ / … / tldw-crit / w4-import-kbd / vault` on one line. After
+**Select folder**, focus lands on the confirmation and Tab walks **Change
+selection** → **Clear** → **Check selection** → **‹ Notes** and back round
+without reaching the rail's "Search Library…" box
+(`import-14-confirmation`, `import-15-tab-cycle-check-selection`); before this
+the same six Tabs marked none of the three and ended in the rail
+(`import-01-tab-leak`). The review then opens with **Import selected items**
+focused, and Enter there reached the receipt "Import completed. · 54 notes
+created · 11 files skipped · 54 links resolved" (`import-16-…`, `import-17-…`,
+`import-18-receipt`). Copy: the confirmation reads
+`1 folder selected: /Users/macbook-dev/.cache/tldw-crit/w4-import-kbd/vault`
+whole in the wide pane, with the status line above it saying "Check the
+selection to see what will be imported." instead of repeating the count
+(`import-14-confirmation`; before, the line was elided at 48 characters AND
+preceded by "1 folder selected." — `import-01-selected`), and no review row
+opens with "Content:" (`import-16-review-no-content-prefix`, against
+`import-02-copy`). Back cues: `‹ Notes` on the editor at 235x52
+(`import-19-back-cue-editor`), `‹ Back to list` on the editor at 100x30
+(`import-26-editor-back-cue-100x30`), `‹ Notes` on
+the import stepper (`import-15-…`), `‹ Files` on the Session Git panel
+(`import-21-back-cue-files`) and `‹ Files` on the compact Folder-files work
+pane at 60x24 (`import-25-files-60x24`). At 100x30 the picker still opens on
+its field (typed text lands there) and still rails its focused button
+(`import-23-picker-100x30`, `import-24-picker-focus-100x30`). The lasting-sync
+chooser's and the sync-roots list's own `‹ Notes` buttons are pinned in
+`Tests/UI/test_library_notes_w4_import_keyboard.py` rather than walked in this
+set. The profile log carried no `unhandled_exception` across the whole walk;
+it holds four `app_started` records against two `app_stopping` lines, and both
+of those are the INFO records of a deliberate Ctrl+Q quit.)*

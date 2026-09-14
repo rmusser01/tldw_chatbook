@@ -46,6 +46,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_NOTES_SORT_FILTERED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
+    back_cue_label,
     library_disabled_action_label,
     library_disabled_reason_line,
     library_selection_count_line,
@@ -515,8 +516,12 @@ def _library_note_back_label(compact: bool) -> str:
     PR #2547 review (Qodo finding 1): compose time and state-apply time
     each inlined this same ternary; a wording change could update one
     rendering path and leave the other stale. One function, both callers.
+
+    task-32553 routes both spellings through ``back_cue_label`` so the
+    editor's wording and every other Library back cue share one glyph and
+    one grammar.
     """
-    return "‹ Back to list" if compact else "‹ Notes"
+    return back_cue_label("Back to list" if compact else "Notes")
 
 
 #: The storage authority every Database Notes surface answers to. Painted once
@@ -1029,7 +1034,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id="library-note-import-canvas",
                 )
             yield Button(
-                "Back to Notes",
+                back_cue_label("Notes"),
                 id="library-notes-import-back",
                 classes="library-canvas-action",
                 compact=True,

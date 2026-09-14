@@ -158,10 +158,11 @@ Live UAT of a keyboard-only export flow (Evals results-grid export, at a
   unambiguous since InputBar's own children are exactly one `Input` (the
   filename) and, if filters were supplied, one `Select`.
 
-None of this touches `FileOpen`'s own default focus behaviour (still the
-directory listing) or the separate `EnhancedFileDialog` picker in
+None of this touches a plain `FileOpen`'s own default focus behaviour (still
+the directory listing) or the separate `EnhancedFileDialog` picker in
 `Widgets/enhanced_file_picker.py`, which composes its own, differently-`id`d
-Input/Select and is unaffected.
+Input/Select and is unaffected. (`FileOpen(offer_select_folder=True)` DOES
+focus the field now -- see section 8 below.)
 
 ### 7. The Filename Field Is Also the Path Field (task-32122, task-32229)
 
@@ -187,6 +188,34 @@ second field beside it:
   is unchanged.
 
 `SelectDirectory` is not a `BaseFileDialog` and none of this reaches it.
+
+### 8. Folder-Offering Open Dialogs Open on the Field (task-32540, task-32554)
+
+- **Initial focus** (task-32540): `FileOpen` overrides
+  `_focus_initial_widget` to focus the input bar's field when
+  `offer_select_folder=True`, exactly as `FileSave` does for its own reason
+  (section 6). Reproduced live at 235x52 before the change: Library ▸ Notes ▸
+  Add from files… ▸ Import once, then typing `/Users` -- every character went
+  into the directory listing's type-ahead and Enter opened `..`. A plain
+  file-only `FileOpen` (character import, skill folders, TTS model
+  directories) is deliberately untouched, since there Enter on a listing row
+  is the natural first keystroke. Both branches are pinned, the second as an
+  explicit negative control, in
+  `Tests/UI/test_library_notes_w4_import_keyboard.py`.
+- **A shape-based focus cue** (task-32540): the bar's buttons told a keyboard
+  user which one Enter would press by colour and a label underline only. The
+  rule that fixes it cannot live here -- the app's own
+  `components/_buttons.tcss` sets `Button:focus { outline: none }`, and
+  Textual ranks every CSS_PATH rule above any widget `DEFAULT_CSS` whatever
+  its specificity -- so `FileSystemPickerScreen Button:focus` lives in the
+  app bundle (`components/_dialogs.tcss`) and paints heavy left/right
+  outlines. Vendored code owns none of it; only this note.
+- **Breadcrumb collapse** (task-32554): `_update_breadcrumbs` rendered every
+  segment, so a 100+ character location ran off the dialog's right edge and
+  clipped exactly the crumbs that say where you are. It now shows root + `…`
+  + the last few (`_MAX_VISIBLE_BREADCRUMBS`, matching
+  `EnhancedFileDialog`'s own ceiling), each crumb keeping its absolute path
+  as its tooltip.
 
 ## Contributing Upstream
 

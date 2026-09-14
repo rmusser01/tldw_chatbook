@@ -41,7 +41,10 @@ between Edit and Manage, autosaving, resolving a conflict, or resizing does
 not close it again. The automatic close resets only when you close or clear
 the open Folder files file, switch between Folder files and Library notes,
 change the linked folder, clear the selected Library note, or leave Notes.
-Using compact **Back to navigator** does not reset it.
+Using compact **‹ Files** does not reset it. (Was "**Back to navigator**" —
+superseded by task-32553 below: the Session Git panel and the Folder-files
+work pane now use the same "‹ " cue as the Notes editor, naming where it
+goes.)
 
 ## Layout tour
 
@@ -102,7 +105,7 @@ Using compact **Back to navigator** does not reset it.
   Manage groups path details, file actions, Session Git, and Danger.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
-  from the row list, **Esc** or **Back to navigator** returns to the files.
+  from the row list, **Esc** or **‹ Files** returns to the files.
   In the file editor itself, **Esc** returns to the **Files** tree; a second
   **Esc** leaves Folder files.
   During commit or push, **Esc** follows the phase-specific safe action in the
@@ -626,3 +629,11 @@ splits across two rows there. Nothing can render it on one row at that width,
 which is why task-32552 AC#4 is qualified to lines the pane can hold; every
 such line in that note does render on one row, and the wider layouts show the
 embed whole.)*
+
+*Verified against fix/library-notes-w4-import-kbd — 2026-09-14 (task-32553, at
+235x52 and 60x24 on a scratch power profile): the Session Git panel's header
+control reads **‹ Files** (`wave4-caps/import-kbd/import-21-back-cue-files`),
+and the compact Folder-files work pane's return control reads **‹ Files** at
+60x24 (`import-25-files-60x24`) — both were "Back to navigator". The Notes
+editor keeps its own task-32139 wording ("‹ Notes" wide, "‹ Back to list"
+compact), so the grammar is now one cue plus the destination everywhere.)*

@@ -263,7 +263,7 @@ async def test_completed_import_receipt_has_focusable_back_action_at_60_columns(
         await pilot.pause()
 
         assert app.focused is back
-        assert str(back.label) == "Back to Notes"
+        assert str(back.label) == "‹ Notes"
         assert back.disabled is False
 
 

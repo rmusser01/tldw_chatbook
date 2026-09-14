@@ -227,7 +227,20 @@ bare-filename branches from drifting to different limits independently).
 """
 
 
-def _bounded_source_name(name: str) -> str:
+#: Cells the scrolling body keeps for itself around the summary line (its
+#: own padding plus room for a scrollbar), subtracted when the canvas's width
+#: stands in for the unmeasured Static's.
+_IMPORT_BODY_CHROME_CELLS = 2
+
+_FOLDER_SELECTED_PREFIX = "1 folder selected: "
+"""What precedes a folder path on the confirmation line.
+
+Its width is what the path has to share the row with, so the fit below
+subtracts exactly this rather than a hand-kept number.
+"""
+
+
+def _bounded_source_name(name: str, budget: int = _SOURCE_NAME_BUDGET) -> str:
     """Keep one selected source name useful without dominating compact layouts.
 
     A folder's absolute path (contains "/" or "\\\\" -- a folder selection
@@ -241,10 +254,36 @@ def _bounded_source_name(name: str) -> str:
     minor). Head-truncate those as before.
     """
     if "/" in name or "\\" in name:
-        return elide_path_middle(name, budget=_SOURCE_NAME_BUDGET)
-    if len(name) <= _SOURCE_NAME_BUDGET:
+        return elide_path_middle(name, budget=budget)
+    if len(name) <= budget:
         return name
-    return f"{name[: _SOURCE_NAME_BUDGET - 1]}…"
+    return f"{name[: budget - 1]}…"
+
+
+def _selection_summary(
+    state: LibraryNoteImportSnapshot, budget: int = _SOURCE_NAME_BUDGET
+) -> str:
+    """The one line that states which sources this import will read.
+
+    ``budget`` is the width the source name may take. The default is the
+    compact floor; the mounted canvas re-renders this against the pane it
+    actually got (``_fit_source_summary``), because a 190-column pane had
+    room for the whole path and was still showing a 48-character elision
+    (task-32554 AC#2).
+    """
+    count = len(state.selected_names)
+    if not count:
+        return "No source selected."
+    if state.selection_kind == "folder":
+        name = _bounded_source_name(state.selected_names[0], budget=budget)
+        return f"{_FOLDER_SELECTED_PREFIX}{name}"
+    noun = "file" if count == 1 else "files"
+    visible_names = tuple(
+        _bounded_source_name(name) for name in state.selected_names[:3]
+    )
+    remainder = count - len(visible_names)
+    more = f"; and {remainder} more" if remainder else ""
+    return f"{count} {noun} selected: {', '.join(visible_names)}{more}"
 
 
 class _ImportBody(VerticalScroll):
@@ -556,10 +595,47 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     def on_mount(self) -> None:
         self._tighten_run_disclosures()
         self.call_after_refresh(self._update_overflow_hint)
+        self.call_after_refresh(self._fit_source_summary)
 
     def _after_recompose(self) -> None:
         self._tighten_run_disclosures()
         self.call_after_refresh(self._update_overflow_hint)
+        self.call_after_refresh(self._fit_source_summary)
+
+    def on_resize(self) -> None:
+        """A wider (or narrower) pane changes how much of the path fits."""
+        self.call_after_refresh(self._fit_source_summary)
+
+    def _fit_source_summary(self) -> None:
+        """Re-state the selected folder against the width the pane actually got.
+
+        task-32554 AC#2: the confirmation middle-elided an 89-character path
+        to 48 characters inside a 190-column pane -- the elision hid
+        ``A/fresh/``, the very segments that told two same-named vaults
+        apart. Compose cannot know the width (the canvas is measured after
+        layout), so the line is composed at the compact floor and widened
+        here, once the pane has a measured width.
+        """
+        state = self.snapshot
+        if state.selection_kind != "folder" or not state.selected_names:
+            return
+        try:
+            summary = self.query_one("#note-import-source-summary", Static)
+        except Exception:
+            return
+        # The Static itself is freshly mounted on every recompose and is
+        # often still unmeasured when this runs, while the CANVAS keeps its
+        # width across child recomposes -- so it is the reliable ruler, less
+        # a couple of cells for the scrolling body's own chrome. Measured
+        # live: reading the Static alone left the line at the 48-character
+        # floor until the terminal was resized.
+        width = summary.content_size.width or max(
+            self.content_size.width - _IMPORT_BODY_CHROME_CELLS, 0
+        )
+        if width <= 0:
+            return
+        budget = max(_SOURCE_NAME_BUDGET, width - len(_FOLDER_SELECTED_PREFIX))
+        summary.update(_selection_summary(state, budget=budget))
 
     def _tighten_run_disclosures(self) -> None:
         """Keep a collapsed run's title one line, as the pager budgeted for."""
@@ -679,22 +755,8 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     def _compose_selection(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         count = len(state.selected_names)
-        if not count:
-            source_copy = "No source selected."
-        elif state.selection_kind == "folder":
-            source_copy = (
-                f"1 folder selected: {_bounded_source_name(state.selected_names[0])}"
-            )
-        else:
-            noun = "file" if count == 1 else "files"
-            visible_names = tuple(
-                _bounded_source_name(name) for name in state.selected_names[:3]
-            )
-            remainder = count - len(visible_names)
-            more = f"; and {remainder} more" if remainder else ""
-            source_copy = f"{count} {noun} selected: {', '.join(visible_names)}{more}"
         yield Static(
-            source_copy,
+            _selection_summary(state),
             id="note-import-source-summary",
             markup=False,
         )

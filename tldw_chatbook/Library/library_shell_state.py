@@ -242,6 +242,31 @@ def library_disabled_action_label(
     return f"{LIBRARY_ACTION_LABEL_PAD}{label}" if align else label
 
 
+#: The one back-cue glyph every Library surface leads with (task-32553).
+LIBRARY_BACK_CUE_MARKER = "‹"
+
+
+def back_cue_label(destination: str) -> str:
+    """Return the one "go back" wording: the cue, then where it goes.
+
+    task-32553 (critique #3, assessor A, everyone): the same action had
+    three names on three surfaces -- "‹ Notes" in the note editor, "Back to
+    Notes" on the import stepper and the Add-from-files chooser, and "Back
+    to navigator" on the Session Git panel and the Folder-files work pane.
+    task-32139 had already settled the grammar inside the editor; this is
+    the same grammar for every other surface, so the cue is recognisable by
+    shape and the word after it always names the destination.
+
+    Args:
+        destination: Where the control returns to, as the reader would name
+            it -- "Notes", "Files", or the editor's compact "Back to list".
+
+    Returns:
+        ``"‹ <destination>"``.
+    """
+    return f"{LIBRARY_BACK_CUE_MARKER} {destination}"
+
+
 # task-4023 AC#5: "▸" carried three meanings on one screen -- selected-row
 # prefix ("▸ Media"), collapsed-disclosure suffix ("Details ▸"), AND the
 # silent value-cycler suffix ("type: All ▸"), where it looked like a

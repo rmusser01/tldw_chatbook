@@ -1870,6 +1870,7 @@ class LibraryNotesController:
             "lasting-folder-choose": "#notes-sync-folder-choose",
             "lasting-check": "#notes-sync-check",
             "lasting-roots-back": "#notes-sync-roots-back",
+            "import-body": "#note-import-body",
             "import-add-source": "#note-import-add-source",
             "import-destination": "#note-import-destination",
             "import-check": "#note-import-check",
@@ -2021,10 +2022,23 @@ class LibraryNotesController:
                 NoteImportPhase.IMPORTING: "import-cancel",
                 NoteImportPhase.RECEIPT: "import-retry",
             }[phase]
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role=role)
-            ) or self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role="import-back")
+            return (
+                self._library_notes_role_target(
+                    dataclasses.replace(identity, semantic_role=role)
+                )
+                # task-32540 AC#3: the SELECT phase's role above is "Choose a
+                # file or folder", which the FOLDER branch of
+                # ``_compose_selection`` never composes -- so after "Select
+                # folder" the chain fell all the way through to "‹ Notes",
+                # several Tab stops PAST the three actions the reader had
+                # just been given. The stepper's own scroll owner exists in
+                # every phase and sits immediately before them.
+                or self._library_notes_role_target(
+                    dataclasses.replace(identity, semantic_role="import-body")
+                )
+                or self._library_notes_role_target(
+                    dataclasses.replace(identity, semantic_role="import-back")
+                )
             )
         return None
     def _restore_library_notes_focus_identity(
