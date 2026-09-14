@@ -21221,6 +21221,10 @@ ResearchNoteSwitchRecoveryModal {
  * The user loop: reproduce a problem -> come here -> copy the relevant
  * lines -> share them for investigation. Nothing may occlude log content.
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 LogsWindow {
     layout: vertical;
@@ -21235,16 +21239,16 @@ LogsWindow {
 
 /* Filter bar: level chips + text filter + pause toggle, single row. */
 #logs-filter-bar {
-    height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 #logs-filter-bar Button {
     width: auto;
-    min-width: 0;
-    height: 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
     border: none;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface;
     color: $text-muted;
 }
@@ -21260,10 +21264,10 @@ LogsWindow {
 }
 
 #logs-filter-text {
-    width: 1fr;
-    height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
     border: none;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface-darken-1;
 }
 
@@ -21274,32 +21278,32 @@ LogsWindow {
 /* The log itself takes all remaining space; one entry per row, long
  * lines scroll horizontally instead of wrapping mid-word. */
 #app-log-display {
-    height: 1fr;
+    height: $ds-height-fill;
     border: none;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 #logs-empty-state {
     color: $text-muted;
-    padding: 2;
+    padding: $ds-space-2;
     height: auto;
 }
 
 #logs-status-line {
-    height: 1;
+    height: $ds-size-1;
     color: $text-muted;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Action bar pinned at the bottom: the share actions, always visible,
  * never overlapping log content. */
 #logs-action-bar {
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 #logs-action-bar Button {
-    margin-right: 1;
+    margin-right: $ds-space-1;
 }
 
 /* ===== MODULE: features/_writing.tcss ===== */
