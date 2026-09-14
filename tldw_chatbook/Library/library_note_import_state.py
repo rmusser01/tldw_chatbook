@@ -930,7 +930,16 @@ def project_library_note_import_snapshot(
     elif state.phase is NoteImportPhase.RECEIPT:
         status = _receipt_status(receipt)
     elif state.selected_count:
-        status = f"{state.selected_count} {'folder' if state.selection_is_folder else 'file' + ('s' if state.selected_count != 1 else '')} selected."
+        # task-32554 AC#2: this used to restate the selection -- "1 folder
+        # selected." directly above the pane's own "1 folder selected:
+        # /Users/…/vault", the same fact twice with the useful half only in
+        # the second. The status line says what to do next instead; the
+        # summary below it owns the selection.
+        status = (
+            "Choose a Notes destination, then check the selection."
+            if state.requires_destination and not state.destination_segments
+            else "Check the selection to see what will be imported."
+        )
     else:
         status = "Choose one or more files, or one folder."
     selection_kind = (
@@ -1088,8 +1097,15 @@ def _membership_summary(item: ImportPreviewItem) -> str:
 
 
 def _effect_summary(item: ImportPreviewItem) -> str:
+    """One clause saying what this source does to note content.
+
+    task-32554 AC#1: every clause used to open "Content: ". The row already
+    reads ``<path> · <this> · <folder placement>``, so the column's subject
+    is the one thing it never needed to name -- 9 columns spent on every
+    row of a 65-row review, on the rows whose tail was being clipped.
+    """
     if item.selected_action is ImportAction.SKIP:
-        return "Content: no change."
+        return "No change."
     if item.selected_action is ImportAction.CREATE_NEW:
         count = len(item.payloads)
         titles = ", ".join(_bounded_title(payload.title) for payload in item.payloads[:2])
@@ -1102,7 +1118,7 @@ def _effect_summary(item: ImportPreviewItem) -> str:
         )
         links = sum(len(payload.wikilinks) for payload in item.payloads)
         parts = [
-            f"Content: create {count} new {'note' if count == 1 else 'notes'}: {titles}"
+            f"Create {count} new {'note' if count == 1 else 'notes'}: {titles}"
         ]
         if keywords:
             shown = ", ".join(keywords[:4])
@@ -1127,9 +1143,9 @@ def _effect_summary(item: ImportPreviewItem) -> str:
             parts.append(f"not imported: {shown}")
         return f"{' · '.join(parts)}."
     return (
-        "Content: replace existing content."
+        "Replace existing content."
         if item.replace_content
-        else "Content: keep existing content."
+        else "Keep existing content."
     )
 
 
