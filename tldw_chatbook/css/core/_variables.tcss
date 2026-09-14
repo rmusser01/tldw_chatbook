@@ -265,8 +265,10 @@ $ds-size-104: 104;
 $ds-size-110: 110;
 $ds-size-120: 120;
 $ds-percent-34: 34%;
-/* task 11 (ADR-161 §3.10): 40% joins the scale -- cross-sheet recurring
-   cap (widgets/conversations/lab/media per the spread census). */
+/* task 11 (ADR-161 §3.10): 30%/40% join the scale -- cross-sheet recurring
+   fills/caps (conversations/sidebars/research run-list; widgets/
+   conversations/lab/media per the spread census). */
+$ds-percent-30: 30%;
 $ds-percent-40: 40%;
 $ds-percent-42: 42%;
 $ds-percent-75: 75%;
@@ -304,6 +306,9 @@ $ds-watchlists-artifacts-detail-share: 8fr;
 $ds-agentic-mcp-table-cap: 70%;
 $ds-agentic-prompt-vars-pane: 27;
 $ds-agentic-mcp-compact-canvas-share: 7fr;
+/* task 11 (ADR-161 §3.10): the Research Workspace chat pane's minimum
+   columns in its two fr-sharing layout modes (single consumer). */
+$ds-research-chat-pane-floor: 58;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
