@@ -509,6 +509,11 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             key = (row.category, "" if row.category == "skipped" else row.effect)
             groups.setdefault(key, []).append((index, row))
         for (category, effect), members in groups.items():
+            # A plan orders its actions by binding id -- a digest -- so a
+            # vault's forty-five Archive files arrive shuffled among the other
+            # folders and no run is uniform. Path order both collapses them
+            # and is the order the user reads a folder in.
+            members.sort(key=lambda member: (member[1].relative_path, member[0]))
             yield Static(
                 group_heading(
                     "Skipped" if category == "skipped" else effect,

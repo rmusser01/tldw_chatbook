@@ -11,6 +11,7 @@ the sync setup form.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -103,14 +104,24 @@ async def test_review_row_reads_path_effect_and_where() -> None:
 
 
 async def test_sixty_creates_collapse_to_one_summary_row_with_a_disclosure() -> None:
-    """AC#2: a uniform run collapses to one row, exactly as Import once does."""
-    rows = tuple(_safe_row(index) for index in range(1, 61))
-    app = _Host(_review_snapshot(rows, safe_count=60))
+    """AC#2: a uniform run collapses to one row, exactly as Import once does.
+
+    The rows arrive in the plan's own order -- by binding id, a digest -- so
+    the vault's Archive files are shuffled among its other folders. That is
+    what the live review showed: sixty named rows and no run at all.
+    """
+    other = ("People", "Projects", "Reading")
+    rows = tuple(_safe_row(index) for index in range(1, 61)) + tuple(
+        _safe_row(100 + index, folder=folder) for index, folder in enumerate(other)
+    )
+    shuffled = tuple(sorted(rows, key=lambda row: hashlib.sha256(row.item_id.encode()).hexdigest()))
+    assert [row.relative_path for row in shuffled] != [row.relative_path for row in rows]
+    app = _Host(_review_snapshot(shuffled, safe_count=63))
 
     async with app.run_test(size=WIDE) as pilot:
         await pilot.pause()
         heading = app.query_one(".notes-sync-review-group-heading", Static)
-        assert str(heading.renderable) == "Create a Library note (60)"
+        assert str(heading.renderable) == "Create a Library note (63)"
         runs = list(app.query(".notes-sync-run").results(Collapsible))
         assert len(runs) == 1
         title = str(runs[0].title)
