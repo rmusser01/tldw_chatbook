@@ -7,6 +7,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Never, Protocol
 
+from loguru import logger
+
 from tldw_chatbook.Notes.note_import_discovery import OBSIDIAN_MARKER_DIRECTORY
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
@@ -415,13 +417,26 @@ class LibraryNotesSyncController:
         conflict_labels = await self._load_conflict_labels(plan)
         try:
             binding_labels = await self._load_binding_labels(plan)
-        except Exception:
+        except Exception as error:
+            # Keeping the review usable is right; losing the reason is not.
+            # Unnamed rows ARE the defect task-32535 removed, so a recurrence
+            # has to be findable. Metadata only: no message, no path.
+            logger.debug(
+                "lasting sync binding labels unavailable error_type={}",
+                type(error).__name__,
+            )
             binding_labels = {}
         return conflict_labels, binding_labels
 
     async def _load_binding_labels(
         self, plan: ReconciliationPlan
     ) -> dict[str, RuntimeBindingLabel]:
+        # ponytail: this costs a SECOND full folder walk per projection --
+        # `binding_labels` re-observes the root to prove the plan still holds,
+        # as `conflict_labels` does, on top of the check's own walk. Acceptable
+        # while a root is a local folder the discovery pass caches; if a wide
+        # root makes the check feel slow, hand the labels out of the check's
+        # own observation instead of re-taking one.
         binding_ids = tuple(
             sorted(
                 {

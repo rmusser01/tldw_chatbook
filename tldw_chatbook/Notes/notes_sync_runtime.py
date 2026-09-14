@@ -11,7 +11,7 @@ from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol, cast
 from uuid import uuid4
@@ -25,10 +25,7 @@ from tldw_chatbook.Notes.note_import_parsers import (
     _frontmatter_title,
     _split_frontmatter,
 )
-from tldw_chatbook.Notes.note_import_plan_models import (
-    MAX_IMPORT_KEYWORDS_PER_NOTE,
-    ImportBounds,
-)
+from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
     NotesSyncBindingRecord,
@@ -327,7 +324,7 @@ class RuntimeBindingLabel:
         return "RuntimeBindingLabel(<private>)"
 
 
-def _destination_folder(root_name: str, relative_path: str) -> str:
+def _destination_folder(root_name: str) -> str:
     """Return the Library folder this file's note will actually land in.
 
     task-32535: the root folder, whatever the file's own folder chain says.
@@ -339,7 +336,6 @@ def _destination_folder(root_name: str, relative_path: str) -> str:
     path.
     """
 
-    del relative_path
     return root_name
 
 
@@ -348,13 +344,16 @@ _FRONTMATTER_BOUNDS = ImportBounds(
     max_file_bytes=1,
     max_total_bytes=1,
     max_depth=1,
-    max_keywords_per_note=MAX_IMPORT_KEYWORDS_PER_NOTE,
 )
 """Import once's own keyword cap for the frontmatter lift (task-32535).
 
-Only ``max_keywords_per_note`` is read here; the walk limits belong to the
-discovery pass and are set to their minimum so they cannot be mistaken for
-one.
+``max_keywords_per_note`` is left at its default because that IS Import once's
+cap -- the Library screen constructs `ImportBounds` without overriding it
+(`library_screen.py:3720`), so a file with 150 tags must behave the same on
+both paths. (It briefly read `MAX_IMPORT_KEYWORDS_PER_NOTE`, ten times the
+default, while claiming parity.) Only that field is read here; the walk limits
+belong to the discovery pass and are set to their minimum so they cannot be
+mistaken for one.
 """
 
 
@@ -1278,7 +1277,7 @@ class _ProductionRuntimeAdapter:
                     binding_id,
                     relative_path,
                     _bounded_label(title),
-                    _destination_folder(root_name, relative_path),
+                    _destination_folder(root_name),
                 )
             )
         return tuple(labels)

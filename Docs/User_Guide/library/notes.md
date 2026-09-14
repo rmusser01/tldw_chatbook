@@ -816,7 +816,10 @@ vs Keep a folder synced on the same folder" below for the one thing the two
 paths do differently with it. There, turning the toggle **off** lasts only
 until you quit Chatbook: the choice is not stored, so a vault is offered the
 toggle again, on, on the next start, and a later check of that root skips the
-three folders again. Nothing already synced changes when it comes back on —
+three folders again. The toggle is offered while you are setting the folder up
+and nowhere else — once the root is active, **Manage sync folders** has no
+switch for it — so if you want those folders synced, import them with Import
+once instead. Nothing already synced changes when it comes back on —
 the pass only ever leaves files the sync has never taken alone.
 
 Turn the toggle off to import the vault exactly as any other folder — every

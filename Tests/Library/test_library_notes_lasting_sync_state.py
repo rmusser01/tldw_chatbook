@@ -666,7 +666,7 @@ def test_review_rows_carry_path_effect_and_destination() -> None:
     )
     labels = {
         "bind-1": RuntimeBindingLabel(
-            "bind-1", "Daily/2026-09-06.md", "2026-09-06", "Vault / Daily"
+            "bind-1", "Daily/2026-09-06.md", "2026-09-06", "Vault"
         ),
         "bind-2": RuntimeBindingLabel("bind-2", "README.md", "README", "Vault"),
     }
@@ -674,13 +674,16 @@ def test_review_rows_carry_path_effect_and_destination() -> None:
     review = build_reconciliation_review(plan, labels=labels)
 
     first, second = review.rows
+    # "Vault", not "Vault / Daily": the only destination the product ships is
+    # the root folder (task-32535 AC#4 as amended), and a pin showing a nested
+    # one reads as evidence that nested destinations exist.
     assert (first.relative_path, first.effect, first.destination) == (
         "Daily/2026-09-06.md",
         "Create a Library note",
-        "Vault / Daily",
+        "Vault",
     )
     assert " · ".join((first.relative_path, first.effect, first.destination)) == (
-        "Daily/2026-09-06.md · Create a Library note · Vault / Daily"
+        "Daily/2026-09-06.md · Create a Library note · Vault"
     )
     assert (second.relative_path, second.destination) == ("README.md", "Vault")
     # A row without a label degrades to the effect alone, never to a wrong path.

@@ -3338,7 +3338,6 @@ class _TreeFolders(_Folders):
         name: str,
         parent_id: str | None,
         folder_id: str | None = None,
-        sync_owned: bool = False,
     ):
         from tldw_chatbook.Notes.note_folder_models import NoteFolder
 

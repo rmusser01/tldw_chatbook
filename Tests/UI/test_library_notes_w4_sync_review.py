@@ -240,7 +240,7 @@ class _Importer:
         raise AssertionError("setup must not enter import")
 
 
-async def test_unnamed_rows_never_cost_the_user_the_review() -> None:
+async def test_unnamed_rows_never_cost_the_user_the_review(tmp_path: Path) -> None:
     """A name is decoration: a refused label projection must not eat the review.
 
     Regression pin: naming rows made `binding_labels` part of loading a
@@ -279,7 +279,7 @@ async def test_unnamed_rows_never_cost_the_user_the_review() -> None:
     )
     controller.choose_relationship("keep_synced")
     controller.set_setup("display_name", "Vault")
-    controller.set_setup("folder", str(Path.home()))
+    controller.set_setup("folder", str(tmp_path / "not-a-vault"))
     await controller.check_setup()
 
     review = controller.snapshot.review

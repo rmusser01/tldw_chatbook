@@ -19,6 +19,8 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     NotesSyncConflictChoice,
     eligible_conflict_reason,
 )
+from tldw_chatbook.Notes.note_import_discovery import _MESSAGES as _DISCOVERY_MESSAGES
+from tldw_chatbook.Notes.note_import_parsers import _MESSAGES as _PARSE_MESSAGES
 from tldw_chatbook.Notes.notes_sync_models import (
     NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
     NotesSyncActionKind,
@@ -37,13 +39,25 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
 if TYPE_CHECKING:
     from tldw_chatbook.Notes.notes_sync_runtime import RuntimeBindingLabel
 
-#: task-32535: the Import once reason copy, shortened to the row grammar.
+def _row_effect(message: str) -> str:
+    """Return one Import once reason as a review row's effect.
+
+    A row is `path · effect · where`, so it takes the reason's first sentence
+    and leaves the advice that follows it ("Restore these notes in Obsidian
+    to import them.") to Import once's roomier receipt.
+    """
+
+    return message.split(". ")[0].rstrip(".")
+
+
+#: task-32535: DERIVED from Import once's own copy, not re-typed beside it —
+#: the guide now promises both paths skip the same files for the same reasons,
+#: so the two surfaces must not be able to drift.
 _ITEM_SKIP_EFFECTS = {
-    "obsidian_config": "Obsidian configuration — skipped",
-    "obsidian_trash": "Obsidian trash — skipped",
-    "obsidian_template": "Obsidian template — skipped",
-    "empty_file": "Empty file — nothing to import",
-}
+    reason: _row_effect(message)
+    for reason, message in _DISCOVERY_MESSAGES.items()
+    if reason.startswith("obsidian_")
+} | {"empty_file": _row_effect(_PARSE_MESSAGES["empty_source"])}
 _DESTINATION_MAX_CHARS = 1024
 
 LastingSyncReviewSource = Literal["setup", "root", "migration"]

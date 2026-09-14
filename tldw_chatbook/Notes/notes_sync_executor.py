@@ -11,7 +11,7 @@ import time
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Protocol, TypeVar, cast
 
 from tldw_chatbook.Notes.notes_device_state_store import (

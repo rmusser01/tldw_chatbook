@@ -601,12 +601,6 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 classes="notes-sync-conflict-title",
                 markup=False,
             )
-            yield Static(
-                row.conflict_relative_path,
-                id=f"notes-sync-conflict-path-{index}",
-                classes="notes-sync-conflict-path",
-                markup=False,
-            )
             yield ReviewActionButton(
                 "View comparison",
                 review_root_id=self.snapshot.review.root_id,
