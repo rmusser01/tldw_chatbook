@@ -1,0 +1,25 @@
+{
+  "source_sha256": {
+    "Tests/CI/test_task2062_2_gguf_source_evidence.py": "daa75e510fd231e1dba7b20c21b3593fca12574af423ed25890a67ca3fbd812d"
+  },
+  "root_tests": {
+    "passed": 12,
+    "seconds": 0.75
+  },
+  "independent_tests": {
+    "passed": 5,
+    "seconds": 0.7,
+    "invalid_mutations_rejected": 4
+  },
+  "ruff_findings": 0,
+  "bandit": {
+    "baseline": 29,
+    "current": 34,
+    "new_nonassert": 0
+  },
+  "workflow_product_change": false,
+  "evidence": {
+    "workflow-diagnostic-contract-review-20260914.md": "86543e558b589aa5a5ff1bd6859a637b8ddcbcdf781eecc653975dbdd85c915f",
+    "workflow-diagnostic-contract-tests-20260914.xml": "6942b5d9746fdf2a434c076c088cea5b77a730ddea2fc1889d63a047d633b397"
+  }
+}

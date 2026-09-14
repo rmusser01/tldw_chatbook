@@ -61,6 +61,7 @@ EXPECTED_STEP_NAMES = (
     "Install bounded test dependencies",
     "Run exact GGUF source evidence nodes",
     "Run each full-app GGUF case with its profile selected before imports",
+    "Diagnose Windows backup startup against the dev source baseline",
 )
 
 
@@ -126,7 +127,9 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
     steps = job.get("steps")
     assert isinstance(steps, list)
     assert tuple(step.get("name") for step in steps) == EXPECTED_STEP_NAMES
-    assert all(set(step) <= {"name", "uses", "with", "run"} for step in steps)
+    # The five evidence steps retain their strict failure and execution rules.
+    assert all(set(step) <= {"name", "uses", "with", "run"} for step in steps[:-1])
+    assert set(steps[-1]) == {"name", "if", "continue-on-error", "run"}
     assert [step.get("uses") for step in steps if "uses" in step] == [
         "actions/checkout@v4",
         "actions/setup-python@v5",
@@ -137,8 +140,8 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
     assert steps[1].get("with") == {"python-version": "3.12"}
 
     lowered = text.casefold()
+    assert lowered.count("continue-on-error") == 1
     for forbidden in (
-        "continue-on-error",
         "actions/cache",
         "upload-artifact",
         "download-artifact",
@@ -153,6 +156,27 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
         "ollama serve",
     ):
         assert forbidden not in lowered
+
+
+
+def test_windows_failure_diagnostic_keeps_exact_read_only_commands() -> None:
+    _text, workflow = _workflow()
+    diagnostic = _named_step(_only_job(workflow), EXPECTED_STEP_NAMES[-1])
+    assert diagnostic.get("if") == "failure() && runner.os == 'Windows'"
+    assert diagnostic.get("continue-on-error") is True
+    baseline = "4631b60f8dd9623fc55bf16f4a37e29fcb1240c7"
+    assert _command_tokens(str(diagnostic.get("run", ""))) == (
+        "git", "fetch", "--depth=1", "origin", baseline,
+        "git", "worktree", "add", "--detach", "$RUNNER_TEMP/backup-startup-dev", baseline,
+        "diagnostic=$GITHUB_WORKSPACE/Tests/Backup_Recovery/startup_timing_diagnostic.py",
+        f"node={REQUIRED_UI_NODES[0]}",
+        "failed=0",
+        "python", "$diagnostic", "--source", "$RUNNER_TEMP/backup-startup-dev",
+        "--node", "$node", "--label", "dev", "||", "failed=1",
+        "python", "$diagnostic", "--source", "$GITHUB_WORKSPACE",
+        "--node", "$node", "--label", "candidate", "||", "failed=1",
+        "exit", "$failed",
+    )
 
 
 def test_workflow_installs_only_editable_package_and_bounded_test_dependencies() -> (
