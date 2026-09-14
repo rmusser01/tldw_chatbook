@@ -4870,11 +4870,15 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
  * Shared destination workbench frame, command, mode, recovery, pane,
  * state, and density contracts.
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 .workbench-frame {
-    width: 100%;
-    height: 100%;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
     layout: vertical;
     overflow: hidden;
     background: $ds-surface-panel;
@@ -4883,23 +4887,23 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 
 .workbench-header {
     height: auto;
-    min-height: 2;
-    padding: 0 1;
-    margin: 0;
+    min-height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     color: $ds-text-primary;
 }
 
 .workbench-header-title {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     text-style: bold;
 }
 
 .workbench-header-subtitle {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
 }
 
@@ -4909,8 +4913,8 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 
 .workbench-header-status {
     width: auto;
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 /* task-523: red cue when the Roleplay Console handoff provider is unready.
@@ -4940,14 +4944,14 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 #personas-conversation-back,
 #personas-conversation-open-library,
 #personas-conversation-back-source {
-    height: 3;
-    min-height: 3;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
 }
 
 #personas-conversations-search {
-    height: 1;
-    min-height: 1;
-    margin: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
     border: none;
 }
 
@@ -4960,7 +4964,7 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 
 #personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-work-area {
     border: none;
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 #personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-conversation-navigation-actions {
@@ -4968,16 +4972,16 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 }
 
 #personas-workbench.personas-workbench-narrow.personas-transcript-active .personas-conversation-navigation-action {
-    width: 100%;
-    padding: 0;
+    width: $ds-width-full;
+    padding: $ds-space-0;
 }
 
 .workbench-command-strip,
 .workbench-mode-strip {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
     layout: horizontal;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -4986,13 +4990,13 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 .workbench-action,
 .workbench-mode {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin: 0 1 0 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 .workbench-action {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .workbench-action.is-primary {
@@ -5021,7 +5025,7 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 }
 
 .workbench-mode {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     color: $ds-text-muted;
 }
 
@@ -5034,9 +5038,9 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 
 .workbench-recovery-callout {
     height: auto;
-    min-height: 0;
-    padding: 0 1;
-    margin: 0;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
     border: solid $ds-status-warning;
     background: $ds-status-warning 10%;
     color: $ds-text-primary;
@@ -5047,50 +5051,50 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 }
 
 .workbench-recovery-title {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     text-style: bold;
 }
 
 .workbench-recovery-body {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $ds-text-primary;
 }
 
 .workbench-recovery-action {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin: 1 0 0 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 .workbench-pane-region {
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     layout: horizontal;
     overflow: hidden;
 }
 
 .workbench-pane {
-    width: 1fr;
-    height: 1fr;
-    min-width: 0;
-    min-height: 0;
-    padding: 0 1;
+    width: $ds-width-fill;
+    height: $ds-height-fill;
+    min-width: $ds-size-0;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
 }
 
 .workbench-pane.is-collapsed {
-    width: 3;
-    min-width: 3;
+    width: $ds-size-3;
+    min-width: $ds-size-3;
 }
 
 .workbench-pane-title,
 .workbench-pane-status {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 .workbench-pane-title {
@@ -5098,9 +5102,9 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 }
 
 .workbench-state-block {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     layout: horizontal;
     background: $ds-surface-raised;
     color: $ds-text-muted;
@@ -5109,9 +5113,9 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 .workbench-state-route,
 .workbench-state-density {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin: 0 1 0 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 .workbench-frame .status-ready {
@@ -5134,17 +5138,17 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 }
 
 .density-normal .workbench-header {
-    min-height: 2;
-    padding: 0 1;
+    min-height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .density-normal .workbench-pane {
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 .density-compact .workbench-header {
-    min-height: 1;
-    padding: 0 1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .density-compact .workbench-header-subtitle {
@@ -5152,7 +5156,7 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 }
 
 .density-compact .workbench-pane {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* task-31825: the auto height trigger, distinct from `.density-compact`
@@ -5170,8 +5174,8 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
    existing shape unchanged, same as it does against `.density-compact`
    today. */
 .shell-header-compact .workbench-header {
-    min-height: 1;
-    padding: 0 1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .shell-header-compact .workbench-header-subtitle {
@@ -5189,33 +5193,33 @@ WorkbenchHelpPanel {
 }
 
 #workbench-help-panel {
-    width: 76;
-    max-width: 95%;
+    width: $ds-size-76;
+    max-width: $ds-percent-95;
     height: auto;
-    max-height: 90%;
+    max-height: $ds-percent-90;
     border: round $ds-grid-line;
     background: $ds-surface-panel;
     color: $ds-text-primary;
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
 }
 
 #workbench-help-scroll {
-    height: 1fr;
-    min-height: 3;
+    height: $ds-height-fill;
+    min-height: $ds-size-3;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-size: 1 1;
 }
 
 #workbench-help-body {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 #workbench-help-close {
     width: auto;
     height: auto;
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 /* ===== MODULE: components/_widgets.tcss ===== */
