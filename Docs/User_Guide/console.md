@@ -738,3 +738,16 @@ right rails rather than by text styling
 `10b-console-card-100x30`). They were `compact` Buttons before, which Textual
 renders with `border: none !important`, so all three read as plain text lines
 two rows apart.*
+
+*Not verified live — task-32533, 2026-09-14, fix/library-notes-w4-crash.* The
+quick **Model** popover's provider picker (**Alt+M**) can no longer be handed a
+provider it does not list: an empty or unrecognised provider opens the picker
+blank instead of raising `InvalidSelectValueError`, and the same guard now
+covers the later re-sync that **Custom ID** plus a keystroke triggers
+(`Widgets/select_values.py`, pinned by
+`Tests/UI/test_console_model_popover_no_provider.py`). This carries no "Verified
+against" stamp on purpose: no profile that can be driven live reaches the broken
+state. With no provider configured, **Alt+M** is refused by the setup gate
+("Typing is locked until setup finishes — press Enter to continue setup"); with
+one configured, the draft always names a provider the picker lists. The evidence
+is the three headless pins, not a capture.

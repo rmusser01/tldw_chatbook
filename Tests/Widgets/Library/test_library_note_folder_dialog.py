@@ -46,6 +46,51 @@ async def test_target_dialog_includes_root_and_bounded_folder_choices():
         assert len(select._options) == 3
 
 
+@pytest.mark.asyncio
+async def test_target_dialog_without_root_mounts_with_a_blank_selection():
+    """TASK-32533: the P0 site. Add note to folder / Move note open this dialog
+    with ``include_root=False``; its blank value was ``Select.BLANK``, which is
+    not a Select attribute at all and resolves to ``Widget.BLANK`` (False) --
+    an illegal value that raised InvalidSelectValueError at mount and, before
+    this task, exited the whole app."""
+    app = ConsolidatedCSSApp()
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            LibraryNoteFolderTargetDialog(
+                title="Add note to folder",
+                folders=(("Personal", "personal"), ("Personal / Ideas", "ideas")),
+            )
+        )
+        await pilot.pause()
+        assert app._exception is None
+        select = app.screen.query_one("#library-note-folder-target", Select)
+        assert select.value is Select.NULL
+        # Both folders, plus the blank prompt row `allow_blank` prepends.
+        assert [value for _, value in select._options] == [
+            Select.NULL,
+            "personal",
+            "ideas",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_target_dialog_choose_with_nothing_selected_stays_open():
+    """Choose with no folder picked must not dismiss with a bogus folder id."""
+    app = ConsolidatedCSSApp()
+    results: list[str | None] = []
+    modal = LibraryNoteFolderTargetDialog(
+        title="Add note to folder",
+        folders=(("Personal", "personal"),),
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        await pilot.click("#library-note-folder-target-confirm")
+        await pilot.pause()
+        assert app.screen is modal
+        assert results == []
+
+
 def _note_folder_modal(kind: str):
     return (
         LibraryNoteFolderNameDialog(title="Rename folder", initial_name="Ideas")

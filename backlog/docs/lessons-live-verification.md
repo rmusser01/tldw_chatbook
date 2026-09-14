@@ -2884,3 +2884,44 @@ way when you need it: `tmux capture-pane -p -S -200` from the pane *before*
 relaunching, or start the app under `script`/a wrapper that keeps stderr a tty.
 Verify the first capture actually shows the nav bar before driving anything —
 a blank capture after 25s is this, not a slow start.
+
+## A surviving app is no longer evidence of no crash (task-32533, 2026-09-14)
+
+**What happened.** task-32533 stopped an unhandled widget-handler exception from
+exiting the app: the screen stays and a toast names the site. That is the right
+product behaviour and it silently retires the review signal every live walk had
+relied on — "the app is still up, so nothing crashed". It was already misleading
+during this very task: at 12:42:49 the Notes folder dialog raised
+`InvalidSelectValueError` on a fresh profile, the app kept running and kept
+logging for five more minutes, and the only trace was one line in
+`tldw_cli_app.log`. Whoever was driving would have walked straight past it.
+Worse, the toast is mounted into the current screen's `ToastRack` and repainted
+through that screen — when the raising pump *is* the screen, the notification
+may never appear at all, so the capture can look completely clean.
+
+**What to do.** After every live walk, before writing the verdict:
+
+```
+grep -nE "unhandled_exception|app_stopping" "$PROFILE/data/<users_name>/tldw_cli_app.log"
+```
+
+Zero new lines is the pass, not a live app. Cite the grep in the report the way
+captures are cited. A surviving `unhandled_exception` line now carries
+`raise_*`/`site_*` and `widget_type`/`widget_id`, so it names the site in one
+read — but only if someone looks.
+
+**Which frames mean "a pump's own handler raised".** The keep-alive that creates
+this blind spot is deliberately narrow, and getting the frame list right took
+reading `textual/message_pump.py` rather than guessing: `on_idle` handlers are
+invoked inline in `_process_messages_loop` with no frame of their own, and
+`_pre_process` mount failures — the P0's own path, a `Select` that dies while
+mounting — carry `_dispatch_message` *without* `_process_messages_loop`. So all
+three of `_dispatch_message`, `_flush_next_callbacks` and
+`_process_messages_loop` are needed and none is redundant; matching only
+`_dispatch_message` (the first version) was an accident of which path the P0
+happened to hit, and it silently left `call_after_refresh` and `on_idle`
+failures exiting the app. The App's own pump is excluded (`pump is not self`):
+skipping `super()` there breaks the *application* loop with no return code and
+no `panic()`. Evidence for that one is sharper than the reasoning was — with the
+clause removed, the pin does not fail an assertion, it hangs the pilot for 35 s
+and dies on `WaitForScreenTimeout`, which is the silent vanish itself.
