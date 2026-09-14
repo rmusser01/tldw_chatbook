@@ -19,15 +19,23 @@ async def test_scope_drains_actual_worker_before_closing_cache(
     tmp_path, monkeypatch, local_root, route, cancel
 ):
     if route == "writing":
-        from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
-        from tldw_chatbook.Writing_Interop.writing_scope_service import WritingScopeService
+        from tldw_chatbook.Writing_Interop.local_writing_service import (
+            LocalWritingService,
+        )
+        from tldw_chatbook.Writing_Interop.writing_scope_service import (
+            WritingScopeService,
+        )
 
         local = LocalWritingService(tmp_path / "writing.sqlite")
         scope = WritingScopeService(local_service=local, server_service=None)
         method = "list_projects"
     else:
-        from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
-        from tldw_chatbook.Research_Interop.research_scope_service import ResearchScopeService
+        from tldw_chatbook.Research_Interop.local_research_service import (
+            LocalResearchService,
+        )
+        from tldw_chatbook.Research_Interop.research_scope_service import (
+            ResearchScopeService,
+        )
 
         local = LocalResearchService(tmp_path / "research.sqlite")
         scope = ResearchScopeService(local_service=local, server_service=None)
@@ -285,15 +293,23 @@ async def test_runtime_close_defers_for_a_foreign_native_borrower(
     from tldw_chatbook.Backup_Recovery.participants import _core_operation
 
     if route == "writing":
-        from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
-        from tldw_chatbook.Writing_Interop.writing_scope_service import WritingScopeService
+        from tldw_chatbook.Writing_Interop.local_writing_service import (
+            LocalWritingService,
+        )
+        from tldw_chatbook.Writing_Interop.writing_scope_service import (
+            WritingScopeService,
+        )
 
         local = LocalWritingService(tmp_path / "writing.sqlite")
         runtime = WritingScopeService(local_service=local, server_service=None)
         connection = local._connect()
     elif route == "research":
-        from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
-        from tldw_chatbook.Research_Interop.research_scope_service import ResearchScopeService
+        from tldw_chatbook.Research_Interop.local_research_service import (
+            LocalResearchService,
+        )
+        from tldw_chatbook.Research_Interop.research_scope_service import (
+            ResearchScopeService,
+        )
 
         local = LocalResearchService(tmp_path / "research.sqlite")
         runtime = ResearchScopeService(local_service=local, server_service=None)
@@ -330,3 +346,134 @@ async def test_runtime_close_defers_for_a_foreign_native_borrower(
             await runtime.shutdown()
         else:
             local.close()
+
+
+async def _receipt_owner(tmp_path, *, history):
+    """Use the native receipt store/projection with an inert startup watcher."""
+    from dataclasses import replace
+
+    from Tests.Notes.test_notes_device_state_store import _binding
+    from Tests.Notes.test_notes_sync_runtime import (
+        _Adapter,
+        _Folders,
+        _input,
+        _LocalNotes,
+        _owner,
+        _store,
+    )
+    from tldw_chatbook.Notes.notes_device_state_store import NotesSyncOperationRecord
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+    from tldw_chatbook.Notes.notes_sync_models import NotesSyncOperationState
+    from tldw_chatbook.Notes.notes_sync_runtime import _ProductionRuntimeAdapter
+
+    store = _store(tmp_path)
+    adapter = _Adapter([_input()])
+    projection = _ProductionRuntimeAdapter(
+        store, NotesScopeService(_LocalNotes("body"), None, folder_repository=_Folders()),
+        local_user_id="user-1", recovery_capacity_bytes=1024 * 1024,
+    )
+    adapter.build_receipt_labels = projection.build_receipt_labels
+    owner, _, _ = _owner(store=store, admitted=True, adapter=adapter)
+    await owner.start()
+    if history:
+        store.create_binding(replace(_binding(), note_scope_id="local_note"))
+        store.create_operation(NotesSyncOperationRecord(
+            operation_id="receipt-operation", root_id="root-1", binding_id="binding-1",
+            kind="update_note", state=NotesSyncOperationState.PENDING,
+            reason_code=None, observation_token="receipt-observation",  # nosec B106 - synthetic journal ID, not a credential
+            expected_note_version=None, expected_file_digest=None,
+        ))
+        with store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE notes_sync_operations SET state = 'completed' "
+                "WHERE operation_id = ?", ("receipt-operation",),
+            )
+    return owner, store
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("finish", ["maintenance", "shutdown"])
+@pytest.mark.parametrize("method,history", [
+    ("list_completed_operations", False),
+    ("list_completed_operations", True),
+    ("get_root", True),
+    ("list_bindings", True),
+])
+async def test_notes_receipt_native_read_finishes_before_close(
+    tmp_path, monkeypatch, local_root, method, history, cancel, finish
+):
+    """A receipt waiter ending must not let shutdown close its live SQLite worker."""
+    owner, store = await _receipt_owner(tmp_path, history=history)
+    entered, release, survived = threading.Event(), threading.Event(), threading.Event()
+    connections = []
+    original = getattr(store, method)
+
+    def blocked(*args, **kwargs):
+        result = original(*args, **kwargs)
+        connection = store._get_connection()
+        connections.append(connection)
+        entered.set()
+        assert release.wait(5)
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+        survived.set()
+        return result
+
+    monkeypatch.setattr(store, method, blocked)
+    command = asyncio.create_task(owner.write_receipts("root-1"))
+    shutdown = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        if cancel:
+            command.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await command
+        if finish == "maintenance":
+            owner._maintenance_close_admission()
+            assert not await owner._maintenance_drain(time.monotonic() + 0.02)
+        else:
+            shutdown = asyncio.create_task(owner.shutdown())
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(shutdown), 0.02)
+        release.set()
+        if not cancel:
+            receipts = await command
+            assert [(row.kind, row.relative_path) for row in receipts] == (
+                [("update_note", "folder/note.md")] if history else []
+            )
+        if finish == "maintenance":
+            assert await owner._maintenance_drain(time.monotonic() + 2)
+        else:
+            await asyncio.wait_for(shutdown, 2)
+        assert survived.is_set()
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connections[0].execute("SELECT 1")
+    finally:
+        release.set()
+        await asyncio.gather(command, return_exceptions=True)
+        monkeypatch.setattr(store, method, original)
+        if shutdown is not None:
+            await asyncio.gather(shutdown, return_exceptions=True)
+        owner._maintenance_resume()
+        await owner.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [False, True])
+async def test_paused_notes_receipts_refuse_backup_pause_and_resume(
+    tmp_path, local_root, history
+):
+    """Normal root pause allows history, but global maintenance fences new reads."""
+    owner, _ = await _receipt_owner(tmp_path, history=history)
+    try:
+        await owner.pause_root("root-1")
+        before = await owner.write_receipts("root-1")
+        owner._maintenance_close_admission()
+        with pytest.raises(Exception, match="runtime_producer_paused"):
+            await owner.write_receipts("root-1")
+        assert await owner._maintenance_drain(time.monotonic() + 2)
+        owner._maintenance_resume()
+        assert await owner.write_receipts("root-1") == before
+    finally:
+        owner._maintenance_resume()
+        await owner.shutdown()

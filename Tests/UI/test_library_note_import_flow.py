@@ -137,8 +137,12 @@ async def test_import_back_retains_canvas_and_shows_truthful_lasting_availabilit
         keep_synced.press()
         await pilot.pause()
         assert screen._library_notes_sync_controller.snapshot.phase == "choose"
-        assert "unavailable" in (
-            screen._library_notes_sync_controller.snapshot.status_line.casefold()
+        # task-32545 AC#3: was `"unavailable" in status_line.casefold()` -- a
+        # proxy for "the line tells the truth", which any rewording breaks
+        # silently. The exact sentence is the contract, and it is the same one
+        # the disabled Keep-a-folder-synced reason already uses.
+        assert screen._library_notes_sync_controller.snapshot.status_line == (
+            "Keeping a folder synced isn't ready on this profile yet."
         )
         assert screen.query_one("#notes-add-import-once", Button).disabled is False
         assert screen._notes_state.view == "lasting_add"

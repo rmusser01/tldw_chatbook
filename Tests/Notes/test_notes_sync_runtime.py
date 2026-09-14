@@ -3653,3 +3653,139 @@ async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_fr
         for action in checked.safe_actions
     )
     await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_disk_edit_after_activation_surfaces_on_the_next_check(
+    tmp_path: Path,
+) -> None:
+    """task-32534 AC#4: a manual Check must not consume the watcher's change.
+
+    ``observe_root`` used to overwrite the discovery signature the watcher
+    compares against, so a disk edit followed by an immediate manual Check
+    was reported once (as changes available) and then never hinted -- the
+    automatic pass that applies it never ran and the note stayed stale.
+    """
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        build_notes_sync_runtime_owner,
+    )
+
+    store = _store(tmp_path)
+    file_path = tmp_path / "root" / "note.md"
+    file_path.write_text("same", encoding="utf-8")
+    with PosixNotesSyncFilesystem(tmp_path / "root") as filesystem:
+        file = filesystem.observe("note.md")
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id="root-1",
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(file),
+            state=NotesSyncBindingState.ACTIVE,
+            serialization=file.observation.serialization,
+            content_digest=file.observation.content_digest,
+            note_version=1,
+        )
+    )
+    local_notes = _LocalNotes("same")
+    service = NotesScopeService(local_notes, None, folder_repository=_Folders())
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=service,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    try:
+        assert owner._changed_root_ids() == ()  # the watcher's baseline
+
+        file_path.write_text("edited on disk", encoding="utf-8")
+        plan = await owner.check_root("root-1")
+
+        assert [action.kind for action in plan.safe_actions] == [
+            NotesSyncActionKind.UPDATE_NOTE
+        ]
+        # The watcher still sees the edit the manual check only reported.
+        assert owner._changed_root_ids() == ("root-1",)
+        second = await owner.check_root("root-1")
+        assert second.root_id == "root-1"
+    finally:
+        await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_write_receipts_name_path_title_effect_for_completed_operations(
+    tmp_path: Path,
+) -> None:
+    """task-32534 AC#3: an automatic write leaves a labelled, bounded receipt."""
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        RuntimeWriteReceipt,
+        build_notes_sync_runtime_owner,
+    )
+
+    store = _store(tmp_path)
+    file_path = tmp_path / "root" / "note.md"
+    file_path.write_text("new", encoding="utf-8")
+    with PosixNotesSyncFilesystem(tmp_path / "root") as filesystem:
+        file = filesystem.observe("note.md")
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id="root-1",
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(file),
+            state=NotesSyncBindingState.ACTIVE,
+            serialization=file.observation.serialization,
+            content_digest=hashlib.sha256(b"old").hexdigest(),
+            note_version=1,
+        )
+    )
+    local_notes = _LocalNotes("old")
+    service = NotesScopeService(local_notes, None, folder_repository=_Folders())
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=service,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    try:
+        assert local_notes.note["content"] == "new"
+
+        receipts = await owner.write_receipts("root-1")
+
+        assert len(receipts) == 1
+        receipt = receipts[0]
+        assert type(receipt) is RuntimeWriteReceipt
+        assert (receipt.kind, receipt.relative_path, receipt.note_title) == (
+            "update_note",
+            "note.md",
+            "Note",
+        )
+        assert receipt.completed_at > 0
+        assert "note.md" not in repr(receipt)
+        with pytest.raises(ValueError):
+            await owner.write_receipts("root-1", limit=0)
+
+        # Fix round 1: pause_root closes the root's admission, and reading the
+        # receipts through `_admit_task` raised `root_admission_closed` -- so
+        # pausing a root, a first-class control and the very flow the live
+        # walk uses to force a failed Check, blanked its whole receipt
+        # history. Receipts are a read; they must survive the pause.
+        await owner.pause_root("root-1")
+        paused_receipts = await owner.write_receipts("root-1")
+        assert [r.operation_id for r in paused_receipts] == [
+            r.operation_id for r in receipts
+        ]
+    finally:
+        await owner.shutdown()

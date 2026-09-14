@@ -1,0 +1,14 @@
+[
+  {
+    "case": "test_a_disk_edit_after_activation_surfaces_on_the_next_check",
+    "returncode": 0,
+    "log": "/private/tmp/uat-dev-f10a-qualified-2_3jqwrp/0/child.log",
+    "receipt": "/private/tmp/uat-dev-f10a-qualified-2_3jqwrp/0/receipt.json"
+  },
+  {
+    "case": "test_write_receipts_name_path_title_effect_for_completed_operations",
+    "returncode": 0,
+    "log": "/private/tmp/uat-dev-f10a-qualified-2_3jqwrp/1/child.log",
+    "receipt": "/private/tmp/uat-dev-f10a-qualified-2_3jqwrp/1/receipt.json"
+  }
+]
