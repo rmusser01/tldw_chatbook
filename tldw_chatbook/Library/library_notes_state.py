@@ -356,9 +356,11 @@ class LibraryNotesOperationState:
         completion_next_action: Optional recovery step after committed success.
         failure_next_action: Recovery instruction rendered after failure.
         failure_line: task-32536 AC#2 -- a complete failure sentence that
-            names the blocker and its remedy ("Can't use this note in
-            Console — {blocker}. Next: {remedy}."). Rendered verbatim in
-            place of the generic "{action} failed — …" line when set.
+            carries its own lead-in, the blocker and the remedy (e.g.
+            "Can't use this note in Console — Console could not take it.
+            Next: try again." or, when there is no note to refuse, "No note
+            is open. Next: open a note, then try again."). Rendered verbatim
+            in place of the generic "{action} failed — …" line when set.
     """
 
     kind: Literal["import", "export", "copy", "console"]
