@@ -1429,6 +1429,37 @@ class _SQLiteAdmissionOutcome:
     admission_refused: bool = False
 
 
+@contextlib.contextmanager
+def _independent_sqlite_helpers() -> Iterator[None]:
+    """Keep outer raw ownership live while independently admitted SQLite opens."""
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+    discover = getattr(raw, "_runtime_operation", None)
+    previous = discover() if discover is not None else None
+    if previous is None:
+        yield
+        return
+    # This is discovery suspension only: the outer source remains registered,
+    # locked and leased. Native SQLite checks use its separately acquired lease.
+    raw._local.operation = None
+    try:
+        yield
+    finally:
+        primary = sys.exception()
+        try:
+            raw._check(previous)
+        except BaseException as cleanup:
+            if primary is not None and (
+                not isinstance(primary, Exception) or isinstance(cleanup, Exception)
+            ):
+                BaseException.add_note(
+                    primary, "private_sqlite_outer_scope_revalidation_failed"
+                )
+            else:
+                raise
+        finally:
+            raw._local.operation = previous
+
+
 def _with_storage_admission(function):
     @functools.wraps(function)
     def admitted(owner_id, database, **kwargs):
@@ -1557,7 +1588,29 @@ def _with_storage_admission(function):
                         pass
 
             kwargs["factory"] = AdmittedConnection
-            connection = function(owner_id, database, **kwargs)
+            # Custom constructor callbacks retain their existing raw context.
+            # Bypass/capture routes do not receive this ordinary-owner scope.
+            scope = (
+                _independent_sqlite_helpers()
+                if factory is sqlite3.Connection and not capture_lease
+                else contextlib.nullcontext()
+            )
+            connection = None
+            try:
+                with scope:
+                    connection = function(owner_id, database, **kwargs)
+            except BaseException as error:
+                if type(connection) is AdmittedConnection:
+                    try:
+                        connection.close()
+                    except BaseException:  # noqa: BLE001 - keep the primary refusal/cancellation and uncertain lease.
+                        # close() retains the existing uncertain lease on failure.
+                        error.add_note("private_sqlite_outer_scope_close_failed")
+                    else:
+                        # Positive native close permits the existing error path
+                        # to release the independently acquired connection lease.
+                        allocation_started = False
+                raise
             constructing = False
             if getattr(connection, "_admission_close_attempted", False):
                 connection._admission_close_attempted = False
