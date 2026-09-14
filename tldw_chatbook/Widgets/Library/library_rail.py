@@ -304,7 +304,7 @@ def library_diagnostics_disclosure(
         id="library-rail-section-body-details-diagnostics",
         classes="library-rail-section-body",
     )
-    body.styles.height = "auto"
+    body.set_styles(height="auto")
     body.display = open_state
     return header, body
 
@@ -550,7 +550,7 @@ class LibraryNavigationRailHandle(DestinationRailHandle):
             **kwargs,
         )
         self.add_class("console-rail-handle-vertical")
-        self.styles.width = self.WIDTH
+        self.set_styles(width=self.WIDTH)
         self.styles.min_width = self.WIDTH
         self.styles.max_width = self.WIDTH
 
@@ -563,9 +563,9 @@ class LibraryNavigationRailHandle(DestinationRailHandle):
         for child in super().compose():
             if isinstance(child, Button):
                 child.add_class("console-rail-handle-button-vertical")
-                child.styles.width = 1
+                child.set_styles(width=1)
                 child.styles.max_width = 1
-                child.styles.height = "1fr"
+                child.set_styles(height="1fr")
                 child.styles.clear_rule("min_height")
                 child.styles.clear_rule("max_height")
                 child.styles.line_pad = 0
@@ -834,7 +834,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 # "see what carries over" meta line under each -- six rail
                 # rows for three destinations. The promise now lives on the
                 # staging canvas that keeps it, so every row is one cell.
-                button.styles.height = 1
+                button.set_styles(height=1)
                 button.styles.min_height = 1
 
         details_lines = shell.details_lines
@@ -1054,12 +1054,12 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             and the Details header + body.
         """
         heading_row = Horizontal(id="library-rail-heading")
-        heading_row.styles.height = 1
+        heading_row.set_styles(height=1)
         heading_row.styles.min_height = 1
         with heading_row:
             heading = Static("Navigation", id="library-rail-heading-label")
-            heading.styles.height = 1
-            heading.styles.width = "1fr"
+            heading.set_styles(height=1)
+            heading.set_styles(width="1fr")
             yield heading
             collapse = Button(
                 "Collapse",
@@ -1067,11 +1067,11 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             collapse.tooltip = "Collapse Library navigation"
-            collapse.styles.width = "auto"
-            collapse.styles.height = 1
+            collapse.set_styles(width="auto")
+            collapse.set_styles(height=1)
             collapse.styles.min_height = 1
-            collapse.styles.padding = (0, 1)
-            collapse.styles.border = ("none", "transparent")
+            collapse.set_styles(padding=(0, 1))
+            collapse.set_styles(border=("none", "transparent"))
             yield collapse
         if self.lifecycle in (LibraryLifecycle.UNKNOWN, LibraryLifecycle.STARTER):
             for row_id in (LIBRARY_ROW_INGEST_MEDIA, LIBRARY_ROW_CREATE_NOTE):
@@ -1081,7 +1081,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         if self.top_action_factory is not None:
             yield from self.top_action_factory()
         search_row = Horizontal(id="library-rail-search-row")
-        search_row.styles.height = "auto"
+        search_row.set_styles(height="auto")
         with search_row:
             yield LibraryRailSearchInput(
                 value=self.query,
@@ -1120,7 +1120,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             id="library-rail-section-body-details",
             classes="library-rail-section-body",
         )
-        details_body.styles.height = "auto"
+        details_body.set_styles(height="auto")
         details_body.display = details_open
         # TASK-23025 considered growing this body on demand (it is ~13
         # widgets mounted display=False on the default route), but the
@@ -1313,7 +1313,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         button.set_class(selected, "library-rail-row-selected")
         if row.count_emphasis:
             button.add_class(f"library-rail-row-due-{row.count_emphasis}")
-        button.styles.height = 1
+        button.set_styles(height=1)
         button.styles.min_height = 1
         return button
 
@@ -1329,7 +1329,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             id=f"library-rail-section-body-{section.section_id}",
             classes="library-rail-section-body",
         )
-        body.styles.height = "auto"
+        body.set_styles(height="auto")
         body.display = open_state
         with body:
             for row in section.rows:

@@ -13,15 +13,15 @@ class LibraryCharacterReturn(Horizontal):
     def __init__(self, return_to_origin: Callable[[], None]) -> None:
         self._return_to_origin = return_to_origin
         super().__init__(id="library-character-return")
-        self.styles.height = 1
+        self.set_styles(height=1)
 
     def compose(self):
         button = Button(
             "Back to Console", id="library-character-back-console", compact=True
         )
-        button.styles.height = 1
+        button.set_styles(height=1)
         button.styles.min_height = 1
-        button.styles.width = "auto"
+        button.set_styles(width="auto")
         yield button
 
     @on(Button.Pressed, "#library-character-back-console")

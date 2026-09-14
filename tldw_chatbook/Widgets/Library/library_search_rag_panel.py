@@ -226,7 +226,7 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
             # Counts plus service-built notes -- literal, never markup.
             markup=False,
         )
-        summary.styles.height = 1
+        summary.set_styles(height=1)
         summary.display = False
         return [button, summary]
 
@@ -990,7 +990,7 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
         classes="library-rag-quiet-line",
         markup=False,
     )
-    quiet_line.styles.height = 1
+    quiet_line.set_styles(height=1)
     children: list[Widget] = [quiet_line]
     shows_full_recovery = library_rag_query_shows_full_recovery(query_state)
     _log_query_recovery_record(

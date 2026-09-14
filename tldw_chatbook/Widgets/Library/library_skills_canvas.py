@@ -600,7 +600,7 @@ class LibrarySkillsTrustHeader(Vertical):
         self.blocked_count = blocked_count
         self.trust_posture = trust_posture
         self.confirming_reset = confirming_reset
-        self.styles.height = "auto"
+        self.set_styles(height="auto")
 
     def compose(self) -> ComposeResult:
         """Render only the posture-dependent header controls.
@@ -638,7 +638,7 @@ class LibrarySkillsTrustHeader(Vertical):
                     markup=False,
                 )
                 toolbar = Horizontal(classes="ds-toolbar")
-                toolbar.styles.height = "auto"
+                toolbar.set_styles(height="auto")
                 with toolbar:
                     yield Button(
                         "Reset",
@@ -841,7 +841,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             if mode == "list"
             else "library-skills-editor-mode"
         )
-        self.styles.width = "1fr"
+        self.set_styles(width="1fr")
         self.styles.min_width = 40
 
     def compose(self) -> ComposeResult:
@@ -1233,7 +1233,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         # library_prompts_canvas.py's toolbar exactly (same render-safe
         # shape: every child is a fixed-width compact Button).
         toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar.set_styles(height="auto")
         # task-14902: the sort choice strip replaces this toolbar row while
         # open (the Notes Sort precedent).
         toolbar.display = not self.sort_choices_visible
@@ -1393,7 +1393,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             markup=False,
         )
         toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar.set_styles(height="auto")
         with toolbar:
             yield Button(
                 "Reset",
@@ -1435,7 +1435,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             disabled=self.import_in_flight,
         )
         toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar.set_styles(height="auto")
         with toolbar:
             # Browse… picks a FILE via the shared FileOpen dialog;
             # task-422 adds the folder variant beside it (SelectDirectory)
@@ -1720,7 +1720,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         delete_copy.display = confirming_delete and not self.mutation_in_flight
         yield delete_copy
         toolbar = Horizontal(id="library-skill-lifecycle-actions", classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar.set_styles(height="auto")
         with toolbar:
             busy = self.mutation_in_flight
             conflict = self.conflict and not busy
@@ -1921,7 +1921,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 # forward, rendered here since this state has no list
                 # header to surface it from.
                 reset_toolbar = Horizontal(classes="ds-toolbar")
-                reset_toolbar.styles.height = "auto"
+                reset_toolbar.set_styles(height="auto")
                 with reset_toolbar:
                     yield Button(
                         _RESET_TRUST_BUTTON_LABEL,
@@ -1938,7 +1938,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                     markup=False,
                 )
                 setup_toolbar = Horizontal(classes="ds-toolbar")
-                setup_toolbar.styles.height = "auto"
+                setup_toolbar.set_styles(height="auto")
                 with setup_toolbar:
                     yield Button(
                         "Set up skill trust",
@@ -1963,7 +1963,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 markup=False,
             )
             toolbar = Horizontal(classes="ds-toolbar")
-            toolbar.styles.height = "auto"
+            toolbar.set_styles(height="auto")
             with toolbar:
                 yield Button(
                     "Unlock",

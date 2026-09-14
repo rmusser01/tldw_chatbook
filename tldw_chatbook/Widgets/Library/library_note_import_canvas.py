@@ -154,9 +154,9 @@ def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
         collapsed=True,
     )
     disclosure.styles.min_height = 1
-    disclosure.styles.margin = 0
-    disclosure.styles.padding = 0
-    disclosure.styles.border = ("none", "transparent")
+    disclosure.set_styles(margin=0)
+    disclosure.set_styles(padding=0)
+    disclosure.set_styles(border=("none", "transparent"))
     return disclosure
 
 
@@ -538,8 +538,8 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     def _tighten_run_disclosures(self) -> None:
         """Keep a collapsed run's title one line, as the pager budgeted for."""
         for title in self.query(".note-import-run > CollapsibleTitle"):
-            title.styles.height = 1
-            title.styles.padding = 0
+            title.set_styles(height=1)
+            title.set_styles(padding=0)
 
     def _update_overflow_hint(self) -> None:
         try:
