@@ -14897,7 +14897,7 @@ Button:disabled {
 }
 
 #evals-inspector-bench .ds-recovery-callout {
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* ===== MODULE: features/_metrics.tcss ===== */
