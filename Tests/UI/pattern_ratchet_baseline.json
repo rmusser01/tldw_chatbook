@@ -8,7 +8,6 @@
     "components/_shared_components.tcss": 17,
     "core/_base.tcss": 5,
     "core/_variables.tcss": 24,
-    "features/_evaluation_unified.tcss": 28,
     "features/_logs.tcss": 15,
     "features/_metrics.tcss": 7,
     "features/_pattern_gallery.tcss": 5,
