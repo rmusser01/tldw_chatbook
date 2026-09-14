@@ -1694,5 +1694,6 @@ async def test_configure_canvas_is_contained_and_initial_focus_is_safe_at_60x20(
         assert region.right <= 60 and region.bottom <= 20
         assert "Keep a folder synced" in _frame(app)
         hint = app.query_one("#notes-sync-fold-hint", Static)
-        assert "Additional setup content is scrollable" in str(hint.renderable)
+        # task-32545 AC#3: was "Additional setup content is scrollable."
+        assert "More below — scroll." in str(hint.renderable)
         assert "above" not in str(hint.renderable).casefold()

@@ -3260,3 +3260,102 @@ async def test_every_note_to_file_write_leaves_a_receipt_row() -> None:
     assert receipt.when == datetime.fromtimestamp(completed_at / 1e9).strftime(
         "%Y-%m-%d %H:%M"
     )
+
+
+async def test_activation_receipt_line_points_at_the_receipts_section() -> None:
+    """task-32545 AC#3: the activation receipt is the line the walk actually sees.
+
+    The apply path was fixed first; this is the second site (`activate_root`),
+    which is what a first activation renders -- the live walk still read
+    "60 applied · durable receipt recorded" there.
+    """
+    root_id = "legacy-root-" + "a" * 40
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot(root_id, "paused", "review_migration"),),
+    )
+
+    async def activate_root(target: str, authorization: object):
+        runtime.calls.append(("activate_root", target, authorization))
+        return NotesSyncControlResult(True, "up_to_date", "sync_now", 60)
+
+    runtime.activate_root = activate_root
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.check_migration(root_id)
+    assert await controller.activate_root(root_id, TOKEN) is True
+
+    assert controller.snapshot.receipt_line == "60 applied · listed under Receipts"
+
+
+async def test_a_check_on_a_paused_root_names_the_pause_and_offers_resume() -> None:
+    """task-32534 AC#1: the code a paused root actually raises is classified.
+
+    `pause_root` closes the root's admission, so `_admit_task` refuses the
+    next Check with ``root_admission_closed`` -- not ``sync_root_not_active``.
+    The live walk read "Check failed — RuntimeError · Next: Check changes",
+    which sent the reader back to the control that had just refused.
+    """
+    runtime = _Runtime()
+
+    async def fail(_root_id: str):
+        raise RuntimeError("root_admission_closed")
+
+    runtime.request_sync_now = fail
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-1")
+
+    row = controller.snapshot.roots[0]
+    assert (row.status_label, row.failure, row.next_action_label) == (
+        "⚠ Needs attention",
+        "Check failed — folder is paused",
+        "Resume",
+    )
+
+
+def test_every_row_reason_code_has_user_copy() -> None:
+    """A row phrase is only reachable when `_refusal_reason` returns its code.
+
+    `_refusal_reason` filters on `_CHECK_REFUSAL_COPY`, so a code present only
+    in `_CHECK_FAILURE_ROW` is dead: `root_admission_closed`, `root_offline`
+    and `root_unavailable` all fell through to the exception-category
+    fallback until the wave-4 live walk hit the first of them.
+    """
+    from tldw_chatbook.Library import library_notes_lasting_sync_state as state
+
+    assert set(state._CHECK_FAILURE_ROW) <= set(state._CHECK_REFUSAL_COPY)
+
+
+async def test_a_control_that_runs_clears_the_previous_check_failure() -> None:
+    """task-32534 AC#1: the row must not keep naming a superseded next action.
+
+    Live: a failed Check left "Next: Resume" on the row; the Resume that
+    followed returned needs-attention and set its own status line, but the
+    stale overlay kept pointing at Resume beside it.
+    """
+    runtime = _Runtime()
+
+    async def fail(_root_id: str):
+        raise RuntimeError("sync_root_not_active")
+
+    runtime.request_sync_now = fail
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-1")
+    assert controller.snapshot.roots[0].failure.endswith("folder is paused")
+
+    await controller.resume_root("root-1")
+
+    assert controller.snapshot.roots[0].failure == ""

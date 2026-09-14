@@ -169,11 +169,17 @@ class LibraryNotesSyncRootsCanvas(Vertical):
             actions.append(("review", "Review", False, None))
         if root.next_action == "review_migration":
             actions.append(("migration", "Review migration", False, None))
-        if root.status == "paused":
+        # task-32534 AC#1: a failed row's status is synthetic ("⚠ Needs
+        # attention"), so the control it names has to come from next_action --
+        # the live walk printed "Next: Resume" beside a Pause and a Recovery
+        # button, and no Resume anywhere.
+        if root.status == "paused" or root.next_action == "resume_sync":
             actions.append(("resume", "Resume", False, None))
         elif root.status not in {"passive", "offline"}:
             actions.append(("pause", "Pause", False, None))
-        if root.status in {"failed", "partial", "needs_attention"}:
+        if root.next_action == "resolve_cleanup" or (
+            not root.failure and root.status in {"failed", "partial", "needs_attention"}
+        ):
             actions.append(("recover", "Recovery", False, None))
         actions.extend(
             (

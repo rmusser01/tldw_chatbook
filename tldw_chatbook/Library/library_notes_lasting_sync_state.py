@@ -939,6 +939,20 @@ _CHECK_REFUSAL_COPY: dict[str, str] = {
     "sync_recovery_unresolved": (
         "A recovery is still open for that folder. Resolve it, then Check again."
     ),
+    # Only pause_root closes a root's admission (notes_sync_runtime
+    # `_closed_roots`), and only resume reopens it -- so this is the code a
+    # Check on a paused root actually raises. Before the wave-4 live walk it
+    # fell through to "Check failed — RuntimeError", which named the category
+    # but sent the reader to Check changes instead of Resume.
+    "root_admission_closed": (
+        "That folder is paused. Resume it, then Check again."
+    ),
+    "root_offline": (
+        "That folder isn't reachable right now. Reconnect it, then Check again."
+    ),
+    "root_unavailable": (
+        "That folder can't be read right now. Reconnect it, then Check again."
+    ),
     "root_lease_unavailable": (
         "That folder isn't available right now. Reconnect it, then Check again."
     ),
@@ -954,6 +968,7 @@ _CHECK_REFUSAL_COPY: dict[str, str] = {
 _CHECK_FAILURE_ROW: dict[str, tuple[str, str]] = {
     "sync_recovery_unresolved": ("recovery still open", "resolve_cleanup"),
     "sync_root_not_active": ("folder is paused", "resume_sync"),
+    "root_admission_closed": ("folder is paused", "resume_sync"),
     "root_lease_unavailable": ("folder isn't available", "reconnect_folder"),
     "root_offline": ("folder isn't available", "reconnect_folder"),
     "root_unavailable": ("folder can't be read", "reconnect_folder"),

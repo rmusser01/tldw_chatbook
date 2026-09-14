@@ -2005,7 +2005,7 @@ class LibraryNotesSyncController:
                     else "Activation needs attention. Review settings, then check again."
                 ),
                 receipt_line=(
-                    f"{applied_count} applied · durable receipt recorded"
+                    f"{applied_count} applied · listed under Receipts"
                     if accepted
                     else ""
                 ),
@@ -2112,6 +2112,11 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return False
+        # task-32534 AC#1: the control ran, so the runtime has re-published
+        # this root and the last refusal is history -- keeping the overlay
+        # left "Next: Resume" on the row beside a status line naming a
+        # different action (the live walk's Resume-after-a-failed-Check).
+        self._clear_root_failure(root_id)
         if result.accepted is False:
             self._state = replace(
                 self._state,

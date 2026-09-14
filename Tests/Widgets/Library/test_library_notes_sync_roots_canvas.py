@@ -120,7 +120,9 @@ async def test_unimplemented_root_management_is_disabled_with_explicit_reason() 
         for button in (retarget, disconnect):
             button.scroll_visible(immediate=True)
             assert button.disabled is True
-            assert "unavailable in this release" in str(button.tooltip)
+            assert "not in this release" in str(button.tooltip)
+            # task-32545 AC#1: the reason is now the label too, not tooltip-only.
+            assert str(button.label).endswith("unavailable — not in this release")
         await pilot.pause()
         await pilot.click(disconnect)
         await pilot.pause()
@@ -129,7 +131,10 @@ async def test_unimplemented_root_management_is_disabled_with_explicit_reason() 
     assert [(message.root_id, message.action) for message in app.messages] == [
         ("root-1", "check"),
     ]
-    assert "Retarget and Disconnect are unavailable in this release" in painted
+    assert (
+        "Retarget/Disconnect unavailable — not in this release; nothing on disk "
+        "or in Notes changes." in " ".join(painted.split())
+    )
 
 
 async def test_root_canvas_is_scrollable_contained_and_focusable_at_60x20() -> None:
@@ -174,8 +179,10 @@ async def test_opaque_root_id_is_message_payload_not_dom_id() -> None:
 @pytest.mark.parametrize(
     ("status", "reason"),
     (
-        ("offline", "Reconnect the folder"),
-        ("passive", "active process"),
+        # task-32545 AC#1: the reason is a "why", not an instruction -- it
+        # reads as "○ Check changes unavailable — <reason>" at the control.
+        ("offline", "the folder is disconnected"),
+        ("passive", "another Chatbook has this folder open"),
     ),
 )
 async def test_non_authoritative_roots_disable_impossible_manual_check(
@@ -201,3 +208,4 @@ async def test_non_authoritative_roots_disable_impossible_manual_check(
         check = app.query_one("#notes-sync-root-check-0", Button)
         assert check.disabled is True
         assert reason in str(check.tooltip)
+        assert str(check.label) == f"○ Check changes unavailable — {reason}"

@@ -184,3 +184,33 @@ async def test_sync_copy_uses_no_engineering_terms() -> None:
     joined = "\n".join(frames)
     for term in _ENGINEERING_TERMS:
         assert term not in joined, term
+
+
+async def test_a_failed_row_offers_the_control_it_names() -> None:
+    """task-32534 AC#1: the named next action must be reachable at the row.
+
+    The failure overlay rewrites the row's status to "needs_attention", so a
+    button set keyed on status offered Pause and Recovery on a paused root
+    whose own row read "Next: Resume" -- and no Resume at all.
+    """
+    row = LastingSyncRootRow(
+        "root-1",
+        "Vault",
+        "needs_attention",
+        "resume_sync",
+        "\u26a0 Needs attention",
+        "Resume",
+        failure="Check failed \u2014 folder is paused",
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="roots",
+        status_line="Check failed \u2014 folder is paused. Next: Resume.",
+        roots=(row,),
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.query("#notes-sync-root-resume-0")
+        assert not app.query("#notes-sync-root-pause-0")
+        assert not app.query("#notes-sync-root-recover-0")
