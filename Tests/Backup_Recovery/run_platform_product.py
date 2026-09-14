@@ -68,6 +68,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_initial_screen_observation.py",
     "Tests/Backup_Recovery/test_caller_cache_retirement.py",
     "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
+    "Tests/Backup_Recovery/test_context_policy_config_lifetime.py",
     "Tests/Backup_Recovery/test_console_projection_config_lifetime.py",
     "Tests/Backup_Recovery/test_console_canvas_config_order.py",
     "Tests/Backup_Recovery/test_config_native_lock_order.py",
@@ -130,6 +131,7 @@ _RESTORE_DIAGNOSTIC_TESTS = (
 )
 _SUPPORT_DIAGNOSTIC_TESTS = (
     "Tests/Backup_Recovery/test_console_progress_timer.py",
+    "Tests/Backup_Recovery/test_context_policy_config_lifetime.py",
     "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
     "Tests/Backup_Recovery/test_console_projection_config_lifetime.py",
     "Tests/Backup_Recovery/test_console_canvas_config_order.py",

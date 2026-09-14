@@ -1,0 +1,117 @@
+{
+  "base_revision": "562530e4b5d7876ecf503b3455a38af264d6cf87",
+  "scope": "Retain one existing config operation across only nine consecutive context-policy getters; parse after retirement. No native check, policy, interval, deadline or source selector changes.",
+  "red": {
+    "failed": 4,
+    "passed": 1,
+    "seconds": 6.36,
+    "current_failure": "No shared native config operation across nine reads.",
+    "log": "/private/tmp/uat-context-policy-red.log"
+  },
+  "root_final": {
+    "passed": 11,
+    "seconds": 13.41
+  },
+  "independent": {
+    "initial_cases_passed": 5,
+    "initial_seconds": 5.9,
+    "additional_cases_passed": 6,
+    "additional_seconds": 10.87,
+    "promoted_cases_ast_identical": true
+  },
+  "related": {
+    "passed": 44,
+    "seconds": 56.13,
+    "scope": "Context policy values; existing native Console config lifetime and Canvas lock-order/refusal cases."
+  },
+  "installed_mounted": {
+    "passed": 3,
+    "seconds": 182.84,
+    "cases": [
+      "console",
+      "settings",
+      "library"
+    ],
+    "python_matches": 2474,
+    "python_mismatches": [],
+    "installed_files": 2866,
+    "installed_files_unchanged": true,
+    "wheel_sha256": "07ca6ac5317d00e8112ae6605501a861e6643b315a46042350d53941a1514ce7"
+  },
+  "per_call_native_comparison": [
+    {
+      "implementation": "baseline",
+      "acquisitions": 9,
+      "elapsed_s": 0.07716550026088953
+    },
+    {
+      "implementation": "current",
+      "acquisitions": 1,
+      "elapsed_s": 0.009362583048641682
+    },
+    {
+      "implementation": "current",
+      "acquisitions": 1,
+      "elapsed_s": 0.007076124660670757
+    },
+    {
+      "implementation": "baseline",
+      "acquisitions": 9,
+      "elapsed_s": 0.06654900033026934
+    }
+  ],
+  "ruff_counts": {
+    "baseline": {
+      "I001": 5,
+      "UP035": 1,
+      "F401": 1,
+      "RUF100": 5,
+      "UP037": 74,
+      "B009": 1,
+      "S110": 9,
+      "BLE001": 83,
+      "TRY004": 3,
+      "SIM103": 1,
+      "UP041": 1,
+      "RUF012": 2,
+      "UP034": 4,
+      "SIM102": 1
+    },
+    "final": {
+      "I001": 5,
+      "UP035": 1,
+      "F401": 1,
+      "RUF100": 5,
+      "UP037": 74,
+      "B009": 1,
+      "S110": 9,
+      "BLE001": 83,
+      "TRY004": 3,
+      "SIM103": 1,
+      "UP041": 1,
+      "RUF012": 2,
+      "UP034": 4,
+      "SIM102": 1
+    }
+  },
+  "bandit_counts": {
+    "baseline": {
+      "B110": 9,
+      "B101": 7
+    },
+    "final": {
+      "B110": 9,
+      "B101": 7
+    }
+  },
+  "hashes": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "3cac3db4065d088d143a8aaaf9f4479f0c44d178522481b58a0982d7f655d4c6",
+    "Tests/Backup_Recovery/test_context_policy_config_lifetime.py": "3563e812f11bc34c3aff7a708b7faff627ea4c2739e0d97b1627a9db73c11496",
+    "Tests/Backup_Recovery/run_platform_product.py": "607a10676de6aeff1ba79e55252fd85ce3dbb374a8f3a1766475f210a4c99d27"
+  },
+  "limitations": [
+    "Local measured call-count reduction is9 to1; no native Windows speed result yet.",
+    "The earlier caller-profile probe reached UI-ready and retained data but failed its separate no-network-attempt assertion after blocked local provider discovery. It is diagnostic evidence, not a passing acceptance run.",
+    "Current Windows runs34859131771 and34863186382 predate this small change."
+  ]
+}

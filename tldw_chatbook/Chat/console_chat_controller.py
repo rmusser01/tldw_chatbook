@@ -23412,6 +23412,9 @@ class ConsoleChatController:
             return None
 
     def _global_context_policy_overrides(self):
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery.config_participants import operation
+
         keys = (
             "conversation_budget_mode",
             "conversation_budget_tokens",
@@ -23423,7 +23426,8 @@ class ConsoleChatController:
             "compaction_failure_behavior",
             "compaction_carry_forward_mode",
         )
-        values = {key: get_cli_setting("console", key, None) for key in keys}
+        with operation(config):
+            values = {key: get_cli_setting("console", key, None) for key in keys}
         return context_policy_overrides_from_console_config(values)
 
     def _validated_legacy_memory(
