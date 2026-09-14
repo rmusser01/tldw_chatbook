@@ -4935,6 +4935,12 @@ class LibraryScreen(BaseAppScreen):
             "note-import-cancel": "import-cancel",
             "note-import-retry": "import-retry",
             "library-notes-import-back": "import-back",
+            # task-32540 AC#3: the stepper's own scroll owner is focusable
+            # and is where the picker parks focus, so it needs a portable
+            # role of its own -- without one the canvas-scoped sync replays
+            # a fallback target and the confirmation loses focus on the very
+            # recompose the selection causes.
+            "note-import-body": "import-body",
             "library-notes-create-blank": "create-template:blank",
         }
         if widget_id in direct_roles:
@@ -8718,9 +8724,21 @@ class LibraryScreen(BaseAppScreen):
         "#library-note-work-pane, #library-note-work-pane *"
     )
 
+    #: task-32540 AC#3: Import once is a full-pane stepper mounted in the
+    #: SAME ``#library-note-work-pane`` as the note editor, so it wants the
+    #: same closed Tab cycle. Live at dev 2f97a42c9a, without it: after
+    #: "Select folder", Tab went source switch -> body -> the rail's
+    #: "Search Library…" box, marking none of Change selection / Clear /
+    #: Check selection -- both assessors clicked all three. F6 and Escape
+    #: remain the ways out of the pane, as the guide says.
+    _LIBRARY_WORK_PANE_TAB_VIEWS = ("editor", "import")
+
     def _library_note_editor_owns_tab(self, focused: Widget | None) -> bool:
-        """Whether Tab should cycle inside the open note editor."""
-        if focused is None or self._notes_state.view != "editor":
+        """Whether Tab should cycle inside the open Notes work pane."""
+        if (
+            focused is None
+            or self._notes_state.view not in self._LIBRARY_WORK_PANE_TAB_VIEWS
+        ):
             return False
         return any(
             node.id == "library-note-work-pane"
@@ -26779,6 +26797,7 @@ class LibraryScreen(BaseAppScreen):
                 )
             except (OSError, TypeError, ValueError):
                 self._notify_library_note_import_failure()
+                return
 
         self.app.push_screen(
             FileOpen(

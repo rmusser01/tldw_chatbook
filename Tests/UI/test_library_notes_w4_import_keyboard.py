@@ -280,16 +280,18 @@ async def test_tab_from_the_selection_pane_cycles_the_three_actions(
             )
         assert tuple(visited) == _SELECTION_PANE_ACTIONS
 
-        # Keep tabbing: the cycle must close inside the canvas rather than
-        # leaking into the rail's search box (the live defect).
-        canvas = screen.query_one("#library-notes-canvas")
+        # Keep tabbing: the cycle must close inside the stepper's pane
+        # rather than leaking into the rail's search box (the live defect).
         for _ in range(12):
             await pilot.press("tab")
             focused = host.focused
             assert focused is not None
             assert getattr(focused, "id", None) != "library-rail-search"
-            assert canvas in focused.ancestors_with_self, (
-                f"Tab left the Notes canvas and landed on "
+            assert any(
+                node.id == "library-note-work-pane"
+                for node in focused.ancestors_with_self
+            ), (
+                f"Tab left the Import once pane and landed on "
                 f"{getattr(focused, 'id', None)!r}"
             )
 
