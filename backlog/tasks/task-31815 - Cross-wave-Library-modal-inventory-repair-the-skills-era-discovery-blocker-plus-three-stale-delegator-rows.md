@@ -3,10 +3,11 @@ id: TASK-31815
 title: >-
   Cross-wave Library modal-inventory repair: the skills-era discovery blocker
   plus three stale delegator rows
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-06 04:42'
-updated_date: '2026-09-15 02:49'
+updated_date: '2026-09-15 04:50'
 labels:
   - library
   - decomposition
@@ -31,4 +32,18 @@ Tests/UI/test_library_modal_dismissal.py maintains a hand-declared (file, class,
 - [ ] #4 The two skill-trust passphrase presenter rows (_request_library_skill_trust_passphrase and _request_library_skill_trust_bootstrap_passphrase) name their real present-day owners and are likewise rediscovered
 - [ ] #5 Each repointed row is verified against the modal's CONCRETE type, not just its presenter name, so a row that resolves to the wrong modal class is caught
 - [ ] #6 backlog/docs/library-decomposition-recipe.md section 7's documented-pre-existing-failures list has the test_library_modal_dismissal.py entry removed, with the commit that fixed it named
+- [ ] #7 The skill import chooser and review-set picker participate in the same concrete modal dismissal, positive-result and focus/lifecycle contracts as other inventoried dialogs.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce the complete modal test-file baseline and trace all currently constructed dialogs and moved presenters in the supported scopes.
+2. Register the skill chooser and review-set picker with exact concrete behavior contracts; add Skills, Ingest and Export controller scopes. Repoint the three originally reported edges plus the newly exposed Export destination and File Notes root-picker edges. Preserve strict unresolved-constructor and bidirectional checks.
+3. Add focused negative controls proving all five repaired presenter/type mappings reject a wrong modal class, and exercise both newly registered dialogs through existing gesture/positive/focus/lifecycle cases.
+4. Run the complete targeted modal file and the two dialog-specific files; compare lint against baseline and format changed code. Record evidence, self-review and remove the obsolete standing-failure documentation with a reference to the repair commit.
+
+ADR required: no
+ADR path: backlog/decisions/161-component-pattern-library.md (existing)
+Reason: test inventory and coverage maintenance for existing dialog classes and controller boundaries; no production UI or architectural behavior changes.
+<!-- SECTION:PLAN:END -->
