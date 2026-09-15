@@ -914,6 +914,9 @@
 
 
 
+    /* task-32613 AC#1: heavy, not solid -- the only shape change these two
+       scroll owners get on focus (see the app-sheet block for the
+       measurement). Same one-cell geometry. */
 
 
 

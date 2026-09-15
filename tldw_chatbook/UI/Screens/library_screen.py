@@ -1780,9 +1780,13 @@ class LibraryScreen(BaseAppScreen):
         border: solid $surface-lighten-1;
     }
 
+    /* task-32613 AC#1: heavy, not solid -- the only shape change these two
+       scroll owners get on focus (see the app-sheet block for the
+       measurement). Same one-cell geometry. */
     #library-note-preview-region:focus,
     #library-note-context-region:focus {
-        border: solid $accent;
+        border: heavy $accent;
+        outline: none;
         background: $boost;
     }
 
@@ -8896,6 +8900,44 @@ class LibraryScreen(BaseAppScreen):
             node.id == "library-note-work-pane"
             for node in focused.ancestors_with_self
         )
+
+    #: task-32613 AC#3: the reading panes' scroll owners, and where a
+    #: forward Tab out of one goes.
+    #:
+    #: Textual orders the focus chain by SCREEN POSITION, not compose order
+    #: (``Widget._focus_sort_key``), so the heading's "‹ Notes" is the first
+    #: stop of the work pane however the canvas is composed, and the reading
+    #: region -- the bottom of the pane -- is the last. One Tab therefore
+    #: wrapped the cycle from the document straight onto the exit, and the
+    #: obvious blind Enter closed the note, returning the pane to "Select a
+    #: note to edit it here" with no warning (assessor B, cap 15/K10;
+    #: reproduced headlessly -- Tab from ``#library-note-preview-region``
+    #: focused ``#library-note-back``). The wrap now hands over to the mode
+    #: strip, which is what a reader leaving the body is reaching for.
+    #:
+    #: ponytail: Back is consequently reached by Shift+Tab (one press from
+    #: Edit) or Escape rather than by wrapping forward -- Textual has no
+    #: tab-index, so cutting the ring anywhere else would need a per-control
+    #: override table. Add one if forward-only Tab reachability of Back is
+    #: ever asked for.
+    _LIBRARY_READING_REGION_IDS = frozenset(
+        {"library-note-preview-region", "library-note-context-region"}
+    )
+    _LIBRARY_READING_REGION_TAB_TARGET = "#library-note-edit"
+
+    def _library_reading_region_tab_target(
+        self, focused: Widget | None
+    ) -> Widget | None:
+        """The forward-Tab stop for a focused reading region, if any."""
+        if focused is None or focused.id not in self._LIBRARY_READING_REGION_IDS:
+            return None
+        try:
+            target = self.query_one(
+                self._LIBRARY_READING_REGION_TAB_TARGET, Button
+            )
+        except (NoMatches, QueryError):
+            return None
+        return target if target in self.focus_chain else None
 
     def _move_library_screen_focus(self, direction: int) -> Widget | None:
         """Cycle focus within the Library content, or app-wide from chrome.

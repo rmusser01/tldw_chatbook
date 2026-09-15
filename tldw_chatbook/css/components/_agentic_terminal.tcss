@@ -2990,9 +2990,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: solid $ds-grid-line;
 }
 
+/* task-32613 AC#1 / task-32607 AC#2: these two scroll owners were the ONLY
+   Notes tab stops whose focus cue was pure colour. Measured by focusing
+   every stop of the navigator, the editor, Preview and Info in turn and
+   diffing the computed (text-style, outermost edge type) pair: every other
+   stop changes shape (buttons gain `bold underline` plus heavy side rails,
+   fields gain `text-style: bold`, the body's border goes tall -> heavy) and
+   these two changed nothing -- `solid` border in, `solid` border out, with
+   the reset's `*:focus { outline: solid }` painting the SAME glyphs over the
+   same cells. In a monochrome dump the pane was byte-identical across Tab,
+   which is exactly what assessor A saw ("two of those stops showed no focus
+   indicator anywhere on screen").
+
+   `heavy` is the smallest change that carries: one cell wide like `solid`,
+   so the pane's geometry is untouched, and ━┃┏ against ─│┌ reads without
+   colour. `outline: none` stops the reset's outline from repainting those
+   same cells in `solid` and cancelling the cue. Still non-obscuring: no
+   `outline: heavy`, no `reverse`, and the border cells were already border
+   cells. */
 #library-note-preview-region:focus,
 #library-note-context-region:focus {
-    border: solid $ds-input-focus-accent;
+    border: heavy $ds-input-focus-accent;
+    outline: none;
     background: $ds-input-focus-bg;
 }
 
