@@ -33802,6 +33802,14 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return await self._collections_controller._export_library_collection_legacy_recovery(selected_path)
 
+    @on(
+        TextArea.Changed,
+        "#library-collections-freeform-note, #library-collections-highlight-quote",
+    )
+    @on(Input.Changed, "#library-collections-highlight-note")
+    def retain_library_collection_annotation_draft(self, event) -> None:
+        self._collections_controller.retain_reader_annotation_draft(event)
+
     @on(Button.Pressed, "#library-collections-highlight-save")
     async def save_library_collection_capture_highlight(
         self, event: Button.Pressed

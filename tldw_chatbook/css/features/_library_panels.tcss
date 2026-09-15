@@ -217,6 +217,7 @@
 #library-collections-page-loading,
 #library-collections-items-empty,
 #library-collections-reader-loading,
+#library-collections-mutation-error,
 #library-collections-reader-error,
 #library-collections-reader-empty {
     width: $ds-width-full;
@@ -227,10 +228,15 @@
     color: $ds-text-muted;
 }
 
+#library-collections-archive-receipt > Static {
+    width: $ds-width-fill;
+}
+
 #library-collections-page-error,
+#library-collections-mutation-error,
 #library-collections-reader-error,
 #library-collections-hard-delete-copy {
-    color: $ds-status-error;
+    color: $ds-status-error-readable;
 }
 
 #library-collections-page-range,

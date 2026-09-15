@@ -449,3 +449,31 @@ messages were verified. No full suite, provider execution or app restart was run
 
 Next: Library Collections, then the remaining Library destinations.
 Integration into `dev` remains pending.
+
+## Collections reader continuity — TASK-32658
+
+The [reader review](../qa/2026-09-15-collections-reader/README.md) repairs lost
+annotation drafts, highlights shown under the wrong capture, unloaded status
+successors, hidden mutation errors and clipped Undo. Committed highlight writes
+now remain reported as saved when the following list refresh fails; newer drafts
+survive pending saves. Capture-note Save stays visible at compact size without
+stealing newer focus. Existing authority and revision fences remain in force.
+
+**95 distinct targeted checks pass.** One inherited LibraryScreen ceiling check
+remains red: 35,210 lines / 1,320 methods versus 33,204 / 1,276; this slice adds
+one eight-line event forwarder to the already oversized screen. Both Collections
+controller size checks pass, no budgets or token values changed, and there are
+no new Ruff diagnostics. Historical extraction prose is preserved in the QA
+appendix with current ownership rationale in source. No full suite was run.
+
+The final private native journey passes at 170×48 dark and 80×24 light. Six
+rendered captures show visible Save, correct highlights and readable Undo.
+Terminal Ctrl+Q completed normal exit 0 after a posted key did not exit; the
+owned shell was observed and closed. Read-only SQLite confirms two exact saved
+captures, four highlights, ten integrity checks and zero messages. These native
+controls use explicit focus plus Enter and direct capture selection; complete
+Tab traversal, remote execution and restart are not claimed.
+
+Next: TASK-32659, covering Clear/search, More saved searches and repeated Archive
+receipts, then the remaining Library destinations. Integration into `dev`
+remains pending.

@@ -12,7 +12,8 @@ late-result fencing remain in ``LibraryCollectionsCaptureController``.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from textual.app import ComposeResult
@@ -145,6 +146,7 @@ class CollectionsCaptureReaderPresentation:
     authority_label: str = "Local"
     mode: CollectionsReaderMode = "read"
     highlights: tuple[CaptureHighlight, ...] = ()
+    annotation_draft: Mapping[str, str] = field(default_factory=dict)
     quick_capture_open: bool = False
     quick_capture_url: str = ""
     quick_capture_title: str = ""
@@ -687,6 +689,21 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 markup=False,
             )
             yield Button("Retry", id="library-collections-reader-retry", compact=True)
+        elif state.mutation_error or state.extraction_error:
+            reason = state.mutation_error or state.extraction_error
+            yield Static(
+                "This capture changed since the action was prepared. The action was not applied."
+                if reason == "revision_conflict"
+                else f"Action failed: {_reason_copy(reason)}. Refresh the reader to review its current state.",
+                id="library-collections-mutation-error",
+                markup=False,
+            )
+            if state.selected_identity is not None:
+                yield Button(
+                    "Refresh reader",
+                    id="library-collections-reader-retry",
+                    compact=True,
+                )
         if self.presentation.action_status:
             yield Static(
                 self.presentation.action_status,
@@ -916,12 +933,13 @@ class LibraryCollectionsWorkPane(VerticalScroll):
         supported, reason = self.presentation.capability("highlights")
         enabled = supported and self.presentation.state.identity_actions_enabled
         yield TextArea(
-            "",
+            self.presentation.annotation_draft.get("highlight-quote", ""),
             id="library-collections-highlight-quote",
             disabled=not enabled,
             tooltip=reason or "Quote to keep with this capture.",
         )
         yield Input(
+            value=self.presentation.annotation_draft.get("highlight-note", ""),
             placeholder="Highlight note (optional)",
             id="library-collections-highlight-note",
             disabled=not enabled,
@@ -969,7 +987,9 @@ class LibraryCollectionsWorkPane(VerticalScroll):
             linked_reason = "Wait until the selected capture is loaded and current."
         yield Static("Capture note", id="library-collections-freeform-note-heading", markup=False)
         yield TextArea(
-            resolved.capture.freeform_note or "",
+            self.presentation.annotation_draft.get(
+                "freeform-note", resolved.capture.freeform_note or ""
+            ),
             id="library-collections-freeform-note",
             disabled=(
                 not self.presentation.capability("update")[0]

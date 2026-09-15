@@ -1,0 +1,107 @@
+{
+  "run": "run-003",
+  "app_run_returned": true,
+  "exit_code": 0,
+  "terminal_quit": "Posted Ctrl+Q did not exit; terminal C-q completed normal shutdown.",
+  "observed_shell": "zsh",
+  "owned_session_closed": true,
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": [
+        "ok"
+      ]
+    }
+  ],
+  "captures": [
+    {
+      "capture_id": "capture-01d7e2fd1af34fbd82b6b5cb378407d5",
+      "title": "Alpha",
+      "freeform_note": "Native note at 80 columns",
+      "status": "saved",
+      "highlights": [
+        {
+          "quote": "Alpha annotation",
+          "note": null
+        },
+        {
+          "quote": "Quote at 170",
+          "note": "Native draft"
+        },
+        {
+          "quote": "Quote at 80",
+          "note": "Native draft"
+        }
+      ]
+    },
+    {
+      "capture_id": "capture-b69e844ec99d4359a1a788d2762b6276",
+      "title": "Beta",
+      "freeform_note": "Saved Beta note",
+      "status": "saved",
+      "highlights": [
+        {
+          "quote": "Beta annotation",
+          "note": null
+        }
+      ]
+    }
+  ],
+  "messages": 0,
+  "capture_count": 2,
+  "app_log_error_lines": []
+}

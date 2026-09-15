@@ -22,7 +22,7 @@ folders ([Notes](notes.md)) and Prompt collections
 > now settled (task-32057 AC#1, 2026-09-11): the feature is called
 > **Collections** in the rail and on the canvas, and **Quick Capture** is
 > the name of one action on it — the button that saves a URL — not of the
-> screen. The local Collections service stays **read-only**: there is no
+> screen. The legacy local Collections service stays **read-only**: there is no
 > schema migration, no membership model and no "Add to collection"
 > affordance anywhere in the app.
 
@@ -80,8 +80,7 @@ right.
 - **Empty state**, one of three sentences — never more than one, and never
   the wrong one. Each names the control that narrowed the list and the way
   back out of it.
-  - A filter is set (search text, domain, tags or a date bound — the things
-    **Clear** undoes): "No captures match these filters · clear them to see
+  - A filter is set (search text, domain, tags or a date bound): "No captures match these filters · clear them to see
     everything saved."
   - A rail scope is selected (Saved, Reading, Read, Archived, Favorites, or a
     saved search carrying its own status / favourite predicate): "Nothing in
@@ -129,6 +128,24 @@ read it here."), then:
   and its availability when there is one.
 - **More** reveals the lower-frequency actions: **Summarize**, **Listen**,
   **Save Offline Copy**, **Retry Extraction**, **Delete Permanently…**.
+
+### Keeping annotations while you read
+
+Unsaved **Capture note**, highlight quote and highlight note fields stay with
+that capture while you open **More**, change modes, refresh the reader or visit
+another capture and return. These drafts last only for the current session and
+are cleared when the capture authority changes. Use **Save capture note** or
+**Add highlight** to persist them. Highlights shown in Work belong to the loaded
+capture, including after you switch captures while a refresh is pending.
+
+After **Add highlight** succeeds, the submitted fields clear. If you typed a
+newer draft while the save was pending, it stays. A later refresh failure says
+that the highlight was saved but the list could not refresh; reopen
+**Highlights** to retry the list without adding the same quote again.
+
+Saving a capture note keeps its Save action focused and visible, scrolling Work
+when needed. At narrow sizes, use the pane grips and vertical scrolling to reach
+controls outside the current viewport.
 
 ## Features & controls
 
@@ -218,6 +235,16 @@ and **Escape** returns focus to the rail, as on every Library canvas;
 - **A failed load names its reason.** "Captures could not be loaded:
   \<reason\>." with **Retry**; the reader's own equivalent is "Capture
   could not be loaded: \<reason\>." with its own **Retry**.
+- **A status change can advance the reader.** If Archive or Mark Read removes
+  a capture from the active scope, Work loads the next selected capture.
+  **Undo** remains beside the Archive receipt. If Undo reports that the archived
+  capture changed, choose **Archived** in the Library rail to review it; refreshing
+  the current reader does not make an old Undo receipt valid again.
+- **A failed action stays visible.** The reader names the failure and offers
+  **Refresh reader** to review the selected capture's current state. A revision
+  conflict means the action was not applied.
+- **Clear currently leaves text search in place.** Empty **Filter captures**
+  and press Enter to remove a text search after clearing the form filters.
 - **Switching captures keeps the old one readable.** While a newly selected
   capture's detail is arriving, the reader says `Loading "<new>"… showing
   "<old>" until ready.` rather than blanking.
@@ -280,3 +307,9 @@ which the first cut mis-read as a never-used profile. Bot review round: it no
 longer speaks at all before a page has come back, it describes the page on
 screen rather than the scope being fetched, and a saved search's
 `favorite=False` predicate counts as a scope.)*
+
+*Reviewed on feat/component-pattern-library — 2026-09-15 (TASK-32658):
+annotation continuity, capture-specific highlights, Archive successor, visible
+Undo and compact Save focus. Automated journeys cover 170×48 and 80×24 in both
+themes; native confirmation covers wide dark and compact light. Unsaved drafts
+are session-only. TASK-32659 tracks the remaining browse-control findings.*

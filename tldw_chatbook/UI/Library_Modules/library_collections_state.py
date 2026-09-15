@@ -90,6 +90,7 @@ from dataclasses import dataclass, field
 from ...Library.collections_capture_models import (
     CaptureCapabilities,
     CaptureHighlight,
+    CaptureIdentity,
     SavedCaptureSearch,
 )
 from ...Utils.adaptive_reader_state import (
@@ -112,6 +113,11 @@ class LibraryCollectionsState:
     requested_page: int = 1
     reader_mode: CollectionsReaderMode = "read"
     highlights: tuple[CaptureHighlight, ...] = ()
+    highlights_identity: CaptureIdentity | None = None
+    highlights_generation: int = 0
+    annotation_drafts: dict[CaptureIdentity, dict[str, str]] = field(
+        default_factory=dict
+    )
     quick_capture_open: bool = False
     quick_capture_url: str = ""
     quick_capture_title: str = ""
