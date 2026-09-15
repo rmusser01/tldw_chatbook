@@ -4,13 +4,15 @@ import json
 import sys
 import threading
 from contextlib import contextmanager
+from types import FunctionType, SimpleNamespace
 
 import pytest
 
 from Tests.Backup_Recovery import startup_timing_diagnostic as diagnostic
 
 
-def test_config_timing_records_lock_wait_body_and_retirement():
+@pytest.mark.parametrize("label", ["config_lock", "config_operation"])
+def test_config_timing_records_lock_wait_body_and_retirement(label):
     lock = threading.RLock()
 
     @contextmanager
@@ -19,7 +21,7 @@ def test_config_timing_records_lock_wait_body_and_retirement():
             yield token
 
     token = object()
-    observer = diagnostic.ConfigTimings({locked.__wrapped__.__code__: "config_lock"})
+    observer = diagnostic.ConfigTimings({locked.__wrapped__.__code__: label})
     observer.start()
     try:
         with locked() as result:
@@ -29,7 +31,7 @@ def test_config_timing_records_lock_wait_body_and_retirement():
         final = observer.snapshot()
         assert not final["active"]
         record = final["completed"][0]
-        assert record["function"] == "config_lock"
+        assert record["function"] == label
         assert record["outcome"] == "returned"
         assert record["acquisition_seconds"] >= 0
         assert record["body_and_release_seconds"] >= 0
@@ -38,6 +40,71 @@ def test_config_timing_records_lock_wait_body_and_retirement():
         observer.close()
     assert sys.monitoring.get_tool(observer.tool_id) is None
     assert sys.monitoring.get_local_events(observer.tool_id, locked.__wrapped__.__code__) == 0
+
+
+def test_active_operation_snapshot_records_only_bounded_live_code_coordinates():
+    entered, release = threading.Event(), threading.Event()
+    marker = "private-local-value-must-not-appear"
+
+    def operation(private_value):
+        entered.set()
+        assert release.wait(3)
+        return private_value
+
+    observer = diagnostic.ConfigTimings({operation.__code__: "config_operation"})
+    observer.start()
+    worker = threading.Thread(target=operation, args=(marker,))
+    try:
+        worker.start()
+        assert entered.wait(3)
+        snapshot = observer.snapshot()
+        active = snapshot["active"][0]
+        assert active["thread"] == worker.native_id
+        assert 1 <= len(active["frames"]) <= 25
+        assert any(row["function"] == "operation" for row in active["frames"])
+        assert all(set(row) == {"file", "function", "line"} for row in active["frames"])
+        assert marker not in json.dumps(snapshot)
+    finally:
+        release.set()
+        worker.join(3)
+        observer.close()
+    assert not worker.is_alive()
+
+
+@pytest.mark.parametrize("operation_source", ["selected", "foreign", "absent"])
+def test_config_operation_selection_checks_source_without_importing_it(
+    tmp_path, monkeypatch, operation_source
+):
+    source = tmp_path.resolve()
+    module = SimpleNamespace()
+    names = (
+        "_config_write_lock", "_apply_literal_settings_transaction_locked",
+        "_publish_runtime_config_unlocked", "_load_settings_uncached", "get_user_data_dir",
+    )
+    def located_function(name, path):
+        code = (lambda: None).__code__.replace(co_name=name, co_filename=str(path))
+        return FunctionType(code, {})
+
+    for name in names:
+        setattr(module, name, located_function(name, source / "tldw_chatbook/config.py"))
+    if operation_source != "absent":
+        path = source / "tldw_chatbook/Backup_Recovery/config_participants.py"
+        if operation_source == "foreign":
+            path = tmp_path / "foreign.py"
+        module._config_participants = SimpleNamespace(operation=located_function("operation", path))
+    monkeypatch.setitem(sys.modules, "tldw_chatbook.config", module)
+    plugin = diagnostic.ConfigTimingPlugin(source)
+    try:
+        plugin.pytest_collection_finish()
+        if operation_source == "foreign":
+            assert plugin.timings.errors == ["ValueError"]
+            assert not plugin.timings.owned
+        else:
+            assert not plugin.timings.errors
+            assert plugin.timings.owned
+            assert ("config_operation" in plugin.timings.codes.values()) == (operation_source == "selected")
+    finally:
+        plugin.timings.close()
 
 
 @pytest.mark.parametrize("raises", [False, True])

@@ -209,6 +209,7 @@ _PRODUCT_SELECTIONS = {
         "Tests/Backup_Recovery/test_canvas_policy_maintenance.py",
         "Tests/Backup_Recovery/test_canvas_policy_worker.py",
         "Tests/Backup_Recovery/test_canvas_view_binding_lifetime.py",
+        "Tests/Backup_Recovery/test_mounted_console_backup.py::test_mounted_console_complete_capture_and_resumed_writes[settings]",
         "Tests/Backup_Recovery/test_mounted_console_backup.py::test_mounted_console_complete_capture_and_resumed_writes[library]",
     ),
 }

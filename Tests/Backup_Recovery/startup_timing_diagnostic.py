@@ -54,11 +54,12 @@ class ConfigTimings:
                         "function": label, "started": now,
                         "cpu_started": time.thread_time(), "acquired": None,
                         "thread": threading.get_native_id(),
+                        "thread_ident": threading.get_ident(),
                     }
                 elif key in self.active:
                     row = self.active[key]
                     if event == "yielded":
-                        if row["function"] == "config_lock" and row["acquired"] is None:
+                        if row["function"] in {"config_lock", "config_operation"} and row["acquired"] is None:
                             row["acquired"] = now
                     else:
                         self.active.pop(key)
@@ -122,7 +123,8 @@ class ConfigTimings:
         """Return bounded durations; ongoing CPU time is deliberately unknown."""
         now = time.perf_counter()
         with self.lock:
-            return {
+            active = list(self.active.values())
+            result = {
                 "active": [
                     {
                         "function": row["function"],
@@ -130,12 +132,33 @@ class ConfigTimings:
                         "phase": "body_and_release" if row["acquired"] is not None else "running",
                         "elapsed_seconds": round(now - row["started"], 6),
                     }
-                    for row in self.active.values()
+                    for row in active
                 ],
                 "completed": list(self.completed), "counts": dict(self.counts),
                 "slowest": dict(self.slowest),
                 "dropped_active": self.dropped_active, "errors": list(self.errors),
             }
+        # These are live code coordinates, not an atomic thread/lock snapshot.
+        # Do not retain frames or inspect arguments, locals, errors or results.
+        try:
+            frames = sys._current_frames()
+            for source, row in zip(active, result["active"], strict=True):
+                frame = frames.get(source["thread_ident"])
+                row["frames"] = coordinates = []
+                while frame is not None and len(coordinates) < 25:
+                    coordinates.append({
+                        "file": Path(frame.f_code.co_filename).name[:128],
+                        "function": frame.f_code.co_name[:128],
+                        "line": frame.f_lineno,
+                    })
+                    frame = frame.f_back
+        except Exception as error:  # noqa: BLE001 - optional code coordinates only.
+            self._error(error)
+        finally:
+            frame = None
+            frames = None
+        result["errors"] = list(self.errors)
+        return result
 
     def close(self):
         """Disable every owned event and callback before releasing the slot."""
@@ -184,6 +207,13 @@ class ConfigTimingPlugin:
                 if Path(code.co_filename).resolve() != self.source / "tldw_chatbook/config.py":
                     raise ValueError("config_timing_source_mismatch")
                 self.timings.codes[code] = label
+            participants = getattr(config, "_config_participants", None)
+            if participants is not None:
+                code = inspect.unwrap(participants.operation).__code__
+                expected = self.source / "tldw_chatbook/Backup_Recovery/config_participants.py"
+                if Path(code.co_filename).resolve() != expected:
+                    raise ValueError("config_operation_timing_source_mismatch")
+                self.timings.codes[code] = "config_operation"
             self.timings.start()
         except Exception as error:  # noqa: BLE001 - observation must not replace collection.
             self.timings._error(error)
