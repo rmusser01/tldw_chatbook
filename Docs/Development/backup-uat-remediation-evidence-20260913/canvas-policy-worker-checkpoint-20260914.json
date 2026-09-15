@@ -1,0 +1,106 @@
+{
+  "base": "27603954403930eb1ee9551995aef784dd97b9c8",
+  "files": {
+    "tldw_chatbook/Chat/console_runtime.py": "68ff8ebce1da0725127a072dc5e7f37ace72e785067b9d99c5037df38402352a",
+    "Tests/Backup_Recovery/test_canvas_policy_worker.py": "b7029afd590b394128abbdf137e3ea818d1257514e40676e9c9cb84362d28bcc",
+    "Tests/Backup_Recovery/run_platform_product.py": "024df5af518ff8bbf249514da0c5e85f286d4ed007330ac10fc4ac810e40f2c6"
+  },
+  "independent_validation": {
+    "cases": 6,
+    "passed": 6,
+    "elapsed_seconds": 5.93,
+    "log": "/private/tmp/uat-policy-worker-independent-final.log",
+    "log_sha256": "a9f5c7303acac93ee10904b35e2506444baf78bcac9b657ac6d670cf4bae3818"
+  },
+  "native_regression": {
+    "baseline": "27603954403930eb1ee9551995aef784dd97b9c8",
+    "result": "failed as expected: native policy polling blocked the UI event loop",
+    "log_sha256": "b5dd3fdc28044e2ac11fe8ced21af116a25898e54994f0197de3d72a2e76a788"
+  },
+  "root_validation": [
+    {
+      "cases": 17,
+      "passed": 17,
+      "seconds": 16.34,
+      "scope": "native read ownership and existing Canvas backup maintenance"
+    },
+    {
+      "cases": 34,
+      "passed": 34,
+      "seconds": 30.72,
+      "scope": "Canvas kill switch, native view binding and config lock order"
+    },
+    {
+      "cases": 1,
+      "passed": 1,
+      "seconds": 1.79,
+      "scope": "live pending-reader watcher cancellation/restart"
+    },
+    {
+      "cases": 3,
+      "passed": 3,
+      "seconds": 162.97,
+      "scope": "installed Console, Settings and Library Complete backup, archive readback, resumed writes"
+    },
+    {
+      "cases": 1,
+      "passed": 1,
+      "scope": "unchanged import budget",
+      "modules": 669,
+      "cap": 686
+    }
+  ],
+  "installed": [
+    {
+      "receipt": "/private/tmp/uat-policy-worker-installed/f9-native-package0/native-package.json",
+      "wheel_sha256": "3e7e58412a50e356827779950232c4d0b6884d2d1f097112651a1c3a0cc24767",
+      "installed_files": 2867,
+      "application_python_matches": 2475,
+      "mismatches": []
+    }
+  ],
+  "static": {
+    "files": {
+      "tldw_chatbook/Chat/console_runtime.py": {
+        "ruff_before": 31,
+        "ruff_after": 31,
+        "ruff_new": []
+      },
+      "Tests/Backup_Recovery/run_platform_product.py": {
+        "ruff_before": 0,
+        "ruff_after": 0,
+        "ruff_new": []
+      },
+      "Tests/Backup_Recovery/test_canvas_policy_worker.py": {
+        "ruff_before": 0,
+        "ruff_after": 0,
+        "ruff_new": []
+      }
+    },
+    "bandit_before": 3,
+    "bandit_after": 3,
+    "bandit_new": []
+  },
+  "limits": "Existing polling interval, fresh permission gates, startup/module caps and backup/product deadlines unchanged.",
+  "pending": "Fresh exact-revision Linux/Windows tests; previous Windows support34920105965 remains active. No Windows startup pass claimed.",
+  "compatibility_limit": {
+    "ordinary_pytest": "Existing pre-preview lifecycle test refuses raw_source_selection_changed before app construction on both parent276 and candidate; neither is a pass.",
+    "bound_native_probe": "Throwaway app-factory probe refused storage_scope_not_enrolled for its additional MCP root; no guard relaxed.",
+    "ordinary_native_probe": "Original body mounts a pending watcher, then fails canvas_controller is None at line2319 on both candidate and byte-verified pristine276. It is not counted as passing; no test or guard changed.",
+    "integration": "All three installed backup routes and native Canvas read ownership/kill-switch cases pass as recorded.",
+    "baseline_source_proof": {
+      "tldw_chatbook/Chat/console_runtime.py": {
+        "sha256": "ab3dbe6b41dd2fd3ecff9d11470a2c171d94066943f5c800b0395c0852eab81d",
+        "equals_pristine_276": true
+      },
+      "Tests/UI/test_console_runtime_ownership.py": {
+        "sha256": "964e15ceba344846cb85410953582e7fa8e534d0a92e00fb4f493ce76bb0e61c",
+        "equals_pristine_276": true
+      },
+      "Tests/Backup_Recovery/test_home_citation_retirement.py": {
+        "sha256": "f2957c65ab51ff487abc6488ad01ffae01901c4dfbeee2e6194991571ca9cb20",
+        "equals_pristine_276": true
+      }
+    }
+  }
+}

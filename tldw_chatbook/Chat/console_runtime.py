@@ -1032,6 +1032,7 @@ class ConsoleRuntime:
         self._canvas_enabled_reader = canvas_enabled_reader
         self._canvas_disabled_latched = self._read_canvas_enabled() is False
         self._canvas_policy_watch_task: asyncio.Task[None] | None = None
+        self._canvas_policy_read_task: asyncio.Task[bool] | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         # One app-wide mutation lane for exact persisted-conversation opens.
         # Individual ChatScreen workspaces are disposable views over this
@@ -2901,6 +2902,8 @@ class ConsoleRuntime:
         if not self._canvas_maintenance_closed:
             raise RecoveryRequired("runtime_producer_not_closed")
         tasks = set(self._canvas_policy_cleanups)
+        if self._canvas_policy_read_task is not None:
+            tasks.add(self._canvas_policy_read_task)
         if self._canvas_policy_watch_task is not None:
             tasks.add(self._canvas_policy_watch_task)
         if tasks:
@@ -2919,7 +2922,12 @@ class ConsoleRuntime:
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
         watcher = self._canvas_policy_watch_task
-        if self._canvas_policy_cleanups or (watcher is not None and not watcher.done()):
+        reader = self._canvas_policy_read_task
+        if (
+            self._canvas_policy_cleanups
+            or (watcher is not None and not watcher.done())
+            or (reader is not None and not reader.done())
+        ):
             raise RecoveryRequired("runtime_work_not_settled")
         with self._canvas_native_lock:
             self._canvas_maintenance_closed = False
@@ -2989,7 +2997,18 @@ class ConsoleRuntime:
         """Revoke native delivery promptly after an external config disable."""
 
         while not self._canvas_maintenance_closed:
-            if not self._canvas_enabled() and self.canvas_disabled():
+            # Native policy reads may wait for a config writer. Keep the UI
+            # runnable, retaining the actual read if the watcher is cancelled.
+            reader = self._canvas_policy_read_task
+            if reader is None:
+                reader = asyncio.create_task(
+                    asyncio.to_thread(self._canvas_enabled),
+                    name="console-canvas-policy-read",
+                )
+                self._canvas_policy_read_task = reader
+            enabled = await asyncio.shield(reader)
+            self._canvas_policy_read_task = None
+            if not enabled and self.canvas_disabled():
                 await self.apply_canvas_policy()
                 return
             await asyncio.sleep(0.25)
@@ -4504,6 +4523,9 @@ class ConsoleRuntime:
                 pass
         if self._canvas_policy_cleanups:
             await asyncio.shield(asyncio.gather(*self._canvas_policy_cleanups))
+        if self._canvas_policy_read_task is not None:
+            await asyncio.shield(self._canvas_policy_read_task)
+            self._canvas_policy_read_task = None
         maintenance_task = self._legacy_trace_maintenance_task
         if maintenance_task is not None and not maintenance_task.done():
             maintenance_task.cancel()
