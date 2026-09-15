@@ -161,8 +161,9 @@ Live UAT of a keyboard-only export flow (Evals results-grid export, at a
 None of this touches a plain `FileOpen`'s own default focus behaviour (still
 the directory listing) or the separate `EnhancedFileDialog` picker in
 `Widgets/enhanced_file_picker.py`, which composes its own, differently-`id`d
-Input/Select and is unaffected. (`FileOpen(offer_select_folder=True)` DOES
-focus the field now -- see section 8 below.)
+Input/Select and is unaffected. (`FileOpen(offer_select_folder=True)`,
+`SelectDirectory` and `EnhancedSelectDirectory` DO focus the field now -- see
+section 8 below.)
 
 ### 7. The Filename Field Is Also the Path Field (task-32122, task-32229)
 
@@ -187,21 +188,53 @@ second field beside it:
   subclass whose only content is `Binding("ctrl+a", "select_all")`. `Home`
   is unchanged.
 
-`SelectDirectory` is not a `BaseFileDialog` and none of this reaches it.
+`SelectDirectory` is not a `BaseFileDialog` and none of this reaches it. (It
+does share the mount-time focus rule in section 8 -- that one lives on the
+common base precisely so a second directory dialog cannot miss it.)
 
 ### 8. Folder-Offering Open Dialogs Open on the Field (task-32540, task-32554)
 
-- **Initial focus** (task-32540): `FileOpen` overrides
-  `_focus_initial_widget` to focus the input bar's field when
-  `offer_select_folder=True`, exactly as `FileSave` does for its own reason
-  (section 6). Reproduced live at 235x52 before the change: Library ▸ Notes ▸
-  Add from files… ▸ Import once, then typing `/Users` -- every character went
-  into the directory listing's type-ahead and Enter opened `..`. A plain
-  file-only `FileOpen` (character import, skill folders, TTS model
-  directories) is deliberately untouched, since there Enter on a listing row
-  is the natural first keystroke. Both branches are pinned, the second as an
-  explicit negative control, in
-  `Tests/UI/test_library_notes_w4_import_keyboard.py`.
+- **Initial focus** (task-32540, generalised by task-32606): a dialog whose
+  result is a DIRECTORY opens on the input bar's field, with any pre-filled
+  value selected, instead of on the listing. Reproduced live at 235x52 before
+  the change: Library ▸ Notes ▸ Add from files… ▸ Import once, then typing
+  `/Users` -- every character went into the directory listing's type-ahead and
+  Enter opened `..`.
+
+  task-32540 shipped this as a `FileOpen._focus_initial_widget` override, and
+  critique #4 found the sibling it never reached: Library ▸ Notes ▸ Folder
+  files pushes the vendored `SelectDirectory`, which has no override at all
+  (nor does `EnhancedSelectDirectory`), so that door stayed mouse-only. The
+  behaviour now lives ONCE on `FileSystemPickerScreen._focus_initial_widget`,
+  keyed on a single declarative fact -- the `RETURNS_A_FOLDER` class
+  attribute, which `SelectDirectory` and `EnhancedSelectDirectory` set and
+  `FileOpen` answers per instance through its existing
+  `_offer_select_folder`. `FileOpen` no longer overrides the method. The
+  field is read generically as the input bar's one `Input`, the way
+  `_resolve_select_folder_target` already reads it, so the three differing ids
+  (`#path_input`, `#dir-path-input`, the anonymous `FileNameInput`) need no
+  special-casing.
+
+  `FileSave` keeps its own override: it is not folder-returning, and its
+  reason (section 6) is different. A plain file-only `FileOpen` (character
+  import, skill folders, TTS model directories) is deliberately untouched,
+  since there Enter on a listing row is the natural first keystroke. Both
+  branches are pinned, the second as an explicit negative control, in
+  `Tests/UI/test_library_notes_w4_import_keyboard.py` and
+  `Tests/UI/test_library_notes_w5_picker_keyboard.py`.
+- **The dialog's own footer** (task-32606): `compose` yields a `Footer` as a
+  direct child of the SCREEN (not of `Dialog`). A `ModalScreen` is
+  translucent, so the host screen's footer shows straight through it --
+  critique #4 pressed Tab three times inside this dialog and kept reading
+  Library's `/ focus search | F6 next pane | esc notes`. An opaque footer on
+  the bottom row replaces those chips for as long as the modal is up; mounted
+  inside `Dialog` it would instead add a second key row eight lines above a
+  contradicting one. `Footer` lays chips out in binding order and scrolls the
+  overflow off the right edge, so `BINDINGS` leads with `escape` and the two
+  path actions -- at 100 columns `esc Cancel` was otherwise off-screen.
+  Known residue: `Footer` renders every `show=True` binding and marks a
+  `check_action`-vetoed one dim rather than dropping it, so `^s Select this
+  folder` appears dimmed on dialogs that do not offer it.
 - **A shape-based focus cue** (task-32540): the bar's buttons told a keyboard
   user which one Enter would press by colour and a label underline only. The
   rule that fixes it cannot live here -- the app's own
