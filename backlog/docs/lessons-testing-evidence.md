@@ -9,6 +9,17 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A fully contained focus target can be covered by a docked sibling
+
+**TASK-32598, Library rail, 2026-09-14.** At 80×24,
+`Screen.can_view_entire(Create)` returned true for the focused toggle at
+`(22,21,3,1)`, yet its compositor crop was three spaces: the docked scroll
+cue occupied that same row. Textual therefore skipped its automatic focus
+scroll. Calling the existing dock-aware `scroll_to_widget` from the rail's
+focus handler moved the toggle up one row and restored its glyph and
+underline in both themes and the native app. Containment is not visibility;
+verify the actual focused glyph/style when docks or overlays share a pane.
+
 ## A rendered app can hide a caught startup error
 
 **TASK-32591 final native check, 2026-09-14.** The integrated app rendered

@@ -9,9 +9,9 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.css.scalar import Scalar
 from textual.css.query import NoMatches
-from textual.events import Focus, Key, MouseDown, Resize
+from textual.css.scalar import Scalar
+from textual.events import DescendantFocus, Focus, Key, MouseDown, Resize
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
@@ -20,11 +20,6 @@ from tldw_chatbook.Library.library_rail_state import (
     LibraryLifecycle,
     LibraryRailPreferences,
 )
-from tldw_chatbook.Utils.library_rail_width import (
-    LIBRARY_DEFAULT_MAX_WIDTH,
-    LIBRARY_MIN_WIDTH,
-    OrdinaryRailStyleContract,
-)
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_MEDIA,
@@ -32,12 +27,17 @@ from tldw_chatbook.Library.library_shell_state import (
     LibraryRailSectionState,
     LibraryShellState,
 )
-from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Utils.library_rail_width import (
+    LIBRARY_DEFAULT_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    OrdinaryRailStyleContract,
+)
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailHandle,
     DestinationRailSectionHeader,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 LIBRARY_RAIL_ROW_PREFIX = "library-row-"
@@ -140,7 +140,7 @@ def library_hang_details_row(renderable: Any, width: int) -> Any:
         return renderable
     global _HANG_CONSOLE
     if _HANG_CONSOLE is None:
-        from rich.console import Console  # noqa: PLC0415 -- lazy: measurement only
+        from rich.console import Console
 
         _HANG_CONSOLE = Console()
     lines = source.wrap(_HANG_CONSOLE, width - len(pad))
@@ -523,7 +523,7 @@ class LibraryRailRowButton(Button):
     """
 
     #: The row record the label is rebuilt from on every width change.
-    library_row: "LibraryRailRow | None" = None
+    library_row: LibraryRailRow | None = None
 
     def on_resize(self, event: Resize) -> None:
         row = self.library_row
@@ -871,6 +871,14 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         """Re-decide the fold cue when the rail becomes visible again."""
         self._schedule_fold_cue_sync()
 
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal keyboard targets above the docked fold cue."""
+        if self._fold_cue_visible and event.widget.has_focus:
+            # Screen.can_view_entire ignores dock gutters, so a covered
+            # toggle can bypass Textual's automatic focus scroll. The
+            # scroll operation itself accounts for each ancestor's docks.
+            self.scroll_to_widget(event.widget, animate=False, immediate=True)
+
     #: task-32357 AC#2: the one toggle this rail answers itself.
     _DIAGNOSTICS_TOGGLE_ID = f"{RAIL_SECTION_TOGGLE_PREFIX}library-details-diagnostics"
 
@@ -1210,9 +1218,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         # cannot act on, standing in the same column as their own counts.
         # It keeps its place -- and its ids, which several tests query while
         # the Details body is closed -- behind its own closed disclosure.
-        size_rows = library_db_size_rows(
-            line for line in details_lines[2:] if line
-        )
+        size_rows = library_db_size_rows(line for line in details_lines[2:] if line)
         if size_rows:
             diagnostics_header, diagnostics_body = library_diagnostics_disclosure(
                 self.diagnostics_open

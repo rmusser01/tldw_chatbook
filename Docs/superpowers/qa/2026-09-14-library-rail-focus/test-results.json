@@ -1,0 +1,27 @@
+{
+  "final-targeted.log": [
+    "29 passed, 2 warnings in 34.36s"
+  ],
+  "capture.log": [
+    "2 passed, 2 warnings in 5.02s"
+  ],
+  "existing-query-debt.log": [
+    "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_resize_gate_skips_library_query_work_on_non_crossing_frames",
+    "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_tab_focus_path_library_query_volume_is_bounded",
+    "2 failed, 2 warnings in 4.42s"
+  ],
+  "red.log": [
+    "FAILED Tests/UI/test_library_rail_focus_visibility.py::test_tab_reveals_create_above_the_docked_cue[textual-dark]",
+    "FAILED Tests/UI/test_library_rail_focus_visibility.py::test_tab_reveals_create_above_the_docked_cue[textual-light]",
+    "2 failed, 2 warnings in 5.01s"
+  ],
+  "rail-tests.log": [
+    "21 passed, 2 warnings in 34.13s"
+  ],
+  "deep-resize.log": [
+    "4 passed, 2 warnings in 21.87s"
+  ],
+  "green-first.log": [
+    "2 passed, 2 warnings in 5.20s"
+  ]
+}
