@@ -5157,7 +5157,11 @@ class LibraryNotesController:
             # that found none says so and stays put. The row keeps the
             # Review the runtime's own ``review_changes`` now offers, so a
             # later visit reaches the same review without re-checking.
-            if controller.snapshot.phase == "review":
+            if (
+                self.is_mounted
+                and self._library_notes_view == "lasting_roots"
+                and controller.snapshot.phase == "review"
+            ):
                 self._library_notes_lasting_origin = "roots"
                 self._library_notes_view = "lasting_add"
                 self._apply_library_notes_footer_context()

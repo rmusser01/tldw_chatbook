@@ -701,7 +701,15 @@ configured sync folder.
 
 **Manage sync folders** lists active, paused, passive, offline, attention,
 recovery, stopped, and migrated-candidate states. Use **Check changes** to scan
-an available root. **Review** appears when its changes need attention;
+an available root. A check that finds effects takes you straight to them: the
+status line reads "Manual check finished. N change(s) to review." and the
+review it just built opens, while the row behind it becomes "◌ Changes
+available · Next: Review changes" so **Review** reaches the same review again
+without re-checking. A check that finds nothing says "Nothing to review." and
+leaves you on the list. (Was "Manual check finished. Review exact effects."
+printed over a root the check had left untouched, with no Review control
+anywhere — superseded by task-32604 below.) **Review** also appears on its own
+when a root's changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
 active root. **Resume** re-activates the root and runs the same check as
 **Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
@@ -755,6 +763,19 @@ on its own show up: the newest 20 across every listed root, newest first, as
 People/Sam.md · Sam" for a note you edited in Chatbook, "Updated note from
 file" for a file you edited on disk (task-32534). Before this a completed
 write left no trace anywhere in the app.
+
+Saving a note in Chatbook is enough to produce that "Wrote note to file" row:
+a note inside an active root that you save in the editor is written to its
+file on its own, on the same terms a file you edit on disk is read into its
+note — you do not have to run **Check changes**, and the row goes on saying
+"✓ Up to date" because by then it is (task-32604). Until this the note side
+produced no signal at all: Chatbook watches the folder, not the notes
+database, so a note you saved stayed in Notes only and its file kept its old
+bytes until something else touched the disk — with the row reading
+"✓ Up to date" the whole time. Chatbook still watches only while it is
+running: a note saved in one session reaches its file in that session, and a
+root whose notes changed outside a session reconciles at the next startup
+check.
 
 Tab moves through the root controls; the footer names the one you are on
 ("enter check changes", "enter pause") instead of a generic "run action", and
@@ -1699,7 +1720,9 @@ editor.)*
 *Verified against fix/library-notes-w3-sync-tail — 2026-09-12 (task-32519, at
 235x52 and 100x30, scratch profile with a 58-file vault): **Pause** →
 "Ⅱ Paused · Next: Resume" → **Resume** → "✓ Up to date · Next: Check changes"
-→ **Check changes** → "Manual check finished. Review exact effects."
+→ **Check changes** → "Manual check finished. Review exact effects." (that
+line now reads "Nothing to review." on a root with nothing pending —
+superseded by task-32604 below)
 (`wave3-caps/sync-tail/09-paused`, `10-resumed`, `11-check-after-resume`).
 With the same note edited in Chatbook and on disk while paused, **Resume** →
 "⚠ Needs attention · Next: Review changes" → **Review** → "59 safe · 1 need
@@ -2021,3 +2044,30 @@ pager's "Previous page unavailable — this is the first page".
 
 The profile logs hold no `unhandled_exception` for either walk; each holds
 one `app_stopping`, the INFO record of a deliberate Ctrl+Q.)*
+
+*Verified against fix/library-notes-w5-p0 — 2026-09-15 (task-32604, at 235x52,
+scratch profile with the 10 seeded notes plus a 65-file git vault under
+`$HOME/.cache/tldw-crit/w5-p0`): **Keep a folder synced** → PowerVault,
+⇄ Both ways → **Check changes** → "54 safe · 0 need attention · 4 skipped ·
+0 folder moves" → **Activate reviewed root** → "54 applied · listed under
+Receipts". `md5 vault/People/Sam.md` was `1d209615…` at activation. Opening
+**Sam** in the Notes editor, appending one line and pressing **Save** —
+"Saved 08:06" — left the file at `4cd06840…` within four seconds with
+nothing touching the disk, carrying the appended line
+(`wave5-caps/p0/01-note-saved-in-chatbook`); **Manage sync folders** then
+listed "2026-09-15 08:06 · Wrote note to file · People/Sam.md · Sam" at the
+top of **Receipts** (`02-receipts-wrote-note-to-file`). Before this the file
+never changed at all and no such receipt existed on any user-reachable path.
+**Check changes** on that root now reads "Nothing to review." beside
+"✓ Up to date · Next: Check changes" (`03-nothing-to-review`), and with one
+line appended to `Daily/2026-09-08.md` on disk it reads "Manual check
+finished. 1 change to review." and opens the review it built —
+"54 safe · 0 need attention · 4 skipped · 0 folder moves", "No change (53)"
+(`04-check-lands-on-review`), where it used to print "Review exact effects."
+and stay on the root list with no Review control. The row's own
+"◌ Changes available · Next: Review changes" projection is pinned on the
+production controller in
+`Tests/UI/test_library_notes_files_sync_journey.py` rather than walked: the
+automatic pass applies a pending change within a second or two, so the state
+is real but too short-lived to capture. The profile log holds no
+`unhandled_exception` and no ERROR record across the whole walk.)*
