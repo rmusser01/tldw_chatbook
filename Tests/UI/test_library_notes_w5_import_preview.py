@@ -430,3 +430,43 @@ async def test_only_one_pane_at_a_time_issues_a_next_instruction():
         assert len(_next_instructions(screen)) == 1, _next_instructions(screen)
 
 
+# --- task-32618: an embed becomes dead text, and the review says so -------
+
+
+def test_a_review_row_says_an_embed_will_show_as_text():
+    """AC#1/AC#3: the review classifies the embedded PNG as "Unsupported ·
+    Image — not a note" and never said the notes embedding it keep the raw
+    syntax. The wording names what the reader will SEE, not the internal
+    classification."""
+    from tldw_chatbook.Library.library_note_import_state import _effect_summary
+    summary = _effect_summary(_preview_item("Daily note\n\n![[diagram.png]]\n"))
+    assert "shows as ![[…]] text, not the file" in summary, summary
+
+    plain = _effect_summary(_preview_item("Daily note\n\nNo embeds.\n"))
+    assert "![[" not in plain, plain
+
+
+def test_an_embed_inside_a_code_span_is_not_counted():
+    """A note that DOCUMENTS embed syntax is not a note with a dead embed --
+    the same reason ``WIKILINK_SCAN`` matches code spans first."""
+    from tldw_chatbook.Notes.note_import_plan_models import embedded_file_count
+
+    assert embedded_file_count("Use `![[file.png]]` to embed.\n") == 0
+    assert embedded_file_count("```\n![[file.png]]\n```\n") == 0
+    assert embedded_file_count("![[a.png]] and ![[b.png]]\n") == 2
+    # A plain wikilink is a link, not an embed.
+    assert embedded_file_count("[[Another note]]\n") == 0
+
+
+def test_the_receipt_repeats_the_embed_count():
+    """AC#2: a user who skipped the review still has to learn it."""
+    from tldw_chatbook.Library.library_note_import_state import _receipt_outcome
+
+    line = _receipt_outcome(_receipt(imported=54), resolved_links=0, dead_embeds=3)
+    assert "3 embedded files left as text" in line, line
+    assert "1 embedded file left as text" in _receipt_outcome(
+        _receipt(imported=1), dead_embeds=1
+    )
+    assert "embedded file" not in _receipt_outcome(_receipt(imported=1))
+
+
