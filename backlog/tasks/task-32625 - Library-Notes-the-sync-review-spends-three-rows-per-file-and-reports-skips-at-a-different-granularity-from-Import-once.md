@@ -3,9 +3,11 @@ id: TASK-32625
 title: >-
   Library Notes: the sync review spends three rows per file and reports skips at
   a different granularity from Import once
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-15 06:44'
+updated_date: '2026-09-15 18:33'
 labels:
   - library
   - notes
@@ -28,7 +30,33 @@ Cause PROVEN by capture. The right shape is A's improvement idea 7: one dense re
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The two review surfaces share a row renderer, or state why they differ
-- [ ] #2 The sync review fits a 54-file vault without three rows per file
-- [ ] #3 Skips are reported at one granularity across both paths
+- [x] #1 The two review surfaces share a row renderer, or state why they differ
+- [x] #2 The sync review fits a 54-file vault without three rows per file
+- [x] #3 Skips are reported at one granularity across both paths
+- [x] #4 Import once and lasting sync render a review row through one shared component (idea 7 of task-32627), or the task records the evidence for why the shared component is out of reach and the two agree on granularity anyway
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Measure what a safe review row actually costs on screen, and why.
+2. Take the rows back to one each without losing the conflict rows' bodies.
+3. Make skips agree with Import once's folder granularity.
+4. Share what can honestly be shared of the row, and say plainly what cannot.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Where the three rows went.** Measured with a 54-file review composed at 100 columns: each safe row's own line (1) + the conflict-choices panel, which is EMPTY for a safe row but held open by `.library-notes-sync-conflict-choices { min-height: 1 }` (1) + `.library-notes-sync-review-row { margin: 0 0 1 0 }`, which exists to separate that panel from the next row (1). The panel is now shown only when it has something in it, and a row with no body drops its margin. 54 files now cost 54 rows: measured both the outer heights ({1}) and the screen distance between consecutive row tops ({1}), because the margin is exactly what an outer height does not include.
+
+The margin is dropped INLINE rather than via a `-plain` CSS rule: the base rule's tokens are all `library-`, so `build_css` splits it out to `screen_agentic_library.tcss` (a screen's `CSS_PATH`), while a `-plain` modifier keeps its block in the boot bundle -- the two would be arguing across sheets. An inline style is the one tier above both, which is why `run_disclosure` already sets its own margin that way.
+
+**Granularity (AC#3).** Import once reports a skip at folder level ('vault/.trash'); wave 4's per-file `item_skips` made this review report the same vault file by file. The run grouping the review already does (`uniform_runs`, keyed on folder + category + effect + destination) is exactly Import once's unit, so a skipped run now renders as ONE plain line -- '.trash · 4 files · Obsidian system folder' -- at any length, rather than as individual rows under eight and a `Collapsible` at eight or more. Plain, not a disclosure: there is nothing under a skip to open, and a `Collapsible` costs the page more rows than the run saves. The group heading's count is unchanged, so 'Skipped (5)' still means five files.
+
+**The shared component (AC#1 / AC#4, idea 7).** Honest answer: the two reviews now share FOUR of the five pieces of a row -- the path budget (`bounded_row_name`), the group heading (`group_heading`), the uniform-run collapse (`uniform_runs`/`run_disclosure`, shared by wave 4's task-32535) and, added here, the row LINE itself (`review_row_line`: 'name · what happens · where', each clause stripped of its own full stop). They do not share the row WIDGET, and should not yet: an Import row is a `Horizontal` carrying per-item Skip/Create new/Update controls, a sync row is a `Vertical` carrying conflict choices, a selected-choice line and a diff pane. Merging those is a bigger change than this task's density finding needs, and the granularity split -- the thing the shared component was wanted FOR -- is closed without it. Recorded as the evidence the AC asks for rather than claimed as done.
+
+**Modified:** `Widgets/Library/library_notes_add_from_files_canvas.py`, `Widgets/Library/library_note_import_canvas.py` (`review_row_line`, used by both surfaces), `Tests/Widgets/Library/test_library_notes_w5_review_density.py` (new), `Docs/User_Guide/library/notes.md`.
+
+**Red first:** row heights {2} against {1} (the outer height; the margin makes three on screen), and the folder-level skip rows absent entirely ([] against the two expected lines).
+<!-- SECTION:NOTES:END -->

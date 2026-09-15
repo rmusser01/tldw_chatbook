@@ -41,6 +41,7 @@ from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
     bounded_row_name,
     group_heading,
+    review_row_line,
     run_disclosure,
     uniform_runs,
 )
@@ -568,7 +569,24 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 markup=False,
             )
             for run in uniform_runs(tuple(members), key=self._run_key):
-                if len(run) < UNIFORM_RUN_MIN or category not in {"safe", "skipped"}:
+                if category == "skipped":
+                    # task-32625 AC#3: Import once reports a skip at FOLDER
+                    # level ("vault/.trash"); wave 4's per-file `item_skips`
+                    # made this review report the same vault file by file, so
+                    # one screen carried two mental models of the same fact.
+                    # A run is one folder with one reason, which is exactly
+                    # Import once's unit -- rendered as one plain line, not a
+                    # disclosure, because there is nothing under a skip to
+                    # open and a Collapsible costs the page more rows than
+                    # the run saves.
+                    yield Static(
+                        self._run_summary(run),
+                        id=f"notes-sync-review-skip-{run[0][0]}",
+                        classes="notes-sync-review-line",
+                        markup=False,
+                    )
+                    continue
+                if len(run) < UNIFORM_RUN_MIN or category != "safe":
                     for index, row in run:
                         yield from self._compose_review_row(index, row)
                     continue
@@ -596,22 +614,39 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         _, first = run[0]
         folder = PurePosixPath(first.relative_path).parent.as_posix()
         where = bounded_row_name(folder) if folder != "." else "top level"
-        parts = (where, f"{len(run)} files", first.effect, first.destination)
-        return " · ".join(part for part in parts if part)
+        count = f"{len(run)} file" if len(run) == 1 else f"{len(run)} files"
+        return review_row_line(where, count, first.effect, first.destination)
 
     @staticmethod
     def _review_row_line(row: LastingSyncReviewRow) -> str:
         path = row.relative_path or row.conflict_relative_path
-        parts = (bounded_row_name(path) if path else "", row.effect, row.destination)
-        return " · ".join(part for part in parts if part)
+        return review_row_line(
+            bounded_row_name(path) if path else "",
+            row.effect,
+            row.destination,
+        )
 
     def _compose_review_row(
         self, index: int, row: LastingSyncReviewRow
     ) -> ComposeResult:
-        with Vertical(
+        # task-32625 AC#2: the row's `margin: 0 0 1 0` separates its LINE
+        # from the body under it. A safe row has no body, so the margin was
+        # the third of its three rows -- 162 rows for the 54 files it takes
+        # one each to state. Inline rather than a `-plain` CSS rule because
+        # the base rule splits out to `screen_agentic_library.tcss` (its
+        # tokens are all `library-`) while a `-plain` modifier keeps the
+        # block in the boot bundle, so the two would be arguing across
+        # sheets; an inline style is the one tier above both, which is why
+        # `run_disclosure` already sets its own margin this way.
+        plain = not (row.conflict_eligible or row.choices)
+        review_row = Vertical(
             id=f"notes-sync-review-row-{index}",
-            classes="library-notes-sync-review-row",
-        ):
+            classes="library-notes-sync-review-row"
+            + (" -plain" if plain else ""),
+        )
+        if plain:
+            review_row.styles.margin = 0
+        with review_row:
             yield Static(
                 self._review_row_line(row),
                 classes="notes-sync-review-line",
@@ -649,7 +684,13 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             id=f"notes-sync-conflict-choices-{index}",
             classes="library-notes-sync-conflict-choices",
         )
-        choices_panel.display = not expanded
+        # task-32625 AC#2: this panel is empty for every safe row, and its
+        # `min-height: 1` still charged the page a row for it -- one of the
+        # three a one-line safe row cost (A cap 49). Shown only when it has
+        # something in it.
+        choices_panel.display = not expanded and (
+            row.conflict_eligible or bool(row.choices)
+        )
         with choices_panel:
             if row.conflict_eligible:
                 yield Static(

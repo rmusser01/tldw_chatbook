@@ -2068,3 +2068,10 @@ note in the list" instead of disappearing; selecting a note enables them and
 the line goes. (A filter is the usual way to end up with no selection, which
 is why they seemed to vanish when filtering.) The compact shell omits the
 heading, where its row is worth more than the label.*
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32625, at
+100 columns): a lasting-sync review row that needs no decision now costs one
+screen row rather than three, so a 54-file vault fits 54 rows; and skipped
+content is named by FOLDER with a file count and a reason (".trash · 4 files ·
+Obsidian system folder"), the granularity Import once already uses, instead of
+one row per skipped file.*
