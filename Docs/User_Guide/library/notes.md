@@ -508,10 +508,22 @@ Enter types. Info's footer is fixed instead — "enter run action" — except
 while its inline delete confirmation is open, which does name the focused
 button ("enter cancel" / "enter delete").
 
-That is true in **Preview** as well, not only in Edit and Info: Tab there
+That is true in **Preview** and **Info** as well, not only in Edit: Tab there
 walks the same six controls — "‹ Notes", Edit, Preview, Info, Save, Use in
-Console — and the footer names each one beside the "pgup/pgdn scroll" it
-already advertised, so an Enter pressed in Preview is never a guess.
+Console — and the footer names each one beside the tier's own keys, so an
+Enter pressed in a reading pane is never a guess. In Info that extends to the
+pane's own actions: Copy, Export Markdown, Export text and Delete each name
+themselves ("enter delete note"), and the Keywords field shows no enter chip
+because Enter does nothing there.
+
+In **Preview**, where the rendered body is the last stop of the cycle, Tab
+out of it lands on **Edit**, the first of the mode buttons, not on "‹ Notes".
+"‹ Notes" is one Shift+Tab back from Edit, and Escape still leaves the note;
+the swap exists so that the one obvious Tab-then-Enter out of a reading pane
+cannot close the note by accident. In **Info** the body is not the last stop
+— Keywords, Copy, Export Markdown, Export text, Delete and "‹ Notes" follow
+it — so Tab there simply carries on to Keywords and the cycle reaches every
+one of the pane's own actions.
 
 When the note body has keyboard focus, only its boundary becomes more
 prominent. The body background and editor size stay unchanged, so focusing
@@ -1259,16 +1271,22 @@ permanent delete.
 
 | Key | Action |
 |---|---|
-| **Ctrl+N** | Makes a new blank note and opens it — no chooser in between. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** does the same, but the footer advertises Ctrl+N in both places now. |
-| **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". |
+| **n** / **Ctrl+N** | Makes a new blank note and opens it — no chooser in between. Both work on the Library landing (no row selected yet) as well as inside the Notes workflow. The notes list advertises the bare **n**; **Ctrl+N** additionally works from inside the filter box, where a printable key would type instead. |
+| **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". The footer drops the "/ find note" chip while a text field has focus, for that reason. |
+| **g** | Go to the folder tree beside the list — focus lands on the selected placement when there is one, otherwise on the first folder row. |
+| **e** (in select mode) | Export the checked notes. Advertised only once at least one row is checked, which is also when the **Export selected** button stops being disabled. |
 | **Escape** | Focus the rail (in **Recently deleted**, go back to the list) |
 | **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
 | ↑ / ↓ (New note view) | Move between **Blank note**, **From a template…** and the template rows it opens |
 | Enter (New note view) | Create from the focused row |
 
-The footer advertises these as `ctrl+n new note | / find note | esc focus
-rail`. Notes does not register **Ctrl+S** and does not replace it with
+The footer advertises these as `n new note | / find note | g go to folder |
+esc focus rail`, and drops every printable one of them while a text field
+(the filter, or the rail's own search box) has focus — there they are
+literal characters, not accelerators. In select mode the tier becomes
+`enter select note | e export selected | esc done`, with the **e** chip
+present only while something is checked. Notes does not register **Ctrl+S** and does not replace it with
 another save shortcut. Use the visible
 Library notes **Save** button for an immediate save; Folder files saves
 automatically. Global navigation keys live in the [guide index](../index.md).
@@ -2221,3 +2239,35 @@ what it counted, the picker's count matches what it displays, and a long review
 row keeps its folder prefix. Extensions in all three scope sentences are read
 from their own constants (`file_notes_service.SUPPORTED_EXTENSIONS`,
 `notes_sync_runtime._SYNC_FILE_EXTENSIONS`) and pinned against them.)*
+
+*Verified against fix/library-notes-w5-kbd-focus — 2026-09-15 (tasks 32607,
+32608, 32609, 32613, critique #4). Measured headlessly against the real
+screen rather than walked in a terminal: every tab stop of the note pane was
+focused in turn and its computed `(text-style, outermost edge type)` pair
+compared focused vs blurred — the pair a monochrome capture keeps. Two stops
+changed nothing, `#library-note-preview-region` and
+`#library-note-context-region` (an accent-coloured `solid` border over a
+`solid` border, with the reset's `*:focus` outline repainting the same
+glyphs); both now take a `heavy` border on focus. The live keywords field
+`#library-note-context-keywords` already passed that test on its own — the
+generic `Input:focus` changes its border type `tall` → `solid` — but the
+Notes-specific field rules named only `#library-note-keywords`, a twin the
+canvas keeps permanently undisplayed, so the live field was styled unlike
+the title field beside it; the selector now names both. That is a
+consistency change, not a fix for a missing cue.
+Info's footer now names the focused control instead of "run action"; Info's
+Delete takes the readable error role instead of the muted one. Tab out of
+**Preview's** reading region was confirmed to land on "‹ Notes" before the
+change and on **Edit** after it; Info's region is stop 7 of 12, not the last,
+so the override does not fire there and a Tab walk of the Info pane visits
+all twelve stops (fix round 1 — the first cut redirected unconditionally and
+stranded Keywords, Copy, Export Markdown, Export text, Delete and "‹ Notes"
+off the forward ring). The lasting-sync canvas and the Session Git commit form
+now contain Tab (the latter through Textual's own `trap_focus`), and from the
+commit form's subject field Tab reaches **Cancel commit** and **Review
+commit** in two and three presses. In the lasting-sync review the pane's own
+stops are "notes-sync-body", "notes-sync-activate" and "notes-sync-back": one
+Tab from the body reaches **Activate reviewed root**, and Enter there fires
+its press, so a reviewed root is activated by keyboard and not merely focused
+by one. Not verified live in a terminal: the same walk end to end against a
+real vault, where the activation does real work.)*

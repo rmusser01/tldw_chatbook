@@ -2936,9 +2936,31 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 /* Note editor: title/keywords Inputs match the filter box's field look
    (tall border, focus accent) rather than defaulting to Textual's bare
-   Input styling. */
+   Input styling.
+
+   task-32607 AC#2: `#library-note-context-keywords` is the keywords field
+   that RENDERS. `#library-note-keywords` is its twin inside
+   `#library-note-wide-utilities`, which `apply_session_state` sets
+   `display = False` unconditionally -- so both of these blocks were being
+   spent on a box nobody can focus, and the live Keywords stop in Info was
+   left on the generic `Input:focus`, styled unlike the Title field
+   directly above it.
+
+   FIX ROUND 1 -- correcting this comment's own first claim: the live field
+   was NOT cue-less. Measured with these two selector additions reverted in
+   place, `#library-note-context-keywords` changes border TYPE `tall` ->
+   `solid` on focus from the generic `Input:focus` alone, and all three
+   parametrisations of `test_every_note_pane_tab_stop_paints_a_shape_change_
+   on_focus` stay green without them. This addition is a CONSISTENCY change
+   -- the live field now wears the same field look as the title field it
+   sits under, and its monochrome-visible cue becomes `text-style: bold`
+   instead of the border-type swap. Adding the live id rather than renaming
+   keeps the existing pins (`#library-note-keywords:focus` is asserted by
+   `test_library_notes_labeled_fields_keep_stable_non_semantic_focus_
+   geometry`) honest about the twin that is still composed. */
 #library-note-title,
-#library-note-keywords {
+#library-note-keywords,
+#library-note-context-keywords {
     width: 100%;
     height: 3;
     min-height: 3;
@@ -2950,12 +2972,27 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-note-title:focus,
-#library-note-keywords:focus {
+#library-note-keywords:focus,
+#library-note-context-keywords:focus {
     border: tall $ds-input-focus-accent;
     outline: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+/* task-32607 AC#3: Info's Delete wore `.library-media-action-danger`, whose
+   whole treatment is `color: $ds-text-muted` -- so the ANSI decode of the
+   pane showed the one destructive control at #a5a5a5 against its siblings'
+   #e1e1e1 and it read as the DISABLED button in the group. Muting is right
+   where danger sits inside a neutral strip you must not pull the eye into
+   (the media Reader's More row); it is wrong where the control IS the
+   section, which is what Info's own "Danger" heading already says. Same
+   remedy and the same readable token as the media trash confirm
+   (`#library-media-trash-delete-confirm`), not the 3.06:1
+   `$ds-status-error`. Id selector (1,0,0) beats the class. */
+#library-note-context-delete {
+    color: $ds-status-error-readable;
 }
 
 /* task-32217 (critique #9 density rule): the Body is the primary content
@@ -2990,9 +3027,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: solid $ds-grid-line;
 }
 
+/* task-32613 AC#1 / task-32607 AC#2: these two scroll owners were the ONLY
+   Notes tab stops whose focus cue was pure colour. Measured by focusing
+   every stop of the navigator, the editor, Preview and Info in turn and
+   diffing the computed (text-style, outermost edge type) pair: every other
+   stop changes shape (buttons gain `bold underline` plus heavy side rails,
+   fields gain `text-style: bold`, the body's border goes tall -> heavy) and
+   these two changed nothing -- `solid` border in, `solid` border out, with
+   the reset's `*:focus { outline: solid }` painting the SAME glyphs over the
+   same cells. In a monochrome dump the pane was byte-identical across Tab,
+   which is exactly what assessor A saw ("two of those stops showed no focus
+   indicator anywhere on screen").
+
+   `heavy` is the smallest change that carries: one cell wide like `solid`,
+   so the pane's geometry is untouched, and ━┃┏ against ─│┌ reads without
+   colour. `outline: none` stops the reset's outline from repainting those
+   same cells in `solid` and cancelling the cue. Still non-obscuring: no
+   `outline: heavy`, no `reverse`, and the border cells were already border
+   cells. */
 #library-note-preview-region:focus,
 #library-note-context-region:focus {
-    border: solid $ds-input-focus-accent;
+    border: heavy $ds-input-focus-accent;
+    outline: none;
     background: $ds-input-focus-bg;
 }
 

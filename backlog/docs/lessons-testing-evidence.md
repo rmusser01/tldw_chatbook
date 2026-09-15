@@ -14465,3 +14465,36 @@ did the wrong thing succeeds just as loudly as one that did the right thing.
 
 Commit the fix first where you can: a committed fix makes the whole class
 impossible, at the cost of one amend.
+
+## A comparison run that never collected scores as perfectly green (wave 5, 2026-09-15)
+
+**The incident.** A branch was being compared against dev the cheap way — swap
+dev's copy of a file in with `git show origin/dev:<path>`, run, swap back — to
+avoid a second worktree on a full disk. Mid-round, dev moved. The newer
+`library_screen.py` referenced `ViewImportedNotesRequested`, a symbol with zero
+occurrences in the branch's canvas file, so every swapped run **died at import**.
+
+Collection failure gives `rc=2`, and:
+
+```
+grep -c '^FAILED'   →  0
+grep -c '^ERROR'    →  1
+```
+
+A harness counting only `^FAILED` read the dev side as **zero failures**. An
+unrun baseline does not score badly; it scores *perfectly*, and it biases the
+comparison in the one direction that matters — toward "no regression here".
+
+**The rule.** Pin the **SHA**, never the branch name, for any baseline you are
+comparing against: `git show <sha>:<path>`, not `git show origin/dev:<path>`. A
+moving baseline silently changes what you measured halfway through. And count
+`^ERROR` alongside `^FAILED`, or assert the collected test count matches what
+you expected — a run that collected nothing is not evidence of anything.
+
+**The family this belongs to.** Four wrong numbers passed as evidence in a single
+day on this programme, each one reading as good news: a ratchet red on both sides
+whose *values* differed (977 vs 980); a failure count read off `F`/`.` progress
+marks that Loguru had interleaved; a FAILED list truncated by `head -8`, whose
+missing entries were inferred to have passed; and this. The common shape is that
+every one of them is a number you did not compute, from output you did not fully
+read, in the direction you were hoping for.

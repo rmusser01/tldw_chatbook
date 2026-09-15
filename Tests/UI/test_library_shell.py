@@ -33283,7 +33283,12 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         screen.query_one("#library-note-preview").press()
         await wait_footer("pgup/pgdn scroll | esc notes")
         screen.query_one("#library-note-context").press()
-        await wait_footer("enter run action | esc note")
+        # task-32607 AC#1: the Info tier no longer renders its literal
+        # "enter run action" on every stop. Entry focus lands on the
+        # context scroll region, which owns no Enter, so the honest tier
+        # here is the exit alone; the per-control "enter <verb>" chips are
+        # pinned by name in Tests/UI/test_library_notes_w5_kbd_focus.py.
+        await wait_footer("esc note")
 
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
@@ -33310,7 +33315,8 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
         await wait_footer("enter confirm | esc cancel")
         await pilot.press("escape")
-        await wait_footer("enter run action | esc note")
+        # task-32607 AC#1: see above -- no generic "run action" chip.
+        await wait_footer("esc note")
         await pilot.press("escape")
         await wait_footer("pgup/pgdn scroll | esc notes")
 
@@ -33370,18 +33376,21 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             await _wait_for_condition(
                 pilot,
                 lambda: footer_shortcuts() == expected,
-                message=f"Footer did not settle to {expected!r}.",
+                message=lambda: (
+                    f"Footer did not settle to {expected!r}; "
+                    f"got {footer_shortcuts()!r}."
+                ),
             )
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("ctrl+n new | / find | esc rail")
+        await wait_footer("n new | / find | g folder | esc rail")
 
         screen.query_one("#library-notes-select-toggle").press()
         await _wait_for_selector(screen, pilot, "#library-notes-selection-actions")
         await wait_footer("enter select | esc done")
         await pilot.press("escape")
-        await wait_footer("ctrl+n new | / find | esc rail")
+        await wait_footer("n new | / find | g folder | esc rail")
 
         # task-32128: the sort strip is not reachable from a folder tree
         # (no Sort control there), so its footer state is covered by the
@@ -33394,14 +33403,14 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         await wait_footer("enter create | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
-        await wait_footer("ctrl+n new | / find | esc rail")
+        await wait_footer("n new | / find | g folder | esc rail")
 
         screen.query_one("#library-notes-add-from-files").press()
         await _wait_for_selector(screen, pilot, "#notes-add-import-once")
         await wait_footer("enter act | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("ctrl+n new | / find | esc rail")
+        await wait_footer("n new | / find | g folder | esc rail")
 
         await pilot.press("escape")
         await _wait_for_condition(
