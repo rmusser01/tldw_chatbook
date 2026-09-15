@@ -978,7 +978,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 tooltip=setup.validation_message or None,
             )
             yield Button(
-                "Back",
+                # task-32624: was a bare "Back" -- the one spelling left
+                # unconverted when task-32553 unified every other back
+                # control on this canvas (and the app) to back_cue_label().
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1049,7 +1052,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     ),
                 )
             yield Button(
-                "Back",
+                # task-32624: was a bare "Back" -- the one spelling left
+                # unconverted when task-32553 unified every other back
+                # control on this canvas (and the app) to back_cue_label().
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,

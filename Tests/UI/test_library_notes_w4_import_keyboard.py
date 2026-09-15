@@ -560,3 +560,37 @@ async def test_one_back_cue_grammar_across_the_notes_surfaces() -> None:
         "notes-sync-back": "‹ Notes",
         "notes-sync-roots-back": "‹ Notes",
     }, labels
+
+
+class _BackCueConfigureHost(ConsolidatedCSSApp):
+    """The lasting-sync setup pane, direct -- 32553's pin above only ever
+    composed the chooser's default "choose" phase, so the "configure" and
+    "review" phases -- where task-32624 found a bare "Back" surviving --
+    were never exercised by it."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def __init__(self, phase: str) -> None:
+        super().__init__()
+        self._phase = phase
+
+    def compose(self) -> ComposeResult:
+        yield LibraryNotesAddFromFilesCanvas(
+            replace(initial_lasting_sync_snapshot(lasting_available=True), phase=self._phase),
+            id="chooser",
+        )
+
+
+@pytest.mark.parametrize("phase", ["configure", "review"])
+async def test_task_32624_extends_the_back_cue_pin_to_configure_and_review(
+    phase: str,
+) -> None:
+    """task-32624: the same "‹ Notes" grammar, on the two phases 32553's
+    own pin (above) never reached -- these read a bare "Back" before."""
+    app = _BackCueConfigureHost(phase)
+
+    async with app.run_test(size=(190, 60)) as pilot:
+        await pilot.pause()
+        label = str(app.query_one("#notes-sync-back", Button).label)
+
+    assert label == "‹ Notes", label
