@@ -109,7 +109,13 @@ assumption, recorded in ADR-138 and the spec. Retain existing checks; do not cla
 the replacement race is technically fixed. This approval does not waive baseline
 static debt or authorize infrastructure, execution, merge or push.
 
-Coordinator follow-through: align the user guide and task with that contract,
-request the original reviewer's finding disposition and final whole-branch review,
-then record the evidence and remaining DoD gaps. Implementation checkboxes above
-record completed work, not a Backlog Done transition.
+Coordinator follow-through completed: guide/task aligned, original reviewer
+disposition and final whole-branch review recorded in
+`.superpowers/sdd/2026-09-14-workflows-authoring-dev/final-review.md`.
+The alias finding is closed under approved scope, not technically fixed. The
+technical authoring review passes; full DoD/merge approval does not, because
+713 incumbent Ruff findings and five formatter failures remain unwaived.
+One nonblocking capture-cleanup minor is recorded separately. Fresh coordinator
+authoring/storage verification: 35 passed in 21.53s; 26 dedicated Python files
+pass Ruff/format. Implementation checkboxes do not mark Backlog Done. Keep the
+branch isolated until the static-analysis gate is explicitly resolved.

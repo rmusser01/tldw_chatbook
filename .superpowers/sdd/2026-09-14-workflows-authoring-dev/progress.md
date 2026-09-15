@@ -31,9 +31,10 @@ The parked integration's failing lifetime-lock alias regression and four R1 sour
 - [x] Backlog task and authoring-only contract recorded; preflight checked.
 - [x] Focused baseline.
 - [x] Implementer dispatch: Euclid (01a0a34c-08d1-76f1-b385-d0fb7ca51883); task brief + approved full contract, production/test ownership only; no nested agents.
-- [ ] Targeted behavioral/static checks.
-- [ ] Task review and actual rendered UI review.
-- [ ] Final branch review and user handoff.
+- [x] Targeted behavioral checks and clean new-file static checks.
+- [x] Task review and actual rendered UI review; alias finding closed under user-approved contract.
+- [x] Final branch review recorded; handoff retains unresolved DoD gate.
+- [ ] Full DoD: incumbent-file lint/format gate remains unsuccessful and unwaived.
 
 Coordinator owns docs/verification handoff; implementer owns production and tests listed in Task 1.
 
@@ -243,3 +244,41 @@ push is authorized. Baseline lint/format debt is not waived; keep Backlog In
 Progress. Historical task review reports remain intact, and the original reviewer
 will receive the actual approval plus amended contract for finding disposition
 and the still-required broader whole-branch review.
+
+## Final review and handoff (2026-09-15)
+
+Contract amendment committed e7a54a992f. Ampere resumed for the actual user
+approval, immutable amendment diff and full77eb2601a6..e7a54a992f package. Final
+review recorded in final-review.md: technical authoring review passes; original
+alias finding CLOSED UNDER APPROVED SCOPE, not technically fixed. No Critical
+or new production Important finding. All40 production/test identities match
+the prior task plus guard fix; migrations match preserved source. No new app
+boot, test rerun or visual review by the reviewer. Reviewer closed after return.
+
+The full DoD/merge verdict is NO because the incumbent713Ruff/fiveformatter
+gate remains unsuccessful and unwaived. Resolving that needs separately
+authorized cleanup or an explicit task-specific gate exception; the user's
+stable-file approval does not grant either. Do not import TASK-32160's exception,
+dispatch a broad cleanup wave, mark Done, merge or push. Backlog ACs record the
+verified functional outcomes while status stays In Progress.
+
+Final review minor (deferred, nonblocking): standalone capture bootstrap cleanup
+depends on a pytest hook that does not run, and factory drains need finally.
+Coordinator verified capture.py:22/99 and Tests/conftest.py bootstrap/sessionfinish
+ownership; no cleanup implementation or deletion performed. Before repeated
+future captures, give the disposable profile an explicit owned lifetime and
+protect factory cleanup on failure. Requests/Kokoro noise remains baseline.
+
+Fresh coordinator verification on unchanged production after the amendment:
+`PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Workflows/test_authoring.py Tests/DB/test_workflows_authoring_storage.py -q --timeout=60 --tb=short --show-capture=no -p no:randomly`
+—35 passed,1 existing warning in21.53s, exit0; existing Kokoro cleanup noise after
+the result. Ruff check and format --check of Workflows, Workflows_Modules,
+workflows_screen, Workflows_DB, their dedicated tests and capture.py: all checks
+passed,26 files already formatted. Full-branch diff-check clean. The earlier374
+result remains pre-guard evidence, not a freshly rerun full selection.
+
+Preservation rechecked: original8aa1987af9357655af9354610b878f247fd1e929,
+parkedfe42f9935371720292f2d0b96d492a15655db8eb with the same5WIP paths. No
+production edits in this approval turn; no new infrastructure, execution, schema,
+server/provider calls, merge, push or deletion. Keep this committed evidence and
+the authoring worktree for the user, not SDD scratch cleanup.

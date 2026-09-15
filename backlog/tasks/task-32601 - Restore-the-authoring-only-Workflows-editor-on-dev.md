@@ -17,10 +17,10 @@ Deliver the approved portable workflow editor on current dev while keeping unfin
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Users can create, edit, save, import and export workflow definitions in the canonical Workflows screen under ADR-138's approved stable-file exchange contract.
-- [ ] #2 The library, step navigator, overview and collapsed continuous form remain usable with keyboard and at supported terminal sizes.
-- [ ] #3 Drafts survive navigation and restart, failed persistence stays recoverable, and opaque server fields survive round trips.
-- [ ] #4 Only existing SQLite safety utilities are used; new execution and process-ownership infrastructure remain absent.
+- [x] #1 Users can create, edit, save, import and export workflow definitions in the canonical Workflows screen under ADR-138's approved stable-file exchange contract.
+- [x] #2 The library, step navigator, overview and collapsed continuous form remain usable with keyboard and at supported terminal sizes.
+- [x] #3 Drafts survive navigation and restart, failed persistence stays recoverable, and opaque server fields survive round trips.
+- [x] #4 Only existing SQLite safety utilities are used; new execution and process-ownership infrastructure remain absent.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,8 +48,10 @@ the spec, plan and user guide. Existing metadata-only alias rejection remains;
 post-validation substitution or a detached live inode can still disrupt SQLite
 locking. This is an accepted operating limitation, not a technical race fix.
 No extra helper or file-I/O subsystem is authorized or added. The original
-reviewer's contract disposition and final whole-branch review are pending;
-baseline static-analysis debt remains unwaived. No Done transition.
+reviewer closed the alias finding under that approved scope and completed the
+whole-branch review through e7a54a992f. Technical authoring review passes, but
+full DoD/merge approval does not: baseline static-analysis debt remains unwaived.
+Functional ACs are verified; no Done transition.
 
 Implemented the reviewed b34eda3d64 authoring slice: real library, navigator,
 overview and independently collapsed continuous forms; immutable saved revisions,
@@ -75,7 +77,7 @@ retain raw-editor focus visibility and settle test modal mounting. Full failing
 test names, diagnoses, exact RED/GREEN commands and final evidence are in
 `.superpowers/sdd/2026-09-14-workflows-authoring-dev/task-1-report.md`.
 
-Task remains **In Progress** pending coordinator code review and full DoD.
+Task remains **In Progress** pending the static-analysis gate and full DoD.
 Existing whole-file Ruff/formatter debt is reported separately, not waived or
 suppressed. New/rewritten authoring files pass Ruff and formatting. All work is
 confined to the named authoring-dev worktree; preserved checkouts are untouched.
@@ -87,4 +89,18 @@ export reject aliases before generic file I/O; shared helpers, SQLite lifecycle,
 migrations and UI are unchanged. The report records exact RED/GREEN evidence and
 the concurrent-path-replacement limitation. The covering authoring/storage suite
 passes 35 tests, including off-loop metadata checks for import and export; scoped
-Ruff/format and diff-check are clean. Task remains In Progress for review.
+Ruff/format and diff-check are clean. Review subsequently completed as above.
+
+Final assessment and scope-based closure are recorded in
+`.superpowers/sdd/2026-09-14-workflows-authoring-dev/final-review.md`.
+Fresh coordinator run after the documentation amendment: 35 passed, one existing
+warning in 21.53s; dedicated new/rewritten Python files pass Ruff and format
+(26 files). No production edits in this approval turn. Whole-file baseline remains
+713 Ruff findings and five formatter failures; no task-specific exception has
+been approved. Resolving this gate requires separate direction, not SQLite work.
+
+Nonblocking review follow-up: the standalone QA capture script needs an explicit
+owned bootstrap-profile lifetime and factory cleanup in finally. Current success
+captures remain evidence, but repeated runs can leave disposable profiles behind
+and capture failures skip factory cleanup. Recorded separately from the authoring
+ACs; no data deleted or cleanup code added in this turn.
