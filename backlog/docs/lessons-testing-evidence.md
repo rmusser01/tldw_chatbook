@@ -14433,3 +14433,35 @@ A second run restored a file from a snapshot the FIRST run had taken, silently
 rolling back an edit made in between; it was caught only because a test that
 had been green went red. Delete the backup directory between runs, or key it by
 run.
+
+## The restore that ends a revert-check can eat the fix you were testing (wave 5, 2026-09-15)
+
+**The incidents, two of them in one day.** Proving a pin RED means putting the
+bug back, running, and putting the fix back. Both halves of that are edits, and
+the "put it back" half is where the work goes missing:
+
+- One implementer ended a revert-check with `git checkout -- <file>`. The fix
+  under test was **uncommitted**, so the checkout restored the file to HEAD and
+  silently deleted it. The script's own "source clean" line printed happily.
+- Another ran a restore in the background while still editing the same file.
+  The restore landed second and clobbered the later edit.
+
+Both were caught, and neither by the restore step reporting a problem — the
+first by grepping for the fix's own expression afterwards instead of trusting
+the script, the second by noticing the file had gone backwards.
+
+**Why it is worth a rule.** A revert-check inverts your usual safety: the state
+you must protect is the *working tree*, not the commit, because the thing you are
+proving is not committed yet. `git checkout -- <file>`, `git restore`, and
+`git stash` all mean "throw away the working tree", which during a revert-check
+means "throw away the fix".
+
+**The rule.** Do revert-checks on a **copy**: `cp file file.bak`, break it, run,
+`cp file.bak file`. Never `git checkout`/`git restore`/`git stash` a file whose
+uncommitted content is the thing under test. Never run a restore in the
+background while editing the same file. And verify the restore by **grepping for
+the fix's own text**, not by reading a script's success line — a restore that
+did the wrong thing succeeds just as loudly as one that did the right thing.
+
+Commit the fix first where you can: a committed fix makes the whole class
+impossible, at the cost of one amend.
