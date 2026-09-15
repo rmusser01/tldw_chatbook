@@ -9,12 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 ##############################################################################
-# Textual imports.
-from textual.widgets import Input
-
-##############################################################################
 # Local imports.
-from .base_dialog import ButtonLabel, InputBar, resolve_default_location
+from .base_dialog import ButtonLabel, resolve_default_location
 from .file_dialog import BaseFileDialog
 from .path_filters import Filters
 
@@ -69,34 +65,14 @@ class FileOpen(BaseFileDialog):
         self._must_exist = must_exist
         """Must the file exist?"""
         self._offer_select_folder = offer_select_folder
-        """Offer the "select the folder being viewed" action?"""
+        """Offer the "select the folder being viewed" action?
 
-    def _focus_initial_widget(self) -> None:
-        """Focus the path field when this dialog also accepts a folder.
-
-        task-32540 (critique #3, both assessors): Import once and "Keep a
-        folder synced" both push this dialog, and the one thing a keyboard
-        user does first is type a path. With the base class's default focus
-        (the directory listing) every typed character went into the
-        listing's type-ahead instead -- reproduced live at 235x52: typing
-        "/Users" left the field on its placeholder and Enter activated the
-        highlighted ".." row. ``FileSave`` already steers initial focus the
-        same way for the same reason (task-1479).
-
-        Only when ``offer_select_folder`` is on: a plain file-only
-        ``FileOpen`` (character import, skill folders, TTS models, ...)
-        keeps browsing-first focus, where Enter on a listing row is the
-        natural first keystroke.
+        Also the per-instance answer to ``RETURNS_A_FOLDER``: with it on,
+        ``FileSystemPickerScreen._focus_initial_widget`` opens this dialog
+        on its path field (task-32540, generalised by task-32606). A plain
+        file-only ``FileOpen`` (character import, skill folders, TTS
+        models, ...) keeps browsing-first focus.
         """
-        if not self._offer_select_folder:
-            super()._focus_initial_widget()
-            return
-        field = self.query_one(InputBar).query_one(Input)
-        field.focus()
-        # Any seeded default is a starting point, not something to type
-        # around -- select it so the first keystroke replaces it.
-        if field.value:
-            field.selection = (0, len(field.value))
 
     def _hint_text(self) -> str:
         """Name both actions once "Select folder" is offered (task-32122).

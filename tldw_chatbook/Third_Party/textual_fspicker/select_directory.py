@@ -30,6 +30,14 @@ from .parts import DirectoryNavigation
 class SelectDirectory(FileSystemPickerScreen):
     """A directory selection dialog."""
 
+    RETURNS_A_FOLDER = True
+    """Every result this dialog can produce is a directory (task-32606).
+
+    So the base class opens it on the "Folder path" field below rather
+    than on the listing -- the behaviour Import once already had, which
+    this door (Library ▸ Notes ▸ Folder files) had been missing.
+    """
+
     DEFAULT_CSS = (
         FileSystemPickerScreen.DEFAULT_CSS
         + """

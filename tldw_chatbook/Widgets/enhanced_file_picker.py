@@ -2481,6 +2481,9 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
     enhanced family everywhere keep a single picker look (TASK-16477).
     """
 
+    RETURNS_A_FOLDER = True
+    """Directory-only, so it opens on its "Folder path" field (task-32606)."""
+
     # The file-flow select button would query the (absent) filename input;
     # this dialog replaces it with the viewed-directory confirm below.
     _SUPPRESSED_BASE_HANDLERS = {

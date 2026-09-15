@@ -12,7 +12,7 @@ from __future__ import annotations
 # Python imports.
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, List, TypeAlias, Union
+from typing import Any, Callable, ClassVar, Dict, List, TypeAlias, Union
 
 ##############################################################################
 # Third-party imports.
@@ -24,7 +24,16 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Input, ListView, ListItem, Static, Select
+from textual.widgets import (
+    Button,
+    Footer,
+    Label,
+    Input,
+    ListView,
+    ListItem,
+    Static,
+    Select,
+)
 
 ##############################################################################
 # Local imports.
@@ -419,6 +428,19 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     ERROR_PERMISSION_ERROR = "Permission error"
     """Error to tell there user there was a problem with permissions."""
 
+    RETURNS_A_FOLDER: ClassVar[bool] = False
+    """Can confirming this dialog hand back a DIRECTORY? (task-32606)
+
+    The one fact that decides initial focus (``_focus_initial_widget``): a
+    dialog whose answer is a folder opens on its path field, because typing
+    or pasting a path is what a keyboard user does first there. Declared
+    per class for the dialogs that always return one (``SelectDirectory``,
+    ``EnhancedSelectDirectory``) and per instance by
+    ``FileOpen(offer_select_folder=True)``, which decides it at
+    construction. A file-only dialog leaves it False and keeps
+    browsing-first focus.
+    """
+
     BINDINGS = [
         Binding("full_stop", "hidden", "Toggle hidden"),
         Binding("ctrl+h", "hidden", "Toggle hidden files"),
@@ -614,6 +636,14 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             error_line.display = False
             yield error_line
 
+            # task-32606 AC#2: a ModalScreen is translucent, so the host
+            # screen's own footer shows straight through it -- critique #4
+            # pressed Tab three times inside this dialog and kept reading
+            # Library's "/ focus search | F6 next pane | esc notes", with
+            # nothing on screen saying which controls were inside the
+            # dialog. The dialog's own bindings belong on the dialog.
+            yield Footer()
+
     def on_mount(self) -> None:
         """Focus the initial widget on mount and set the initial path."""
         dir_nav = self.query_one(DirectoryNavigation)
@@ -631,12 +661,19 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     def _focus_initial_widget(self) -> None:
         """Focus whichever widget should hold focus right after mounting.
 
-        Defaults to the directory listing. Subclasses override this to
-        steer initial focus elsewhere -- e.g. ``FileSave`` (file_save.py)
-        focuses its filename input instead, so a keyboard user can press
-        Enter immediately to confirm the seeded default filename rather
-        than have Enter activate the highlighted directory row (usually
-        ``..``) (task-1479).
+        A dialog that ``RETURNS_A_FOLDER`` opens on its path field, with
+        any pre-filled value selected so the first keystroke replaces it:
+        typing or pasting a path is the first thing a keyboard user does
+        there, and with the listing focused every character went into the
+        listing's type-ahead instead (task-32540 for Import once,
+        task-32606 for the whole family -- critique #4 reproduced Folder
+        files' "Choose File Notes Folder" swallowing a typed path and made
+        that door mouse-only). Anything else defaults to the directory
+        listing, where Enter on a row is the natural first keystroke.
+
+        ``FileSave`` (file_save.py) still overrides this for its own,
+        unrelated reason: its seeded filename must be confirmable with one
+        Enter (task-1479).
 
         This is a plain method call, not a message handler: overriding it
         resolves via normal Python MRO, unlike Textual's ``on_mount``/`@on`
@@ -648,6 +685,18 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         in the walk fires and then gets clobbered by this method's own
         ``dir_nav.focus()`` call afterwards).
         """
+        if self.RETURNS_A_FOLDER or getattr(self, "_offer_select_folder", False):
+            # Read generically via InputBar's one Input child, the way
+            # `_resolve_select_folder_target` already reads it: the field's
+            # id differs per dialog (#path_input, #dir-path-input, the
+            # anonymous FileNameInput).
+            fields = self.query("InputBar Input")
+            if fields:
+                path_field = fields.first(Input)
+                path_field.focus()
+                if path_field.value:
+                    path_field.selection = (0, len(path_field.value))
+                return
         self.query_one(DirectoryNavigation).focus()
 
     def _set_error(self, message: str = "") -> None:
