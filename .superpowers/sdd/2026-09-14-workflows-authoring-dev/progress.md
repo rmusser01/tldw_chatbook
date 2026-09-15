@@ -282,3 +282,28 @@ parkedfe42f9935371720292f2d0b96d492a15655db8eb with the same5WIP paths. No
 production edits in this approval turn; no new infrastructure, execution, schema,
 server/provider calls, merge, push or deletion. Keep this committed evidence and
 the authoring worktree for the user, not SDD scratch cleanup.
+
+## Approved no-new-static-debt qualification (2026-09-15)
+
+User separately approved the recommended TASK-32601 no-new-static-debt gate.
+ADR-138/spec/plan/task record the scope at581009e8a2; prior unwaived/no-merge
+review remains a historical checkpoint. This approval changes the task's static
+acceptance rule, not production or shared CI configuration.
+
+Coordinator's initial exact-span comparison found711mapped diagnostics and2I001
+findings in changed test import blocks. Resumed Euclid for ONLY those2blocks and
+its report. Commit62ab9ebc04 fixes both;15affected Workflows tests pass,164
+deselected in16.44s. Coordinator additionally ran35authoring/storage tests:
+35passed1warning20.79s. No production changes, new tests, broad formatting,
+suppressions, dependencies or runtime infrastructure. Euclid closed after report.
+
+Final all34changed-Python comparison against77eb2601a6:25newfiles+rewritten screen
+clean;711remaining diagnostics map exactly to baseline code/rule/message/columns;
+all64formatter edits in5files map exactly to baseline spans/replacement bytes,
+including7insertions via adjacent-line anchors. No unmatched lint or formatter
+edits. See static-gate.md and static-gate-results.json for method and exact counts.
+Whole-file commands still fail as documented; only the approved gate can pass.
+
+Ampere resumed for a scoped review of this qualification and2import-block fix,
+not another broad branch/UI audit. Task stays In Progress until that disposition.
+Capture cleanup and Requests/Kokoro warning minors remain tracked and nonblocking.
