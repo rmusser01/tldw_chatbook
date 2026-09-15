@@ -99,3 +99,12 @@ files retain 713 baseline Ruff findings and five baseline formatter failures;
 these are not waived. Completing the implementation steps does not mark the
 Backlog task Done. Task code review and final branch review are separate gates.
 Visual evidence and scoped correction verdict: Docs/superpowers/qa/workflows-authoring-dev/README.md.
+
+## Open review gate
+
+Fix `9b13b49d51` adds metadata-only exchange admission; 35 covering tests pass.
+Task re-review remains open for replacement between path validation and file
+opening. No shared helper changes or safety-contract waiver are authorized.
+Pause for the user's choice of file-I/O scope/contract before continuing; final
+whole-branch review has not run. Implementation checkboxes above record completed
+work, not approval of this remaining safety gap or a Backlog Done transition.

@@ -1,0 +1,228 @@
+# SDD ledger — plan: Docs/superpowers/plans/2026-09-14-workflows-authoring-dev.md
+
+Base: 77eb2601a63ba473318b8ec1e4edb53f8ac5899e
+Task: TASK-32601. Current scope approved by user: authoring-only editor on clean dev.
+Source: b34eda3d64 editor checkpoint; source and parked integration branches unchanged.
+
+## Preflight
+
+| Task/pair | Interface or internal consistency check | Result |
+| --- | --- | --- |
+| Task 1 | Source DocumentService/DraftSession and UI injection names | Present at the reviewed editor-only checkpoint; no runtime import is needed for those interfaces. |
+| Task 1 | SQLite requirements vs. implementation | Current shared connection factory handles privacy checks. Keep transaction/migration code; exclude source raw pins and every execution API. |
+| Task 1 | Old Console tests vs. new authoring UI | Preserve Console handoff behavior in a secondary region; update only obsolete layout assertions with equivalent behavior. |
+| Task 1 | Source/UI requirements vs. Run availability | Source has an optional launch seam; this slice never enables it and tests absence of runtime/lock effects. |
+| Task 1 | Files and test steps | A single integrated deliverable, no cross-task interface pairs. New lifecycle/exchange tests plus reused document/draft/editor tests. |
+| Task 1 | Schema and roadmap | Existing v1-v4 migrations retained unchanged for file compatibility; no new schema, no v1 branching or parallelism. |
+
+No scope-expanding rulings. Tool instructions require inherited subagent model unless the user asks for an override; no override requested.
+
+## Baseline
+
+Clean dev checked before production edits. The initial four-file selection was too broad (included unrelated Library/MCP/Models/Schedules/Console cases) and interrupted via SIGINT to its verified owned PID 66736 after recording pre-existing failures. It is incomplete, not green. Failures included Library tooltip/state fixture drift, missing Schedules tooltips, MCP DuplicateIds, a Models external-view selector, and Console hidden-inspector geometry. No unrelated production fix authorized.
+
+Focused baseline: PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_destination_visual_parity_correction.py Tests/UI/test_console_live_work_handoffs.py -k workflows -q --timeout=60 --tb=short --show-capture=no -p no:randomly — 19 passed, 276 deselected, 1 warning in 22.68s. Existing Requests dependency and Kokoro shutdown warnings are unchanged.
+
+The parked integration's failing lifetime-lock alias regression and four R1 source/test/doc files remain untouched; the proposal's additional user edit also remains untouched.
+
+## Task 1
+
+- [x] Clean dev worktree, source checkpoint and server reference established.
+- [x] Backlog task and authoring-only contract recorded; preflight checked.
+- [x] Focused baseline.
+- [x] Implementer dispatch: Euclid (01a0a34c-08d1-76f1-b385-d0fb7ca51883); task brief + approved full contract, production/test ownership only; no nested agents.
+- [ ] Targeted behavioral/static checks.
+- [ ] Task review and actual rendered UI review.
+- [ ] Final branch review and user handoff.
+
+Coordinator owns docs/verification handoff; implementer owns production and tests listed in Task 1.
+
+Documentation base commit: c5711892ab. No source changes in that commit.
+
+Coordinator side work: source-inspection compatibility note records server dev
+2e1a5e58d3344a1efd578efb4dbfb1c9465e8767 and the default Pydantic envelope-field
+loss caveat. Capture harness is reused from the reviewed source, with process-local
+Menlo verification and raw SVG geometry comparison; not run before the UI port.
+
+Fresh immutable-base Ruff checks (git show c5711892ab:path piped to ruff check
+--stdin-filename path --output-format concise -) confirm 25 pre-existing findings
+in DB/private_sqlite.py and 14 in Tests/DB/test_private_sqlite_inventory.py.
+These 39 findings are neither introduced by this port nor waived as a clean
+whole-file static-analysis result.
+
+Latest implementer milestone: editor smoke checks passed at all three sizes,
+including pane layout/F6/Tab/typing/New/Add Step/Discard. A larger run found
+narrow raw-JSON recovery crowding from the Console secondary strip, an expanded
+field height overridden by shared form CSS, premature real-app test navigation,
+and a leftover admission reference in Validate. Implementer is fixing/retesting;
+not yet a completed task or green final run.
+
+App wait snapshots can read the live subagent's latest commentary:
+thread 01a0a34c-08d1-76f1-b385-d0fb7ca51883, host local,
+cursor 043333d5-3ecb-444c-9991-8f87e6fed645:6. Avoid history rereads.
+Capture is paused until implementer clears the app-test overlap. Script now
+captures real TldwCli (existing factory substitutes only unrelated startup),
+uses the shared initial-screen wait, and includes wide overview plus selected
+step at all three sizes. Ruff check/format for the capture script are clean.
+
+Subsequent startup diagnosis: default splash lasts 7 seconds while the existing
+initial-screen helper waits about 3. The implementation test and capture use
+the existing factory's isolated config override to disable splash; no production
+startup/lifecycle change is needed for this failure. Latest wait cursor is
+043333d5-3ecb-444c-9991-8f87e6fed645:18.
+
+Read-only preservation recheck: original branch remains 8aa1987af9357655af9354610b878f247fd1e929;
+parked worktree remains fe42f99353 with its same five modified paths.
+
+Capture round 1 completed, exit 0. All four required PNGs opened and valid:
+wide overview and selected-step 160x48/110x36/60x20. Real TldwCli + real workflow
+store/lifecycle/nav and production CSS; existing factory substitutes unrelated
+startup. Fixed-pitch Menlo advances 48.1640625 for iiii/WWWW normal and bold,
+raw/corrected SVG non-style geometry equal. Run contrast 7.2544:1; search 6.7679:1.
+Expected factory missing-ChaChaNotesDB logs and existing Requests warning remain.
+No capture process running; implementer cleared to resume sequential app tests.
+
+Visual review dispatched fresh to Hegel (01a0a369-7378-7b03-b624-429863932f01),
+shipped impeccable_finish_reviewer role read by that agent, no forked history,
+read-only screenshots/artifact review. All four PNG paths required. No detector
+for Textual. Coordinator does not inspect the shipped role definition.
+Implementation still runs targeted app picker/failure tests; no final test claim.
+Latest implementer cursor: 043333d5-3ecb-444c-9991-8f87e6fed645:23.
+
+Visual review 1 disposition: fix. All five required sections received; complete
+return in visual-review-1.md. Two material findings verified against the open
+captures and current status rendering: disambiguate persisted draft vs saved
+revision; keep the focused Prompt field label visible at 60x20. These implement
+the approved status/context requirements, without a new visual direction.
+Forwarded to original implementer for one batch and focused regressions, then
+same four recaptures and the same reviewer's scoped verdict. Reviewer retained.
+
+Coordinator independent DB verification: PYTHONPATH=. .../.venv/bin/python -m
+pytest Tests/DB/test_workflows_authoring_storage.py -q --timeout=60 --tb=short
+--show-capture=no -p no:randomly — 6 passed, 1 warning in 1.33s. Existing Requests
+and stale Kokoro temporary-directory cleanup warnings remain. No app boot ran in
+this check. All four migration git hash-object values equal their b34eda3d64
+blob IDs byte-for-byte (v0→1:1f22f244; v1→2:9e6a4b73; v2→3:c2a69b83; v3→4:484cd210).
+
+Latest implementer cursor: 043333d5-3ecb-444c-9991-8f87e6fed645:35.
+Status-label fix green at all three widths; narrow Prompt label regression RED,
+scrolling/sizing fix in progress. Do not recapture until the pair is ready.
+
+Capture round 2 completed, exit 0; all four same-path PNGs opened. Status now
+distinguishes saved revision from stored draft. Reviewer scoped verdict: status
+resolved; narrow label fix partial. Prompt is visible at 60x20 but its populated
+value `{{ prepare.text }}` is absent from PNG and both SVGs, while wider frames
+contain it. This is real Textual output, not font conversion. Full scoped verdict
+is saved in visual-review-2.md. Original implementer owns the second reviewer
+fix batch: label, populated value and focus must paint together at 60x20.
+No broader polish hunt or new infrastructure. Await production-shaped regression
+and app-test overlap clearance before the final reviewer-driven recapture.
+
+Implementer reported 348 comprehensive targeted passes before visual fixes,
+then 9 focused visual passes and 9 non-boot authoring passes after a rejected
+setup/quit correction. The 348 result is not post-all-fixes final evidence.
+Ruff baseline has now been compared for all eight touched incumbent Python files:
+713 pre-existing findings, unchanged counts. Five pre-existing formatter failures.
+This debt is explicitly unwaived; Backlog must not be marked Done on these facts.
+
+Second reviewer-driven fix: compact TextArea vertical padding had consumed the
+real-app content area. Implementer reports 10 focused passes including label,
+value and focus in the actual 60x20 app. Final reviewer-driven capture round 3
+exited 0; all four PNGs opened and valid. Raw-SVG label/value assertions now guard
+all selected-step captures. Menlo geometry/contrast checks remain unchanged.
+Same reviewer received only the original two findings for its final verdict.
+No capture process remains; implementer cleared to resume targeted interaction
+checks and final verification. No new self-directed visual hunt.
+
+Final UI verdict received: disposition ship, both original material fixes
+resolved. All four captures valid and no visible regression from these fixes.
+This is a scoped fix-list verdict, not a new full-surface audit. Full return in
+visual-review-3.md. Hegel closed after completion. Implementer retains final
+interaction regression verification and explicit-path commit; task code review
+and documenter still await its stable result.
+
+Final-selection attempt was 3 failed, 350 passed (not two failures): focused raw
+editor could be scrolled out of view after reconciliation; recovery modal test
+queried before queued mount; concurrent overview remove/mount raised DuplicateIds.
+Implementer diagnosed each and added deterministic overlapping-refresh coverage.
+Fix is local UI reconciliation serialization plus retained-focused-field scroll
+and a native modal-mount test pause. Focused result: 4 passed, 52 deselected.
+Comprehensive targeted selection and affected Workflows destination cases are now
+being rerun sequentially. No new storage/runtime lock or helper subsystem.
+
+Post-correction documenter dispatched fresh to Laplace
+(01a0a386-a8a1-7ca0-80e3-a81a35ad1a63), shipped role read by agent, no fork.
+Write boundary only QA README Built surface section (<=300 words); no global
+DESIGN/PRODUCT/sidecar, new identity, test/app boot, git or production changes.
+Source capture script Ruff/format rechecked clean. Original8aa1987a and parked
+fe42f99353 plus five parked WIP paths rechecked unchanged.
+
+Documenter completed only QA README, preserving earlier evidence and global
+artifacts; the new section records built responsive/form/token/status behavior
+and the post-capture interaction-only corrections. Coordinator removed an exact
+rendered three-row claim because inherited min-height affects computed geometry;
+it now says compact sizing. No UI code changed. Documenter closed.
+Final comprehensive selection: 355 passed, 1 existing dependency warning in
+187.51s; final destination/Console selection passed 19, 276 deselected in 28.00s.
+Combined final behavioral selection: 374 passes. Task implementation committed
+a1f47397eb, detailed report committed7eeed1efb1. No implementation-owned changes
+or running tests remain. New module Ruff/format and diff-check pass; baseline debt
+remains unwaived and Backlog In Progress.
+
+Task1 spec+quality reviewer dispatched fresh to Ampere
+(01a0a38d-2267-78c0-a6f2-7c2334081dae), supplied task brief, binding globals,
+report and immutable review-c5711892ab..7eeed1efb1.diff. Read-only, no nested
+agents, test reruns only for named unanswered risk. Coordinator remains owner of
+QA/parity/plan/lesson documentation and capture evidence. Final whole-branch
+review is still required after this task verdict and any fixes.
+
+Coordinator QA/parity/lesson/plan/captures committed b0ce08a093 (18 explicit paths).
+Stage initially needed Git metadata escalation; approved explicit-path retry
+succeeded. Fixed one trailing blank line in capture-only fontconfig, then staged
+diff-check passed. Whole branch diff-check passed; worktree tracked state clean.
+No hooks/models, push or merge. Old/new status/header grep found only covered
+editor tests and historical design references, no new uncovered test file.
+
+Task1 review: spec NOT compliant / Needs fixes. One Important: lexical-only
+exchange admission allows a .json hard link to live DB into open_private_binary,
+whose post-open nlink rejection closes a descriptor and can release SQLite locks.
+Main checked authoring.py plus existing private_paths.py opening/classification/
+close order and confirmed the concern. Original implementer receives one batch:
+feature-local metadata-only pre-open rejection, no new shared helpers or runtime
+infrastructure, failed-import real foreign-writer regression and scoped tests.
+Review1 production head7eeed; current b0ce adds only coordinator documentation.
+Task1: minor (deferred): existing713Ruff/fiveformatter plus Requests/Kokoro noise;
+unwaived baseline, not newly introduced. Final branch review must triage it.
+
+Task1 fix round1 implemented at9b13b49d51: 25-line feature-local metadata preflight
+and off-thread export path check; no shared SQLite/private-path or UI changes.
+RED reproduced foreign-writer acquisition after refused DELETE DB and WAL SHM
+alias imports; ten generic-exchange-boundary cases also failed. Final covering
+Tests/Workflows/test_authoring.py + Tests/DB/test_workflows_authoring_storage.py:
+35 passed,1 existing warning in22.80s. Scoped Ruff/format and diff-check clean.
+Report line515+ records exact commands plus limitation: metadata preflight is
+not a path lease, cannot stop post-validation replacement or identify a detached
+live inode whose known path moved. Documentation is not a waiver of the finding.
+Same reviewer receives re-review-b0ce08a093..9b13b49d51.diff (actual filename
+review-b0ce08a093..9b13b49d51.diff) and originalfinding verbatim. b0ce production
+is identical to previous reviewed7eeed; the intervening coordinator-only docs
+are excluded from scoped fix re-review and reserved for final branch review.
+
+Task1: fix round1/5 (0 fully addressed,1 open; commits b0ce08a093..9b13b49d51).
+Reviewer accepts stable-alias rejection but retains Important for replacement
+between metadata check and actual raw open. No new breakage. Full return in
+task-re-review-1.md. No waiver or scope narrowing has been made.
+
+PAUSED FOR USER DECISION, not completion: the stronger actual-open guarantee
+cannot be claimed from this metadata-only fix. Read-only check of the existing
+private SQLite protocol confirms only prepare/pin/recheck/close and TTS controls,
+not a generic isolated JSON reader. Extending that protocol, adding an isolated
+file-I/O boundary, or relaxing the approved safety contract requires direction;
+none has been authorized. Do not enter another infrastructure implementation
+loop or treat documentation as approval. Final whole-branch review has NOT run
+because the task review remains open. Backlog remains In Progress.
+
+Developer scope/authority instructions require stopping for this material choice,
+rather than automatically exhausting fix rounds with unauthorized boundary work.
+All code/docs remain on the isolated authoring branch; no merge/push/old-work
+mutation. Review/implementer seats closed after their reports; resumable on reply.

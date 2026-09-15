@@ -42,6 +42,16 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 
 ## Implementation Notes
 
+**Current review gate:** In Progress, awaiting a user decision. The metadata-only
+exchange guard passes its 35-test authoring/storage verification and rejects
+existing DB/sidecar aliases before file I/O. Scoped code re-review still flags an
+Important issue: replacing the selected file after validation can bypass that
+guard and cause raw-open/close of a live SQLite inode. Its documented limitation
+is not an accepted waiver. No extra helper or file-I/O subsystem has been added.
+Changing that boundary, explicitly accepting a stable-path contract, or deferring
+file-picker exchange requires direction. Final whole-branch review has not run;
+the existing static-analysis debt also remains unwaived. No Done transition.
+
 Implemented the reviewed b34eda3d64 authoring slice: real library, navigator,
 overview and independently collapsed continuous forms; immutable saved revisions,
 durable recoverable drafts, explicit private JSON import/export and disabled Run.
