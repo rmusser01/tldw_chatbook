@@ -27171,6 +27171,10 @@ class LibraryScreen(BaseAppScreen):
             group="library_note_import_execute",
         )
 
+    @on(LibraryNoteImportCanvas.ViewImportedNotesRequested)
+    def handle_library_note_import_view_notes(self, event: LibraryNoteImportCanvas.ViewImportedNotesRequested) -> None:
+        return self._notes_controller.handle_library_note_import_view_notes(event)
+
     @on(LibraryNoteImportCanvas.RetryRequested)
     def handle_library_note_import_retry(self, event: LibraryNoteImportCanvas.RetryRequested) -> None:
         return self._notes_controller.handle_library_note_import_retry(event)

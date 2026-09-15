@@ -580,3 +580,92 @@ def test_the_lasting_sync_review_says_which_sources_it_reads():
         assert extension in source, f"{extension} missing from the review's scope line"
 
 
+# --- task-32622: the receipt and picker nits ------------------------------
+
+
+def test_the_links_figure_says_what_it_counted():
+    """AC#2: "54 links resolved" counted link occurrences that reach a note
+    the same batch creates, but said neither half, so a review showing about
+    nine wikilinks read it as a different number or a double count."""
+    from tldw_chatbook.Library.library_note_import_state import _receipt_outcome
+
+    line = _receipt_outcome(_receipt(imported=54), resolved_links=54)
+    assert "54 links to imported notes rewritten" in line, line
+    assert "links resolved" not in line, line
+    assert "1 link to an imported note rewritten" in _receipt_outcome(
+        _receipt(imported=2), resolved_links=1
+    )
+
+
+def test_a_long_row_label_keeps_its_folder_prefix():
+    """AC#4. B cap 23: a long file name was FRONT-truncated, so the row read
+    as a tail fragment ending in ".md" with its "vault/Inbox/" gone -- the one
+    thing that would let the reader find it -- while every sibling row carried
+    its folder."""
+    from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+        _ROW_NAME_BUDGET,
+        bounded_row_name,
+    )
+
+    name = "vault/Inbox/2026-09-14-a-very-long-meeting-note-about-the-review.md"
+    label = bounded_row_name(name)
+    assert label.startswith("vault/Inbox/"), label
+    assert label.endswith(".md"), label
+    assert len(label) <= _ROW_NAME_BUDGET, label
+
+    # A short name is untouched, and a deep path still head-truncates.
+    assert bounded_row_name("vault/Inbox/short.md") == "vault/Inbox/short.md"
+    deep = bounded_row_name("/".join("dir" for _ in range(30)) + "/note.md")
+    assert deep.endswith("note.md") and len(deep) <= _ROW_NAME_BUDGET, deep
+
+
+@pytest.mark.asyncio
+async def test_the_receipt_offers_a_way_to_the_notes_it_created():
+    """AC#1. B cap 25: after a 54-note import the receipt offered a collapsed
+    Skipped disclosure and "esc back to notes" -- no way forward."""
+    app = _ImportCanvasHost(_receipt_snapshot(notes_written=54))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        button = app.query_one("#note-import-view-notes", Button)
+        assert "54" in str(button.label)
+        button.press()
+        await pilot.pause()
+
+    assert any(
+        type(message).__name__ == "ViewImportedNotesRequested"
+        for message in app.messages
+    ), app.messages
+
+
+@pytest.mark.asyncio
+async def test_the_receipt_offers_no_way_forward_when_nothing_was_written():
+    """The control names its own destination, so it must not appear when
+    there is nothing there."""
+    app = _ImportCanvasHost(_receipt_snapshot(notes_written=0))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        assert not app.query("#note-import-view-notes")
+
+
+@pytest.mark.asyncio
+async def test_the_picker_count_matches_what_it_displays(tmp_path):
+    """AC#3. B cap 20: "Loaded · 17 entries" over a list of 14 -- the three
+    dot-entries were counted but not shown."""
+    # A subdirectory of its own: a conftest fixture puts a "test_data" folder
+    # in ``tmp_path`` itself, which would silently join the counts.
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    for index in range(4):
+        (vault / f"note-{index}.md").write_text("x", encoding="utf-8")
+    for name in (".hidden-one", ".hidden-two"):
+        (vault / name).write_text("x", encoding="utf-8")
+
+    app = _NavigationHost(vault)
+    async with app.run_test(size=(80, 24)) as pilot:
+        navigation = await _wait_for_loaded_listing(app, pilot)
+        status = navigation.listing_status
+        shown = len(navigation._display_records)
+        total = len(navigation._records)
+
+    assert (shown, total) == (4, 6), (shown, total)
+    assert status == "Loaded · 4 of 6 entries shown", status

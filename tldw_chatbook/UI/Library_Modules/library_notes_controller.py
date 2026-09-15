@@ -5407,6 +5407,25 @@ class LibraryNotesController:
         event.stop()
         current = self._library_note_import_controller.snapshot.page.page_number
         self._library_note_import_controller.set_page(current + event.delta)
+    @on(LibraryNoteImportCanvas.ViewImportedNotesRequested)
+    def handle_library_note_import_view_notes(
+        self, event: LibraryNoteImportCanvas.ViewImportedNotesRequested
+    ) -> None:
+        """Leave the settled receipt for the list the import just filled.
+
+        task-32622 AC#1. The destination is the same list "‹ Notes" reaches
+        (``handle_library_notes_import_back``) -- the import controller
+        already reloads Notes when execution settles
+        (``_refresh_after_settlement``), so the rows are fresh by the time
+        this runs.
+
+        ponytail: it lands on the Notes list, not scrolled to the
+        destination folder -- revealing one folder needs a tree-reveal seam
+        the list does not have yet. Filed as the ceiling on task-32622.
+        """
+        event.stop()
+        self._library_notes_view = "list"
+        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
     @on(LibraryNoteImportCanvas.RetryRequested)
     def handle_library_note_import_retry(
         self, event: LibraryNoteImportCanvas.RetryRequested

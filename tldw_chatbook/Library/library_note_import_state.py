@@ -304,6 +304,10 @@ class LibraryNoteImportSnapshot:
     skipped_count: int = 0
     skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     resolved_links: int = 0
+    #: task-32622 AC#1: how many notes this receipt actually put in the
+    #: Library, so the receipt can offer a way to them instead of ending at
+    #: "esc back to notes" after the biggest thing the user has done.
+    notes_written: int = 0
 
 
 def _review_order(plan: NoteImportPlan | None) -> tuple[ImportPreviewItem, ...]:
@@ -1019,6 +1023,7 @@ def project_library_note_import_snapshot(
         skipped_count=receipt.skipped if receipt else 0,
         skipped_items=state.latest_skipped_items if receipt else (),
         resolved_links=state.latest_resolved_links if receipt else 0,
+        notes_written=(receipt.imported + receipt.updated) if receipt else 0,
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
         obsidian_available=state.vault_detected,
@@ -1274,15 +1279,25 @@ def _receipt_outcome(
     if receipt is None:
         return ""
     # task-32130: "All planned items settled." named no outcome at all.
-    # Each row carries its own plural: the task-32618 clause below needs one
-    # no "+s" rule produces.
+    # Each row carries its own plural, because task-32622 AC#2 needed a
+    # clause ("links to imported notes") that no "+s" rule produces: "54
+    # links resolved" said nothing about WHAT resolved, and the review's own
+    # visible link rows were nowhere near 54, so the number read as either a
+    # different thing or the same thing twice (B cap 25, A cap 22).
     counts = (
         (receipt.imported, "note", "notes", "created"),
         (receipt.updated, "note", "notes", "updated"),
         (receipt.skipped, "file", "files", "skipped"),
         (receipt.failed, "file", "files", "failed"),
-        # task-32178: Obsidian links that found a note in the same batch.
-        (resolved_links, "link", "links", "resolved"),
+        # task-32178/task-32622: Obsidian links that found a note in the same
+        # batch, now named as what they are -- they are counted per link
+        # occurrence, across every note the batch creates.
+        (
+            resolved_links,
+            "link to an imported note",
+            "links to imported notes",
+            "rewritten",
+        ),
         # task-32618: the review says the image is not imported; without this
         # the receipt never says the notes that embed it keep the raw
         # ![[…]] syntax on screen.
