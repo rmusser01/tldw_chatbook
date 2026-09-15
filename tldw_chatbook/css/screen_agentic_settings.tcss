@@ -366,6 +366,32 @@ $ds-console-settings-wide-max-width: 196;
     display: none;
 }
 
+/* TASK-32593: a 24-column label leaves only seven editable cells in the
+   default 80-column workbench. Keep the sidebar and complete labels, and
+   spend vertical space on the direct Connect/Network field rows instead.
+   Existing controls retain their compact border and focus contracts. */
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row,
+.settings-workbench-compact #settings-network-card > .settings-input-row {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-size-2;
+    margin-bottom: $ds-space-stack;
+}
+
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-network-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-network-card > .settings-input-row > Select {
+    width: $ds-width-full;
+}
+
+/* The narrow card can have 34 columns once its scrollbar appears. Its
+   longest policy is 29 columns; one padding cell plus the existing border
+   and arrow fits it without changing the value or removing focus chrome. */
+.settings-workbench-compact #settings-network-ssl-mode > SelectCurrent {
+    padding-right: $ds-space-0;
+}
+
 /* Settings density: the workbench panes themselves carry borders and
    padding, so the frame would only double them up. */
 #settings-workbench {

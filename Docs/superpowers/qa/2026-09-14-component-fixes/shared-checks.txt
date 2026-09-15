@@ -1,0 +1,32 @@
+..................................                                       [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/Performance/test_boot_css_byte_budget.py:237: UserWarning: boot-css-bytes: 613053/634050 bytes (headroom 20997)
+    ratchet.emit_headroom(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a95bb6be-9842-4cf0-8a1e-a2245d845423/test_kokoro_constructor_direct3
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a95bb6be-9842-4cf0-8a1e-a2245d845423/test_kokoro_constructor_direct3'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a95bb6be-9842-4cf0-8a1e-a2245d845423
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a95bb6be-9842-4cf0-8a1e-a2245d845423'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+17.50s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+17.50s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+2.83s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+1.27s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+
+(21 durations < 1s hidden.)
+34 passed, 6 warnings in 44.05s

@@ -1,0 +1,48 @@
+Ordered SVG nodes (tag, attributes, text, tail); generated terminal IDs and surrounding text whitespace normalized.
+
+--- dark-before
++++ dark-after
+@@ -860,3 +860,5 @@
+ ["rect", {"fill": "#1e1e1e", "height": "24.65", "shape-rendering": "crispEdges", "width": "36.6", "x": "170.8", "y": "684.7"}, "", ""]
+-["rect", {"fill": "#1e1e1e", "height": "24.65", "shape-rendering": "crispEdges", "width": "1244.4", "x": "207.4", "y": "684.7"}, "", ""]
++["rect", {"fill": "#1e1e1e", "height": "24.65", "shape-rendering": "crispEdges", "width": "1220", "x": "207.4", "y": "684.7"}, "", ""]
++["rect", {"fill": "#1e1e1e", "height": "24.65", "shape-rendering": "crispEdges", "width": "12.2", "x": "1427.4", "y": "684.7"}, "", ""]
++["rect", {"fill": "#1e1e1e", "height": "24.65", "shape-rendering": "crispEdges", "width": "12.2", "x": "1439.6", "y": "684.7"}, "", ""]
+ ["rect", {"fill": "#121212", "height": "24.65", "shape-rendering": "crispEdges", "width": "12.2", "x": "1451.8", "y": "684.7"}, "", ""]
+@@ -2531,3 +2533,3 @@
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-27)", "textLength": "12.2", "x": "0", "y": "678.8"}, "│", ""]
+-["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-27)", "textLength": "1305.4", "x": "146.4", "y": "678.8"}, "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────", ""]
++["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-27)", "textLength": "1305.4", "x": "146.4", "y": "678.8"}, "┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐", ""]
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-27)", "textLength": "12.2", "x": "1451.8", "y": "678.8"}, "│", ""]
+@@ -2538,2 +2540,3 @@
+ ["text", {"class": "terminal-ID-r6", "clip-path": "url(#terminal-ID-line-28)", "textLength": "36.6", "x": "170.8", "y": "703.2"}, "0.7", ""]
++["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-28)", "textLength": "12.2", "x": "1439.6", "y": "703.2"}, "│", ""]
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-28)", "textLength": "12.2", "x": "1451.8", "y": "703.2"}, "│", ""]
+@@ -2541,3 +2544,3 @@
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-29)", "textLength": "12.2", "x": "0", "y": "727.6"}, "│", ""]
+-["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-29)", "textLength": "1305.4", "x": "146.4", "y": "727.6"}, "└──────────────────────────────────────────────────────────────────────────────────────────────────────────", ""]
++["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-29)", "textLength": "1305.4", "x": "146.4", "y": "727.6"}, "└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘", ""]
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-29)", "textLength": "12.2", "x": "1451.8", "y": "727.6"}, "│", ""]
+--- light-before
++++ light-after
+@@ -860,3 +860,5 @@
+ ["rect", {"fill": "#d8d8d8", "height": "24.65", "shape-rendering": "crispEdges", "width": "36.6", "x": "170.8", "y": "684.7"}, "", ""]
+-["rect", {"fill": "#d8d8d8", "height": "24.65", "shape-rendering": "crispEdges", "width": "1244.4", "x": "207.4", "y": "684.7"}, "", ""]
++["rect", {"fill": "#d8d8d8", "height": "24.65", "shape-rendering": "crispEdges", "width": "1220", "x": "207.4", "y": "684.7"}, "", ""]
++["rect", {"fill": "#d8d8d8", "height": "24.65", "shape-rendering": "crispEdges", "width": "12.2", "x": "1427.4", "y": "684.7"}, "", ""]
++["rect", {"fill": "#d8d8d8", "height": "24.65", "shape-rendering": "crispEdges", "width": "12.2", "x": "1439.6", "y": "684.7"}, "", ""]
+ ["rect", {"fill": "#e0e0e0", "height": "24.65", "shape-rendering": "crispEdges", "width": "12.2", "x": "1451.8", "y": "684.7"}, "", ""]
+@@ -2531,3 +2533,3 @@
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-27)", "textLength": "12.2", "x": "0", "y": "678.8"}, "│", ""]
+-["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-27)", "textLength": "1305.4", "x": "146.4", "y": "678.8"}, "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────", ""]
++["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-27)", "textLength": "1305.4", "x": "146.4", "y": "678.8"}, "┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐", ""]
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-27)", "textLength": "12.2", "x": "1451.8", "y": "678.8"}, "│", ""]
+@@ -2538,2 +2540,3 @@
+ ["text", {"class": "terminal-ID-r6", "clip-path": "url(#terminal-ID-line-28)", "textLength": "36.6", "x": "170.8", "y": "703.2"}, "0.7", ""]
++["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-28)", "textLength": "12.2", "x": "1439.6", "y": "703.2"}, "│", ""]
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-28)", "textLength": "12.2", "x": "1451.8", "y": "703.2"}, "│", ""]
+@@ -2541,3 +2544,3 @@
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-29)", "textLength": "12.2", "x": "0", "y": "727.6"}, "│", ""]
+-["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-29)", "textLength": "1305.4", "x": "146.4", "y": "727.6"}, "└──────────────────────────────────────────────────────────────────────────────────────────────────────────", ""]
++["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-29)", "textLength": "1305.4", "x": "146.4", "y": "727.6"}, "└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘", ""]
+ ["text", {"class": "terminal-ID-r1", "clip-path": "url(#terminal-ID-line-29)", "textLength": "12.2", "x": "1451.8", "y": "727.6"}, "│", ""]

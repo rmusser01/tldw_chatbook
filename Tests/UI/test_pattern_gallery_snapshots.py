@@ -31,6 +31,8 @@ def _normalize(svg: str) -> str:
     svg = re.sub(r"<\?xml[^>]*\?>", "", svg)
     svg = re.sub(r"<svg[^>]*>", "<svg>", svg)
     svg = re.sub(r'font-family="[^"]*"', 'font-family="X"', svg)
+    # Exporter indentation on otherwise empty lines is not rendered content.
+    svg = re.sub(r"(?m)^[ \t]+$", "", svg)
     return svg.strip()
 
 

@@ -1,6 +1,6 @@
 /* ========================================
  * LAYOUT: Tab System
- * ======================================== 
+ * ========================================
  * Tab navigation and tab button styles
  * ======================================== */
 /* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
@@ -9,20 +9,20 @@
 
 
 #tabs { dock: top; height: $ds-size-4; background: $background; padding: $ds-space-0 $ds-space-1; }
-#tabs Button { 
-    width: $ds-width-fill; 
-    height: $ds-height-full; 
+#tabs Button {
+    width: $ds-width-fill;
+    height: $ds-height-full;
     min-height: $ds-size-4;
     border: none;  /* No border for tab buttons */
-    background: $panel; 
-    color: $text-muted; 
+    background: $panel;
+    color: $text-muted;
     padding: $ds-space-0 $ds-space-1;
 }
-#tabs Button:hover { 
-    background: $panel-lighten-1; 
+#tabs Button:hover {
+    background: $panel-lighten-1;
     color: $text;
 }
-#tabs Button.-active { 
+#tabs Button.-active {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;

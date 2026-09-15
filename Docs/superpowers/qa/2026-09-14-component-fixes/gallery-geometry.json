@@ -1,0 +1,58 @@
+[
+  {
+    "capture": "textual-dark-80-rest",
+    "field": "Region(x=12, y=27, width=66, height=3)",
+    "row": "Region(x=1, y=27, width=77, height=4)",
+    "value": "0.7",
+    "focused": false
+  },
+  {
+    "capture": "textual-dark-80-focus",
+    "field": "Region(x=12, y=27, width=66, height=3)",
+    "row": "Region(x=1, y=27, width=77, height=4)",
+    "value": "0.7",
+    "focused": true
+  },
+  {
+    "capture": "textual-light-80-rest",
+    "field": "Region(x=12, y=27, width=66, height=3)",
+    "row": "Region(x=1, y=27, width=77, height=4)",
+    "value": "0.7",
+    "focused": false
+  },
+  {
+    "capture": "textual-light-80-focus",
+    "field": "Region(x=12, y=27, width=66, height=3)",
+    "row": "Region(x=1, y=27, width=77, height=4)",
+    "value": "0.7",
+    "focused": true
+  },
+  {
+    "capture": "textual-dark-120-rest",
+    "field": "Region(x=12, y=27, width=106, height=3)",
+    "row": "Region(x=1, y=27, width=117, height=4)",
+    "value": "0.7",
+    "focused": false
+  },
+  {
+    "capture": "textual-dark-120-focus",
+    "field": "Region(x=12, y=27, width=106, height=3)",
+    "row": "Region(x=1, y=27, width=117, height=4)",
+    "value": "0.7",
+    "focused": true
+  },
+  {
+    "capture": "textual-light-120-rest",
+    "field": "Region(x=12, y=27, width=106, height=3)",
+    "row": "Region(x=1, y=27, width=117, height=4)",
+    "value": "0.7",
+    "focused": false
+  },
+  {
+    "capture": "textual-light-120-focus",
+    "field": "Region(x=12, y=27, width=106, height=3)",
+    "row": "Region(x=1, y=27, width=117, height=4)",
+    "value": "0.7",
+    "focused": true
+  }
+]

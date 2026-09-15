@@ -120,9 +120,9 @@ directly with the Button type contract.
 def compose_form(self):
     yield Label("Model", classes="form-label")
     yield Input(placeholder="gpt-4o", classes="form-input")
-    with Container(classes="form-row"):
+    with Horizontal(classes="form-row"):
         yield Label("Temperature", classes="form-label")
-        yield Input(classes="form-input")
+        yield Input(classes="form-input w-fill")
     yield TextArea(classes="form-textarea")
     yield Select([], classes="form-select")
     with Collapsible(title="Advanced", classes="form-section-collapsible"): ...
@@ -138,9 +138,17 @@ def compose_form(self):
   24-col width (min 12), height 1, `$ds-surface-panel` background,
   `$ds-text-primary`; not density-equivalent to `form-label`, kept as a
   variant rather than force-merged. Owning sheet
-  `components/_agentic_terminal.tcss`; scoped compounds (RAG card width 20,
+  `features/_settings.tcss`; scoped compounds (RAG card width 20,
   imagegen backend rows width 12, stacked rows width 100%) compose on top.
-- `form-row` — horizontal field-grouping container; stack with `$ds-space-stack`.
+  In the compact workbench (100 columns or fewer), direct Providers Connect
+  and Network rows stack complete labels above full-width controls. Wider
+  layouts retain the 24-column label column. The compact input's one-row
+  border/focus contract stays unchanged; Network's closed policy selector
+  gives one padding cell back to its label while retaining its arrow and border.
+- `form-row` — supplies row sizing and `$ds-space-stack` spacing. Compose it
+  on `Horizontal` for inline fields. A field beside a label uses
+  `form-input w-fill` to take the remaining width; a standalone stacked field
+  keeps `form-input`.
 - `settings-detail-row` — documented **variant** of `form-row` (ADR-161 task 9,
   probe-measured): the read-only detail line — `$ds-surface-panel` fill,
   `$ds-text-primary`, one-row minimum, `$ds-space-inline` padding. Consumed on
@@ -555,18 +563,13 @@ def compose_sections(self):
 - `section-header` — major region heading, underlined variant.
 - `subsection-title` — secondary heading within a section.
 
-`section-title` and `subsection-title` each have exactly one bare definition
-now, in the owning sheet `components/_sections.tcss` (ADR-161 task 4
-dissolved the `features/_tools-settings.tcss` ×2 and
-`features/_evaluation_unified.tcss` duplicates; the winners are the
-tools-settings pair by usage weight, tokenized on arrival). `.section-header`'s
-canonical definition also lives there, moved from
-`components/_shared_components.tcss` — two later-in-cascade copies remain as
-documented follow-up, not part of the family: `features/_chat.tcss`'s bare
-bold-underline variant (still wins text-style/margins app-wide) and
-`components/stats_screen.css`'s screen-sheet copy (still supplies its
-`border-left` and, now that it follows the owning sheet in the manifest,
-`padding-left: $ds-space-1`).
+All three classes have one bare definition in `components/_sections.tcss`.
+The former Statistics `.section-header` copy was removed; its thick primary
+left edge and one-cell left inset now belong to the canonical definition.
+That definition sets bold text and a two-row top margin. The scoped
+`Screen .section-header` composition in `features/_chat.tcss` preserves the
+screen-wide bold-underlined heading and one-row top/bottom margins. It is a
+scoped composition, not a second bare definition or a chat-only override.
 
 **States.** Static text — no interactive states.
 

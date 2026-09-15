@@ -1,0 +1,25 @@
+..........                                                               [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-753ff8d8-2082-4b45-bd2a-7dd17f303e95/test_kokoro_constructor_direct3
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-753ff8d8-2082-4b45-bd2a-7dd17f303e95/test_kokoro_constructor_direct3'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-753ff8d8-2082-4b45-bd2a-7dd17f303e95
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-753ff8d8-2082-4b45-bd2a-7dd17f303e95'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+2.04s call     Tests/UI/test_settings_narrow_layout.py::test_all_category_labels_render_fully[size0]
+1.88s call     Tests/UI/test_settings_narrow_layout.py::test_all_category_labels_render_fully[size1]
+1.78s call     Tests/UI/test_settings_network_category.py::test_network_category_hop_reseeds_select_from_pending_mode
+1.69s call     Tests/UI/test_settings_narrow_layout.py::test_inspector_does_not_wrap_mid_word[size0-overview-expected_words0]
+1.37s call     Tests/UI/test_settings_configuration_hub.py::test_settings_invalid_input_keeps_error_tint_while_focused
+1.17s call     Tests/UI/test_settings_narrow_layout.py::test_console_capture_controls_are_reachable_at_80x24
+1.07s call     Tests/UI/test_settings_network_category.py::test_network_category_rejects_missing_ca_and_saves_valid_one
+1.01s call     Tests/UI/test_settings_narrow_layout.py::test_dirty_marker_renders_fully[size0]
+
+(17 durations < 1s hidden.)
+10 passed, 2 warnings in 17.19s

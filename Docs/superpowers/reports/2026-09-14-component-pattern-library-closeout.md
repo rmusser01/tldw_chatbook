@@ -83,7 +83,11 @@ All runs were targeted; no full repository sweep was requested or run.
   local work ledger; the two pre-existing failures below were isolated explicitly.
 - Fatal Python lint (`E9,F63,F7,F82`) passed across **118 changed/new files**.
   All seven new Python files pass full Ruff and formatting checks. Final
-  `git diff --check` is clean. Existing-file lint debt was not broadly reformatted.
+  The uncommitted working diff passed `git diff --check` at closeout; that
+  command did not compare the complete branch against its base. The later
+  component audit found eight historical trailing-whitespace lines in the
+  full branch range, tracked separately by TASK-32595. Existing-file lint debt
+  was not broadly reformatted.
 - Actual terminal app launched at 160×50 with a scratch config/data profile.
   Command-palette navigation opened the gallery; top forms and bottom utility
   samples rendered in both textual-dark and textual-light. ANSI captures confirm

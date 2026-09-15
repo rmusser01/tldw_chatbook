@@ -117,6 +117,41 @@ def test_deleted_manifest_input_is_stale(css_tree: Path) -> None:
     assert "deleted" in reason
 
 
+@pytest.mark.parametrize("missing_source", [None, "first.tcss", "second.tcss"])
+def test_multi_module_split_requires_outputs_only_for_complete_sources(
+    css_tree: Path, monkeypatch: pytest.MonkeyPatch, missing_source: str | None
+) -> None:
+    """Startup must follow the builder's multi-source split/partial-tree contract."""
+    split = build_css.ScreenOwnedSplit(
+        modules=("first.tcss", "second.tcss"),
+        sheets={"example": "screen_example.tcss"},
+        prefixes={"example": ("example",)},
+        pinned=frozenset(),
+    )
+    monkeypatch.setattr(build_css, "SCREEN_OWNED_SPLITS", (split,))
+    manifest = _manifest_with_current(css_tree)
+    for module in split.modules:
+        if module == missing_source:
+            continue
+        source = css_tree / "css" / module
+        source.write_text("/* source */\n")
+        manifest[f"css/{module}"] = [
+            build_css._file_sha256(source),
+            source.stat().st_mtime,
+        ]
+    _write_manifest(css_tree, manifest)
+
+    stale, reason = _generated_css_is_stale(css_tree)
+    if missing_source is not None:
+        assert not stale, reason
+        return
+    assert stale
+    assert "screen_example.tcss" in reason
+
+    (css_tree / "css" / "screen_example.tcss").write_text("/* generated */\n")
+    assert _generated_css_is_stale(css_tree) == (False, "")
+
+
 def test_gained_bundled_css_declaration_is_stale(css_tree: Path) -> None:
     """A NEW carrier module (not in the manifest) must trigger a rebuild."""
     _write_manifest(css_tree, _manifest_with_current(css_tree))

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-15 00:18'
-updated_date: '2026-09-15 00:45'
+updated_date: '2026-09-15 01:13'
 labels:
   - design-system
   - ui
@@ -29,6 +29,7 @@ The completed design-system branch cannot merge cleanly into current dev. The au
 - [x] #3 Targeted Console and Library shell/file-notes tests covering the merged changes pass, with any demonstrated pre-existing failures identified separately.
 - [x] #4 The boot-CSS budget is met without raising its ratchet, and the proposed merge has unique Backlog task IDs.
 - [x] #5 Python files changed by the integration pass fatal syntax and undefined-name checks.
+- [x] #6 Source-tree CSS freshness checks support the integrated multi-module split registry without exceptions, require missing generated sheets for complete splits, and retain partial-tree behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,6 +43,7 @@ Reason: reconcile existing implementations without changing their architecture o
 2. Preserve upstream Library test coverage and behavior; transplant upstream Console styling into the decomposed owning sources and tokenize any newly introduced fixed values.
 3. Rebuild generated bundle/split styles; run ownership, literal-floor, reproducibility and boot-budget checks plus the affected Console and Library tests.
 4. Review the integration diff against both parents, check Backlog ID uniqueness, record exact evidence and commit the verified merge candidate.
+5. Final native exit-log review exposed a stale split.module access in startup freshness detection. Add a regression for multi-source split outputs and partial trees, migrate the caller to split.modules, run the complete CSS staleness test module, and re-boot the private profile with a clean startup log.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -52,4 +54,8 @@ Reconciled origin/dev fd30614dcdc1e6cbd39b1532769d3e10be9b12b6 with design head 
 Evidence: 68 successful governance/build checks followed by the repaired guard in a 30-pass targeted harness run; 36 targeted layout checks; fatal Ruff across 277 changed Python files. Boot CSS is 612,733/634,050 bytes without a raised budget. All derived-artifact checks pass (Mermaid checked with network access to pinned inputs). Native scratch-profile startup rendered at 120x40 and 80x24; no provider request sent. Existing incoming documentation whitespace is preserved, and historical design-branch whitespace remains tracked by the audit. No full test suite run.
 
 ADR check: existing ADR-161 and ADR-150 apply; no new architecture decision. Full details, limitations and selected evidence: Docs/superpowers/reports/2026-09-14-component-integration.md.
+
+Final native exit-log review exposed a caught startup AttributeError after the merge: _generated_css_is_stale still used split.module while the integrated registry now exposes split.modules. The app rendered committed styles, so initial render captures did not prove freshness detection worked. Reopened this task and added AC #6 before repair. The caller now requires all source files before requiring a split output, preserving partial-tree behavior. Three new complete/partial split regressions failed before the fix; the complete CSS freshness module now passes all 18 tests. Fatal Ruff and test formatting pass. A new scratch-profile native run rendered Console, logged no CSS error, and exited with code 0; its command, diagnostics, exit code and tested-source hashes are retained under Docs/superpowers/qa/2026-09-14-component-fixes/startup-fixed-*.
+
+The subsequent component repairs also close the original More/Settings/gallery/documentation follow-ups. Current boot CSS is 613053/634050 bytes and the full design-branch whitespace comparison is clean. Final evidence and remaining review boundaries: Docs/superpowers/reports/2026-09-14-component-audit-fixes.md. The caught-startup-error incident is recorded in backlog/docs/lessons-testing-evidence.md. Existing ADR-150/161 still apply; no new ADR is required.
 <!-- SECTION:NOTES:END -->

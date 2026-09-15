@@ -59,7 +59,7 @@ class PatternGalleryScreen(Screen):
                     yield Checkbox("Stream response", classes="form-checkbox")
                     with Horizontal(classes="form-row"):
                         yield Label("Temperature", classes="form-label")
-                        yield Input(placeholder="0.7", classes="form-input")
+                        yield Input(placeholder="0.7", classes="form-input w-fill")
                     # ADR-161 task 7: the settings grid-row label variant --
                     # fixed 24-col column with panel background; a documented
                     # variant of form-label, NOT a merge candidate (probe).

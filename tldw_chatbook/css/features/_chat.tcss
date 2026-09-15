@@ -247,9 +247,10 @@
  * owning sheet components/_sections.tcss. It is scoped here to `Screen`
  * -- composition, legal anywhere -- which preserves the computed styles
  * exactly: the (0,1,1) compound wins the properties it declares by
- * specificity where it used to win by bundle order (stats_screen.css's
- * screen copy still interposes between the two sheets, so folding into
- * the owner would have changed text-style and margin-top). */
+ * specificity where it used to win by bundle order. At task 6, the
+ * Statistics copy still interposed between the two sheets. Its remaining
+ * edge/padding defaults were subsequently folded into the canonical owner;
+ * this scoped text-style/margin composition preserves the final cascade. */
 Screen .section-header {
     text-style: bold underline;
     color: $primary;

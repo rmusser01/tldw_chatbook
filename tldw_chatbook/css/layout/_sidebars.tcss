@@ -1,6 +1,6 @@
 /* ========================================
  * LAYOUT: Sidebars
- * ======================================== 
+ * ========================================
  * Generic sidebar patterns and collapsible behavior
  * Used across multiple features
  * ======================================== */
@@ -224,11 +224,11 @@
     border: solid $primary-lighten-2;
     border-bottom: solid $primary-lighten-2;
 }
-.sidebar-textarea { 
-    width: $ds-width-full; 
+.sidebar-textarea {
+    width: $ds-width-full;
     height: $ds-size-5;  /* Default height for text areas */
-    border: round $surface; 
-    margin-bottom: $ds-space-1; 
+    border: round $surface;
+    margin-bottom: $ds-space-1;
 }
 
 /* Notes expand button */
@@ -277,9 +277,9 @@
     height: $ds-size-25;
     border: round $accent;
 }
-.sidebar Select { 
-    width: $ds-width-full; 
-    margin-bottom: $ds-space-1; 
+.sidebar Select {
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
     border: solid $primary-lighten-2;
     border-bottom: solid $primary-lighten-2;
 }

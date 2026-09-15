@@ -19570,13 +19570,13 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
         # from the screen-owned modules are generated outputs too -- a
         # missing or stale one must trigger the same rebuild, or visiting
         # that screen loads nothing (the bundle no longer carries its
-        # rules). Required only when the SOURCE module is part of this
+        # rules). Required only when ALL source modules are part of this
         # tree, mirroring the builders' own skip for partial/scratch
         # checkouts.
         *(
             css_dir / name
             for split in build_css.SCREEN_OWNED_SPLITS
-            if (css_dir / split.module).is_file()
+            if all((css_dir / module).is_file() for module in split.modules)
             for name in split.sheets.values()
         ),
     ]

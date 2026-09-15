@@ -9,6 +9,33 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A rendered app can hide a caught startup error
+
+**TASK-32591 final native check, 2026-09-14.** The integrated app rendered
+Console and Settings from committed styles while its startup freshness check
+raised `AttributeError`: the split registry had changed from `module` to
+`modules`, but the caller still used the old attribute. The entry point caught
+and logged the error, then continued. The traceback became visible after
+quitting the alternate-screen TUI. A focused three-case regression reproduced
+the error; correcting the caller restored the complete 18-test freshness
+module. Native render evidence needs a review of startup/exit diagnostics,
+especially where optional setup failures are caught and startup continues.
+
+## Strip whole CSS comments before interpreting selector lines
+
+**TASK-32591 integration, 2026-09-14.** The new split-sheet harness guard
+handled a comment only on its opening line. Continuation lines mentioning
+`feature.tcss,` and `widget.py,` were parsed as class selectors `tcss` and
+`py`. This stayed hidden while both bundled and split styles retained the
+same authoring comments; the design-system bundle intentionally strips
+comments, making the guard suddenly report dozens of unrelated harnesses.
+Removing complete multiline comments before selector extraction eliminated
+those false findings and exposed thirteen real missing split-sheet pins.
+The regression includes filenames, a fake selector and braces inside a
+comment alongside real selectors; its expected set contains only the real
+selectors. Parser guards need inputs whose non-code syntax differs across
+the artifacts being compared.
+
 ## A zero regex count can hide an unchanged visual write
 
 **TASK-32596, 2026-09-14 recovery.** The interrupted Python migration had an

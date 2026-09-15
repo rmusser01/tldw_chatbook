@@ -9806,6 +9806,13 @@ WorktreeRecoveryDialog {
 
 .tldw-split-source-header-end { }
 
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label {
+    width: $ds-width-full;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
 
 #settings-detail-pane .destination-section {
     width: $ds-width-full;

@@ -6,6 +6,10 @@ are design/audit head `705a39bdb88ef4f64a926eeec169f0d9a02469e4` and
 `2ecf784d6ea41592a9d9b6b915fbe8c8c533470f`. This is local integration on
 `feat/component-pattern-library`; it does not merge or publish the branch to dev.
 
+Follow-up: the [component audit fixes report](2026-09-14-component-audit-fixes.md)
+closes the shared UI findings and records a startup CSS-freshness caller missed
+by this merge's initial render checks, subsequently repaired and verified.
+
 ## Resolution
 
 - Preserved both Library harness constants where new split-sheet harnesses and
