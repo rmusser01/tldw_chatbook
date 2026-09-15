@@ -283,6 +283,22 @@ Skills. After an existing Skill saves, keyboard focus moves from Save to **Back
 to list**. A field or pane selected while saving keeps focus. Text entered
 while the write is running stays marked unsaved; save again to persist it.
 
+### Files
+
+Select **Files** to see supporting-file paths relative to the Skill folder,
+their byte sizes, and a **binary** label for binary files. An empty file is
+listed as **0 bytes**; a Skill without supporting files says **No supporting
+files.** The instruction body in `SKILL.md` is available under **Edit**.
+
+This is a read-only inventory of file metadata. Long paths wrap. With focus
+in the Work pane, use **Up/Down**, **Page Up/Page Down**, or **Home/End** to
+scroll. **Home** brings the mode controls back into view after a long list.
+Use **Tab/Shift+Tab** to reach **Files** or **Edit**, then **Enter** to select it.
+
+Switching between **Edit** and **Files** preserves unsaved description and
+instruction changes. Return to **Edit** to save or discard them. Viewing the
+inventory does not change the supporting files or their trust approval.
+
 ### Applying an Agent Lesson proposal
 
 Console may prepare an exact improvement proposal for a Chatbook-managed local

@@ -422,3 +422,30 @@ restart, provider execution and full-suite qualification were not performed.
 
 Next: Skills Files and supporting-file interactions, then the remaining Library
 destinations. Integration into `dev` remains pending.
+
+## Skills Files and supporting files — TASK-32657
+
+The [Files review](../qa/2026-09-15-skills-files/README.md) found no production
+defect in the reviewed read-only inventory. New coverage qualifies empty and
+populated bundles, UTF-8 byte sizes, empty files, binary labels, nested and long
+paths, and a 65-supporting-file list. Tab/Shift+Tab mode switching preserves
+unsaved description and instruction fields. Real private trust records and all
+66 bundle-file hashes remain unchanged. The guide now explains Files and its
+keyboard navigation.
+
+**64 distinct targeted checks pass**, including four size/theme journeys,
+reader/state/service checks and token/bundle governance. The new test and native
+runner pass Ruff and formatting. An initial wide-layout assertion included
+neighboring panes when joining wrapped text; cropping to the inventory repaired
+the test. Independent follow-up review confirmed the keyboard and trust coverage
+gaps were closed. No production or stylesheet changes were required.
+
+The private native run passes at 170×48 dark and 80×24 light. Six rendered
+captures show readable empty states, long paths and the final file reached by
+End. Home restores mode controls; Discard naturally returns to the bundle row.
+Normal Ctrl+Q returned exit 0 and the owned shell was closed. Exact file hashes,
+uninitialized trust, no trust manifest, ten SQLite integrity checks and zero
+messages were verified. No full suite, provider execution or app restart was run.
+
+Next: Library Collections, then the remaining Library destinations.
+Integration into `dev` remains pending.
