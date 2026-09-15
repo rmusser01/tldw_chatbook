@@ -980,3 +980,19 @@ update-branches in 70 minutes — dev moved every 20-40 minutes that evening, ag
   dev's current minting rate, an id chosen before a multi-hour reconciliation is
   STALE BY CONSTRUCTION — re-sweep and renumber, if needed, as the LAST commit
   before push, not during the fix wave.
+
+
+## Codex turn snapshots can contain the task you just created
+
+**TASK-32645, plugin design, 2026-09-15.** The final ID sweep using
+`git rev-list --objects --all` reported the newly authored task as an existing
+claim even though it was still untracked and `git log --all -- <task path>`
+showed no commit. The blob was an earlier copy of this session's task, with
+the same title and creation timestamp, reachable through a
+`refs/codex/turn-diffs/...` tree snapshot. Treating it as a competing claim
+would have renumbered the task in response to its own checkpoint.
+
+**What to do.** Keep broad snapshot-aware allocation scans, but inspect matching
+blob identity, creation metadata and ref object type before renumbering.
+A checkpoint of the same uncommitted task is not another owner. Do not exclude
+all Codex snapshots: they can also expose another session's uncommitted claim.
