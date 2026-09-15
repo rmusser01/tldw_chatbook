@@ -14949,7 +14949,11 @@ class ChatScreen(BaseAppScreen):
             ephemeral=self._console_active_session_is_ephemeral(),
         )
 
-    def _console_provider_blocker_copy(self) -> str:
+    def _console_provider_blocker_copy(
+        self,
+        *,
+        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness] | None = None,
+    ) -> str:
         """Return concise Console recovery copy for provider/model setup gaps.
 
         task-32345: ``wait_for_active_run`` means "a turn is already in
@@ -14999,7 +15003,11 @@ class ChatScreen(BaseAppScreen):
           dedicated constructor dependency on ``ConsolePromptsController``)
           so its behavior does not depend on this copy's definition.
         """
-        _settings, readiness = self._active_console_settings_readiness()
+        _settings, readiness = (
+            self._active_console_settings_readiness()
+            if settings_readiness is None
+            else settings_readiness
+        )
         if (
             readiness.operability == "ready_to_send"
             or readiness.recovery_action == "wait_for_active_run"
@@ -15050,9 +15058,17 @@ class ChatScreen(BaseAppScreen):
             return "endpoint"
         return ""
 
-    def _console_provider_recovery_action(self) -> tuple[str, str, str]:
+    def _console_provider_recovery_action(
+        self,
+        *,
+        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness] | None = None,
+    ) -> tuple[str, str, str]:
         """Return the label, target, and tooltip for Console provider recovery."""
-        _settings, readiness = self._active_console_settings_readiness()
+        _settings, readiness = (
+            self._active_console_settings_readiness()
+            if settings_readiness is None
+            else settings_readiness
+        )
         if readiness.operability == "ready_to_send":
             return ("Open Settings", "hidden", "Open provider settings")
         presentation = build_console_readiness_presentation(readiness)
@@ -15061,9 +15077,17 @@ class ChatScreen(BaseAppScreen):
             label = CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         return label, presentation.action_target, presentation.action_tooltip
 
-    def _build_console_setup_card_state(self) -> ConsoleSetupCardState:
+    def _build_console_setup_card_state(
+        self,
+        *,
+        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness] | None = None,
+    ) -> ConsoleSetupCardState:
         """Build the empty-transcript onboarding state from current readiness."""
-        settings, readiness = self._active_console_settings_readiness()
+        settings, readiness = (
+            self._active_console_settings_readiness()
+            if settings_readiness is None
+            else settings_readiness
+        )
         has_model = _has_selected_text(getattr(settings, "model", None))
         return build_console_setup_card_state(
             readiness=readiness,
@@ -15126,9 +15150,15 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
-        blocker_copy = self._console_provider_blocker_copy()
+        # These synchronous presentation helpers consume one result. Keep the
+        # acquisition (including session convergence) complete before sharing
+        # it, and acquire afresh on the next update or independent helper call.
+        settings_readiness = self._active_console_settings_readiness()
+        blocker_copy = self._console_provider_blocker_copy(
+            settings_readiness=settings_readiness
+        )
         action_label, _action_target, action_tooltip = (
-            self._console_provider_recovery_action()
+            self._console_provider_recovery_action(settings_readiness=settings_readiness)
         )
         if blocker_copy:
             empty_action_label, empty_action_tooltip = (
@@ -15145,7 +15175,9 @@ class ChatScreen(BaseAppScreen):
             # default-label fallback, so card mode is unaffected.
             empty_action_label, empty_action_tooltip = "", ""
 
-        card_state = self._build_console_setup_card_state()
+        card_state = self._build_console_setup_card_state(
+            settings_readiness=settings_readiness
+        )
         try:
             surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
         except QueryError:

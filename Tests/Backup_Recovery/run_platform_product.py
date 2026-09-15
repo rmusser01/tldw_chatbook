@@ -71,6 +71,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_initial_screen_observation.py",
     "Tests/Backup_Recovery/test_caller_cache_retirement.py",
     "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py",
     "Tests/Backup_Recovery/test_sqlite_inside_config_scope.py",
     "Tests/Backup_Recovery/test_persona_observation_budget.py",
     "Tests/Backup_Recovery/test_db_status_maintenance.py",
@@ -207,6 +208,7 @@ _PRODUCT_SELECTIONS = {
     "support": (_PRODUCT_TESTS[0], *_PRODUCT_TESTS[5:]),
     "support-diagnostic": _SUPPORT_DIAGNOSTIC_TESTS,
     "native-close-diagnostic": (
+        "Tests/Backup_Recovery/test_console_guidance_readiness.py",
         "Tests/TTS/test_profile_native_close_contract.py::test_native_repository_close_preserves_proven_state_and_exclusion",
         "Tests/Backup_Recovery/test_db_status_maintenance.py",
         "Tests/Backup_Recovery/test_canvas_policy_maintenance.py",

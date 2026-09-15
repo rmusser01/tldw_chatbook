@@ -700,7 +700,7 @@ async def test_prompts_provider_recovery_uses_existing_console_settings_seam() -
         await _wait_for_selector(console, pilot, "#console-shell")
         recovery = AsyncMock()
         console._open_console_provider_recovery = recovery
-        console._console_provider_blocker_copy = lambda: (
+        console._console_provider_blocker_copy = lambda *, settings_readiness=None: (
             "No active provider or model is configured."
         )
 
