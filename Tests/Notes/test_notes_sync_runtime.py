@@ -3819,8 +3819,10 @@ def _record_import_once(
         approve_note_import_plan,
     )
     from tldw_chatbook.Notes.note_import_parsers import parse_import_sources
-    from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
-    from tldw_chatbook.Notes.note_import_plan_models import ImportAction
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        ImportAction,
+        ImportBounds,
+    )
     from tldw_chatbook.Notes.note_import_planner import (
         apply_item_override,
         classify_import_batch,

@@ -20,6 +20,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_ENTRIES,
     ImportAction,
     ImportPreviewItem,
+    ImportSource,
     NoteImportPlan,
     ParsedNotePayload,
     RootCollisionState,
@@ -128,7 +129,7 @@ def _private_source_locator_digest(item: ImportPreviewItem) -> str:
     return _private_source_locator_digest_for_source(item.source)
 
 
-def _private_source_locator_digest_for_source(source: object) -> str:
+def _private_source_locator_digest_for_source(source: ImportSource) -> str:
     """Return the same private digest for one discovered source on its own.
 
     task-32605: lasting sync walks a folder with the importer's own

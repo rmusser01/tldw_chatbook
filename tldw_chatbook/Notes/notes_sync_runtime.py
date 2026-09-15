@@ -25,7 +25,8 @@ from tldw_chatbook.Notes.note_import_parsers import (
     _frontmatter_title,
     _split_frontmatter,
 )
-from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
+from tldw_chatbook.Notes.note_import_plan_models import ImportBounds, ImportSource
+from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
 from tldw_chatbook.Notes.note_import_receipts import NoteImportReceiptRepository
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
@@ -677,7 +678,9 @@ class _ProductionRuntimeAdapter:
         *,
         local_user_id: str,
         recovery_capacity_bytes: int,
-        prior_imports: Callable[[tuple[object, ...]], Mapping[str, object]]
+        prior_imports: Callable[
+            [tuple[ImportSource, ...]], Mapping[str, PriorImportObservation]
+        ]
         | None = None,
     ) -> None:
         self._store = store
@@ -772,7 +775,7 @@ class _ProductionRuntimeAdapter:
     async def _prior_import_paths(
         self,
         notes: NotesScopeSyncAuthority,
-        sources: Mapping[str, object],
+        sources: Mapping[str, ImportSource],
     ) -> frozenset[str]:
         """Return never-bound paths whose Import once note is still present.
 
@@ -808,10 +811,9 @@ class _ProductionRuntimeAdapter:
             return frozenset()
         imported: list[tuple[str, str]] = []
         for relative_path, source in sources.items():
-            observation = observations.get(getattr(source, "display_path", ""))
-            note_id = getattr(observation, "note_id", None)
-            if type(note_id) is str and note_id:
-                imported.append((note_id, relative_path))
+            observation = observations.get(source.display_path)
+            if observation is not None:
+                imported.append((observation.note_id, relative_path))
         if not imported:
             return frozenset()
 
@@ -857,7 +859,7 @@ class _ProductionRuntimeAdapter:
         # task-32605: the importer's own source locators, kept so a file it
         # already imported can be recognised without re-deriving its
         # display-path convention here.
-        discovered_sources: dict[str, object] = {}
+        discovered_sources: dict[str, ImportSource] = {}
         reused_files = 0
         # TASK-32244: refusals are counted across the whole walk instead of
         # raising on the first one, so "discovery did not finish" can say how

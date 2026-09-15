@@ -37,6 +37,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_ENTRIES,
     ImportAction,
     ImportMatchKind,
+    ImportSource,
     NoteImportPlan,
     planned_change_count,
 )
@@ -2212,7 +2213,7 @@ class NoteImportReceiptRepository:
 
     def prior_imported_notes_read_only(
         self,
-        sources: tuple[object, ...],
+        sources: tuple[ImportSource, ...],
     ) -> Mapping[str, PriorImportObservation]:
         """Return the latest exact observation per discovered source path.
 
@@ -2234,8 +2235,10 @@ class NoteImportReceiptRepository:
             ImportReceiptError: If the ledger cannot be read safely.
         """
 
-        if type(sources) is not tuple:
-            raise TypeError("sources must be a tuple of discovered sources.")
+        if type(sources) is not tuple or any(
+            type(source) is not ImportSource for source in sources
+        ):
+            raise TypeError("sources must be a tuple of ImportSource values.")
         if not sources or not self._database_path.exists():
             return {}
         connection: sqlite3.Connection | None = None
@@ -2256,13 +2259,13 @@ class NoteImportReceiptRepository:
 
     def _prior_observations(
         self,
-        sources: tuple[object, ...],
+        sources: tuple[ImportSource, ...],
         connection_context: AbstractContextManager[sqlite3.Connection],
     ) -> dict[str, PriorImportObservation]:
         """Project observations for discovered sources, keyed by display path."""
 
         try:
-            digest_items: dict[str, list[object]] = {}
+            digest_items: dict[str, list[ImportSource]] = {}
             for source in sources:
                 digest = _private_source_locator_digest_for_source(source)
                 digest_items.setdefault(digest, []).append(source)
