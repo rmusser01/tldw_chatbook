@@ -1,0 +1,17 @@
+{
+  "base": "6b20175799c47f44cf287065207630ab1ad86e93",
+  "sha256": {
+    "Tests/Backup_Recovery/startup_timing_diagnostic.py": "973e6d8bc973b29ac52f62a8da40328bbf45b33cbd1462ff632fc92a16207c48",
+    "Tests/Backup_Recovery/test_startup_config_timing.py": "1b1308dd8c64806cf2e3152cf0c7ea9296075d593af17c0a35a0f901a4568eaf",
+    "Tests/Backup_Recovery/test_startup_timing_diagnostic.py": "fd4e688a01244145df9285ec6276930b06b04a6c447ddb56d2eb626c25f67cf7"
+  },
+  "changed_existing_test_functions": [
+    "test_progress_selection_only_observes_exact_collected_test_and_fixed_helpers"
+  ],
+  "alpha_rename_verification": {
+    "from": "secret",
+    "to": "private_marker",
+    "inverse_replacement_reproduces_reviewed_sha256": "40020e1d94912f8b4bb95e4dbd3bdf5dca0e904b5b4e0f5ee4a9ea583cd38b08",
+    "occurrences": 8
+  }
+}

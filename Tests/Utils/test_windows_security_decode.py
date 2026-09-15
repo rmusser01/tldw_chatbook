@@ -201,7 +201,8 @@ def test_real_warm_decode_cannot_hide_invalid_handle(tmp_path):
         native = files._native()
         assert native.security(native.handle(descriptor), False) == (1000, 0o600)
         with pytest.raises(OSError):
-            native.security(-1, False)
+            # -1 is a process pseudo-handle; NULL is not an acquired file handle.
+            native.security(0, False)
     finally:
         windows.close(descriptor)
 

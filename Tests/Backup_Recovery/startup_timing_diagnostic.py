@@ -1,7 +1,9 @@
 """Compare one unchanged full-app test with bounded main-thread timing output.
 
 This optional CI diagnostic uses cProfile, so its timings include profiling
-overhead. It records code coordinates and aggregate times, never call values.
+overhead. It records code coordinates and aggregate times, never application
+values. The fixed focus helper additionally exposes only its completed-step
+count, not visited widget IDs or other test values.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from pathlib import Path
 
 
 class ConfigTimings:
-    """Observe finite code objects without wrapping config owners or reading values."""
+    """Observe finite code objects without wrapping owners or reading app values."""
 
     tool_id = 3
 
@@ -58,6 +60,13 @@ class ConfigTimings:
                     }
                 elif key in self.active:
                     row = self.active[key]
+                    if row["function"] == "test_focus" and event in {"yielded", "returned", "raised"}:
+                        # This one fixed test helper appends after press + pause.
+                        # Never invoke custom len or retain/export list contents.
+                        visited = frame.f_locals.get("visited")
+                        row.pop("completed_focus_steps", None)
+                        if type(visited) is list and len(visited) <= 80:
+                            row["completed_focus_steps"] = len(visited)
                     if event == "yielded":
                         if row["function"] in {"config_lock", "config_operation"} and row["acquired"] is None:
                             row["acquired"] = now
@@ -75,6 +84,7 @@ class ConfigTimings:
                             "thread": row["thread"],
                             "elapsed_seconds": round(now - row["started"], 6),
                             "thread_cpu_seconds": round(time.thread_time() - row["cpu_started"], 6),
+                            **({"completed_focus_steps": row["completed_focus_steps"]} if "completed_focus_steps" in row else {}),
                         }
                         if row["acquired"] is not None:
                             # Entry includes native admission and all lock setup;
@@ -148,6 +158,7 @@ class ConfigTimings:
                         "phase": "body_and_release" if row["acquired"] is not None else "running",
                         "elapsed_seconds": round(now - row["started"], 6),
                         **({"suspended_at": dict(row["suspended_at"])} if "suspended_at" in row else {}),
+                        **({"completed_focus_steps": row["completed_focus_steps"]} if "completed_focus_steps" in row else {}),
                     }
                     for row in active
                 ],
@@ -206,7 +217,7 @@ class ConfigTimingPlugin:
         self.timings = ConfigTimings({})
 
     def pytest_collection_modifyitems(self, items):
-        """Observe only the collected GGUF test and its three fixed async helpers."""
+        """Observe only the collected GGUF test and its four fixed async helpers."""
         import inspect
 
         expected = self.source / "Tests/UI/test_llm_gguf_source_modes.py"
@@ -220,6 +231,7 @@ class ConfigTimingPlugin:
                     ("_mount_models", "test_mount"),
                     ("_settle_pilot_until", "test_settle"),
                     ("_close_context", "test_close"),
+                    ("_press_until_focus", "test_focus"),
                 ):
                     code = function.__globals__[name].__code__
                     if Path(code.co_filename).resolve() != expected:

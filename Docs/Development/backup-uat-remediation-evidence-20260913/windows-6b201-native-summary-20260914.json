@@ -1,0 +1,323 @@
+{
+  "product_selection": "native-close-diagnostic",
+  "selected_product_nodes": [
+    "Tests/TTS/test_profile_native_close_contract.py::test_native_repository_close_preserves_proven_state_and_exclusion",
+    "Tests/Backup_Recovery/test_db_status_maintenance.py",
+    "Tests/Backup_Recovery/test_canvas_policy_maintenance.py",
+    "Tests/Backup_Recovery/test_canvas_policy_worker.py",
+    "Tests/Backup_Recovery/test_canvas_view_binding_lifetime.py",
+    "Tests/Backup_Recovery/test_mounted_console_backup.py::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+    "Tests/Backup_Recovery/test_mounted_console_backup.py::test_mounted_console_complete_capture_and_resumed_writes[library]"
+  ],
+  "summary_effective_returncode": 1,
+  "revision": "6b20175799c47f44cf287065207630ab1ad86e93",
+  "artifact": "/private/tmp/uat-windows-6b201-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-6b20175799c47f44cf287065207630ab1ad86e93",
+  "verified_artifact_files": 27,
+  "phases": {
+    "native": {
+      "collected": 59,
+      "counts": {
+        "passed": 58,
+        "failed": 1
+      },
+      "seconds": 1.326,
+      "failures": [
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_real_warm_decode_cannot_hide_invalid_handle",
+          "status": "failed",
+          "seconds": 0.009,
+          "full_traceback_path": "/private/tmp/uat-windows-6b201-native-close/junit-failures/c4cf6b45a193c669.txt",
+          "failure_evidence": []
+        }
+      ],
+      "skips": []
+    },
+    "product": {
+      "collected": 43,
+      "counts": {
+        "passed": 43
+      },
+      "seconds": 508.088,
+      "failures": [],
+      "skips": []
+    }
+  },
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "691cf8af93833dcd98ce0f1a8a7af58e3e12c96853e5708281cdd0fa91e3d609",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "source_files": 16648,
+  "git_blob_verification": {
+    "revision": "6b20175799c47f44cf287065207630ab1ad86e93",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "selected_driver_and_helper_git_matches": {
+    "Tests/Utils/test_windows_security_decode.py": {
+      "sha256": "53b56e97b18be0b877bee13027c7e6d938729a9e169620a93c867ca66da4baae",
+      "git_match": "windows_crlf"
+    },
+    "Tests/Utils/test_windows_files.py": {
+      "sha256": "e3d018881a9fbc7071207fa0d988104a14d1718224550dedd7fcb346cbb3977d",
+      "git_match": "windows_crlf"
+    },
+    "Tests/Backup_Recovery/test_mounted_console_backup.py": {
+      "sha256": "1be300313cd0a211ca58e7829ee9f1f0c16b7bbefc063e00e914eced624fc8c7",
+      "git_match": "windows_crlf"
+    },
+    "Tests/Backup_Recovery/test_home_citation_retirement.py": {
+      "sha256": "e78005a249bd9f891d5f29f8178a6aad515a28b3950be88ff9705c88e101dd41",
+      "git_match": "windows_crlf"
+    },
+    "Tests/Backup_Recovery/native_package.py": {
+      "sha256": "de0063a04616b3c97806efd4daaebb81254fd954e03f899d245123b6f09da0af",
+      "git_match": "windows_crlf"
+    },
+    "Tests/Backup_Recovery/run_platform_product.py": {
+      "sha256": "6033bbe4e881b1ce31ebe79bc8bb6f02b531bbef0c68e23ca2f1a1be56a6b572",
+      "git_match": "windows_crlf"
+    },
+    "Tests/Backup_Recovery/thread_diagnostics.py": {
+      "sha256": "9ece5af67a2f4a45c1a85fed9bcdac707336f4b4e811996eeecba39c247ee2ca",
+      "git_match": "windows_crlf"
+    }
+  },
+  "manifest_sha256": "f7a77ab4b6d38d2b8e87390b4de1c4000949791a2cad4a32948a99220fac3076",
+  "fresh_security_decode_microcost": {
+    "calls": {
+      "ConvertSidToStringSidW": 4,
+      "GetAce": 3,
+      "GetSecurityInfo": 11,
+      "descriptor_free": 11
+    },
+    "iterations_per_sample": 200,
+    "median_seconds": {
+      "cached": 0.0016168000000789107,
+      "uncached": 0.003955700000005891
+    },
+    "samples": {
+      "cached": [
+        0.0016168000000789107,
+        0.001602700000034929,
+        0.0016188000000738612
+      ],
+      "uncached": [
+        0.003955700000005891,
+        0.003949099999999817,
+        0.004031600000075741
+      ]
+    }
+  },
+  "product_groups": {
+    "Tests.TTS.test_profile_native_close_contract": 4,
+    "Tests.Backup_Recovery.test_db_status_maintenance": 8,
+    "Tests.Backup_Recovery.test_canvas_policy_maintenance": 12,
+    "Tests.Backup_Recovery.test_canvas_policy_worker": 6,
+    "Tests.Backup_Recovery.test_canvas_view_binding_lifetime": 11,
+    "Tests.Backup_Recovery.test_mounted_console_backup": 2
+  },
+  "mounted": [
+    {
+      "route": "settings",
+      "junit_seconds": 156.024,
+      "entry_phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.0
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 20.406
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 20.406
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 39.203
+        },
+        {
+          "phase": "service_close_begin",
+          "elapsed": 120.016
+        },
+        {
+          "phase": "service_close_complete",
+          "elapsed": 120.016
+        }
+      ],
+      "inventory_observations": 5,
+      "all_inventories_unchanged_and_available": true,
+      "settlement": [
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "retire_caches_before",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "retire_caches_after",
+          "live_leases": 1,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "runtime_resume",
+          "live_leases": 0,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        }
+      ]
+    },
+    {
+      "route": "library",
+      "junit_seconds": 113.166,
+      "entry_phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.031
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 20.296
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 20.296
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 38.828
+        },
+        {
+          "phase": "service_close_begin",
+          "elapsed": 109.984
+        },
+        {
+          "phase": "service_close_complete",
+          "elapsed": 109.984
+        }
+      ],
+      "inventory_observations": 5,
+      "all_inventories_unchanged_and_available": true,
+      "settlement": [
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "retire_caches_before",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "retire_caches_after",
+          "live_leases": 1,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "runtime_resume",
+          "live_leases": 0,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        }
+      ]
+    }
+  ],
+  "remaining_failure": {
+    "classification": "test invalid-handle premise; -1 is current-process pseudo-handle",
+    "recommended_fixture_change": "native.security(0, False), preserving warm-up and pytest.raises(OSError)",
+    "native_revalidation": "required"
+  },
+  "limitations": [
+    "Evidence qualifies exact 6b201 native-close selection only; not full PR acceptance.",
+    "Microcost is warm repeated native security reads, not a whole-app timing claim.",
+    "Separate startup keyboard failures remain; not independently verified by this report.",
+    "Installed files are validated through artifact receipts, not a new remote filesystem read."
+  ]
+}

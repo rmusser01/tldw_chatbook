@@ -93,14 +93,139 @@ def test_progress_selection_only_observes_exact_collected_test_and_fixed_helpers
         "_mount_models": located("_mount_models", expected),
         "_settle_pilot_until": located("_settle_pilot_until", expected),
         "_close_context": located("_close_context", expected),
+        "_press_until_focus": located("_press_until_focus", expected),
         "not_selected": located("not_selected", expected),
     })
     plugin = diagnostic.ConfigTimingPlugin(source)
     plugin.pytest_collection_modifyitems([SimpleNamespace(obj=selected)])
-    assert set(plugin.timings.codes.values()) == {"test_case", "test_mount", "test_settle", "test_close"}
+    assert set(plugin.timings.codes.values()) == {"test_case", "test_mount", "test_settle", "test_close", "test_focus"}
     foreign = located("foreign_test", source / "another_test.py")
     plugin.pytest_collection_modifyitems([SimpleNamespace(obj=foreign)])
-    assert len(plugin.timings.codes) == 4
+    assert len(plugin.timings.codes) == 5
+
+
+@pytest.mark.asyncio
+async def test_focus_progress_records_completed_steps_without_visited_values():
+    import asyncio
+
+    gates = [asyncio.Event(), asyncio.Event()]
+    private_marker = "private-widget-id-must-not-appear"
+
+    async def selected_focus():
+        visited = []
+        for gate in gates:
+            await gate.wait()
+            visited.append(private_marker)
+        return tuple(visited)
+
+    observer = diagnostic.ConfigTimings({selected_focus.__code__: "test_focus"})
+    observer.start()
+    task = asyncio.create_task(selected_focus())
+    try:
+        await asyncio.sleep(0)
+        initial = observer.snapshot()
+        assert initial["active"][0]["completed_focus_steps"] == 0
+        gates[0].set()
+        await asyncio.sleep(0)
+        progressed = observer.snapshot()
+        assert progressed["active"][0]["completed_focus_steps"] == 1
+        gates[1].set()
+        assert await task == (private_marker, private_marker)
+        final = observer.snapshot()
+        assert final["completed"][-1]["completed_focus_steps"] == 2
+        assert private_marker not in json.dumps([initial, progressed, final])
+        assert not final["active"]
+    finally:
+        for gate in gates:
+            gate.set()
+        await task
+        observer.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["subclass", "oversized", "nonlist", "missing", "other_label"])
+async def test_focus_progress_ignores_unexpected_lists_and_other_code(kind):
+    import asyncio
+
+    class UnreadableList(list):
+        def __len__(self):
+            raise AssertionError("must not execute a custom length method")
+
+    value = {
+        "oversized": [None] * 81,
+        "nonlist": (None,),
+        "other_label": [None],
+    }.get(kind, UnreadableList())
+    release = asyncio.Event()
+
+    async def selected_focus():
+        visited = value
+        await release.wait()
+        return visited
+
+    if kind == "missing":
+        async def selected_without_visited():
+            await release.wait()
+            return value
+        selected_focus = selected_without_visited
+
+    label = "test_case" if kind == "other_label" else "test_focus"
+    observer = diagnostic.ConfigTimings({selected_focus.__code__: label})
+    observer.start()
+    task = asyncio.create_task(selected_focus())
+    try:
+        await asyncio.sleep(0)
+        assert "completed_focus_steps" not in observer.snapshot()["active"][0]
+        release.set()
+        assert await task is value
+        final = observer.snapshot()
+        assert "completed_focus_steps" not in final["completed"][-1]
+        assert final["errors"] == []
+    finally:
+        release.set()
+        await task
+        observer.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_focus_progress_retains_boundary_count_on_original_unwind(cancelled):
+    import asyncio
+
+    future = asyncio.get_running_loop().create_future()
+    private_marker = "private-focus-step-must-not-appear"
+    original = ValueError("private-focus-error-must-not-appear")
+
+    async def selected_focus():
+        visited = [private_marker] * 80
+        await future
+        return visited
+
+    observer = diagnostic.ConfigTimings({selected_focus.__code__: "test_focus"})
+    observer.start()
+    task = asyncio.create_task(selected_focus())
+    try:
+        await asyncio.sleep(0)
+        assert observer.snapshot()["active"][0]["completed_focus_steps"] == 80
+        if cancelled:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            future.set_exception(original)
+            with pytest.raises(ValueError) as caught:
+                await task
+            assert caught.value is original
+        final = observer.snapshot()
+        assert final["completed"][-1]["completed_focus_steps"] == 80
+        assert final["completed"][-1]["outcome"] == "raised"
+        assert not final["active"] and not final["errors"]
+        assert private_marker not in json.dumps(final) and str(original) not in json.dumps(final)
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        observer.close()
 
 
 @pytest.mark.parametrize("label", ["config_lock", "config_operation"])
