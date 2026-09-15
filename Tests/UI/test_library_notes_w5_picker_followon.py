@@ -378,6 +378,21 @@ def test_the_note_count_reads_one_folder_and_stops_at_the_ceiling(
     assert pdn.count_folder_notes(haystack, ceiling=100) == (4, False)
     assert len(seen) == 40
 
+    # Review round 2: a DOT-entry used to jump the ceiling check entirely --
+    # the check lived in a `finally` under the note-matching `try`, and
+    # `continue` skipped it. A folder of dot-entries then read to its end and
+    # reported `(0, False)`: an unbounded read sold as an exact count. The
+    # fixture above has no dot-entries, so it could not see this.
+    dotted = tmp_path / "dotted"
+    dotted.mkdir()
+    for index in range(40):
+        (dotted / f".hidden{index:03d}").write_text("x", encoding="utf-8")
+    seen.clear()
+    assert pdn.count_folder_notes(dotted, ceiling=3) == (0, True)
+    assert len(seen) <= 3, (
+        f"a dot-entry must not skip the ceiling; it read {len(seen)} of 40"
+    )
+
     # Exact fit reports a floor too, and that is deliberate -- see the
     # function's docstring: a tight flag would cost one more read.
     seen.clear()

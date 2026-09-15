@@ -119,18 +119,23 @@ def count_folder_notes(
         with os.scandir(folder) as entries:
             for entry in entries:
                 seen += 1
-                if entry.name.startswith("."):
-                    continue
-                try:
-                    if entry.is_file() and (
-                        os.path.splitext(entry.name)[1].casefold() in NOTE_SUFFIXES
-                    ):
-                        total += 1
-                except OSError:
-                    continue
-                finally:
-                    if seen >= ceiling:
-                        return total, True
+                # The ceiling check is the LAST thing in the body so that every
+                # path reaches it. It used to live in a `finally` under the
+                # note-matching `try`, which a dot-entry `continue` jumped
+                # straight past -- a folder of 2000 dot-entries read all 2000
+                # at ceiling=3 and reported `(0, False)`, an unbounded read
+                # sold as an exact count.
+                if not entry.name.startswith("."):
+                    try:
+                        if entry.is_file() and (
+                            os.path.splitext(entry.name)[1].casefold()
+                            in NOTE_SUFFIXES
+                        ):
+                            total += 1
+                    except OSError:
+                        pass
+                if seen >= ceiling:
+                    return total, True
     except OSError:
         return None
     return total, False
