@@ -25,7 +25,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     initial_lasting_sync_snapshot,
 )
 from tldw_chatbook.Library import library_browse_location as browse_location_module
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
+from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, SelectDirectory
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
     LibraryNoteImportCanvas,
@@ -526,11 +526,28 @@ def _as_host(screen: LibraryScreen, host: _PickerHost):
 
 
 def _capture_saved_directories(monkeypatch) -> list[tuple]:
+    """Capture the start-directory write, whatever else rides with it.
+
+    task-32643 folded this context's recent-roots list into the SAME config
+    write, so the seam is now ``save_settings_to_cli_config`` (one dict of
+    sections). These pins are about the start directory only, so the
+    ``[filepicker]`` half is dropped here rather than asserted -- it has its
+    own pins in ``Tests/Library/test_library_browse_location.py``. Following
+    the rename matters: a stale patch would leave the real writer running and
+    assert against a list nothing ever appended to.
+    """
     saved: list[tuple] = []
+
+    def _write(settings):
+        for section, values in settings.items():
+            if section == "filepicker":
+                continue
+            for key, value in values.items():
+                saved.append((section, key, value))
+        return True
+
     monkeypatch.setattr(
-        browse_location_module,
-        "save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        browse_location_module, "save_settings_to_cli_config", _write
     )
     return saved
 
@@ -624,7 +641,14 @@ async def test_import_once_and_ingest_keep_independent_last_directories(
         fake_save,
     )
     monkeypatch.setattr(
-        browse_location_module, "save_setting_to_cli_config", fake_save
+        browse_location_module,
+        "save_settings_to_cli_config",
+        lambda settings: all(
+            fake_save(section, key, value)
+            for section, values in settings.items()
+            if section != "filepicker"
+            for key, value in values.items()
+        ),
     )
     monkeypatch.setattr(screen, "run_worker", lambda work, **kwargs: work())
     screen._library_note_import_controller = MagicMock()
@@ -672,7 +696,9 @@ async def test_notes_sync_picker_opens_at_the_remembered_directory(
             _folder_requested_event()
         )
 
-    assert isinstance(host.pushed, FileOpen)
+    # task-32611: this door can only answer with a folder, so it opens the
+    # folder-only dialog, not the files-AND-folder one it used to push.
+    assert isinstance(host.pushed, SelectDirectory)
     assert Path(host.pushed._location) == tmp_path.resolve()
 
 

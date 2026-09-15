@@ -666,9 +666,18 @@ def test_ingest_browse_remembers_the_directory_of_the_picked_file(
     saved: list[tuple] = []
     # task-32242: the write now goes through the shared, generation-ordered
     # `library_browse_location`, so that is the module whose save is patched.
+    # task-32643: and it is now the PLURAL `save_settings_to_cli_config`, one
+    # dict of sections, because a Notes door's recent-roots list rides the same
+    # write. The ingest browser passes no `recent_context`, so it still writes
+    # exactly one section -- which is what this pin reads back.
     monkeypatch.setattr(
-        "tldw_chatbook.Library.library_browse_location.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.Library.library_browse_location.save_settings_to_cli_config",
+        lambda settings: [
+            saved.append((section, key, value))
+            for section, values in settings.items()
+            for key, value in values.items()
+        ]
+        is not None,
     )
 
     screen._remember_library_ingest_location(picked)
