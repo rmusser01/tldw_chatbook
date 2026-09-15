@@ -685,3 +685,13 @@ as every other Library destination instead of its own 30. Both identity lines
 path" — now paint on exactly one row, middle-elided with "…" so the file's
 own name survives; before this the absolute path folded over six rows at
 100x30, broken inside a directory name.
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32615, same
+three sizes): in Session Git's Commit workflow the Cancel/Review actions now
+sit directly under the Subject and Body they act on rather than at the pane
+floor twenty to forty rows below, and they stay on screen on a pane too short
+for the whole form. The repository-trust prompt prints the repository path on
+its own lines, broken only at "/" — the whole path, with no component split
+in half. An action receipt ("Committed 1 session note as …") now paints under
+the file's save state near the top of the Manage pane instead of below the
+"Danger" heading.*

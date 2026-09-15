@@ -1528,6 +1528,14 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-save-status",
                 markup=False,
             ),
+            # task-32615 AC#3: this is where an action RECEIPT belongs -- it
+            # was the pane's last child, so "Committed 1 session note as
+            # c1db79e…; unrelated changes untouched." and "Commit review
+            # ready." both painted directly under the Manage region's
+            # "Danger" heading (B caps 44/47/48). Under the breadcrumb and
+            # the save state, above both regions, it reads as what it is at
+            # every one of the three sizes.
+            Static("", id="file-notes-action-status", markup=False),
             preview_status,
             Vertical(
                 self._editor_widget,
@@ -1626,7 +1634,6 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-manage-region",
             ),
             path_task,
-            Static("", id="file-notes-action-status", markup=False),
             id="file-notes-editor-pane",
         )
         return Vertical(editor_pane, id="file-notes-work")
