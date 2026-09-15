@@ -85,32 +85,39 @@ def normalise(fragment: str) -> str:
 def emitted_somewhere(fragment: str, source_root: Path = SOURCE_ROOT) -> bool:
     """True when some source file contains ``fragment`` literally.
 
-    ponytail: the probe is REPO-WIDE, so it cannot falsify a claim that
-    names a surface. A guide says "press Export… **in Notes**"; this asks
-    only "does ``Export…`` exist anywhere under ``tldw_chatbook/``". It
-    does -- as a live ``Button`` label on Media, Conversations, Prompts,
-    Meetings, Artifacts and the Console inspector -- so the claim survives
-    while being false for the surface it names. That is exactly how this
-    sweep's own stamp certified `import-and-export.md`'s "press Export… in
-    Notes" while the Notes toolbar ships a bare ``"Export"``
-    (``library_notes_canvas.py:1842``).
+    ponytail: this probe is REPO-WIDE and RAW, and it needs to be BOTH
+    surface-scoped AND literal-only before it can falsify a claim like
+    "press Export… **in Notes**". Neither half alone is enough. Measured on
+    that exact incident -- the Notes toolbar ships a bare ``"Export"``
+    (``library_notes_canvas.py:1842``) while the guide said ``"Export…"`` --
+    with "scoped" meaning the 12 ``library_notes*`` modules and "AST"
+    meaning non-docstring ``ast.Constant`` string values:
 
-    Measured, because the obvious fix is the wrong one: ``Export…`` has 35
-    raw lines in the tree -- 12 pure ``#`` comments, 13 docstring nodes, and
-    **9 non-docstring string literals, 7 of them Button labels**. So an
-    ``ast.Constant`` pass that drops comments and docstrings still finds 9
-    hits and would NOT have caught this. Excluding prose is a precision
-    improvement; it is not the hole.
+        probe                "Export…"   "Export"
+        repo-wide + raw            35       1431   <- what runs today
+        repo-wide + AST             9        373   <- literals only: MISSES
+        scoped    + raw             1         31   <- scoping only: MISSES
+        scoped    + AST             0         13   <- CATCHES
 
-    Upgrade path: bind a page (or a page section) to the modules that own
-    the surface it documents, and probe only those. Verified against this
-    incident both ways -- ``Export…`` scoped to the 12 ``library_notes*``
-    modules returns 0 hits, so the false claim fails; ``Export`` scoped the
-    same way returns 13, so the corrected sentence still passes. That
-    binding is the real work and belongs with the allowlist in task-32589;
-    a raw tree-wide grep is what makes this script runnable in seconds
-    today, and it still catches the larger class -- a string no source file
-    contains anywhere.
+    Read the two middle rows before "improving" this function. Literals
+    alone still find 9, because ``Export…`` is a live ``Button`` label on
+    Media, Conversations, Prompts, Meetings, Artifacts and the Console
+    inspector -- six surfaces the claim did not name. Scoping alone still
+    finds 1: ``library_notes_controller.py:5406``, a stale DOCSTRING on
+    ``handle_library_notes_export`` -- the handler for the very button that
+    ships bare -- so prose *about* the Notes export action, sitting inside a
+    Notes module, satisfies a raw scoped probe.
+
+    Only the pair works, and the bottom row also shows the corrected
+    sentence still passing (``"Export"``, scoped + AST -> 13), which is the
+    half a one-directional check would miss.
+
+    Upgrade path: bind a page (or a page section) to the modules owning the
+    surface it documents, and probe those with an ``ast.Constant`` pass that
+    excludes docstrings. That binding is the real work and belongs with the
+    allowlist in task-32589 (AC#7). A raw tree-wide grep is what makes this
+    script runnable in seconds today, and it still catches the larger class
+    -- a string no source file contains anywhere.
     """
     command = ["grep", "-rqF"]
     command += [f"--include={glob}" for glob in SOURCE_GLOBS]

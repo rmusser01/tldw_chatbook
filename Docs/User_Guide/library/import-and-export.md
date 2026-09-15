@@ -1061,14 +1061,25 @@ brand-new profile there is no Browse section to click, which that page's
 *How the first version of this stamp went wrong, since it is the whole
 subject of this sweep:* it asserted "none needed correcting" for a page whose
 Notes claims had been read but not grepped.
-`scripts/check_guide_claim_strings.py` did not catch it either, and **the
-reason is not the one this stamp first gave.** It is not that `"Export…"`
-lives only in comments: it is a live **Button** label in seven places
-(Media, Conversations, Prompts, Meetings, Artifacts, the Console inspector).
-The hole is that the checker probes the **whole tree** while the claim names
-a **surface** — "press Export… *in Notes*" — so a string that exists
-somewhere else satisfies a claim that is false where it was made. Closing it
-needs the claim to resolve against the modules that own the named surface:
-probed against the twelve `library_notes*` modules, `Export…` returns
-nothing and this claim fails, while `Export` returns thirteen and the
-corrected sentence stands. Recorded on the script and as task-32589 AC#7-8.)*
+`scripts/check_guide_claim_strings.py` did not catch it either, and this
+stamp has now given the reason wrongly **twice** — first "the string lives
+only in comments" (it does not; `Export…` is a live **Button** label on six
+other surfaces), then "the checker probes the whole tree" (true, but only
+half the cause). Measured, with every figure labelled by the probe that
+produced it — "scoped" being the twelve `library_notes*` modules, "AST"
+being non-docstring string literals:
+
+| probe | `"Export…"` | `"Export"` |
+|---|---|---|
+| repo-wide + raw | 35 | 1431 |
+| repo-wide + AST | 9 | 373 |
+| scoped + raw | 1 | 31 |
+| **scoped + AST** | **0** | **13** |
+
+**Both conditions are necessary and neither alone is sufficient.** Literals
+alone still find 9. Scoping alone still finds 1 — a stale docstring on
+`handle_library_notes_export`, the handler for the very button that ships
+bare, so prose *about* the Notes export action, inside a Notes module,
+satisfies it. Only the pair reaches 0 for the false spelling while leaving
+13 for the true one, which is what lets the corrected sentence above still
+pass its own check. Recorded on the script and as task-32589 AC#7-8.)*
