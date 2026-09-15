@@ -14258,6 +14258,52 @@ test's first draft. If you genuinely cannot run it, say INFERRED and name the
 experiment that would settle it; never let proximity to your own change
 decide the verdict in either direction.
 
+## A shared red is not a baseline red until the NUMBER matches (task-32605, 2026-09-15)
+
+**The incident.** PR #2691's landing pass reported "zero branch-only reds"
+from a `Tests/Notes/` name-set comparison against detached dev — the method
+the entry above prescribes, run correctly. The PR still had a failing check:
+`UI latency guardrails`. That check was *also* failing on `origin/dev` at the
+exact base commit the branch was cut from, which is the shape everyone here
+has learned to wave through as a baseline red.
+
+It was not one. The two runs differed in the only place that mattered:
+
+```
+dev:    assert 977 <= 975   NEW modules (3)  approval_provenance,
+                                             note_import_parsers, select_values
+branch: assert 980 <= 975   NEW modules (6)  ...those three, PLUS
+                                             note_import_execution_models,
+                                             note_import_planner,
+                                             note_import_receipts
+```
+
+Three of the six were ours. `notes_sync_runtime.py` is resident at
+`_ui_ready`, and the task had added module-level imports of
+`PriorImportObservation` (annotation-only) and `NoteImportReceiptRepository`
+(one call, inside a factory) — dragging two modules and a transitive third
+onto the boot path for a read that only ever happens during a sync pass. Had
+it landed, the next PR to touch this area would have inherited the growth as
+*its* baseline and the ratchet would have drifted by three, permanently,
+with every party correctly reporting "already red on dev".
+
+**The rule.** A red you intend to wave through must be compared the same way
+a green one is: by its **value and its named set**, never by its pass/fail
+bit. A ratchet prints its number and its delta list precisely so the
+comparison is possible — read them on both sides. The same applies to any
+budget, census or count-based guard: `failing on dev too` answers a different
+question than `failing by the same amount, for the same reasons`.
+
+**The fix shape, for the next person who trips the ui-ready census.** ADR-097
+forbids raising the constant, and you rarely need to. An annotation-only
+import moves under `TYPE_CHECKING` for free when the module already has
+`from __future__ import annotations`. A runtime import used in one place
+moves inside the function — or, when the call site is a lambda in a factory,
+behind a small helper that imports inside the closure it returns. Pin it with
+a subprocess probe (`sys.modules` is shared across a test file, so an
+in-process assertion proves nothing about ordering) and capture its RED by
+restoring the module-level import.
+
 ## A stale projection is not proof the publisher is silent (task-32604, 2026-09-15)
 
 **The incident.** The crit-4 P0's triage named three links, and link 2 read
