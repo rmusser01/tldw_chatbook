@@ -57,7 +57,12 @@ _ITEM_SKIP_EFFECTS = {
     reason: _row_effect(message)
     for reason, message in _DISCOVERY_MESSAGES.items()
     if reason.startswith("obsidian_")
-} | {"empty_file": _row_effect(_PARSE_MESSAGES["empty_source"])}
+} | {
+    "empty_file": _row_effect(_PARSE_MESSAGES["empty_source"]),
+    # task-32605: Import once has no counterpart sentence for this -- it is
+    # the one skip that exists because the OTHER path already ran.
+    "already_imported": "Already imported by Import once — left as it is",
+}
 _DESTINATION_MAX_CHARS = 1024
 
 LastingSyncReviewSource = Literal["setup", "root", "migration"]
