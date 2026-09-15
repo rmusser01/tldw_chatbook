@@ -25,6 +25,7 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSEventHandler,
     TTSGlobalOverrideDecisionEvent,
     TTSMessageSpeechRequestEvent,
+    TTSPlaybackLifecycle,
     TTSRequestEvent,
 )
 from tldw_chatbook.TTS.character_request_resolver import (
@@ -138,12 +139,23 @@ class _RecordingHandler(TTSEventHandler):
         message_id: str | None,
         voice: str | None,
         resolution: CharacterTTSRequestResolution | None = None,
+        *,
+        outcome_callback=None,
+        expected_destination_fingerprint=None,
+        playback_lifecycle=None,
+        cancellation_is_success=None,
     ) -> None:
         self.generated.append((text, message_id, voice))
         self.resolutions.append(resolution)
+        if outcome_callback is not None:
+            outcome_callback(True)
+        if playback_lifecycle is not None:
+            playback_lifecycle.report_terminal("stopped")
 
 
-def _issued_snapshot() -> tuple[
+def _issued_snapshot(
+    content: str = "  Exact   Console response.\n",
+) -> tuple[
     ConsoleChatStore,
     TTSMessageSpeechSnapshot,
 ]:
@@ -152,7 +164,7 @@ def _issued_snapshot() -> tuple[
     message = store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
-        content="  Exact   Console response.\n",
+        content=content,
     )
     return store, store.issue_tts_message_speech_snapshot(message.id)
 
@@ -292,6 +304,137 @@ async def test_unexpected_validator_failure_is_generic_and_privacy_safe(monkeypa
     assert handler._request_cooldown == {}
     assert handler.generated == []
     assert handler._active_tasks == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "spoken"),
+    [
+        ("## Summary\n\n**Important** and _useful_.", "Summary. Important and useful."),
+        (
+            "- First item\n- Second item\n\n> Quoted text",
+            "First item. Second item. Quoted text",
+        ),
+        ("1. First\n2. Second\n   - Nested", "First. Second. Nested"),
+        (
+            "Read [the **guide**](https://example.test/private) now.",
+            "Read the guide now.",
+        ),
+        (
+            "Read [the guide][ref].\n\n[ref]: https://example.test/private",
+            "Read the guide.",
+        ),
+        (
+            "Run `pytest -q` with `C++` and `snake_case`.",
+            "Run pytest -q with C++ and snake_case.",
+        ),
+        (
+            "Before\n\n```python\nprint('SECRET_CODE')\n```\n\nAfter",
+            "Before. Code block omitted. After",
+        ),
+        ("~~~mermaid\ngraph TD; A-->B\n~~~", "Code block omitted."),
+        (
+            "Before\n\n    print('SECRET_CODE')\n\nAfter",
+            "Before. Code block omitted. After",
+        ),
+        ("```text\nunclosed fence", "Code block omitted."),
+        ("- Example:\n\n  ```python\n  pass\n  ```", "Example: Code block omitted."),
+        (
+            "| Fruit | Count |\n| --- | ---: |\n| Apples | 2 |\n| Pears | 3 |",
+            "Fruit: Apples; Count: 2. Fruit: Pears; Count: 3.",
+        ),
+        (
+            "| **Command** | Result |\n| --- | --- |\n| `a\\|b` | [OK](https://example.test) |",
+            "Command: a|b; Result: OK.",
+        ),
+        ("Use ~~old~~ new.\n\n---\n\nKeep going!", "Use old new. Keep going!"),
+        ("Soft\nwrap and hard  \nbreak", "Soft wrap and hard. break"),
+        ("![A **red** apple](https://example.test/apple.png)", "A red apple"),
+        (
+            r"Keep \*literal\* and -3.5, C++, snake_case, 2 * 3 and $5.",
+            "Keep *literal* and -3.5, C++, snake_case, 2 * 3 and $5.",
+        ),
+        ("Fish &amp; chips; 你好。\n\n次の段落", "Fish & chips; 你好。 次の段落"),
+    ],
+)
+async def test_console_speech_converts_markdown_without_changing_snapshot(
+    content, spoken
+):
+    """Raw Markdown reaching synthesis, or lossy punctuation stripping, breaks this."""
+    store, snapshot = _issued_snapshot(content)
+    handler = _RecordingHandler()
+    handler._tts_service = object()
+    try:
+        await handler.handle_tts_request(
+            TTSMessageSpeechRequestEvent(
+                snapshot, store.validate_tts_message_speech_snapshot
+            )
+        )
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert handler.generated == [(spoken, snapshot.message_id, None)]
+        assert store.validate_tts_message_speech_snapshot(snapshot) == content
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_formatting_only_reply_settles_successfully_without_synthesis():
+    store, snapshot = _issued_snapshot("---\n\n<!-- Formatting only. -->")
+    handler = _RecordingHandler()
+    handler._tts_service = object()
+    states, outcomes = [], []
+    lifecycle = TTSPlaybackLifecycle(
+        message_id=snapshot.message_id,
+        request_id=1,
+        validator=lambda: True,
+        callback=states.append,
+    )
+    try:
+        await handler.handle_tts_request(
+            TTSMessageSpeechRequestEvent(
+                snapshot,
+                store.validate_tts_message_speech_snapshot,
+                outcome_callback=outcomes.append,
+                playback_lifecycle=lifecycle,
+            )
+        )
+        await asyncio.sleep(0)
+        assert outcomes == [True]
+        assert states == ["stopped"]
+        assert handler.generated == []
+        assert handler.resolutions == []
+        assert handler._request_cooldown == {}
+        assert handler.messages == []
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        "```\n" + "x" * 5000 + "\n```",
+        "| " + "Header" * 80 + " |\n| --- |\n" + "| value |\n" * 20,
+    ],
+)
+async def test_console_speech_limits_both_original_and_expanded_text(content):
+    store, snapshot = _issued_snapshot(content)
+    handler = _RecordingHandler()
+    handler._tts_service = object()
+    try:
+        await handler.handle_tts_request(
+            TTSMessageSpeechRequestEvent(
+                snapshot,
+                store.validate_tts_message_speech_snapshot,
+            )
+        )
+        await asyncio.sleep(0)
+        assert handler.generated == []
+        assert handler._request_cooldown == {}
+        assert any("too long" in (event.error or "") for event in handler.messages)
+    finally:
+        await handler.cleanup_tts_resources()
 
 
 @pytest.mark.asyncio
@@ -592,8 +735,22 @@ async def test_unassigned_character_reads_once_then_uses_global_resolution() -> 
 
 
 @pytest.mark.asyncio
-async def test_resolution_failure_offers_single_use_override_without_cooldown() -> None:
+@pytest.mark.parametrize(
+    ("content", "spoken"),
+    [
+        ("Character response.", "Character response."),
+        (
+            "**Character** response.\n\n```python\npass\n```",
+            "Character response. Code block omitted.",
+        ),
+    ],
+)
+async def test_resolution_failure_offers_single_use_override_without_cooldown(
+    content, spoken
+) -> None:
     store, snapshot = _issued_character_snapshot()
+    store.update_message_content(message_id=snapshot.message_id, content=content)
+    snapshot = store.issue_tts_message_speech_snapshot(snapshot.message_id)
 
     async def unavailable_profile_service():
         return None
@@ -626,7 +783,7 @@ async def test_resolution_failure_offers_single_use_override_without_cooldown() 
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
-    assert handler.generated == [("Character response.", snapshot.message_id, None)]
+    assert handler.generated == [(spoken, snapshot.message_id, None)]
     assert handler.resolutions[0] is not None
     assert handler.resolutions[0].source == "explicit_override"
     assert snapshot.message_id in handler._request_cooldown

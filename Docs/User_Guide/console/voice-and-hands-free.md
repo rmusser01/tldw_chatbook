@@ -13,6 +13,23 @@ While hands-free is running, it owns reply speech; the two features never
 double-speak. **Speak replies** persists per conversation for normal
 (keyboard) use.
 
+## How formatted replies are spoken
+
+**Speak replies** and a completed message's **Speak** action turn Markdown
+into spoken text:
+
+- Headings, emphasis, lists, and quotations keep their words, with pauses
+  between blocks. Links use their labels; images use their alternative text.
+- Inline code is read without backticks, including commands and identifiers.
+- Each fenced or indented code block is replaced by **“Code block omitted.”**
+  The code remains available in the onscreen response.
+- Tables are read row by row with column labels, such as “Fruit: Apples;
+  Count: 2.”
+
+Retry and global voice fallback use the same conversion. Replies containing
+only formatting are skipped without pausing automatic speech. Both the original
+reply and the spoken version must fit the existing 5,000-character speech limit.
+
 ## Hands-free: the loop
 
 | Phase | What you see | What is happening |
