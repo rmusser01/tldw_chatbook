@@ -230,9 +230,14 @@ common base precisely so a second directory dialog cannot miss it.)
   the bottom row replaces those chips for as long as the modal is up; mounted
   inside `Dialog` it would instead add a second key row eight lines above a
   contradicting one. `EnhancedFileDialog` mirrors the base layout by hand
-  rather than calling it, so it yields its own `Footer` for the same reason
-  (`enhanced_file_picker.py`); without that, `EnhancedSelectDirectory` kept
-  the defect this section fixes.
+  rather than calling it, so the base's `Footer` does not reach it and
+  `EnhancedSelectDirectory` still shows the HOST screen's chips through the
+  modal. That is a known, deliberate gap, not an oversight: a screen-docked
+  footer takes the bottom terminal row, and that dialog is `height: 95%`
+  against this one's 80%, so at the 60x24 its pickers are pinned at, adding
+  it pushed the character-import picker's selection marker off the bottom
+  and turned three existing size pins red. Giving that family the chips
+  needs a layout answer for that row, not one more `yield`.
 
   Three consequences of putting it at screen level, all handled:
 

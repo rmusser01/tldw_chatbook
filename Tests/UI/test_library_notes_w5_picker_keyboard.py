@@ -249,21 +249,25 @@ async def test_the_folder_picker_renders_its_own_footer_chips(
         )
 
 
-async def test_every_folder_offering_picker_gets_a_footer_of_its_own(
+async def test_the_vendored_folder_pickers_dock_a_footer_on_the_screen(
     tmp_path: Path,
 ) -> None:
-    """AC#2 for the whole family, including the hand-mirrored one.
+    """AC#2 across the vendored family, and where the footer must sit.
 
-    `EnhancedFileDialog` re-implements `compose` instead of calling the
-    base's, so the base's `Footer` never reached it and
-    `EnhancedSelectDirectory` -- the second dialog this task fixed for
-    initial focus -- still showed the HOST screen's chips through the
-    translucent modal (review round 1, important 2).
+    Docked on the SCREEN it REPLACES the host's chips; inside `Dialog` it
+    would add a second key row above a contradicting one -- the placement
+    this task tried first and rejected (capture 02). The earlier pin could
+    not tell those apart (review round 1, minor 4).
+
+    `EnhancedFileDialog` is deliberately absent: see its `compose` for why
+    a screen-docked footer is not a one-line addition there.
     """
     from textual.widgets import Footer
 
     (tmp_path / "sub").mkdir()
-    for name, dialog in _folder_offering_dialogs(tmp_path).items():
+    dialogs = _folder_offering_dialogs(tmp_path)
+    for name in ("SelectDirectory", "FileOpen(offer_select_folder)"):
+        dialog = dialogs[name]
         app = _PickerHost(dialog)
         async with app.run_test(size=WIDE) as pilot:
             await pilot.pause()
@@ -321,7 +325,7 @@ async def test_the_footer_leads_with_the_keys_a_narrow_terminal_can_show(
 
 @pytest.mark.parametrize(
     "dialog_name",
-    ["SelectDirectory", "FileOpen(offer_select_folder)", "EnhancedSelectDirectory"],
+    ["SelectDirectory", "FileOpen(offer_select_folder)"],
 )
 async def test_clicking_a_footer_chip_does_not_cancel_the_picker(
     tmp_path: Path, dialog_name: str

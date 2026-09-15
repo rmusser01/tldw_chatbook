@@ -20,16 +20,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 from textual.timer import Timer
-from textual.widgets import (
-    Button,
-    Footer,
-    Input,
-    Label,
-    ListItem,
-    ListView,
-    OptionList,
-    Static,
-)
+from textual.widgets import Button, Input, Label, ListItem, ListView, OptionList, Static
 from textual.widgets.option_list import Option
 
 from ..Third_Party.textual_fspicker import Filters
@@ -1472,13 +1463,17 @@ class EnhancedFileDialog(BaseFileDialog):
                             )
                         yield cancel_button
 
-        # task-32606: this family mirrors the base layout by hand rather than
-        # calling it, so the base's own `Footer` never reached it -- leaving
-        # `EnhancedSelectDirectory` (the second dialog this task fixed for
-        # initial focus) still showing the HOST screen's chips through the
-        # translucent modal. Docked at screen level for the same reason as
-        # the base: see `FileSystemPickerScreen.compose`.
-        yield Footer()
+        # task-32606 deliberately does NOT yield a `Footer` here, although
+        # the vendored base does and `EnhancedSelectDirectory` therefore
+        # keeps showing the HOST screen's chips through the translucent
+        # modal. A screen-docked footer takes the bottom terminal row, and
+        # this dialog is `height: 95%` (the vendored one is 80%): at the
+        # 60x24 these pickers are pinned at, adding it pushed the selection
+        # marker off the bottom of the character-import picker and turned
+        # three existing size pins red
+        # (`test_file_picker_action_tooltips.py`,
+        # `test_file_picker_progressive.py`). Giving this family the chips
+        # needs a layout answer for that row, not one more `yield`.
 
     def on_mount(self) -> None:
         """Initialize the dialog on mount.
