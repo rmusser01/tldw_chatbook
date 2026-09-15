@@ -523,3 +523,60 @@ async def test_a_frontmatter_titled_note_does_not_paint_a_second_title():
     )
 
 
+# --- task-32621: Folder files states what it lists, and claims no save ----
+
+
+def test_no_file_selected_asserts_no_save_state():
+    """AC#1. A cap 29: the right pane showed the chip "Saved" beside the
+    words "No file selected" -- every save-state input is False when nothing
+    is open, so the resolver's final ``else`` claimed a save for a file that
+    does not exist."""
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        resolve_file_note_status_channels,
+    )
+
+    empty = resolve_file_note_status_channels(root="/notes/vault", file_open=False)
+    assert empty.content_recovery == "No file open."
+    assert empty.safe_next_action == "Choose a file in the tree"
+
+    opened = resolve_file_note_status_channels(root="/notes/vault", file_open=True)
+    assert opened.content_recovery == "Saved"
+
+
+def test_the_folder_files_tree_states_what_it_lists():
+    """AC#2: the tree silently omitted notes.csv, meta.yaml, a Canvas folder
+    and an attachments folder (A cap 29, B cap 35). The extensions named here
+    are ``file_notes_service.SUPPORTED_EXTENSIONS``; if that set changes, this
+    sentence is what has to change with it."""
+    import inspect
+
+    from tldw_chatbook.Notes.file_notes_service import SUPPORTED_EXTENSIONS
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        LibraryFileNotesWorkspace,
+    )
+
+    source = inspect.getsource(LibraryFileNotesWorkspace._build_reader_items_pane)
+    assert 'id="file-notes-tree-scope"' in source
+    for extension in SUPPORTED_EXTENSIONS:
+        assert extension in source, f"{extension} missing from the tree's legend"
+
+
+def test_the_lasting_sync_review_says_which_sources_it_reads():
+    """AC#3: lasting sync silently ignores the same .csv and .yaml sources
+    Import once reports under Failed and Skipped, and "0 need attention" hid
+    it. Neither path changes what it does; each now says which it does. The
+    extensions are ``notes_sync_runtime._SYNC_FILE_EXTENSIONS``."""
+    import inspect
+
+    from tldw_chatbook.Notes.notes_sync_runtime import _SYNC_FILE_EXTENSIONS
+    from tldw_chatbook.Widgets.Library import library_notes_add_from_files_canvas
+
+    source = inspect.getsource(
+        library_notes_add_from_files_canvas.LibraryNotesAddFromFilesCanvas
+        ._compose_phase
+    )
+    assert 'id="notes-sync-review-scope"' in source
+    for extension in _SYNC_FILE_EXTENSIONS:
+        assert extension in source, f"{extension} missing from the review's scope line"
+
+

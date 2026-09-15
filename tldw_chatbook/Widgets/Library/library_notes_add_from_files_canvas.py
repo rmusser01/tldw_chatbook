@@ -515,6 +515,18 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 id="notes-sync-review-summary",
                 markup=False,
             )
+            # task-32621 AC#3: this pass reads .md/.markdown/.txt only
+            # (``notes_sync_runtime._SYNC_FILE_EXTENSIONS``) and says nothing
+            # about the rest, so "0 need attention" covered a vault whose
+            # .csv and .yaml sources Import once at least reports under
+            # Failed and Skipped. Neither path has to change what it DOES --
+            # each now says which it does.
+            yield Static(
+                "Syncs .md, .markdown and .txt only; other files are left alone.",
+                id="notes-sync-review-scope",
+                classes="library-disabled-reason",
+                markup=False,
+            )
             if review.stale:
                 yield Static(
                     "⚠ This review is stale. Check again before applying.",
