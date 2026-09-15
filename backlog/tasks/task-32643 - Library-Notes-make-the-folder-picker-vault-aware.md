@@ -122,6 +122,30 @@ vendored package is deliberately absent from the app's boot import closure
 monkeypatches the shared function and asserts the LISTING's marker follows it,
 which a second `.obsidian` test written inside the picker would not satisfy.
 
+**A regression of my own, found by probe rather than by these pins.** With
+the badge on, the picker opened at 100x30 with `..` highlighted in 4 runs out
+of 4, against 0 of 4 without a `notes_context` -- so the first Enter inside
+the listing went UP a directory. The cause is older than the badge: a
+projection that started before the scan's first batch landed publishes an
+EMPTY listing while `_scan_finished` has since become True,
+`_settle_highlight` reads that as "empty directory", and its own first line
+(`if self.highlighted is not None: return`) then makes the wrong answer
+permanent. The badge's extra message-loop work only widened the window.
+Guarded with the same "more is owed" fact `_settle_projection_highlight`
+already consults one line above (`not self._projection_dirty`). Pinned
+DETERMINISTICALLY against the production method with the five attributes it
+reads, because the integration-shaped version of that test passed with the
+fix reverted when run alone -- recorded in
+`backlog/docs/lessons-testing-evidence.md`.
+
+**Which extensions count as a note.** `NOTE_SUFFIXES` is deliberately local,
+not a reused constant, because the three doors disagree: Folder files reads
+`file_notes_service.SUPPORTED_EXTENSIONS` (adds `.text`), Keep a folder synced
+reads `notes_sync_runtime._SYNC_FILE_EXTENSIONS`, Import once reads
+`note_import_parsers.SUPPORTED_NOTE_EXTENSIONS` (adds `.rst`, `.json`,
+`.yaml`, `.yml`, `.csv`). Verified at a prompt that `{.md, .markdown, .txt}`
+is exactly their intersection, so the badge never over-promises on any door.
+
 **RED->GREEN.** `Tests/UI/test_library_notes_w5_picker_followon.py`, 12 tests
 for this task (18 in the file with task-32611's): 12 red at `origin/dev`
 48d40df8ce -- `AttributeError: module '...progressive_directory_navigation' has
