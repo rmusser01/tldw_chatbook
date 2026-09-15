@@ -140,10 +140,20 @@ async def test_the_folder_files_picker_opens_with_its_path_field_focused(
         replica.close()
 
 
-async def test_folder_files_reaches_and_edits_a_file_with_no_mouse(
+async def test_folder_files_chooses_a_folder_and_edits_a_file_by_key_presses(
     tmp_path: Path,
 ) -> None:
-    """AC#3: choose a folder and edit a file in it, keyboard only."""
+    """AC#3: every step from the choose button to a changed file is a key.
+
+    Honest scope (review round 1, minor 5): this pins what each control
+    DOES when it holds focus, not the Tab route to it. Focus is placed
+    programmatically at three points -- the choose button, the tree, the
+    editor -- because the live Tab route into the Folder-files tree leaks
+    into the Library rail, which is a separate open defect ridered by this
+    task rather than fixed by it. The keyboard walk of the picker itself
+    (the part this task owns) IS exercised end to end here and was
+    re-walked live at 235x52 and 100x30.
+    """
     root = _vault(tmp_path)
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
@@ -226,6 +236,135 @@ async def test_the_folder_picker_renders_its_own_footer_chips(
         assert keys, "the picker's footer advertises nothing"
         # The dialog's own escape route, named by the dialog's own binding.
         assert "escape" in keys and keys["escape"], keys
+
+        # The footer is a child of the SCREEN, not of `Dialog`. Docked at
+        # screen level it REPLACES the host screen's chips; inside `Dialog`
+        # it would merely add a second key row above a contradicting one,
+        # which is the placement this task tried first and rejected
+        # (capture 02-picker-open-235x52.txt). Without this the pin passes
+        # for either placement (review round 1, minor 4).
+        assert footer.parent is dialog, (
+            "the footer must dock on the screen, over the host's own row; "
+            f"it is a child of {type(footer.parent).__name__}"
+        )
+
+
+async def test_every_folder_offering_picker_gets_a_footer_of_its_own(
+    tmp_path: Path,
+) -> None:
+    """AC#2 for the whole family, including the hand-mirrored one.
+
+    `EnhancedFileDialog` re-implements `compose` instead of calling the
+    base's, so the base's `Footer` never reached it and
+    `EnhancedSelectDirectory` -- the second dialog this task fixed for
+    initial focus -- still showed the HOST screen's chips through the
+    translucent modal (review round 1, important 2).
+    """
+    from textual.widgets import Footer
+
+    (tmp_path / "sub").mkdir()
+    for name, dialog in _folder_offering_dialogs(tmp_path).items():
+        app = _PickerHost(dialog)
+        async with app.run_test(size=WIDE) as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            footer = dialog.query_one(Footer)
+            assert footer.parent is dialog, (
+                f"{name}'s footer must dock on the screen, over the host's "
+                f"own row; it is a child of {type(footer.parent).__name__}"
+            )
+
+
+@pytest.mark.parametrize(
+    "dialog_name",
+    ["SelectDirectory", "FileOpen(offer_select_folder)"],
+)
+async def test_the_footer_leads_with_the_keys_a_narrow_terminal_can_show(
+    tmp_path: Path, dialog_name: str
+) -> None:
+    """AC#2 at 100x30: `Footer` scrolls its overflow off the right edge.
+
+    Chips render in binding order, so the order IS the narrow-width
+    priority. Before the reorder `esc Cancel` was off-screen entirely at
+    100 columns; a dead `^s Select this folder` (vetoed by `check_action`
+    on every dialog that does not offer it, yet still rendered, dimmed, by
+    Textual) sat second and ate 23 of 60 columns ahead of every live
+    action (review round 1, important 2 + minor 4).
+
+    Scoped to the vendored family, whose `BINDINGS` this task owns.
+    `EnhancedFileDialog` hides Escape on purpose (task-430's smart
+    dismiss) and appends its own bindings AFTER the base's, so neither
+    half of this rule is its to keep.
+    """
+    from textual.widgets._footer import FooterKey
+
+    dialog = _folder_offering_dialogs(tmp_path)[dialog_name]
+    app = _PickerHost(dialog)
+    async with app.run_test(size=CRITIQUE_COMPACT) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        order = [chip.key for chip in dialog.query(FooterKey)]
+        assert order[0] == "escape", f"the way out must lead: {order}"
+        live = [chip.key for chip in dialog.query(FooterKey) if not chip._disabled]
+        dead = [chip.key for chip in dialog.query(FooterKey) if chip._disabled]
+        # `FileOpen(offer_select_folder=True)` really does offer ctrl+s, so
+        # it has nothing vetoed; the other two do.
+        if dead:
+            assert order.index(live[-1]) < order.index(dead[0]), (
+                "a binding this dialog cannot run is ordered ahead of one it "
+                f"can, so the narrow-width slots go to a dead chip: {order}"
+            )
+
+
+# --- Critical (review round 1): a footer chip click must not cancel --------
+
+
+@pytest.mark.parametrize(
+    "dialog_name",
+    ["SelectDirectory", "FileOpen(offer_select_folder)", "EnhancedSelectDirectory"],
+)
+async def test_clicking_a_footer_chip_does_not_cancel_the_picker(
+    tmp_path: Path, dialog_name: str
+) -> None:
+    """The footer docks OUTSIDE ``SAFE_MODAL_CONTENT``.
+
+    `SafeModalDismissMixin.on_click` classifies a primary click whose
+    target is neither the content nor a descendant, at a point outside the
+    content region, as a backdrop click -- and cancels. Textual's
+    `FooterKey.on_mouse_down` neither stops nor prevents the event, so a
+    chip fires its key AND closes the dialog. Reproduced at
+    `origin/dev`+this-task's-footer: screen stack 2 -> 1, result ``None``.
+    The chips are styled `pointer: pointer` with a hover highlight, so
+    they invite exactly that click, and on `FileSave` it discards a typed
+    filename.
+    """
+    from textual.widgets._footer import FooterKey
+
+    dialog = _folder_offering_dialogs(tmp_path)[dialog_name]
+    app = _PickerHost(dialog)
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        depth = len(app.screen_stack)
+        # Every chip whose own action is not "close this dialog": `escape`
+        # cancels by design, and on `FileOpen(offer_select_folder=True)`
+        # ctrl+s confirms the folder and dismisses, also by design.
+        closing = {"request_safe_cancel", "smart_dismiss", "select_current_folder"}
+        keys = [c.key for c in dialog.query(FooterKey) if c.action not in closing]
+        assert keys, "no non-closing chip to click"
+        for key in keys:
+            # Re-query every time: a chip whose key moves focus changes the
+            # active bindings, so `Footer` recomposes and the widget from
+            # the first pass is detached with a stale region.
+            chip = next(c for c in dialog.query(FooterKey) if c.key == key)
+            await pilot.click(chip)
+            await pilot.pause()
+            await pilot.pause()
+            assert len(app.screen_stack) == depth, (
+                f"clicking the {key!r} footer chip dismissed the picker "
+                f"(stack {depth} -> {len(app.screen_stack)})"
+            )
+            assert app.screen is dialog
 
 
 # --- AC#4: one shared behaviour, not a per-subclass override ----------------
