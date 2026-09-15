@@ -16,6 +16,180 @@ import time
 from pathlib import Path
 
 
+class ConfigTimings:
+    """Observe finite code objects without wrapping config owners or reading values."""
+
+    tool_id = 3
+
+    def __init__(self, codes):
+        self.codes = codes
+        self.clock = time.perf_counter
+        self.lock = threading.Lock()
+        self.active = {}
+        self.completed = []
+        self.slowest = {}
+        self.counts = {}
+        self.errors = []
+        self.dropped_active = 0
+        self.owned = False
+
+    def _error(self, error):
+        self.errors.append(type(error).__name__)
+        del self.errors[:-4]
+
+    def _event(self, code, event, frame):
+        if code not in self.codes:
+            return
+        try:
+            now = self.clock()
+            with self.lock:
+                key = id(frame)
+                if event == "started":
+                    label = self.codes[code]
+                    self.counts[label] = self.counts.get(label, 0) + 1
+                    if len(self.active) >= 32:
+                        self.dropped_active += 1
+                        return
+                    self.active[key] = {
+                        "function": label, "started": now,
+                        "cpu_started": time.thread_time(), "acquired": None,
+                        "thread": threading.get_native_id(),
+                    }
+                elif key in self.active:
+                    row = self.active[key]
+                    if event == "yielded":
+                        if row["function"] == "config_lock" and row["acquired"] is None:
+                            row["acquired"] = now
+                    else:
+                        self.active.pop(key)
+                        done = {
+                            "function": row["function"], "outcome": event,
+                            "thread": row["thread"],
+                            "elapsed_seconds": round(now - row["started"], 6),
+                            "thread_cpu_seconds": round(time.thread_time() - row["cpu_started"], 6),
+                        }
+                        if row["acquired"] is not None:
+                            # Entry includes native admission and all lock setup;
+                            # exit includes body work and native/lock retirement.
+                            # Neither number measures mutex contention alone.
+                            done["acquisition_seconds"] = round(row["acquired"] - row["started"], 6)
+                            done["body_and_release_seconds"] = round(now - row["acquired"], 6)
+                        self.completed.append(done)
+                        del self.completed[:-16]
+                        old = self.slowest.get(row["function"])
+                        if old is None or done["elapsed_seconds"] > old["elapsed_seconds"]:
+                            self.slowest[row["function"]] = done
+        except Exception as error:  # noqa: BLE001 - optional observation must preserve execution.
+            self._error(error)
+
+    def start(self):
+        """Use an unclaimed monitoring slot; never replace another tool."""
+        monitoring = sys.monitoring
+        events = monitoring.events
+
+        def started(code, _offset):
+            self._event(code, "started", sys._getframe(1))
+
+        def returned(code, _offset, _value):
+            self._event(code, "returned", sys._getframe(1))
+
+        def yielded(code, _offset, _value):
+            self._event(code, "yielded", sys._getframe(1))
+
+        def raised(code, _offset, _error):
+            self._event(code, "raised", sys._getframe(1))
+
+        try:
+            monitoring.use_tool_id(self.tool_id, "backup-startup-config")
+            self.owned = True
+            for event, callback in (
+                (events.PY_START, started), (events.PY_RETURN, returned),
+                (events.PY_YIELD, yielded), (events.PY_UNWIND, raised),
+            ):
+                monitoring.register_callback(self.tool_id, event, callback)
+            for code in self.codes:
+                monitoring.set_local_events(
+                    self.tool_id, code, events.PY_START | events.PY_RETURN | events.PY_YIELD
+                )
+            # Python 3.12 exposes unwind only globally; the callback immediately
+            # ignores code outside the finite selection and never reads its error.
+            monitoring.set_events(self.tool_id, events.PY_UNWIND)
+        except Exception as error:  # noqa: BLE001 - test results remain authoritative.
+            self._error(error)
+            self.close()
+
+    def snapshot(self):
+        """Return bounded durations; ongoing CPU time is deliberately unknown."""
+        now = time.perf_counter()
+        with self.lock:
+            return {
+                "active": [
+                    {
+                        "function": row["function"],
+                        "thread": row["thread"],
+                        "phase": "body_and_release" if row["acquired"] is not None else "running",
+                        "elapsed_seconds": round(now - row["started"], 6),
+                    }
+                    for row in self.active.values()
+                ],
+                "completed": list(self.completed), "counts": dict(self.counts),
+                "slowest": dict(self.slowest),
+                "dropped_active": self.dropped_active, "errors": list(self.errors),
+            }
+
+    def close(self):
+        """Disable every owned event and callback before releasing the slot."""
+        if not self.owned:
+            return
+        try:
+            self._close_owned()
+        except Exception as error:  # noqa: BLE001 - keep ownership for a cleanup retry.
+            self._error(error)
+
+    def _close_owned(self):
+        monitoring = sys.monitoring
+        events = monitoring.events
+        monitoring.set_events(self.tool_id, 0)
+        for code in self.codes:
+            monitoring.set_local_events(self.tool_id, code, 0)
+        for event in (events.PY_START, events.PY_RETURN, events.PY_YIELD, events.PY_UNWIND):
+            monitoring.register_callback(self.tool_id, event, None)
+        monitoring.free_tool_id(self.tool_id)
+        self.owned = False
+
+
+class ConfigTimingPlugin:
+    """Attach after collection so selected config imports keep their original order."""
+
+    def __init__(self, source):
+        self.source = source
+        self.timings = ConfigTimings({})
+
+    def pytest_collection_finish(self):
+        import inspect
+
+        try:
+            config = sys.modules.get("tldw_chatbook.config")
+            if config is None:
+                return
+            names = {
+                "_config_write_lock": "config_lock",
+                "_apply_literal_settings_transaction_locked": "transaction",
+                "_publish_runtime_config_unlocked": "publication",
+                "_load_settings_uncached": "settings_rebuild",
+                "get_user_data_dir": "user_directory",
+            }
+            for name, label in names.items():
+                code = inspect.unwrap(getattr(config, name)).__code__
+                if Path(code.co_filename).resolve() != self.source / "tldw_chatbook/config.py":
+                    raise ValueError("config_timing_source_mismatch")
+                self.timings.codes[code] = label
+            self.timings.start()
+        except Exception as error:  # noqa: BLE001 - observation must not replace collection.
+            self.timings._error(error)
+            self.timings.close()
+
+
 def snapshot(profile: cProfile.Profile, source: Path, label: str) -> dict:
     """Return the largest observed product costs without source or local values."""
     rows = []
@@ -70,12 +244,14 @@ def main() -> int:
     stopping = threading.Event()
     started = time.monotonic()
     failures = []
+    config_timing = ConfigTimingPlugin(source)
 
     def emit():
         try:
             record = snapshot(profile, source, args.label)
             record["elapsed_seconds"] = round(time.monotonic() - started, 3)
             record["observer_errors"] = list(failures)
+            record["config_operations"] = config_timing.timings.snapshot()
             print(json.dumps(record), file=sys.stderr, flush=True)
         except Exception as error:  # noqa: BLE001 - optional output cannot replace the observed test outcome.
             failures.append(type(error).__name__)
@@ -94,8 +270,11 @@ def main() -> int:
             observer.start()
         except RuntimeError as error:
             failures.append(type(error).__name__)
-        return pytest.main([args.node, "--timeout=60", "-q", "--capture=no"])
+        return pytest.main(
+            [args.node, "--timeout=60", "-q", "--capture=no"], plugins=[config_timing]
+        )
     finally:
+        config_timing.timings.close()
         profile.disable()
         stopping.set()
         if observer.ident is not None:

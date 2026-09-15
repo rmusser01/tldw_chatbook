@@ -54,8 +54,9 @@ def test_observer_failure_preserves_test_outcome_and_retires_profile(
     )
     original = RuntimeError("original test failure")
 
-    def run(args):
+    def run(args, *, plugins):
         assert args == ["fixture-node", "--timeout=60", "-q", "--capture=no"]
+        assert len(plugins) == 1
         if raises:
             raise original
         return 7
