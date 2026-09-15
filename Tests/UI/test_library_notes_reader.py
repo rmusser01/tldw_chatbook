@@ -538,6 +538,13 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
 
         discard = screen.query_one("#library-note-discard-new", Button)
         mode_controls = screen.query_one("#library-note-mode-controls")
+        task_actions = screen.query_one("#library-note-task-actions")
+        # task-32623 review round 1, F9: pin the hand-measured CSS constant
+        # itself, not just the no-shift behaviour it produces -- a drift in
+        # the number could still happen to not shift anything today and
+        # silently stop reserving the row's real widest width.
+        assert task_actions.styles.min_width is not None
+        assert task_actions.styles.min_width.value == 61
         assert discard.display is True, "untouched new note should offer Discard"
         x_with_discard = mode_controls.region.x
 
