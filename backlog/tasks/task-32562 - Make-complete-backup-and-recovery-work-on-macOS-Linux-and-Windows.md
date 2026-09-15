@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-15 07:05
+updated_date: 2026-09-15 07:08
 ---
 
 ## Description
@@ -375,6 +375,7 @@ a523 Library independenttrace identifies a second concrete UIretrycandidate: Con
 Bounded-section compatibility caught a real candidate regression: original content/allocation case failed final overflow-hint assertion while exact HEAD baseline passed. Narrowed layout-signal waiting to screens excluded from native is_current/background layout; visible/background screens retain original request_reconcile behavior. Same original bodies and eight covered/transparent/hidden/removal cases are being verified; no guard or test deadline changed.
 Final narrowed bounded-section correction: root19 native guidance/provider/tray/section PASS61.71s; eight unchanged original geometry/scoped cases PASS in exact private-profile children; independent8PASS11.90s. Real phase logs verify all seven guidance checkpoints and safe collection. Product Ruff4→3 existing findings, Bandit0; new wrappers/runner clean; embedded section16 and guidance57 B101 only, guidance Ruff7unchanged. a523 Windows native-close is terminal59native+47/50productPASS: Settings succeeds, guidance45s and Library420s fail; exact31artifact and2475Python receipts verified. Installed macOS final candidate now running, followed by exact Linux/Windows on commit; task remains In Progress.
 Final installed macOS verification passes all3 Console/Settings/Library capture/archive-note/resumed-write workflows193.06s, exact2475Python/2867installed files. Independent4file review/hash verification approved; native-close58 and restore16 collect. Commit the scoped bounded-section correction plus retained guidance checkpoint logs/evidence, then push existing PR2642 and run exact Linux22/Windows58; no merge or final acceptance yet.
+Approved remaining CI correction, independently reviewed: enable Git for Windows core.longpaths on the ephemeral Windows wheel job before pinned actions/checkout. Preserve genuine synthetic PR merge, all files, default ref, credentials setting and all vendor/build/wheel tests; no dev integration needed. Existing filename basename236chars is valid but full checkout path exceeds legacyMAX_PATH. Official Git documentation confirms builtin long-path support; fresh actual Windows checkout/build still required. Scope is four YAML step lines only. Local disk briefly refused new log creation; first Linux command never launched, retry uses numeric-only session output with raw host logs retained.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
