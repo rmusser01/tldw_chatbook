@@ -2553,9 +2553,12 @@ class ConsoleLeftRail(Vertical):
         count, counts = (
             self._agent_progress_state() if self._agent_progress_state else (0, {})
         )
-        self.query_one(
-            "#console-agent-progress", Button
-        ).label = f"Progress: {count} queued"
+        # task-32639: this runs on a timer, and the button only exists while
+        # _open_agent_progress is set and the agent section is composed. A tick
+        # landing between recomposes used to raise NoMatches out of the timer,
+        # which Textual re-raises at the app -- the app exits.
+        for progress in self.query("#console-agent-progress").results(Button):
+            progress.label = f"Progress: {count} queued"
         if counts != self._progress_counts:
             if self._refresh_progress_navigation is not None:
                 self._refresh_progress_navigation()
