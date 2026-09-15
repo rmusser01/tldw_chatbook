@@ -43,7 +43,7 @@ still scanned. Only deleting rules, or swapping stylesheet sources per screen, r
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-CLOSED 2026-09-14 by task-32532 plan Task 10 (ADR-161): the monolith carve-up completed and the spec 3.5 size-ceiling test shipped (`test_sheet_size_ceiling`, 2,000 comment-stripped active lines per CSS_MODULES sheet).
+CLOSED 2026-09-14 by task-32596 plan Task 10 (ADR-161): the monolith carve-up completed and the spec 3.5 size-ceiling test shipped (`test_sheet_size_ceiling`, 2,000 comment-stripped active lines per CSS_MODULES sheet).
 
 AC disposition at close (per the supersession recorded above):
 - #1 MET for the owners the audit named with material mass: Library (-> features/_library{,_panels}.tcss), Settings (-> features/_settings.tcss), and additionally Console (-> features/_console{,_panels}.tcss, bundle-resident), Home (-> features/_home.tcss), destination (-> layout/_destination.tcss), and the ds-* primitives (-> components/_ds_primitives.tcss). The small scoped residue the 2026-08-29 analysis also named (mcp-mode-strip, lab-mode-strip, workflows/personas/watchlists pane strips) stays in the monolith as SHARED agentic-shell chrome: those rules style shell regions composed across screens (verified: their selectors are multi-shell comma lists or non-vocabulary scoped overrides), so per the ADR-161 spec 3.5 carve rule ("what remains of the monolith is true Console/shared chrome") they are chrome, not an owned vocabulary; the parent task's 3.10 in-place passes own any further split. The grab-bag condition itself is closed: every class VOCABULARY now lives in a single-purpose sheet.
@@ -52,7 +52,7 @@ AC disposition at close (per the supersession recorded above):
 - #4 MET: surface-wide computed-style probes on the four heaviest consumers (Home/ChatScreen-Console/Settings-default/Library) are BYTE-IDENTICAL before/after, and normalized SVG A/B captures of all four are byte-identical.
 - #5 MET: `check_bundle_sync.py` green -- the bundle and every generated sheet reproduce from the new sources.
 
-Superseded by task-32532 (component-pattern library; ADR-161). The monolith split lands as plan Tasks 9-10. Close when the size-ceiling test ships.
+Superseded by task-32596 (component-pattern library; ADR-161). The monolith split lands as plan Tasks 9-10. Close when the size-ceiling test ships.
 
 Prior analysis (2026-08-29 review pass), preserved for the Task 9-10 implementers:
 

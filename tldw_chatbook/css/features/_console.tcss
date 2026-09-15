@@ -2472,14 +2472,18 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     color: $ds-text-muted;
 }
 
+/* task-32555 AC#1: the card's actions are buttons, not text lines -- a
+   round edge at rest, and focus changes the SHAPE (heavy side rails), not
+   just the text style. The card's own height:auto absorbs the two border
+   rows each button gained when it stopped being compact. */
 .console-setup-modal-action {
     width: auto;
     min-width: $ds-size-12;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     padding: $ds-space-0 $ds-space-1;
-    border: none;
+    border: round $ds-grid-line;
     background: $ds-focus-bg;
     color: $ds-text-primary;
     content-align: left middle;
@@ -2488,7 +2492,10 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 .console-setup-modal-action:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
-    text-style: bold underline;
+    border: round $ds-focus-accent;
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+    text-style: bold;
 }
 
 #console-chat-tabs {

@@ -9,6 +9,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
+from rich.cells import cell_len
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on
@@ -45,7 +46,10 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_NOTES_SORT_FILTERED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
+    back_cue_label,
     library_disabled_action_label,
+    library_disabled_reason_line,
+    library_selection_count_line,
 )
 from tldw_chatbook.Widgets.Library.library_rail import LibraryRailSearchInput
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -201,6 +205,59 @@ def browse_row_width(labels: tuple[str, ...]) -> int:
     return sum(len(label) + _TOOLBAR_ACTION_CHROME for label in labels)
 
 
+#: Cells a ``ds-toolbar`` row costs before its first action: the row's own
+#: left padding. MEASURED at the 64-column pane a 235-column terminal gives
+#: the Notes list beside an open note, where every action's region starts at
+#: x=1 rather than x=0 -- which is why the four folder actions, 64 cells of
+#: buttons by ``_TOOLBAR_ACTION_CHROME``, still ran one cell off a 64-column
+#: pane (task-32544).
+_TOOLBAR_ROW_INDENT = 1
+
+
+def toolbar_action_rows(
+    labels: tuple[str, ...], pane_width: int
+) -> tuple[tuple[int, ...], ...]:
+    """Split one action group into the rows its pane can actually paint.
+
+    Textual toolbars do not wrap, so a group wider than its pane paints its
+    last action past the edge: task-32544 measured "Remove placement" at
+    x=48..68 of the 64-column pane a 235-column terminal gives the list
+    beside an open note, and it read on screen as "Remove pl". This is the
+    guide's own narrow-pane rule ("the toolbar moves the action that does
+    not fit onto a row of its own") applied to a group of any size, rather
+    than to the single action ``browse_row_overflows`` was written for.
+
+    Greedy, in composed order: actions keep their reading order and a row
+    closes as soon as the next one would not fit. An action too wide for
+    the pane on its own still takes a row of its own -- there is nothing
+    narrower to give it.
+
+    Args:
+        labels: The rendered action labels, disabled markers included, in
+            the order they are composed.
+        pane_width: Columns the pane has, or 0 when unmeasured -- which
+            keeps the single row the group has always had.
+
+    Returns:
+        One tuple of label indices per row, never empty.
+    """
+    if pane_width <= 0 or not labels:
+        return (tuple(range(len(labels))),)
+    budget = pane_width - _TOOLBAR_ROW_INDENT
+    rows: list[tuple[int, ...]] = []
+    current: list[int] = []
+    used = 0
+    for index, label in enumerate(labels):
+        cost = cell_len(label) + _TOOLBAR_ACTION_CHROME
+        if current and used + cost > budget:
+            rows.append(tuple(current))
+            current, used = [], 0
+        current.append(index)
+        used += cost
+    rows.append(tuple(current))
+    return tuple(rows)
+
+
 def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -> bool:
     """Whether these actions cannot all be painted on one row of the pane.
 
@@ -227,7 +284,39 @@ def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -
     return needed > pane_width - (_TOOLBAR_SPLIT_HYSTERESIS if already_split else 0)
 
 
-def render_preview_source(body: str) -> str:
+def _drop_leading_title_heading(body: str, title: str) -> str:
+    """Drop a body's opening H1 when it only repeats the note's own title.
+
+    task-32551: task-32142 put the title above the Preview body, so an
+    imported note whose Markdown starts with ``# <its own title>`` -- the
+    normal shape of a file exported from any notes app -- printed that
+    title twice, once as the pane's title line and once as the rendered H1.
+
+    Exact match only (case-sensitive, whitespace-stripped): a heading that
+    merely resembles the title is the author's own first section and stays.
+
+    Args:
+        body: The note's stored Markdown source.
+        title: The note's title.
+
+    Returns:
+        ``body`` with that one line removed, or ``body`` unchanged.
+    """
+    wanted = title.strip()
+    if not wanted:
+        return body
+    lines = body.split("\n")
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if line.strip() == f"# {wanted}":
+            del lines[index]
+            return "\n".join(lines)
+        return body
+    return body
+
+
+def render_preview_source(body: str, *, title: str = "") -> str:
     """Return the note body as the Markdown Preview should render it.
 
     ONE home for the order, because Preview renders from two places -- the
@@ -238,17 +327,23 @@ def render_preview_source(body: str) -> str:
 
     Args:
         body: The note's stored Markdown source.
+        title: The note's title, so a leading ``# <title>`` is not rendered
+            underneath the title line Preview already shows (task-32551).
+            Omitted callers keep the old behaviour.
 
     Returns:
         The source with imported `[[Title]](note://<id>)` links reduced to
-        their display text (task-32263) and Obsidian callout headers turned
-        into plain blockquote headers (task-32249).
+        their display text (task-32263), Obsidian callout headers turned
+        into plain blockquote headers (task-32249), and a redundant opening
+        H1 dropped (task-32551).
     """
     # Lazy, like the parser factory below it: this module is on the Library
     # route's pre-import path (Tests/Performance/test_screen_preimport_payload_budget.py).
     from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
 
-    return render_obsidian_callouts(render_note_links(body))
+    return render_obsidian_callouts(
+        render_note_links(_drop_leading_title_heading(body, title))
+    )
 
 
 def compose_note_row_label(
@@ -333,6 +428,53 @@ def note_row_tiebreak_labels(
     return tiebreakers
 
 
+def _library_note_heading_title(title: str, suffix: str, width: int) -> str:
+    """Ellipsize one note title, then re-attach its list-row tie-break.
+
+    task-32548: appended AFTER the ellipsis on purpose -- a title long
+    enough to be trimmed is exactly the one whose tie-break would be
+    trimmed away first, and the tie-break is the only part of the string
+    that identifies WHICH note is open.
+    """
+    ellipsized = ellipsize_note_title_cells(title, width)
+    return f"{ellipsized} · {suffix}" if suffix else ellipsized
+
+
+def note_title_tiebreak_suffix(
+    projection: LibraryNotesTreeProjection | None, note_id: str
+) -> str:
+    """Return the tie-break label one note's own list row carries.
+
+    task-32548: ``note_row_tiebreak_labels`` is a list-row projection, so a
+    reader who opened one of two "Reading list" notes lost the only thing
+    telling them apart the moment the editor filled the pane. The editor
+    header asks the SAME function the row asked, rather than inventing a
+    second discriminator that could disagree with the list beside it.
+
+    Args:
+        projection: The notes tree projection the list is drawn from, or
+            ``None`` when the tree has not loaded (a flat-list fallback,
+            where nothing is tie-broken either).
+        note_id: The open note's id.
+
+    Returns:
+        The row's third key (``"#8d61"``, ``"09:16"``), or ``""`` when the
+        note is absent, unknown, or does not collide with anything.
+    """
+    rows = projection.rows if projection is not None else ()
+    if not rows or not note_id:
+        return ""
+    labels = note_row_tiebreak_labels(rows)
+    if not labels:
+        return ""
+    for row in rows:
+        if row.kind == "note" and row.note_id == note_id:
+            label = labels.get(row.placement_id, "")
+            if label:
+                return label
+    return ""
+
+
 #: Backlink rows Info renders at most (task-32145). The loader asks for one
 #: more than this so an over-cap result can say "50+" rather than claim an
 #: exact 50 that is not the real number.
@@ -374,8 +516,12 @@ def _library_note_back_label(compact: bool) -> str:
     PR #2547 review (Qodo finding 1): compose time and state-apply time
     each inlined this same ternary; a wording change could update one
     rendering path and leave the other stale. One function, both callers.
+
+    task-32553 routes both spellings through ``back_cue_label`` so the
+    editor's wording and every other Library back cue share one glyph and
+    one grammar.
     """
-    return "‹ Back to list" if compact else "‹ Notes"
+    return back_cue_label("Back to list" if compact else "Notes")
 
 
 #: The storage authority every Database Notes surface answers to. Painted once
@@ -599,6 +745,12 @@ class LibraryNotePresentationState:
     #: The controller counts this for ``metadata_line`` anyway; carrying the
     #: number instead of the sentence keeps the strip off a second scan.
     word_count: int = 0
+    #: task-32548: the tie-break the open note's own LIST row carries when
+    #: its title collides with another visible note ("· #8d61" / "· 09:16"),
+    #: or ``""`` when nothing collides. Computed once per canvas sync from
+    #: the projection the list is drawn from, so the editor header and the
+    #: list row can never disagree about which note is open.
+    title_suffix: str = ""
 
 
 class _LibraryNotesTreePagerButton(Button):
@@ -882,7 +1034,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id="library-note-import-canvas",
                 )
             yield Button(
-                "Back to Notes",
+                back_cue_label("Notes"),
                 id="library-notes-import-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -965,6 +1117,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 next_action = "Resolve the conflict or reload the note."
             elif state.snapshot.saving or state.transfer_running:
                 next_action = ""
+            elif "Next:" in state.transfer_status:
+                # task-32536 AC#2: a hand-off failure names its own remedy;
+                # a second "Next:" here would offer "Review the error" for
+                # an error that is not on screen.
+                next_action = ""
             elif "failed" in f"{status} {state.transfer_status}".lower():
                 next_action = "Review the error, then keep editing."
             elif state.presentation == "preview":
@@ -1039,6 +1196,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         real one, leaving the width-aware toolbar (task-32127) permanently
         on its "not measured yet" shape. This widget's OWN rendered width
         is the honest fallback for exactly that case.
+
+        Deliberately NOT the measured width first (task-32557, tried and
+        reverted): a resize delivers this canvas a run of MID-LAYOUT widths
+        -- 110, 106, 46, 48, 68, 40, 1, 72 were logged for one 60 -> 170 ->
+        60 round trip -- and every one of them is a real number this method
+        would have to answer with. Deciding the toolbar's shape from them
+        recomposed the canvas on transients, which cost the in-place
+        breakpoint path its widget identity
+        (``test_library_note_compact_labels_round_trip_without_recompose``).
+        The contract's staleness is cured at its source instead, by
+        ``apply_pane_width`` below.
         """
         return self.pane_width or self._measured_width
 
@@ -1071,6 +1239,49 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         before = self._toolbar_decisions(self._effective_pane_width())
         self._measured_width = width
         if before != self._toolbar_decisions(self._effective_pane_width()):
+            self.refresh(recompose=True)
+
+    def apply_pane_width(self, pane_width: int) -> None:
+        """Take a freshly resolved Items width; re-shape only if it shrank.
+
+        task-32557: ``pane_width`` used to arrive only with a state sync, so
+        after a resize the toolbar kept deciding its shape from the width it
+        had at its last compose. Live, a 235-column list merged its two
+        action groups (pane 138), the terminal was narrowed to 60, and the
+        merged row stayed -- painting "Add from files…" as "Add from"
+        against the grip of a 50-column pane. The screen now hands the
+        resolved width straight over.
+
+        Only a SHRINK re-shapes, and that asymmetry is the point: a shape
+        too wide for its pane paints half words, which is a correctness
+        defect and has to be answered this frame; a shape too narrow for its
+        pane only leaves space, and can wait for the compose that is coming
+        anyway (compose always reads the current width). Re-shaping on
+        growth too would recompose on every breakpoint crossing and cost the
+        in-place responsive path its widget identity -- pinned by
+        ``test_library_note_compact_labels_round_trip_without_recompose``.
+
+        A GROWN width is still RECORDED, without refreshing (review M1).
+        ``_effective_pane_width`` gives this attribute priority over the
+        measured width, so dropping a grown width on the floor left
+        235 -> 60 -> 235 composing the 50-cell shape into a 138-cell pane
+        until an unrelated state sync re-stamped it -- a state dev never
+        reaches, because dev's ``pane_width`` never moves off its compose
+        value. Recording it means the next compose reads the true width.
+
+        Args:
+            pane_width: The Items width the reader layout just resolved.
+        """
+        if pane_width <= 0:
+            return
+        if self.pane_width and pane_width >= self.pane_width:
+            self.pane_width = pane_width
+            return
+        before = self._toolbar_decisions(self._effective_pane_width())
+        self.pane_width = pane_width
+        if self.mode == "list" and before != self._toolbar_decisions(
+            self._effective_pane_width()
+        ):
             self.refresh(recompose=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -1471,7 +1682,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 yield export_selected
             yield Static(
-                f"{list_state.selected_count} selected",
+                # task-32549: "○ Export selected" said that exporting was
+                # off and nothing about why -- the reason was on a tooltip,
+                # which does not render in a TUI. Named on THIS line rather
+                # than in the label or on a line of its own: the strip above
+                # has no cells to spare (task-32261 had to hide its own
+                # in-row counter to keep this very action on a 42-column
+                # pane), and a new line costs the tree a row at 60x20, which
+                # `test_library_note_60x20_navigator_state_allocation`
+                # caught when this was tried that way.
+                library_selection_count_line(
+                    list_state.selected_count, export_base
+                ),
                 id="library-notes-selection-status",
                 # task-32272: the class, not the id, is what the in-place
                 # toggle patcher looks for -- a new count renderer opts in
@@ -1657,6 +1879,29 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 yield from self._compose_tree_actions(
                     operation_running=list_state.operation_running
                 )
+        if not select_mode and notes_sort_is_blocked(
+            tree_projection=self.tree_projection, filter_value=self.filter_value
+        ):
+            # Only while the Sort control is on screen: select mode replaces
+            # the whole toolbar, and a reason for a control nobody can see is
+            # the same dishonesty in the other direction (walked live at
+            # 100x30, `layout-23-100x30-export-reason`).
+            # task-32549: "○ Sort: Newest" said that sorting was off and
+            # nothing about why -- the reason was on a tooltip, which does
+            # not render in a TUI. On the shared `.library-disabled-reason`
+            # line rather than in the label, and MEASURED that way: the
+            # label spelling was walked live first and painted "○ Sort
+            # unavailable — clear the" against the grip on the 42-column
+            # pane a 100x30 terminal gives this list
+            # (`wave4-caps/layout/layout-21-100x30-sort-reason`). Same line,
+            # same sentence, as Export selected below and "○ Server notes"
+            # in the sync canvas.
+            yield Static(
+                library_disabled_reason_line("Sort", "clear the filter"),
+                id="library-notes-sort-disabled-reason",
+                classes="library-disabled-reason",
+                markup=False,
+            )
         status_row = Horizontal(id="library-notes-status-row")
         status_row.add_class("h-auto")
         status_row.display = not select_mode
@@ -2008,6 +2253,47 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
     def _compose_tree_actions(self, *, operation_running: bool) -> ComposeResult:
         """Render actions appropriate to the selected folder-tree placement."""
+        buttons = self._tree_action_buttons(operation_running=operation_running)
+        rows = toolbar_action_rows(
+            tuple(str(button.label) for button in buttons),
+            self._effective_pane_width(),
+        )
+        for row_index, row in enumerate(rows):
+            container = Horizontal(
+                id=(
+                    "library-notes-tree-actions"
+                    if row_index == 0
+                    else f"library-notes-tree-actions-{row_index + 1}"
+                ),
+                # The class is how a pin reaches EVERY packed row: Textual
+                # has no attribute selectors, so a selector aimed at
+                # `#library-notes-tree-actions` alone stopped seeing the
+                # overflow row this packer introduced (review M4).
+                classes="ds-toolbar library-notes-tree-action-row h-auto",
+            )
+            with container:
+                for index in row:
+                    yield buttons[index]
+
+    def _tree_action_buttons(self, *, operation_running: bool) -> list[Button]:
+        """Every action the selected placement offers, in composed order.
+
+        Built as a LIST rather than yielded straight into a container
+        (task-32544): the widest composition -- "New folder / Add to folder
+        / Move note / Remove placement" with a note selected, 62 cells --
+        did not fit the 64-column pane a 235-column terminal gives the list
+        beside an open note, and Textual toolbars do not wrap, so "Remove
+        placement" painted at x=48..68 and read on screen as "Remove pl".
+        Measuring the labels first is what lets ``toolbar_action_rows``
+        split them across rows the pane can paint, which is the guide's own
+        narrow-pane rule applied to this group.
+
+        Args:
+            operation_running: Whether a Notes mutation is in flight.
+
+        Returns:
+            The group's buttons, freshly built so a caller can mount them.
+        """
         projection = self.tree_projection
         selected = (
             projection.row(self.tree_selected_placement_id)
@@ -2024,11 +2310,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "This folder is managed by sync; change its sync root instead."
         )
         stale_reason = "This branch may be out of date; retry it before changing it."
-        _, stacked = _toolbar_shape(self._effective_pane_width(), self.compact)
-        with (Vertical if stacked else Horizontal)(
-            id="library-notes-tree-actions", classes="ds-toolbar"
-        ):
-            yield Button(
+        buttons: list[Button] = [
+            Button(
                 "New folder",
                 id="library-notes-folder-new",
                 classes="library-canvas-action",
@@ -2046,13 +2329,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     else None
                 ),
             )
-            if selected is not None and selected.kind == "folder":
-                for label, button_id in (
-                    ("Rename", "library-notes-folder-rename"),
-                    ("Move", "library-notes-folder-move"),
-                    ("Remove", "library-notes-folder-remove"),
-                ):
-                    yield Button(
+        ]
+        if selected is not None and selected.kind == "folder":
+            for label, button_id in (
+                ("Rename", "library-notes-folder-rename"),
+                ("Move", "library-notes-folder-move"),
+                ("Remove", "library-notes-folder-remove"),
+            ):
+                buttons.append(
+                    Button(
                         label,
                         id=button_id,
                         classes="library-canvas-action",
@@ -2070,12 +2355,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                             else None
                         ),
                     )
-            elif selected is not None and selected.kind == "note":
-                protected = selected.protected
-                protected_placement_reason = (
-                    "This placement is managed by sync; change its sync root instead."
                 )
-                yield Button(
+        elif selected is not None and selected.kind == "note":
+            protected = selected.protected
+            protected_placement_reason = (
+                "This placement is managed by sync; change its sync root instead."
+            )
+            buttons.append(
+                Button(
                     "Add to folder",
                     id="library-notes-placement-add",
                     classes="library-canvas-action",
@@ -2083,7 +2370,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     disabled=operation_running or selected_branch_stale,
                     tooltip=stale_reason if selected_branch_stale else None,
                 )
-                yield Button(
+            )
+            buttons.append(
+                Button(
                     "Move note",
                     id="library-notes-placement-move",
                     classes="library-canvas-action",
@@ -2097,7 +2386,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         else None
                     ),
                 )
-                yield Button(
+            )
+            buttons.append(
+                Button(
                     "Remove placement",
                     id="library-notes-placement-remove",
                     classes="library-canvas-action",
@@ -2122,14 +2413,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         )
                     ),
                 )
-            if self.tree_deleted_folder_available:
-                yield Button(
+            )
+        if self.tree_deleted_folder_available:
+            buttons.append(
+                Button(
                     "Restore folder",
                     id="library-notes-folder-restore",
                     classes="library-canvas-action",
                     compact=True,
                     disabled=operation_running,
                 )
+            )
+        return buttons
 
     @staticmethod
     def _backlink_buttons(
@@ -2199,6 +2494,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # documents "‹ Back to list" (60x24). One label now, sized by
         # ``self.compact`` like the guide's own compact-vs-wide split.
         back_label = _library_note_back_label(self.compact)
+        # task-32548: the heading strip carries the same tie-break the note's
+        # list row carries, so two same-titled notes stay distinguishable once
+        # one of them is open. Appended AFTER the ellipsis so a long title
+        # cannot eat the identity.
+        heading_title = _library_note_heading_title(
+            title, presentation_state.title_suffix, 72
+        )
         with Horizontal(id="library-note-heading"):
             yield Button(
                 back_label,
@@ -2213,17 +2515,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
             )
             yield Static(
-                ellipsize_note_title_cells(title, 72),
+                heading_title,
                 id="library-note-editor-title",
                 markup=False,
             )
             yield Static(
-                ellipsize_note_title_cells(title, 72),
+                heading_title,
                 id="library-note-preview-title",
                 markup=False,
             )
             yield Static(
-                ellipsize_note_title_cells(title, 72),
+                heading_title,
                 id="library-note-context-title",
                 markup=False,
             )
@@ -2317,7 +2619,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             yield Markdown(
-                render_preview_source(content),
+                render_preview_source(content, title=title),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
@@ -2787,15 +3089,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         title_width = 52 if state.compact else 72
         title = ellipsize_note_title_cells(snapshot.title, title_width)
-        for selector in (
-            "#library-note-editor-title",
-            "#library-note-preview-title",
-            "#library-note-context-title",
-            "#library-note-preview-body-title",
+        # task-32548: the heading strip carries the tie-break; the Preview
+        # body's document heading does not -- it is the note's own title as
+        # the reader wrote it, not a list identity.
+        heading_title = _library_note_heading_title(
+            snapshot.title, state.title_suffix, title_width
+        )
+        for selector, copy in (
+            ("#library-note-editor-title", heading_title),
+            ("#library-note-preview-title", heading_title),
+            ("#library-note-context-title", heading_title),
+            ("#library-note-preview-body-title", title),
         ):
             widget = self.query_one(selector, Static)
-            if self._static_text(widget) != title:
-                widget.update(title)
+            if self._static_text(widget) != copy:
+                widget.update(copy)
 
         preview_body = self.query_one("#library-note-preview-body", Markdown)
         # Markdown.update() parses and remounts asynchronously. Keep the
@@ -2812,7 +3120,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # compose time too, so the staleness comparison below has to be
         # against the SAME rendered source -- comparing the raw body would
         # re-render every sync on any note carrying a link or a callout.
-        preview_source = render_preview_source(snapshot.body)
+        preview_source = render_preview_source(snapshot.body, title=snapshot.title)
         if show_preview and preview_body.source != preview_source:
             preview_body.update(preview_source)
         channels = state.status_channels or NotesStatusChannels(

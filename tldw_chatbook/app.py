@@ -96,6 +96,7 @@ from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
 from textual.worker import Worker, WorkerCancelled, WorkerState
+from textual.message_pump import active_message_pump
 from textual.binding import Binding
 from textual.timer import Timer
 from textual.css.query import NoMatches, QueryError
@@ -1025,6 +1026,46 @@ def _usable_cpu_count() -> int:
 # file must agree on one spelling. Private to `app.py`: every event emitted
 # here belongs to the application lifecycle.
 _DIAGNOSTICS_COMPONENT_APP = "app"
+
+# TASK-32533. The three `textual.message_pump` frames that mean "one pump's own
+# handler raised": `_dispatch_message` (a message handler, and the compose/mount
+# dispatch in `_pre_process` -- the P0's own path), `_flush_next_callbacks`
+# (`call_after_refresh` / `call_later`) and `_process_messages_loop` (the
+# `on_idle` dispatch inlined there). Workers, the compositor and the driver
+# carry none of these and still exit.
+#
+# The application's OWN run loop is the exception: it runs through
+# `_process_messages_loop` too, so this frame set alone would make run-loop
+# errors non-fatal. It is excluded instead by `keep_alive`'s `pump is not self`
+# clause. Neither clause works without the other -- do not remove one because
+# the other "already covers it".
+_PUMP_DISPATCH_FRAMES = frozenset(
+    {"_dispatch_message", "_flush_next_callbacks", "_process_messages_loop"}
+)
+
+
+def _exception_frames(error: BaseException) -> list[tuple[str, str, int | None]]:
+    """Return ``(module, function, line)`` for each traceback frame, outermost first.
+
+    TASK-32533. Identifiers only -- module ``__name__``, ``co_name`` and the
+    line number -- so the result can be persisted through the metadata-only
+    diagnostics schema without ever carrying the message or a file path.
+    """
+    frames: list[tuple[str, str, int | None]] = []
+    tb = error.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        frames.append(
+            (
+                str(frame.f_globals.get("__name__", "")),
+                frame.f_code.co_name,
+                tb.tb_lineno,
+            )
+        )
+        tb = tb.tb_next
+    return frames
+
+
 # Home's open-eval-runs feed queries pending and failed statuses separately;
 # this cap bounds both queries (a count, not a listing -- anything beyond it
 # still reads as "runs need attention").
@@ -12254,11 +12295,13 @@ class TldwCli(
 
     def on_base_app_screen_contents_rebuilt(self, message: Any) -> None:
         """Restore app-owned presentation after the active screen rebuilds."""
-        if message.screen is self.screen:
+        if self.screen_stack and message.screen is self.screen:
             self._schedule_persona_buddy_overlay()
 
     def _schedule_persona_buddy_overlay(self, _screen: Any = None) -> None:
         """Skip disabled work and coalesce presentation updates on the app."""
+        if not self.screen_stack:
+            return
         owner = getattr(self, "_persona_buddy_overlay", None)
         if owner is not None and owner.closed:
             return
@@ -18217,11 +18260,16 @@ class TldwCli(
             raise cancellation
 
     def _handle_exception(self, error: Exception) -> None:
-        """Record the crash type, then let Textual do what it always did.
+        """Record the crash site, then keep the screen alive if it is survivable.
 
         TASK-1240. Names the exception class only -- never the message, which is
-        caller-supplied text and may quote user or model content. Calls super()
-        unconditionally: Textual sets the return code here, and swallowing that
+        caller-supplied text and may quote user or model content.
+
+        TASK-32533 adds the raising frame to that record and stops calling
+        super() for the one case where the default (exit the whole app) is worse
+        than the bug: an exception raised inside a widget's own message handler.
+        Every other path -- workers, the run loop, the compositor, the driver --
+        still goes to super(), which sets the return code; swallowing those
         would turn a crash into a hang.
 
         `WorkerFailed` is unwrapped. When a worker raises and `exit_on_error` is
@@ -18241,18 +18289,118 @@ class TldwCli(
         underlying = (
             getattr(error, "error", None) if isinstance(error, WorkerFailed) else None
         )
+        raised = underlying if underlying is not None else error
+        # TASK-32533: the type alone left critique #3's P0 unrecoverable from
+        # the profile log (the traceback went to the dead pane's stderr).
+        # Record the raising frame as identifiers only -- module, function,
+        # line -- never the message, never a file path.
+        frames = _exception_frames(raised)
+        site = next(
+            (
+                frame
+                for frame in reversed(frames)
+                if frame[0].startswith("tldw_chatbook.")
+            ),
+            frames[-1] if frames else ("", "", None),
+        )
+        frame_fields: dict[str, object] = {}
+        if frames:
+            raise_module, raise_function, raise_line = frames[-1]
+            site_module, site_function, site_line = site
+            frame_fields = {
+                "raise_module": raise_module,
+                "raise_function": raise_function,
+                "raise_line": raise_line,
+                "site_module": site_module,
+                "site_function": site_function,
+                "site_line": site_line,
+            }
+        # The pump whose handler raised: Textual calls this method from inside
+        # that pump's own context, so the ContextVar names it exactly. A Select
+        # that fails while mounting leaves no Chatbook frame on the stack, so
+        # its DOM id is the field that makes the site greppable.
+        pump = None
+        if underlying is None:
+            try:
+                pump = active_message_pump.get()
+            except LookupError:
+                pump = None
+        if pump is not None:
+            frame_fields["widget_type"] = type(pump).__name__
+            pump_id = getattr(pump, "id", None)
+            if pump_id:
+                frame_fields["widget_id"] = pump_id
         try:
             persist_event(
                 _DIAGNOSTICS_COMPONENT_APP,
                 "unhandled_exception",
                 level=logging.ERROR,
-                exception_type=type(
-                    underlying if underlying is not None else error
-                ).__name__,
+                exception_type=type(raised).__name__,
+                **frame_fields,
             )
         except Exception:
             # Diagnostics must never be the reason a crash handler fails.
             pass
+        # TASK-32533: a widget or screen pump that raises inside its own
+        # dispatch reaches here through one of `_PUMP_DISPATCH_FRAMES`;
+        # Textual's default then exits the whole app for one panel's bug. Keep
+        # the screen alive for that case only -- not for a worker
+        # (`underlying`), not for the compositor or driver, and only outside
+        # headless `run_test` so the suite keeps its exception signal. Where the
+        # raise came from the handler dispatch itself, Textual has already
+        # broken that widget's message loop (`_process_messages_loop` breaks
+        # after this call), which is why the notification warns that the panel
+        # may stop responding.
+        #
+        # TWO clauses do the pump filtering and BOTH are load-bearing. `pump` is
+        # Textual's `active_message_pump`: `App._context()` sets it to the app
+        # around the application loop, `MessagePump._context()` sets it to the
+        # widget around each widget task (including `_pre_process`, so a
+        # mount-time widget failure is still kept alive and still names the
+        # widget). `pump is not self` therefore excludes exactly the application
+        # loop -- which also runs through `_process_messages_loop` and so is
+        # matched by the frame set. Without it, breaking out of
+        # `App._process_messages` without `super()` unwinds with no return code
+        # and no `panic()`: the app vanishes on exit 0 with nothing in the log,
+        # the P0's symptom with LESS evidence than before.
+        keep_alive = (
+            underlying is None
+            and pump is not None
+            and pump is not self
+            and bool(
+                getattr(
+                    self, "_keep_screen_alive_on_handler_error", not self.is_headless
+                )
+            )
+            and any(
+                module == "textual.message_pump" and function in _PUMP_DISPATCH_FRAMES
+                for module, function, _line in frames
+            )
+        )
+        if keep_alive:
+            if site[0].startswith("tldw_chatbook."):
+                where = site[1]
+            elif pump is not None:
+                pump_id = getattr(pump, "id", None)
+                where = type(pump).__name__ + (f"#{pump_id}" if pump_id else "")
+            else:
+                where = site[1] or type(raised).__name__
+            try:
+                self.bell()
+                self.notify(
+                    f"Something went wrong in {where} — the screen was kept open. "
+                    "That panel may stop responding or disappear until you "
+                    "reopen it; details are in the log file.",
+                    severity="error",
+                    timeout=12,
+                    markup=False,
+                )
+            except Exception:
+                # Telling the user failed, so keeping the app alive would leave
+                # them with a silently broken panel: take the old exit instead.
+                pass
+            else:
+                return
         super()._handle_exception(error)
 
     def _get_artifact_share_controller(self):

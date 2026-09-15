@@ -1,10 +1,11 @@
 ---
 id: TASK-18929
 title: 'Agent loop: consecutive-denial circuit breaker'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-19 09:55'
-updated_date: '2026-08-19 09:55'
+updated_date: '2026-09-13 00:19'
 labels:
   - agents
   - tools
@@ -21,22 +22,41 @@ Port of hermes-agent's consecutive-denial circuit breaker (2026-08-19 hermes-rel
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Config knob (e.g. `[agents] denial_circuit_breaker_limit`) with a documented default; 0 or absent disables the breaker cleanly
-- [ ] #2 The streak counter resets on any successful/approved tool call; only consecutive denials trip the breaker — pinned by tests
-- [ ] #3 Tripping produces a clear terminal state: transcript System row + run-log record naming the count; the user can immediately retry or continue (no silent hang, no lost partial reply)
-- [ ] #4 Fleet isolation: the breaker is per run/child; one child tripping does not stop a sibling or the supervisor
-- [ ] #5 Tests cover trip, reset, disabled mode, per-child isolation, and the terminal messaging
+- [x] #1 The streak counter resets on any successful/approved tool call; only consecutive denials trip the breaker — pinned by tests
+- [x] #2 Tripping produces a clear terminal state: transcript System row + run-log record naming the count; the user can immediately retry or continue (no silent hang, no lost partial reply)
+- [x] #3 Fleet isolation: the breaker is per run/child; one child tripping does not stop a sibling or the supervisor
+- [x] #4 Tests cover trip, reset, disabled mode, per-child isolation, and the terminal messaging
+- [x] #5 The agents denial_circuit_breaker_limit setting defaults to 3; explicit 0 disables it and invalid values use the documented conservative default.
+- [x] #6 Only authoritative explicit user denial or configured permission Off increments the streak; unanswered, timeout, cancellation, stale authority, legacy refusal text and synthetic restored-pending results do not.
+- [x] #7 Evaluate the trailing streak after a fully settled tool batch, preserve every tool reply, and stop before another model call; an approved tail resets the streak and the terminal message reports the actual observed count.
+- [x] #8 Builtin, local, MCP, virtual CLI and raw-shell authoritative invocation decisions reach the run-local counter even when pending review is bypassed; defaulted unanswered stamps and opaque runtime refusals never fabricate denial authority.
+- [x] #9 Ordinary non-denial budget and cancellation stops preserve the established coherent continuation boundary; denial-breaker terminal history still includes every settled tool reply, with targeted regression coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no.
-ADR path: N/A.
-Reason: bounded loop guard within the existing agent runtime; no schema/boundary change (config knob follows existing `[agents]` conventions).
+ADR required: yes. ADR path: backlog/decisions/154-agent-denial-streak-boundary.md. Reason: compatible structured provider/review/runtime provenance and coherent stop boundary. Execute Docs/superpowers/plans/2026-09-12-agent-denial-breaker.md: compatible typed review facts; authoritative producers; run-local budget/counter; Console and real persistence/fleet evidence; docs and independent review. Accepted ADR-078 remains unchanged.
 
-1. Streak counter in the agent loop's denial path (shared with the child runtime)
-2. Terminal-state handling + transcript/run-log messaging
-3. Config knob + docs (agent-runs-and-tools.md "Related settings")
-4. Tests per the AC matrix
+Final integration correction: preserve ordinary non-denial budget and cancellation continuation boundaries while retaining every settled reply when the denial breaker itself trips. Use the existing loop-top continuation regression and denial/cancellation neighbors, then independent combined review. ADR required: no new ADR; this is a regression repair within ADR 154 and its existing runtime boundary.
+
+Execute the four confirmed integration findings together via Docs/superpowers/plans/2026-09-12-agent-orchestration-final-integration.md. One source correction wave and one scoped re-review; preserve final provider errors, existing authority, and honest task completion.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented compatible approval facts at the existing review/provider boundaries and a fresh counter for each runtime invocation. Explicit user Deny and configured Off count; unresolved, unavailable, stale-authority, restored-pending and legacy-text refusals do not. Actual invocation results take precedence over review metadata, and success or any non-denial result resets the streak. The default is 3; explicit 0 disables it and invalid values fall back to 3. Child copies and admitted/live intersections preserve the configured limit.
+
+A complete batch settles before enforcement, so approved tails reset the streak and the terminal message reports the observed count. The run stops before another model request with complete native history, STEP_ERROR and a run-local error record. Cancellation and continuation persistence failures retain precedence. Console preserves partial text, adds one System explanation even without the original placeholder, and accepts the next agent submit. Real fleet tests prove sibling/supervisor isolation and fresh resumed-child counters with retained tool replies.
+
+ADR required: yes. Implemented backlog/decisions/154-agent-denial-streak-boundary.md and the linked specification/plan; accepted ADR-078 is unchanged. Source slices 49b5569676, 762941cec0/e85c7d16c3, a56f534fd4 and 86f2a79e76 were independently reviewed. Work touched shared models/runtime, existing producer/stamp owners, Console budget/finalization seams, focused tests and the user guide; no schema migration or new dependency.
+
+Targeted evidence (overlapping runs are not summed): 30 shared-type/trace cases; 686 distinct producer cases across qualified runs, then 81 MCP cases and 6 final cases for the absent-stamp fix; initial 130 runtime/budget/continuation cases and expanded final66; final6 Console/store, real SQLite/segmented log, noncancelled restored-pending, gated sibling and actual resumed-history cases. Nearby15 and root33 terminal/log plus2 fleet baseline cases also passed in separate selections. Final Task4 output was captured directly: 6 passed, exit0. Every edited formatting range and new test file passes; per-file lint counts are unchanged (two existing F811 diagnostic messages only shift their referenced import line).
+
+Evidence qualifications: core runtime preimplementation RED was missed; a later exact-BASE 13-failure control proves sensitivity only. Task4 missing-placeholder RED was observed before editing (1failed/1passed), but only an explicitly labelled output summary was retained. Shared RequestsDependencyWarning and foreign pytest cleanup warnings remain unchanged. No full suite, live provider test, shared dependency repair or foreign cleanup was performed. Full reports/reviews and exact commands remain in .superpowers/sdd/2026-09-12-agent-denial-breaker/ in the preserved orchestration worktree; current completion is reflected in backlog/docs/agent-orchestration-followups-2026-09-12.md.
+
+Reopened during final integration on 2026-09-12: test_budget_exhausted_at_loop_top_yields_the_last_boundary fails with an extra completed tool batch. Its test AST is unchanged from merged base d66908a69, while this wave added unconditional coherent_len advancement after every batch in agent_runtime.py. Source/AST classification and current failure evidence are preserved in the orchestration SDD workspace; no pristine-base test execution is claimed. Earlier reviewed delivery remains historical evidence, not current completion. The focused repair and combined review are pending.
+
+Final integration repair completed in 7852cf47ba and independently re-reviewed: coherent_len advances after a settled batch only when the denial breaker itself terminates. Ordinary budget/cancellation stops retain the established boundary; denial history still retains the entire settled batch. The unchanged loop-top regression now passes in the complete 45-case continuation module, with zero teardown errors. Six focused denial/cancellation/history neighbors also pass. Scoped static adds no diagnostics and all edited formatting ranges pass. AC9 is complete; this supersedes the reopened status while preserving the original failure evidence and earlier implementation notes. The shared final review/evidence/50-ruling record is Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md. Existing ADR154 applies; no new ADR, full-suite claim, live provider, foreign cleanup or unsafe worktree behavior. TASK31210/31211 and the parent remain open.
+<!-- SECTION:NOTES:END -->

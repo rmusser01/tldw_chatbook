@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
 )
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
@@ -83,7 +84,7 @@ def _cost_state() -> ConsoleCostState:
 class _ChipsOverflowApp(App):
     """Bare chip strip under the shipped stylesheet (real chip widths)."""
 
-    CSS_PATH = str(BUNDLE)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, state: ConsoleControlState, *, fat: bool = True) -> None:
         super().__init__()

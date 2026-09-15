@@ -45,6 +45,7 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ScopeListPage,
     TagCount,
 )
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTIC_TERMINAL = (
@@ -127,7 +128,7 @@ class ModalHarness(App[None]):
     layout relies on real CSS (``1fr``/``auto`` width interplay) to keep
     the Save/Clear/Cancel row within screen bounds for ``pilot.click``."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self) -> None:
         super().__init__()

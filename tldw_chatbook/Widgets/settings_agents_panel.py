@@ -3,28 +3,129 @@
 Edits the AgentRuns DB directly (immediate CRUD) — unlike TOML-backed
 Settings categories there is no draft/Save-with-`s` cycle; each Save/Delete
 applies at once. Fleet spec §4.
+
+ADR-147 (TASK-32477 task 9): the preset form also edits the routing fields
+(``provider`` / ``params``), and a routing block below the form edits the
+four ``[agents]`` routing keys (sub-agent defaults + spawn-override policy)
+and offers a "Test routing" dry-run over the pure resolver. The routing keys
+persist through the atomic config writer; presets persist through the DB.
 """
 
 from __future__ import annotations
 
+import math
+import re
 import sqlite3
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, ListItem, ListView, Static, Switch, TextArea
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Input,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+    Switch,
+    TextArea,
+)
 
 from tldw_chatbook.Agents.agent_models import (
     RUNTIME_TOOL_NAMES,
     AgentDefinition,
+    definition_from_row,
 )
-from tldw_chatbook.Agents.agent_presets import BULK_READER_PRESET
+from tldw_chatbook.Agents.agent_presets import AGENT_PRESETS
+from tldw_chatbook.Agents.agent_routing import (
+    AgentsRoutingConfig,
+    RoutingError,
+    load_agents_routing_config,
+    resolve_spawn_target,
+)
+from tldw_chatbook.Chat.console_provider_support import (
+    supported_console_provider_readiness_keys,
+)
+from tldw_chatbook.Chat.console_session_settings import (
+    build_console_provider_options,
+)
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    CUSTOM_ENDPOINT_ID_PREFIX,
+    load_custom_endpoints,
+    split_custom_endpoint_id,
+)
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.sampling_params import (
+    params_to_tuple,
+    validate_sampling_params,
+)
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 #: Soft ceiling before the status line warns about spawn-schema bloat
 #: (spec §4: every enabled definition rides the spawn tool's schema).
 ENABLED_DEFINITIONS_SOFT_CAP = 20
+
+#: Prompt shown by the routing provider Selects for the empty (inherit) value.
+INHERIT_PARENT_PROMPT = "(inherit parent)"
+
+_INT_LITERAL = re.compile(r"[+-]?\d+")
+
+
+def parse_params_text(text: str) -> tuple[dict[str, object], list[str]]:
+    """Parse a ``key = value``-per-line sampling-params draft.
+
+    Numeric literals become ``int``/``float``; anything else stays a string.
+    Non-finite float literals (``inf``/``nan``) stay strings so validation
+    rejects them as non-numbers rather than smuggling an un-JSON-able float
+    into the DB or the config file.
+
+    Args:
+        text: The raw TextArea draft.
+
+    Returns:
+        ``(params, errors)``: the parsed mapping (insertion-ordered by line)
+        and grammar errors only — validate the mapping itself with
+        ``validate_sampling_params``. Empty ``errors`` means every non-blank
+        line parsed.
+    """
+    params: dict[str, object] = {}
+    errors: list[str] = []
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        key, sep, raw_value = line.partition("=")
+        key = key.strip()
+        value = raw_value.strip()
+        if not sep or not key:
+            errors.append(f"params line {lineno}: expected 'key = value'")
+            continue
+        if _INT_LITERAL.fullmatch(value):
+            params[key] = int(value)
+            continue
+        try:
+            number = float(value)
+        except ValueError:
+            params[key] = value
+        else:
+            params[key] = number if math.isfinite(number) else value
+    return params, errors
+
+
+def _parse_requested_tools(raw: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split ordered tool names into stored and runtime-only selections."""
+
+    requested = tuple(
+        dict.fromkeys(name.strip() for name in raw.split(",") if name.strip())
+    )
+    stored = tuple(name for name in requested if name not in RUNTIME_TOOL_NAMES)
+    omitted = tuple(name for name in requested if name in RUNTIME_TOOL_NAMES)
+    return stored, omitted
 
 
 def _derive_runs_db(app_instance) -> AgentRunsDB | None:
@@ -48,13 +149,37 @@ def _derive_runs_db(app_instance) -> AgentRunsDB | None:
 class AgentsSettingsPanel(Vertical):
     """List + form editor over the agent_definitions table."""
 
-    def __init__(self, app_instance, runs_db: AgentRunsDB | None = None, **kwargs):
+    def __init__(
+        self,
+        app_instance: Any | None,
+        runs_db: AgentRunsDB | None = None,
+        *,
+        routing_readiness: Callable[[Mapping[str, Any], str], str | None] | None = None,
+        **kwargs: Any,
+    ):
+        """Initialize the panel.
+
+        Args:
+            app_instance: The running app (its ``app_config`` feeds the
+                provider options, the routing dry-run, and gates the
+                ``[agents]`` config write); ``None`` in bare harnesses, where
+                the routing controls still render but Save skips the config
+                write (a bare harness must never touch the real config file).
+            runs_db: Injectable definitions store (tests); derived from the
+                app's ChaChaNotes path when omitted.
+            routing_readiness: Injectable readiness probe for the "Test
+                routing" dry-run (same seam as the resolver's own
+                ``readiness=`` parameter); ``None`` uses real readiness.
+        """
         super().__init__(**kwargs)
+        self._app_instance = app_instance
         self._runs_db = (
             runs_db if runs_db is not None else _derive_runs_db(app_instance)
         )
+        self._owns_runs_db = runs_db is None and self._runs_db is not None
         self._selected_id: str | None = None
         self._rows: list[dict] = []
+        self._routing_readiness = routing_readiness
 
     def compose(self) -> ComposeResult:
         if self._runs_db is None:
@@ -73,14 +198,14 @@ class AgentsSettingsPanel(Vertical):
         )
         yield ListView(id="agents-definition-list")
         with VerticalScroll(id="agents-form"):
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Name", classes="settings-input-label")
                 yield Input(
                     placeholder="researcher (lowercase slug)",
                     id="agents-name-input",
                     classes="settings-compact-input",
                 )
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Description", classes="settings-input-label")
                 yield Input(
                     placeholder="One line the supervisor reads (max 200 chars)",
@@ -92,32 +217,140 @@ class AgentsSettingsPanel(Vertical):
                 classes="settings-input-label",
             )
             yield TextArea(id="agents-instructions-area")
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Model override", classes="settings-input-label")
                 yield Input(
                     placeholder="empty = parent's model (same provider)",
                     id="agents-model-input",
                     classes="settings-compact-input",
                 )
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Provider", classes="settings-input-label")
+                yield Select(
+                    self._provider_select_options(),
+                    value=Select.NULL,
+                    prompt=INHERIT_PARENT_PROMPT,
+                    allow_blank=True,
+                    compact=True,
+                    id="agents-provider-select",
+                    classes="settings-compact-select",
+                )
+            yield Static(
+                "Params (one key = value per line; empty = inherit the "
+                "resolved stack)",
+                classes="settings-input-label",
+            )
+            yield TextArea(id="agents-params-area")
+            with Horizontal(classes="settings-input-row agents-field-row"):
+                yield Static("Child time cap (seconds)", classes="settings-input-label")
+                yield Input(
+                    placeholder="empty = existing child limit",
+                    id="agents-wall-seconds-input",
+                    classes="settings-compact-input",
+                )
+            with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static(
                     "Tools (comma-separated; empty = inherit all; names "
                     "only narrow, never grant)",
                     classes="settings-input-label",
                 )
                 yield Input(id="agents-tools-input", classes="settings-compact-input")
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row agents-enabled-row"):
                 yield Static("Enabled", classes="settings-input-label")
                 yield Switch(value=True, id="agents-enabled-switch")
+            with Horizontal(
+                classes="settings-input-row settings-select-row agents-preset-row"
+            ):
+                yield Static("Preset", classes="settings-input-label")
+                yield Select(
+                    [(preset.name, preset.name) for preset in AGENT_PRESETS],
+                    value=AGENT_PRESETS[0].name,
+                    allow_blank=False,
+                    id="agents-preset-select",
+                    classes="settings-compact-select",
+                )
+                yield Button("Load preset", id="agents-load-preset-button")
             with Horizontal(classes="settings-input-row"):
                 yield Button("New", id="agents-new-button")
-                yield Button("Bulk reader", id="agents-bulk-reader-button")
                 yield Button("Save", variant="primary", id="agents-save-button")
                 yield Button("Delete", variant="error", id="agents-delete-button")
-        yield Static("", id="agents-status", classes="settings-detail-row")
+            yield Static(
+                "Routing — sub-agent defaults and spawn-override policy "
+                "(stored in config.toml [agents], applied at spawn)",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Default provider", classes="settings-input-label")
+                yield Select(
+                    self._provider_select_options(),
+                    value=Select.NULL,
+                    prompt=INHERIT_PARENT_PROMPT,
+                    allow_blank=True,
+                    compact=True,
+                    id="agents-default-provider-select",
+                    classes="settings-compact-select",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Default model", classes="settings-input-label")
+                yield Input(
+                    placeholder="empty = provider's configured model",
+                    id="agents-default-model-input",
+                    classes="settings-compact-input",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    "Allow ad-hoc spawn overrides", classes="settings-input-label"
+                )
+                yield Checkbox(value=False, id="agents-override-enabled-checkbox")
+            yield Static(
+                "Override allowlist (one per line: provider or "
+                "provider/model-glob)",
+                classes="settings-input-label",
+            )
+            yield TextArea(id="agents-override-allowlist-area")
+            yield Static(
+                "", id="agents-allowlist-warning", classes="settings-detail-row"
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Button("Test routing", id="agents-test-routing-button")
+            yield Static(
+                "", id="agents-routing-report", classes="settings-detail-row"
+            )
+        yield Static(
+            "", id="agents-status", classes="settings-detail-row", markup=False
+        )
 
     async def on_mount(self) -> None:
         await self._reload_list()
+        self._load_routing_controls()
+
+    # -- app config / provider options ------------------------------------
+    def _app_config(self) -> Mapping[str, Any]:
+        """Return the app's config mapping (empty when harness-mounted)."""
+        config = getattr(self._app_instance, "app_config", None)
+        return config if isinstance(config, Mapping) else {}
+
+    def _provider_select_options(self) -> list[tuple[str, str]]:
+        """Build provider Select options via the shared Console builder so
+        custom-ep entries appear by display_name (ADR-146/147)."""
+        return [
+            (option.label, option.value)
+            for option in build_console_provider_options(
+                {}, app_config=self._app_config()
+            )
+        ]
+
+    def _set_select_provider(self, select: Select, provider: str) -> None:
+        """Set a provider Select's value, keeping a stored-but-stale id
+        selectable (flagged ``(missing)``) instead of raising or dropping it."""
+        if not provider:
+            select.value = Select.NULL
+            return
+        options = self._provider_select_options()
+        if provider not in {value for _, value in options}:
+            options = [*options, (f"{provider} (missing)", provider)]
+            select.set_options(options)
+        select.value = provider
 
     # -- list / selection -------------------------------------------------
     async def _reload_list(self) -> None:
@@ -133,13 +366,30 @@ class AgentsSettingsPanel(Vertical):
         self._rows = self._runs_db.list_agent_definitions()
         for row in self._rows:
             marker = "" if row["enabled"] else " (disabled)"
-            await lv.append(ListItem(Static(f"{row['name']}{marker}"), name=row["id"]))
-        enabled_count = sum(1 for r in self._rows if r["enabled"])
-        if enabled_count > ENABLED_DEFINITIONS_SOFT_CAP:
-            self._set_status(
-                f"{enabled_count} enabled definitions — every one rides the "
-                "spawn schema each turn; consider disabling some."
+            await lv.append(
+                ListItem(Static(f"{row['name']}{marker}", markup=False), name=row["id"])
             )
+        warning = self._enabled_count_warning()
+        if warning:
+            self._set_status(warning)
+
+    def on_unmount(self) -> None:
+        if self._owns_runs_db:
+            self._owns_runs_db = False
+            db, self._runs_db = self._runs_db, None
+            if db is not None:
+                db.close()
+
+    def _enabled_count_warning(self) -> str:
+        """Return the spawn-schema warning for the current loaded rows."""
+
+        enabled_count = sum(1 for row in self._rows if row["enabled"])
+        if enabled_count <= ENABLED_DEFINITIONS_SOFT_CAP:
+            return ""
+        return (
+            f"{enabled_count} enabled definitions — every one rides the "
+            "spawn schema each turn; consider disabling some."
+        )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         definition_id = event.item.name
@@ -151,6 +401,18 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-description-input", Input).value = row["description"]
         self.query_one("#agents-instructions-area", TextArea).text = row["instructions"]
         self.query_one("#agents-model-input", Input).value = row["model"]
+        self._set_select_provider(
+            self.query_one("#agents-provider-select", Select),
+            row.get("provider", ""),
+        )
+        self.query_one("#agents-params-area", TextArea).text = "\n".join(
+            f"{key} = {value}"
+            for key, value in definition_from_row(row).params
+        )
+        wall_seconds = row.get("max_wall_seconds")
+        self.query_one("#agents-wall-seconds-input", Input).value = (
+            "" if wall_seconds is None else str(wall_seconds)
+        )
         self.query_one("#agents-tools-input", Input).value = ", ".join(
             row["tool_allowlist"]
         )
@@ -160,12 +422,18 @@ class AgentsSettingsPanel(Vertical):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "agents-new-button":
             self._clear_form()
-        elif event.button.id == "agents-bulk-reader-button":
-            self._load_bulk_reader_preset()
+        elif event.button.id == "agents-load-preset-button":
+            selected_name = self.query_one("#agents-preset-select", Select).value
+            preset = next(
+                preset for preset in AGENT_PRESETS if preset.name == selected_name
+            )
+            self._load_preset(preset)
         elif event.button.id == "agents-save-button":
             await self._save()
         elif event.button.id == "agents-delete-button":
             await self._delete()
+        elif event.button.id == "agents-test-routing-button":
+            self._test_routing()
 
     def _clear_form(self) -> None:
         self._selected_id = None
@@ -173,42 +441,60 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-description-input", Input).value = ""
         self.query_one("#agents-instructions-area", TextArea).text = ""
         self.query_one("#agents-model-input", Input).value = ""
+        self.query_one("#agents-provider-select", Select).value = Select.NULL
+        self.query_one("#agents-params-area", TextArea).text = ""
+        self.query_one("#agents-wall-seconds-input", Input).value = ""
         self.query_one("#agents-tools-input", Input).value = ""
         self.query_one("#agents-enabled-switch", Switch).value = True
         self._set_status("")
 
-    def _load_bulk_reader_preset(self) -> None:
+    def _load_preset(self, preset: AgentDefinition) -> None:
         self._selected_id = None
-        self.query_one("#agents-name-input", Input).value = BULK_READER_PRESET.name
-        self.query_one(
-            "#agents-description-input", Input
-        ).value = BULK_READER_PRESET.description
-        self.query_one(
-            "#agents-instructions-area", TextArea
-        ).text = BULK_READER_PRESET.instructions
-        self.query_one("#agents-model-input", Input).value = ""
-        self.query_one("#agents-tools-input", Input).value = ", ".join(
-            BULK_READER_PRESET.tool_allowlist
+        name_input = self.query_one("#agents-name-input", Input)
+        name_input.value = preset.name
+        description_input = self.query_one("#agents-description-input", Input)
+        description_input.value = preset.description
+        self.query_one("#agents-instructions-area", TextArea).text = preset.instructions
+        model_input = self.query_one("#agents-model-input", Input)
+        model_input.value = preset.model
+        self._set_select_provider(self.query_one("#agents-provider-select", Select), preset.provider)
+        self.query_one("#agents-params-area", TextArea).text = "\n".join(
+            f"{key} = {value}" for key, value in preset.params
         )
-        self.query_one(
-            "#agents-enabled-switch", Switch
-        ).value = BULK_READER_PRESET.enabled
-        self._set_status("Choose a cheaper model from the same provider, then Save.")
-
-    def _form_definition(self) -> AgentDefinition:
-        # dict.fromkeys dedupes while preserving first-seen order -- "a, a"
-        # must not produce a tool_allowlist with a repeated entry (it feeds
-        # definition_fingerprint's sorted() list, so a dupe there would be a
-        # silent identity divergence from what was actually typed).
-        tools = tuple(
-            dict.fromkeys(
-                name.strip()
-                for name in self.query_one("#agents-tools-input", Input).value.split(
-                    ","
-                )
-                if name.strip() and name.strip() not in RUNTIME_TOOL_NAMES
+        self.query_one("#agents-wall-seconds-input", Input).value = ""
+        tools_input = self.query_one("#agents-tools-input", Input)
+        tools_input.value = ", ".join(preset.tool_allowlist)
+        self.query_one("#agents-enabled-switch", Switch).value = preset.enabled
+        if preset.name == "bulk-reader":
+            self._set_status(
+                "Choose a cheaper model from the same provider, then Save."
             )
+        else:
+            self._set_status("Editable preset loaded; choose Save to create it.")
+
+    def _form_definition(
+        self, *, stored_tools: tuple[str, ...] | None = None
+    ) -> AgentDefinition:
+        if stored_tools is None:
+            stored_tools, _ = _parse_requested_tools(
+                self.query_one("#agents-tools-input", Input).value
+            )
+        raw_wall_seconds = self.query_one(
+            "#agents-wall-seconds-input", Input
+        ).value.strip()
+        try:
+            max_wall_seconds = None if not raw_wall_seconds else float(raw_wall_seconds)
+        except ValueError as exc:
+            raise ValueError("Child time cap (seconds) must be a number.") from exc
+        params, param_errors = parse_params_text(
+            self.query_one("#agents-params-area", TextArea).text
         )
+        param_errors.extend(validate_sampling_params(params))
+        if param_errors:
+            # Raised here so _save's existing ValueError channel renders the
+            # message and gates the whole save (preset row AND [agents] keys).
+            raise ValueError("; ".join(param_errors))
+        provider_value = self.query_one("#agents-provider-select", Select).value
         return AgentDefinition(
             name=self.query_one("#agents-name-input", Input).value.strip(),
             description=self.query_one(
@@ -217,14 +503,22 @@ class AgentsSettingsPanel(Vertical):
             instructions=self.query_one(
                 "#agents-instructions-area", TextArea
             ).text.strip(),
-            tool_allowlist=tools,
+            tool_allowlist=stored_tools,
             model=self.query_one("#agents-model-input", Input).value.strip(),
             enabled=self.query_one("#agents-enabled-switch", Switch).value,
+            provider=(
+                "" if provider_value is Select.NULL else str(provider_value)
+            ),
+            params=params_to_tuple(params),
+            max_wall_seconds=max_wall_seconds,
         )
 
     async def _save(self) -> None:
+        stored_tools, omitted_runtime_tools = _parse_requested_tools(
+            self.query_one("#agents-tools-input", Input).value
+        )
         try:
-            defn = self._form_definition()
+            defn = self._form_definition(stored_tools=stored_tools)
             if self._selected_id is None:
                 self._runs_db.create_agent_definition(defn)
             else:
@@ -234,10 +528,162 @@ class AgentsSettingsPanel(Vertical):
             # message, not an uncaught exception that would crash the
             # Settings screen's compose (compose-exception lesson: a crash
             # there kills navigation for the whole app).
-            self._set_status(str(exc))
+            message = str(exc).replace("max_wall_seconds", "Child time cap (seconds)")
+            self._set_status(message)
             return
-        self._set_status(f"Saved '{defn.name}'.")
+        notice = f"Saved '{defn.name}'."
+        if omitted_runtime_tools:
+            notice += (
+                " Ignored runtime-only tools: " + ", ".join(omitted_runtime_tools) + "."
+            )
+            if not stored_tools:
+                notice += " No tool filter remains; parent tools are inherited."
+        routing_note = self._save_routing_config()
+        if routing_note:
+            notice += f" {routing_note}"
         await self._reload_list()
+        warning = self._enabled_count_warning()
+        self._set_status(" ".join(part for part in (notice, warning) if part))
+
+    # -- routing config (the four [agents] keys) ---------------------------
+    def _load_routing_controls(self) -> None:
+        """Populate the routing controls from the current [agents] config."""
+        if self._runs_db is None:
+            return
+        routing = load_agents_routing_config()
+        self._set_select_provider(
+            self.query_one("#agents-default-provider-select", Select),
+            routing.subagent_default_provider,
+        )
+        self.query_one(
+            "#agents-default-model-input", Input
+        ).value = routing.subagent_default_model
+        self.query_one(
+            "#agents-override-enabled-checkbox", Checkbox
+        ).value = routing.spawn_override_enabled
+        self.query_one(
+            "#agents-override-allowlist-area", TextArea
+        ).text = "\n".join(routing.spawn_override_allowlist)
+
+    def _parse_allowlist(self, text: str) -> tuple[list[str], list[str]]:
+        """Split the allowlist draft into ``(entries, problems)``.
+
+        Each non-blank line is ``provider`` or ``provider/model-glob``; the
+        provider part must be a known provider id or a live ``custom-ep:``
+        slug. Problem entries are named verbatim so the warning can point at
+        them — they are never silently dropped from the stored value (the
+        whole allowlist write is skipped instead).
+        """
+        known_providers = set(supported_console_provider_readiness_keys())
+        endpoints = load_custom_endpoints(self._app_config())
+        entries: list[str] = []
+        problems: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            provider_part, sep, glob = line.partition("/")
+            provider_part = provider_part.strip()
+            glob = glob.strip()
+            if sep and not glob:
+                problems.append(f"'{line}' (empty model glob)")
+                continue
+            if provider_part.startswith(CUSTOM_ENDPOINT_ID_PREFIX):
+                slug = split_custom_endpoint_id(provider_part)
+                if slug is None or slug not in endpoints:
+                    problems.append(f"'{line}' (unknown endpoint slug)")
+                    continue
+            elif provider_config_key(provider_part) not in known_providers:
+                problems.append(f"'{line}' (unknown provider id)")
+                continue
+            entries.append(f"{provider_part}/{glob}" if sep else provider_part)
+        return entries, problems
+
+    def _save_routing_config(self) -> str | None:
+        """Persist the routing controls to the four ``[agents]`` config keys.
+
+        Returns:
+            A status-line note (config write failed or allowlist skipped),
+            or ``None`` when everything persisted — including when the panel
+            has no app config context (bare harness), where the write is
+            skipped entirely so tests can never touch the real config file.
+        """
+        warning = self.query_one("#agents-allowlist-warning", Static)
+        warning.update("")
+        if self._app_instance is None:
+            return None
+        entries, problems = self._parse_allowlist(
+            self.query_one("#agents-override-allowlist-area", TextArea).text
+        )
+        default_provider_value = self.query_one(
+            "#agents-default-provider-select", Select
+        ).value
+        values: dict[str, object] = {
+            "subagent_default_provider": (
+                ""
+                if default_provider_value is Select.NULL
+                else str(default_provider_value)
+            ),
+            "subagent_default_model": self.query_one(
+                "#agents-default-model-input", Input
+            ).value.strip(),
+            "spawn_override_enabled": bool(
+                self.query_one("#agents-override-enabled-checkbox", Checkbox).value
+            ),
+        }
+        if not problems:
+            values["spawn_override_allowlist"] = entries
+        note = None
+        if not save_settings_to_cli_config({"agents": values}):
+            note = "Could not write the [agents] routing keys to config.toml."
+        if problems:
+            warning.update(
+                "Override allowlist NOT saved — fix or remove: "
+                + "; ".join(problems)
+            )
+        return note
+
+    # -- "Test routing" dry-run --------------------------------------------
+    def _test_routing(self) -> None:
+        """Dry-run the spawn resolver for every enabled preset plus the
+        configured default. Pure resolution — no child is spawned."""
+        routing = load_agents_routing_config()
+        app_config = self._app_config()
+        lines = [
+            self._routing_report_line(preset.name, app_config, routing, preset=preset)
+            for row in self._rows
+            if row["enabled"]
+            for preset in [definition_from_row(row)]
+        ]
+        lines.append(
+            self._routing_report_line("(default)", app_config, routing, preset=None)
+        )
+        self.query_one("#agents-routing-report", Static).update("\n".join(lines))
+
+    def _routing_report_line(
+        self,
+        label: str,
+        app_config: Mapping[str, Any],
+        routing: AgentsRoutingConfig,
+        *,
+        preset: AgentDefinition | None,
+    ) -> str:
+        """Render one dry-run line: ``name -> provider / model — ready`` or
+        ``name -> [code] message``; inherit-fallthroughs are reported as such."""
+        try:
+            target = resolve_spawn_target(
+                app_config,
+                parent_provider="",
+                parent_model="",
+                preset=preset,
+                routing=routing,
+                readiness=self._routing_readiness,
+            )
+        except RoutingError as exc:
+            if exc.level == "inherit":
+                return f"{label} -> inherit parent's endpoint at spawn"
+            return f"{label} -> [{exc.code}] {exc}"
+        return f"{label} -> {target.provider} / {target.model} — ready"
 
     async def _delete(self) -> None:
         if self._selected_id is None:

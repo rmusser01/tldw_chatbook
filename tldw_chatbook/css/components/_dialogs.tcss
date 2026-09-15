@@ -35,6 +35,31 @@ EnhancedFileDialog InputBar Select {
     margin-bottom: $ds-space-0;
 }
 
+/* task-32540 AC#2 (critique #3, assessor B 27): the picker's Open /
+   Select folder / Cancel told a keyboard user which one was focused by
+   colour alone -- foreground 224,224,224 -> 225,230,235 over a blue-ish
+   fill, plus the label underline `components/_buttons.tcss` paints. Both
+   are colour/text-style; nothing about the button's SHAPE changed, so in
+   monochrome (and in a plain-text capture) the three were byte-identical.
+   Same remedy and same reasoning as `Button.library-canvas-action:focus`
+   in screen_agentic_library.tcss: heavy SIDE rails land on the button's
+   own padding cells, so the label survives and the button's dimensions
+   never change on focus/blur (`outline: heavy` would eat a one-row
+   compact button's only row -- the task-2041 trap).
+
+   APP tier on purpose. `Button:focus` in `components/_buttons.tcss` sets
+   `outline: none`, and Textual ranks every CSS_PATH-sourced rule above
+   any widget's own DEFAULT_CSS regardless of specificity -- so the same
+   rule written into `FileSystemPickerScreen.DEFAULT_CSS` would never
+   paint. The 2-type selector (0,1,2) outranks the bare `Button:focus`
+   (0,1,1) within this tier. `FileSystemPickerScreen` matches the
+   vendored dialogs and, via the CSS type-name MRO, `EnhancedFileDialog`
+   too. */
+FileSystemPickerScreen Button:focus {
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+}
+
 /* The EnhancedFileDialog selector above (TASK-16478) also defends the
    enhanced picker's own input-bar row (`Widgets/enhanced_file_picker.py`):
    its class-level DEFAULT_CSS cannot beat the bare `Select { width: 100% }`

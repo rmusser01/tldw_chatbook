@@ -1,9 +1,9 @@
 # Voice AEC companion release
 
 `tldw-voice-aec` is the native WebRTC AEC3 companion for `tldw_chatbook`. The
-application and companion always use the same version. The application
-`speech_recording` extra exact-pins that companion version so an application release
-cannot silently acquire a different native implementation.
+application and companion always use the same version. A combined application/companion release exact-pins that version in the application
+`speech_recording` extra so it cannot acquire a different native implementation.
+An explicitly validated app-only release omits that dependency as described below.
 
 The local 0.1.9.0 companion adds `DUPLEX_ABI_VERSION = 1` and
 `NativeDuplexBridge` alongside `AecProcessor`. Device startup checks ABI and
@@ -53,7 +53,27 @@ The operator procedure, privacy boundary, audible-sample warning, and exact proj
 command are in
 [speculative-voice-qualification.md](speculative-voice-qualification.md).
 
-## Required release order
+## App-only release exception (0.2.2)
+
+The owner approved version-only application 0.2.2 with the same app-only scope as
+0.2.1, without the unavailable native companion.
+Ordinary `speech_recording` dependencies remain; experimental duplex voice stays
+unqualified and unavailable. No acoustic flag or qualification evidence changes.
+The ADR-098 app-only amendment governs this exception.
+
+Run `python Packaging/check_voice_aec_version_sync.py --app-only`: source versions
+must still match, no application dependency or extra may include the companion,
+and every packaged rollout entry must be explicitly unqualified. App publishing
+and structural native builds use this mode. Installed-wheel checks verify the
+absence of the dependency, ordinary recording requirements, and the unchanged
+runtime hard-off gate even with the development environment override.
+
+This mode does not publish the companion. The default checker and native release
+workflow retain their exact-pin and complete qualification requirements. Restoring
+the dependency requires switching the app/structural checks back to combined-release
+mode and following the entire companion-first order below.
+
+## Required combined-release order
 
 1. Bump `project.version` in the root and companion `pyproject.toml` files together.
    Update the exact `tldw-voice-aec==<app-version>` entry in `speech_recording`, then
@@ -153,7 +173,9 @@ those rules requires a release-security review.
 Missing platform wheels, failed native smoke tests, unexpected shared libraries,
 version drift, missing SBOM subjects, altered hashes, extra artifact files, missing
 `PATENTS` or other notices, an unverified Sigstore/GitHub OIDC identity, or a failed
-Trusted Publishing step blocks the companion and application releases. Do not rebuild
+Trusted Publishing step blocks the companion and combined application releases.
+The app-only exception above retains unavailable duplex voice and omits the
+companion dependency. Do not rebuild
 locally to replace one failing file and do not use `skip-existing` to hide a partial
 publish.
 

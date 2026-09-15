@@ -349,6 +349,76 @@ Button.settings-category-group-toggle:focus {
     margin: $ds-space-0;
 }
 
+/* Agent presets keep selection and its explicit load action on one compact
+   row. The button must size to its label; Textual's default full-width Button
+   otherwise places it beyond both supported Settings widths. */
+.agents-preset-row {
+    height: $ds-size-4;
+    min-height: $ds-size-4;
+}
+
+#agents-preset-select {
+    width: $ds-width-fill;
+    min-width: $ds-size-12;
+}
+
+#agents-load-preset-button {
+    width: auto;
+    min-width: $ds-size-13;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+}
+
+/* TextArea's border consumes two rows. Keep at least one painted content row
+   when the preset row joins this scrollable form. */
+#agents-instructions-area {
+    height: $ds-size-5;
+    min-height: $ds-size-3;
+}
+
+/* Inputs inherit a full-row minimum from Textual. Inside the Agents label +
+   field rows that made their 1fr width extend past the right viewport edge. */
+#agents-form .settings-compact-input {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    min-width: $ds-size-0;
+    border: none;
+    outline: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.agents-field-row {
+    layout: grid;
+    grid-size: $ds-size-2;
+    grid-columns: $ds-size-24 1fr;
+    overflow-x: hidden;
+}
+
+#agents-form .settings-compact-input:focus {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    border: none;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#agents-enabled-switch {
+    width: auto;
+    min-width: $ds-size-8;
+}
+
+/* Switch chrome needs a full control row. Scope this rule to the form so the
+   later-loaded Settings sheet's compact input row cannot clip its content. */
+#agents-form .agents-enabled-row {
+    height: $ds-control-height;
+    min-height: $ds-control-height;
+}
+
+
 .settings-input-label {
     /* task-1713: 12 cells truncated most labels ("Palette limit" ->
        "Palette", "Tool result display cap" -> "Tool result"), which read

@@ -34,6 +34,7 @@ not merely present in the DOM.
 from __future__ import annotations
 
 import pytest
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from textual.app import App, ComposeResult
 from textual.errors import NoWidget
 from textual.widgets import Button, Input
@@ -130,7 +131,7 @@ class _GeometryHost(App):
     scrollable ``max-height`` in ``_evals.tcss``), not Textual's unstyled
     defaults."""
 
-    CSS_PATH = None  # set per-instance below (path resolved at import time)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, cards):
         super().__init__()
@@ -139,13 +140,6 @@ class _GeometryHost(App):
     def compose(self) -> ComposeResult:
         yield CardPicker(self._cards, id="picker")
         yield Button("Done", id="picker-host-done")
-
-
-def _bundled_css_path() -> str:
-    import tldw_chatbook
-    from pathlib import Path
-
-    return str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
 
 
 def _hit_widget(screen, expected):
@@ -284,7 +278,6 @@ async def test_control_below_the_picker_stays_hit_testable_with_many_cards(size)
     ``_REALISTIC_SIZE`` and its 235x52 companion)."""
     cards = [{"id": i, "name": f"Card {i}"} for i in range(60)]
     host = _GeometryHost(cards)
-    host.CSS_PATH = _bundled_css_path()
     async with host.run_test(size=size) as pilot:
         await pilot.pause()
         screen = pilot.app.screen
@@ -304,7 +297,6 @@ async def test_control_below_the_picker_stays_hit_testable_after_search(size):
     painted region stale relative to the (now different) row count."""
     cards = [{"id": i, "name": f"Card {i}"} for i in range(60)]
     host = _GeometryHost(cards)
-    host.CSS_PATH = _bundled_css_path()
     async with host.run_test(size=size) as pilot:
         await pilot.pause()
         await pilot.click("#evals-card-search")
@@ -335,7 +327,6 @@ async def test_a_card_beyond_the_bounded_row_list_is_reachable_by_scrolling():
     scrollable, not just short."""
     cards = [{"id": i, "name": f"Card {i}"} for i in range(60)]
     host = _GeometryHost(cards)
-    host.CSS_PATH = _bundled_css_path()
     async with host.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         screen = pilot.app.screen

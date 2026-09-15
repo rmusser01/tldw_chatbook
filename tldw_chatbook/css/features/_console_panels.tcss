@@ -189,6 +189,19 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     min-height: $ds-size-1;
 }
 
+/* Wide-terminal tier (viewport >= 150 columns): the fixed 120-column
+   Conversation settings dialog reads as cramped next to the full-screen
+   F9 Settings on wide terminals, so grow the container to 85% of the
+   viewport, capped at 196 columns. The class is toggled by Python from
+   the app viewport width -- the container's own width cannot drive this
+   without a chicken-and-egg loop. Everything else (height, padding,
+   borders) is unchanged; the compact tier below 100 container columns
+   cannot co-occur (150 viewport columns implies a >= 120 container). */
+#console-settings-modal.-conversation-settings-wide {
+    width: $ds-percent-85;
+    max-width: $ds-console-settings-wide-max-width;
+}
+
 .console-settings-error {
     height: auto;
     min-height: $ds-size-1;
@@ -2208,3 +2221,53 @@ ConsolePromptsModal.-narrow #console-prompts-search {
     color: $text-muted;
 }
 #console-agent-progress { width: $ds-width-fill; height: $ds-size-1; min-height: $ds-size-1; margin: $ds-space-1 $ds-space-0; }
+
+/* Recorded agent work uses the native inline decision and modal shells. */
+#chat-worktree-confirm-card {
+    height: auto;
+    max-height: $ds-size-22;
+    padding: $ds-space-inset;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    border: solid $ds-status-approval-required;
+}
+#worktree-action, .worktree-recovery-title {
+    height: auto;
+    text-style: $ds-text-strong;
+}
+#worktree-details {
+    height: auto;
+    max-height: $ds-size-12;
+}
+#worktree-source, #worktree-destination, #worktree-diffstat, #worktree-consequence,
+.worktree-recovery-context, .worktree-recovery-row Static {
+    height: auto;
+    width: $ds-width-full;
+}
+#worktree-buttons, .worktree-recovery-actions, #worktree-recovery-footer {
+    height: $ds-control-height;
+}
+#worktree-buttons Button, .worktree-recovery-actions Button,
+#worktree-recovery-footer Button {
+    margin-right: $ds-space-inline;
+    min-width: $ds-size-10;
+}
+WorktreeRecoveryDialog {
+    align: center middle;
+}
+#worktree-recovery-dialog {
+    width: $ds-percent-90;
+    max-width: $ds-size-110;
+    height: $ds-percent-90;
+    padding: $ds-space-inset;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+#worktree-recovery-rows {
+    height: $ds-height-fill;
+}
+.worktree-recovery-row {
+    height: auto;
+    margin-bottom: $ds-space-section;
+}

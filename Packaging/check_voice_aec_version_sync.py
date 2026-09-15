@@ -6,11 +6,11 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
-from pathlib import Path
+import json
 import re
 import sys
 import tomllib
-
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPANION_NAME = "tldw-voice-aec"
@@ -33,11 +33,14 @@ def _pyproject(path: Path) -> dict[str, object]:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-def check_version_sync(repo_root: Path = REPO_ROOT) -> list[str]:
+def check_version_sync(
+    repo_root: Path = REPO_ROOT, *, app_only: bool = False
+) -> list[str]:
     """Return version-lock violations without importing either package.
 
     Args:
         repo_root: Checkout containing the application and companion pyprojects.
+        app_only: Require no companion dependency and entirely unqualified rollout.
 
     Returns:
         Human-readable violations. An empty list means the lock is exact.
@@ -94,7 +97,7 @@ def check_version_sync(repo_root: Path = REPO_ROOT) -> list[str]:
             requirement
             for requirement in build_requirements
             if isinstance(requirement, str)
-            and _normalized_name(re.split(r"[<>=!~;\[\s]", requirement, 1)[0])
+            and _normalized_name(re.split(r"[<>=!~;@\[\s]", requirement.strip(), 1)[0])
             == "pybind11"
         ]
         if isinstance(build_requirements, list)
@@ -135,10 +138,45 @@ def check_version_sync(repo_root: Path = REPO_ROOT) -> list[str]:
     companion_requirements = [
         requirement
         for requirement in speech
-        if _normalized_name(re.split(r"[<>=!~;\[\s]", requirement, 1)[0])
+        if _normalized_name(re.split(r"[<>=!~;@\[\s]", requirement.strip(), 1)[0])
         == COMPANION_NAME
     ]
-    if companion_requirements != [expected]:
+    if app_only:
+        requirements = list(app.get("dependencies", []))
+        for group in extras.values():
+            requirements.extend(group)
+        if any(
+            _normalized_name(re.split(r"[<>=!~;@\[\s]", requirement.strip(), 1)[0])
+            == COMPANION_NAME
+            for requirement in requirements
+        ):
+            errors.append(
+                "app-only release must omit every native companion dependency"
+            )
+        try:
+            manifest = json.loads(
+                (
+                    repo_root / "tldw_chatbook/Audio/voice_qualification_manifest.json"
+                ).read_text(encoding="utf-8")
+            )
+            platforms = (
+                manifest.get("platforms") if isinstance(manifest, dict) else None
+            )
+            unqualified = (
+                isinstance(platforms, dict)
+                and bool(platforms)
+                and all(
+                    isinstance(record, dict) and record.get("qualified") is False
+                    for record in platforms.values()
+                )
+            )
+        except (OSError, ValueError):
+            unqualified = False
+        if not unqualified:
+            errors.append(
+                "app-only release requires entirely unqualified packaged rollout"
+            )
+    elif companion_requirements != [expected]:
         errors.append(
             "speech_recording must contain exactly one unmarked exact companion pin "
             f"{expected!r}; found {companion_requirements!r}"
@@ -150,8 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     """Run the version-lock check."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    parser.add_argument(
+        "--app-only",
+        action="store_true",
+        help="Require omitted companion and unqualified rollout",
+    )
     args = parser.parse_args(argv)
-    errors = check_version_sync(args.repo_root.resolve())
+    errors = check_version_sync(args.repo_root.resolve(), app_only=args.app_only)
     if errors:
         for error in errors:
             print(f"voice AEC version error: {error}", file=sys.stderr)

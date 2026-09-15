@@ -80,9 +80,11 @@ choice independently of which rail sections are open. While the expanded
 Library is still authoritatively empty, **Back to Get started** is available.
 Adding any usable content permanently graduates the profile to the full
 Library; deleting that content later does not hide tools again. Graduation
-announces itself once, as the toast "Library tools are now available." — the
-rail growing is the durable evidence, so nothing is added to the canvas, and
-whatever you were reading or typing is left alone.
+is silent: the rail growing is the evidence, nothing is added to the canvas,
+and whatever you were reading or typing is left alone. (Graduation was
+announced by the toast "Library tools are now available." — superseded by
+task-32555, which dropped it: the words described the rail rather than what
+the reader had just done.)
 
 Compact presentation never blocks navigation. Deep links and command-palette
 routes, including **Tab Navigation: Library — Skills**, can open a tool that is
@@ -138,7 +140,13 @@ knows more than the source owners do:
   a new profile is never left with silent empty counts and no way to retry.
 - **From your Library** uses cached summaries in the fixed order **Database
   Notes → Media → Conversations**. Missing or unresolved sources are omitted;
-  the order does not imply that items were ranked against each other.
+  the order does not imply that items were ranked against each other. These
+  rows are reachable by keyboard, and Enter opens whichever one has focus —
+  so the focused row carries the same left-edge bar every other focused row
+  on this screen does, and the footer names what Enter will do there ("enter
+  open notes", "enter open media"). Before task-32546 focus here was a
+  change of background colour and nothing else, and the footer never
+  mentioned the row at all.
 - **Quick actions** are **Import…**, **New note**, then **Search**. They use the
   same guarded destinations as the rail.
 
@@ -280,7 +288,12 @@ readable measure rather than stretched across the whole canvas.
   staging canvas adds "esc back to hub". Every hint is a per-key
   "key action" pair — the Notes editor, for example, shows
   "esc back to notes" and nothing else, because the note is already
-  saved and there is no save key to advertise.
+  saved and there is no save key to advertise — beside it, whenever one of
+  the editor's own controls rather than a text field has focus, the footer
+  also names that control's Enter action ("enter save note"), in Edit and
+  Preview alike. In the notes LIST the footer names Enter only for the
+  delete receipt's **Undo** and **Dismiss**; a note row or the filter shows
+  no "enter …" chip. See [Notes](library/notes.md).
   While a text field has focus the footer leads with `typing in field`,
   names the Escape chip for that surface (`esc leave field` where nothing
   else owns the key — a list canvas keeps its own `esc focus rail`), and
@@ -321,12 +334,28 @@ thing, so nothing on the screen relies on colour alone:
 | `●` (inside a line) | not a state — it samples a colour | a highlight's colour swatch in the Media reader |
 | `▸` / `▾` | disclosure | trailing on a section header, leading on a folder-tree node |
 | `○` | a blocked or disabled action | any greyed action, always beside its reason or tooltip |
+| `●` / `○` (in a radio group) | the one option chosen out of a set | Console's per-conversation **Library access** modal and the first-run setup wizard — the two radio groups that paint the pair |
 | `✓` (leading, in a chooser) | the active value of a chooser | choice strips, kept toggles ("mode: ✓ Search ⇄ RAG Answer") |
 | `▸ ` (leading, on a rail row) | the destination you are on | the left rail |
 | `⇄` | press to switch between the two options either side of it | mode toggles |
 
 A rail row never expands and a tree node is never a rail row, so the two
 leading `▸` uses cannot collide on one control.
+
+Radio groups are deliberately carved out of the `☐`/`☑` pair rather than
+folded into it: a radio offers exactly one choice, and painting it as a
+checkbox would promise a multi-select it does not have. In the two groups
+named above, exactly one sibling is `●` and the rest are `○` — that is what
+tells you it is a chooser — so a `○` there means "not this one", not
+"blocked". Outside a radio group, `○` keeps its blocked/disabled meaning.
+(A decision, not a law of nature: it can be revisited if radios and disabled
+controls ever end up side by side often enough to confuse.)
+
+**Not yet everywhere.** Every other radio group in the app — the Console
+capture-policy, export and share dialogs, the Chatbook wizards — still uses
+the stock control, which paints `●` on *every* option and tells the two
+states apart by colour alone. Read those by which option is highlighted, not
+by the glyph; bringing them onto the pair above is outstanding work.
 
 ### Left rail
 
@@ -566,7 +595,9 @@ you're on:
   list** does on that surface, which is not the same on every editor.
   Notes autosave, so a note edit is already saved when you leave it:
   Escape returns to the list at once, re-focusing its first row, the
-  editor's only footer chip is "esc back to notes", and its status line
+  editor's footer chip is "esc back to notes" (plus the focused control's
+  own "enter …" action, when focus is on a control rather than a field),
+  and its status line
   reads "Next: Keep editing; changes save automatically." Only a
   *blocked* save holds a note open, and it says what to fix — see
   [Notes](library/notes.md). Nothing autosaves in the Prompts or Skills
@@ -869,9 +900,10 @@ relaunched before its first Library visit — the lifecycle is recorded at
 profile creation instead of being inferred from a missing key.)*
 
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32063:
-"Library tools are now available." fires only when the compact Get started
-rail actually gives way to the full one, not on a populated profile's first
-source read. task-32064: the "Chunking Lab / Try selected text" strip left the
+"Library tools are now available." *was* fired only when the compact Get
+started rail actually gives way to the full one, not on a populated profile's
+first source read — the toast itself was dropped by task-32555; see the stamp
+at the end of this file. task-32064: the "Chunking Lab / Try selected text" strip left the
 top of every canvas for Details ▸ Actions, with a one-line gloss, and Escape
 in the Lab returns to the Library canvas it was opened from. task-32069: the
 rail search box has an "x" and no longer carries a stale query onto another
@@ -985,3 +1017,26 @@ column keeps its full copy and hangs its continuation lines two cells in, so
 the blocked Handoff row's reason and next step read as one row — live at
 235x52 on a seeded profile, and pinned on the painted lines at 235x52 and
 60x24.)*
+
+*Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32464,
+controller's decision, revisitable: radios are carved out of the selection
+pair. `☐`/`☑` stays the multi-select toggle, `●`/`○` is a radio group, and a
+bare `○` outside a group keeps its blocked/disabled meaning — the legend now
+says so rather than leaving Console's Library access modal as its
+counterexample.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
+AC#2, at 235x52 on a profile stamped `starter` with an empty notes database):
+creating and saving the first note grows the rail from the compact Get started
+list to the full Browse / Create / Study / Import-Export rail and raises no
+toast (`wave4-caps/console-handoff/handoff-13-no-toast`).*
+
+*Verified against fix/library-notes-w4-layout — 2026-09-14 (task-32546: the
+landing's "From your Library" rows marked focus with a background colour
+alone — rgb(30,30,30) to rgb(28,70,102), decoded from an ANSI capture — and
+the footer never named them. They take the house left bar now, and F6 from
+the rail search field lands on "█ Notes · Import checklist" with the footer
+reading "enter open notes" (`wave4-caps/layout/layout-15-f6-after-2`; before,
+`layout-27-f6-2`). Note for anyone re-walking this: from a cold landing, Tab
+walks the top tab bar rather than the canvas, which is why the original
+twelve-Tab capture set differed only on the nav line.)*

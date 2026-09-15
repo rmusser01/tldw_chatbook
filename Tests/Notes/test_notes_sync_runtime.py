@@ -345,6 +345,10 @@ class _Adapter:
         self.executor = _Executor()
         self.created_folders: list[str] = []
         self.rolled_back_folders: list[object] = []
+        self.obsidian_modes: dict[str, bool] = {}
+
+    def remember_obsidian_mode(self, root_id: str, enabled: bool) -> None:
+        self.obsidian_modes[root_id] = enabled
 
     async def observe_root(self, _root: NotesSyncRootRecord) -> ReconciliationInput:
         result = self.observations[min(self.observe_calls, len(self.observations) - 1)]
@@ -2630,12 +2634,16 @@ async def test_shutdown_settles_in_flight_pause_and_resume_before_store_close(
             "sync_now",
             NotesSyncRootState.ACTIVE,
         ),
+        # task-32519: a root with changes to review still returns to service;
+        # the changes surface exactly as an active root's Check changes shows
+        # them, instead of the root staying paused behind a review it could
+        # not open.
         (
             _input(),
-            False,
+            True,
             "changes_available",
             "review_changes",
-            NotesSyncRootState.PAUSED,
+            NotesSyncRootState.ACTIVE,
         ),
     ),
 )
@@ -3314,3 +3322,470 @@ async def test_cancelled_setup_review_releases_the_lease_and_the_root_path(
     assert owner._leases == {}
     assert coordinator.events[-1:] == ["lease-released"]
     await owner.shutdown()
+
+
+class _TreeFolders(_Folders):
+    """A folder repository that keeps a tree, for the wave-4 sync-review pins."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.folders: dict[str, object] = {}
+        self.reconciled: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+
+    def create_folder(
+        self,
+        *,
+        name: str,
+        parent_id: str | None,
+        folder_id: str | None = None,
+    ):
+        from tldw_chatbook.Notes.note_folder_models import NoteFolder
+
+        parent = self.folders.get(parent_id) if parent_id is not None else None
+        parent_path = "" if parent is None else parent.path
+        folder = NoteFolder(
+            folder_id=folder_id or f"folder-{len(self.folders) + 1}",
+            parent_id=parent_id,
+            name=name,
+            path=f"{parent_path}/{name}",
+            normalized_path=f"{parent_path}/{name}".casefold(),
+            version=1,
+            deleted=False,
+        )
+        self.created.append(name)
+        self.folders[folder.folder_id] = folder
+        return folder
+
+    def get_folder(self, folder_id: str, *, include_deleted: bool = True):
+        return self.folders.get(folder_id)
+
+    def get_folder_by_path(self, segments):
+        wanted = "/" + "/".join(segments)
+        return next(
+            (item for item in self.folders.values() if item.path.casefold() == wanted.casefold()),
+            None,
+        )
+
+    def has_managed_folder_ownership(self, folder_id: str) -> bool:
+        return False
+
+    def reconcile_managed(self, *, owner_id: str, desired=()) -> tuple[object, ...]:
+        self.reconciled.append((owner_id, tuple(desired)))
+        return ()
+
+
+class _ManyLocalNotes:
+    """Several caller-identified notes with a keyword store."""
+
+    def __init__(self) -> None:
+        self.notes: dict[str, dict[str, object]] = {}
+        self.keywords: dict[str, str] = {}
+        self.links: dict[str, list[str]] = {}
+
+    def get_note_by_id(self, _user_id: str, note_id: str):
+        note = self.notes.get(note_id)
+        return dict(note) if note is not None else None
+
+    def add_note(self, _user_id: str, title: str, content: str, *, note_id: str) -> str:
+        self.notes[note_id] = {
+            "id": note_id,
+            "title": title,
+            "content": content,
+            "version": 1,
+            "deleted": False,
+        }
+        return note_id
+
+    def update_note(self, _user_id: str, note_id: str, values, expected_version: int) -> bool:
+        note = self.notes[note_id]
+        if note["version"] != expected_version:
+            return False
+        note.update(values)
+        note["version"] = expected_version + 1
+        return True
+
+    def get_keywords_for_note(self, _user_id: str, note_id: str):
+        return [
+            {"id": keyword_id, "keyword": self.keywords[keyword_id]}
+            for keyword_id in self.links.get(note_id, [])
+        ]
+
+    def get_keyword_by_text(self, _user_id: str, text: str):
+        for keyword_id, keyword in self.keywords.items():
+            if keyword.casefold() == text.casefold():
+                return {"id": keyword_id, "keyword": keyword}
+        return None
+
+    def add_keyword(self, _user_id: str, text: str) -> str:
+        keyword_id = f"kw-{len(self.keywords) + 1}"
+        self.keywords[keyword_id] = text
+        return keyword_id
+
+    def link_note_to_keyword(self, _user_id: str, note_id: str, keyword_id: str) -> None:
+        self.links.setdefault(note_id, []).append(keyword_id)
+
+    def unlink_note_from_keyword(self, _user_id: str, note_id: str, keyword_id: str) -> None:
+        self.links[note_id].remove(keyword_id)
+
+    def note_keywords(self, note_id: str) -> tuple[str, ...]:
+        return tuple(self.keywords[keyword_id] for keyword_id in self.links.get(note_id, []))
+
+
+def _vault_owner(tmp_path: Path):
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+
+    folders = _TreeFolders()
+    local_notes = _ManyLocalNotes()
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=NotesScopeService(
+            local_notes, None, folder_repository=folders
+        ),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    return owner, folders, local_notes
+
+
+@pytest.mark.asyncio
+async def test_binding_labels_returns_relative_path_and_destination_per_binding(
+    tmp_path: Path,
+) -> None:
+    """task-32535 AC#1: every reviewed binding can be named by path and folder."""
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        RuntimeBindingLabel,
+    )
+
+    root_path = tmp_path / "vault"
+    (root_path / "Daily").mkdir(parents=True)
+    (root_path / "People").mkdir()
+    (root_path / "Daily" / "2026-09-06.md").write_text("# Day\n", encoding="utf-8")
+    (root_path / "People" / "Sam.md").write_text("# Sam\n\nHi.\n", encoding="utf-8")
+    (root_path / "top.md").write_text("plain\n", encoding="utf-8")
+    _store(tmp_path)
+    owner, _folders, _notes = _vault_owner(tmp_path)
+    await owner.start()
+    review = await owner.review_setup(
+        NotesSyncRootSetup(
+            display_name="Vault",
+            canonical_path=str(root_path),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+        )
+    )
+    binding_ids = tuple(action.binding_id for action in review.safe_actions)
+    assert len(binding_ids) == 3
+    requested = binding_ids[::-1]
+
+    labels = await owner.binding_labels(review.root_id, requested)
+
+    assert all(type(label) is RuntimeBindingLabel for label in labels)
+    assert tuple(label.binding_id for label in labels) == requested
+    by_path = {label.relative_path: label for label in labels}
+    # The destination is where the note actually lands: the root folder, for
+    # every file. Keeping the vault's folder chain is refused by the folder
+    # layer (task-32535 AC#4), and a label that promised "Vault / Daily" for
+    # a note arriving in "Vault" would be the defect this task fixes.
+    assert by_path["Daily/2026-09-06.md"].destination_folder == "Vault"
+    assert by_path["People/Sam.md"].destination_folder == "Vault"
+    assert by_path["top.md"].destination_folder == "Vault"
+    assert by_path["People/Sam.md"].note_title == "Sam"
+    assert by_path["top.md"].note_title == "top"
+    assert "Sam" not in repr(labels[0])
+    # A review that no longer matches the folder is refused, not mislabelled.
+    (root_path / "People" / "Sam.md").write_text("# Sam changed\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.binding_labels(review.root_id, requested)
+    await owner.abandon_setup(review.root_id)
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_frontmatter(
+    tmp_path: Path,
+) -> None:
+    """task-32535 AC#3/#4 on the real adapter, executor and folder chain."""
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
+
+    from tldw_chatbook.Notes.notes_sync_executor import MAX_SYNC_TITLE_LENGTH
+
+    root_path = tmp_path / "vault"
+    for folder in (
+        ".obsidian",
+        ".trash",
+        "Templates",
+        "Inbox",
+        "Projects",
+        "People",
+        "Reading",
+    ):
+        (root_path / folder).mkdir(parents=True)
+    (root_path / ".obsidian" / "app.json").write_text("{}", encoding="utf-8")
+    (root_path / ".trash" / "Old idea.md").write_text("# Old\n", encoding="utf-8")
+    (root_path / "Templates" / "Daily.md").write_text("# {{date}}\n", encoding="utf-8")
+    (root_path / "Inbox" / "Untitled.md").write_bytes(b"")
+    (root_path / "Untitled 1.md").write_text("\n\n", encoding="utf-8")
+    review_text = (
+        "---\ntitle: Library ▸ Notes review\ntags: [project, ux]\n---\n# Heading\n"
+    )
+    (root_path / "Projects" / "Library review.md").write_text(review_text, encoding="utf-8")
+    # One ordinary Obsidian alias longer than an execution request accepts.
+    # Import once bounds a keyword at 512 and the request refuses one over 256,
+    # and the request is built inside a loop over EVERY safe action -- so this
+    # single file used to abort the whole root's activation (task-32535 fix
+    # round 1). It must activate, with the over-long alias dropped and the
+    # file's other keywords kept.
+    long_alias = "Attention Is All You Need " + "and more title " * 20
+    assert len(long_alias) > 256
+    (root_path / "People" / "Sam.md").write_text(
+        f'---\ntags: [people]\naliases: ["{long_alias}"]\n---\n# Sam\n',
+        encoding="utf-8",
+    )
+    # The same defect one field over: an execution request refuses a title
+    # over MAX_SYNC_TITLE_LENGTH, so a 5,000-character `title:` aborted the
+    # whole root the same way. A title is the note's only name, so this one is
+    # truncated rather than dropped (task-32535 fix round 2).
+    long_title = "Deep work notes " * 320
+    assert len(long_title.strip()) > MAX_SYNC_TITLE_LENGTH
+    (root_path / "Reading" / "Deep work.md").write_text(
+        f'---\ntitle: "{long_title}"\n---\n# Deep work\n',
+        encoding="utf-8",
+    )
+    truncated_title = long_title.strip()[:MAX_SYNC_TITLE_LENGTH]
+    _store(tmp_path)
+    owner, folders, local_notes = _vault_owner(tmp_path)
+    await owner.start()
+
+    def setup(obsidian_mode: bool) -> NotesSyncRootSetup:
+        return NotesSyncRootSetup(
+            display_name="Vault",
+            canonical_path=str(root_path),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            obsidian_mode=obsidian_mode,
+        )
+
+    # Off: the vault's own folders come back as creates. The two empty files
+    # do not -- Import once refuses an empty source whatever folder it is in.
+    off = await owner.review_setup(setup(False))
+    assert len(off.safe_actions) == 5
+    assert sorted((skip.relative_path, skip.reason_code) for skip in off.item_skips) == [
+        ("Inbox/Untitled.md", "empty_file"),
+        ("Untitled 1.md", "empty_file"),
+    ]
+
+    on = await owner.review_setup(setup(True))
+    assert len(on.safe_actions) == 3
+    assert sorted((skip.relative_path, skip.reason_code) for skip in on.item_skips) == [
+        (".trash/Old idea.md", "obsidian_trash"),
+        ("Inbox/Untitled.md", "empty_file"),
+        ("Templates/Daily.md", "obsidian_template"),
+        ("Untitled 1.md", "empty_file"),
+    ]
+    labels = await owner.binding_labels(
+        on.root_id, tuple(action.binding_id for action in on.safe_actions)
+    )
+    assert {label.relative_path: label.note_title for label in labels} == {
+        "Projects/Library review.md": "Library ▸ Notes review",
+        "People/Sam.md": "Sam",
+        # Single-spaced already, so the display bound is a plain slice.
+        "Reading/Deep work.md": truncated_title[:160],
+    }
+
+    result = await owner.activate_root(on.root_id, on.observation_token)
+
+    assert result.accepted is True
+    assert result.applied_count == 3
+    notes_by_title = {note["title"]: note for note in local_notes.notes.values()}
+    assert set(notes_by_title) == {
+        "Library ▸ Notes review",
+        "Sam",
+        truncated_title,
+    }
+    # The frontmatter block stays byte-exact: sync writes the body back.
+    assert notes_by_title["Library ▸ Notes review"]["content"] == review_text
+    assert local_notes.note_keywords(str(notes_by_title["Library ▸ Notes review"]["id"])) == (
+        "project",
+        "ux",
+    )
+    # The over-long alias is gone; the note and its other keyword are not.
+    assert local_notes.note_keywords(str(notes_by_title["Sam"]["id"])) == ("people",)
+    # Both notes sit directly in the root folder. Keeping the vault's own
+    # folder chain (AC#4) is NOT implemented: `note_folders` refuses a manual
+    # child of a subtree that already holds a managed placement
+    # (`_require_manual_folder_subtree`, reason `sync_managed_folder`), and a
+    # subfolder that DID get made then reads as managed-owned, which the
+    # authority's verify path rejects as `folder_authority_changed` on the
+    # next run. Sync needs its own folder door first -- see task-32535's
+    # notes; this pin holds the flat placement until then so a half-nested
+    # tree cannot ship.
+    by_path = {folder.path: folder for folder in folders.folders.values()}
+    assert set(by_path) == {"/Vault"}
+    placements = {
+        note_id: folder_id
+        for _owner, desired in folders.reconciled
+        for folder_id, note_id in desired
+    }
+    root_folder = by_path["/Vault"].folder_id
+    assert placements[str(notes_by_title["Library ▸ Notes review"]["id"])] == root_folder
+    assert placements[str(notes_by_title["Sam"]["id"])] == root_folder
+    assert placements[str(notes_by_title[truncated_title]["id"])] == root_folder
+    # A later Check of the activated root runs the same pass: the flag is
+    # resolved from the vault marker the walk already reports, so a file
+    # dropped into .trash/ after activation is still skipped with a reason.
+    (root_path / ".trash" / "Newer idea.md").write_text("# New\n", encoding="utf-8")
+    checked = await owner.check_root(on.root_id)
+    assert sorted(
+        (skip.relative_path, skip.reason_code) for skip in checked.item_skips
+    ) == [
+        (".trash/Newer idea.md", "obsidian_trash"),
+        (".trash/Old idea.md", "obsidian_trash"),
+        ("Inbox/Untitled.md", "empty_file"),
+        ("Templates/Daily.md", "obsidian_template"),
+        ("Untitled 1.md", "empty_file"),
+    ]
+    assert all(
+        action.kind is NotesSyncActionKind.NO_CHANGE
+        for action in checked.safe_actions
+    )
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_disk_edit_after_activation_surfaces_on_the_next_check(
+    tmp_path: Path,
+) -> None:
+    """task-32534 AC#4: a manual Check must not consume the watcher's change.
+
+    ``observe_root`` used to overwrite the discovery signature the watcher
+    compares against, so a disk edit followed by an immediate manual Check
+    was reported once (as changes available) and then never hinted -- the
+    automatic pass that applies it never ran and the note stayed stale.
+    """
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        build_notes_sync_runtime_owner,
+    )
+
+    store = _store(tmp_path)
+    file_path = tmp_path / "root" / "note.md"
+    file_path.write_text("same", encoding="utf-8")
+    with PosixNotesSyncFilesystem(tmp_path / "root") as filesystem:
+        file = filesystem.observe("note.md")
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id="root-1",
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(file),
+            state=NotesSyncBindingState.ACTIVE,
+            serialization=file.observation.serialization,
+            content_digest=file.observation.content_digest,
+            note_version=1,
+        )
+    )
+    local_notes = _LocalNotes("same")
+    service = NotesScopeService(local_notes, None, folder_repository=_Folders())
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=service,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    try:
+        assert owner._changed_root_ids() == ()  # the watcher's baseline
+
+        file_path.write_text("edited on disk", encoding="utf-8")
+        plan = await owner.check_root("root-1")
+
+        assert [action.kind for action in plan.safe_actions] == [
+            NotesSyncActionKind.UPDATE_NOTE
+        ]
+        # The watcher still sees the edit the manual check only reported.
+        assert owner._changed_root_ids() == ("root-1",)
+        second = await owner.check_root("root-1")
+        assert second.root_id == "root-1"
+    finally:
+        await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_write_receipts_name_path_title_effect_for_completed_operations(
+    tmp_path: Path,
+) -> None:
+    """task-32534 AC#3: an automatic write leaves a labelled, bounded receipt."""
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        RuntimeWriteReceipt,
+        build_notes_sync_runtime_owner,
+    )
+
+    store = _store(tmp_path)
+    file_path = tmp_path / "root" / "note.md"
+    file_path.write_text("new", encoding="utf-8")
+    with PosixNotesSyncFilesystem(tmp_path / "root") as filesystem:
+        file = filesystem.observe("note.md")
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id="root-1",
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(file),
+            state=NotesSyncBindingState.ACTIVE,
+            serialization=file.observation.serialization,
+            content_digest=hashlib.sha256(b"old").hexdigest(),
+            note_version=1,
+        )
+    )
+    local_notes = _LocalNotes("old")
+    service = NotesScopeService(local_notes, None, folder_repository=_Folders())
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=service,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    try:
+        assert local_notes.note["content"] == "new"
+
+        receipts = await owner.write_receipts("root-1")
+
+        assert len(receipts) == 1
+        receipt = receipts[0]
+        assert type(receipt) is RuntimeWriteReceipt
+        assert (receipt.kind, receipt.relative_path, receipt.note_title) == (
+            "update_note",
+            "note.md",
+            "Note",
+        )
+        assert receipt.completed_at > 0
+        assert "note.md" not in repr(receipt)
+        with pytest.raises(ValueError):
+            await owner.write_receipts("root-1", limit=0)
+
+        # Fix round 1: pause_root closes the root's admission, and reading the
+        # receipts through `_admit_task` raised `root_admission_closed` -- so
+        # pausing a root, a first-class control and the very flow the live
+        # walk uses to force a failed Check, blanked its whole receipt
+        # history. Receipts are a read; they must survive the pause.
+        await owner.pause_root("root-1")
+        paused_receipts = await owner.write_receipts("root-1")
+        assert [r.operation_id for r in paused_receipts] == [
+            r.operation_id for r in receipts
+        ]
+    finally:
+        await owner.shutdown()

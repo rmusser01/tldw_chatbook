@@ -36,5 +36,5 @@ before first paint (ADR-097). Evidence:
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-2026-09-14 TASK-32532 branch paydown: boot CSS is 609,446 B against the tightened 634,050 B limit; the canonical snapshot and byte guard are green without an exception. This is branch evidence, not a claim that dev is updated. The separate modal-default deferral AC remains unimplemented here, so this task stays To Do. See Docs/superpowers/reports/2026-09-14-component-pattern-library-closeout.md.
+2026-09-14 TASK-32596 branch paydown: boot CSS is 609,446 B against the tightened 634,050 B limit; the canonical snapshot and byte guard are green without an exception. This is branch evidence, not a claim that dev is updated. The separate modal-default deferral AC remains unimplemented here, so this task stays To Do. See Docs/superpowers/reports/2026-09-14-component-pattern-library-closeout.md.
 <!-- SECTION:NOTES:END -->

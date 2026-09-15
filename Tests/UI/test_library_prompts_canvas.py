@@ -37,7 +37,7 @@ from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static, TextArea
 
@@ -364,7 +364,7 @@ class _CanvasHost(ConsolidatedCSSApp):
 class _StyledCanvasHost(_CanvasHost):
     """Canvas harness with the application's real layout rules loaded."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 class _FilterDispatchCanvasHost(_StyledCanvasHost):

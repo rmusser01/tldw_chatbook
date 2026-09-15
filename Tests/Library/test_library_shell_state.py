@@ -527,3 +527,39 @@ def test_study_decks_and_quizzes_counts_default_to_none():
     quizzes_row = _study_row(shell, "create-quizzes")
     assert decks_row.count is None
     assert quizzes_row.count is None
+
+
+def test_library_disabled_action_label_carries_a_reason():
+    """task-32549: the shared seam states WHY, on a line beside the control.
+
+    The label keeps only the blocked marker -- every row this task touches
+    is measured to the cell, and the label spelling clipped at 100x30.
+    """
+    from tldw_chatbook.Library.library_shell_state import (
+        library_disabled_action_label,
+        library_disabled_reason_line,
+    )
+
+    assert library_disabled_action_label("Sort", True) == "○ Sort"
+    assert library_disabled_action_label("Sort", False) == "Sort"
+    assert library_disabled_reason_line("Sort", "clear the filter") == (
+        "Sort unavailable — clear the filter"
+    )
+    # A trailing full stop on the reason is not doubled up.
+    assert library_disabled_reason_line("Export selected", "nothing selected.") == (
+        "Export selected unavailable — nothing selected"
+    )
+
+
+def test_library_selection_count_line_names_the_action_a_zero_blocks():
+    """task-32549: the line under a select strip carries the reason too."""
+    from tldw_chatbook.Library.library_shell_state import (
+        library_selection_count_line,
+    )
+
+    assert library_selection_count_line(0, "Export selected") == (
+        "0 selected — Export selected unavailable"
+    )
+    assert library_selection_count_line(0, "Export") == "0 selected — Export unavailable"
+    assert library_selection_count_line(1, "Export selected") == "1 selected"
+    assert library_selection_count_line(12, "Export selected") == "12 selected"

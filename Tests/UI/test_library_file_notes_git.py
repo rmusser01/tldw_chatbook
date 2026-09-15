@@ -2336,7 +2336,18 @@ async def test_action_controls_fit_from_visible_label_cells_and_recompute() -> N
         await pilot.pause()
         assert not panel.has_class("-stack-actions")
 
-        await pilot.resize_terminal(40, 20)
+        # task-32553 shortened this header's back cue from "Back to
+        # navigator" (17 cells) to "‹ Files" (7), so the untrusted header now
+        # needs exactly 33 cells ("‹ Files" 7+2 plus "Trust and check status"
+        # 22+2) where it needed 43, and the flip moved from between 40 and 70
+        # columns to between 32 and 33. The WIDTH is re-picked, not the rule,
+        # and 33/32 pins the flip exactly -- the old test crossed it once,
+        # with slack on both sides.
+        await pilot.resize_terminal(33, 20)
+        await pilot.pause()
+        assert not panel.has_class("-stack-actions")
+
+        await pilot.resize_terminal(32, 20)
         await pilot.pause()
         assert panel.has_class("-stack-actions")
         await _assert_visible_panel_buttons_fit(panel, pilot)
@@ -2352,6 +2363,16 @@ async def test_action_controls_fit_from_visible_label_cells_and_recompute() -> N
         )
         await pilot.pause()
         assert not panel.has_class("-stack-actions")
+
+        # The status render un-stacks at 32 because its own action rows are
+        # short, but it also SHOWS `#file-notes-git-bulk-toggle`, whose label
+        # ("Show bulk · 1 stage · 1 unstage") is 31 cells wide -- nothing fits
+        # 32 columns then, stacked or not.
+        # Fit is asserted at a width the panel can actually serve; the
+        # narrowest supported one is covered by
+        # `test_focused_controls_keep_complete_labels_and_fit[(40, 20)]`.
+        await pilot.resize_terminal(70, 28)
+        await pilot.pause()
         await _assert_visible_panel_buttons_fit(panel, pilot)
 
 

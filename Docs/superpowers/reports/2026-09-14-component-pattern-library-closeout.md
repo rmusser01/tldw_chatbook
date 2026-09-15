@@ -3,7 +3,7 @@
 Implementation commit: `ae9093a714`.
 
 The design-system workstream is implemented on `feat/component-pattern-library`
-in `.worktrees/component-pattern-library`. TASK-32532 and its twelve subtasks
+in `.worktrees/component-pattern-library`. TASK-32596 and its twelve subtasks
 track the work; TASK-24451 was superseded and closed during the carve-up.
 
 ADR required: no new ADR. Existing decisions:

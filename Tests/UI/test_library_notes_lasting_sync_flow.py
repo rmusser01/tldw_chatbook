@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import re
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button
@@ -138,7 +140,15 @@ async def test_mounted_production_projection_is_inert_and_names_nearest_valid_ac
         assert screen._notes_state.lasting_sync_snapshot.lasting_available is False
         keep = app.query_one("#notes-add-keep-synced", Button)
         assert keep.disabled is False
-        assert "Unavailable" in app.export_screenshot(simplify=True)
+        # task-32545 AC#3: was the bare word "Unavailable" (from
+        # "Unavailable until the reviewed lasting-sync cutover"), which a
+        # reader could not act on. The nearest valid action is the pin.
+        painted = " ".join(
+            re.sub(r"<[^>]+>", "", app.export_screenshot(simplify=True))
+            .replace("&#160;", " ")
+            .split()
+        )
+        assert "Nearest valid action: Import once" in painted
         import_once = app.query_one("#notes-add-import-once", Button)
         assert import_once.label.plain == "Import once"
         assert import_once in app.screen._compositor.visible_widgets
@@ -154,7 +164,7 @@ async def test_mounted_production_projection_is_inert_and_names_nearest_valid_ac
         (
             NotesSyncControlResult(True, "up_to_date", "sync_now", applied_count=2),
             "receipt",
-            "2 applied · durable receipt recorded",
+            "2 applied · listed under Receipts",
         ),
         (
             NotesSyncControlResult(False, "failed", "review_changes"),

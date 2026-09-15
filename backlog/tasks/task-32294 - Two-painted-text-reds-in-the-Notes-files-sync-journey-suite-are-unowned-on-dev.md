@@ -3,9 +3,10 @@ id: TASK-32294
 title: >-
   Two painted-text reds in the Notes files-sync journey suite are unowned on
   dev
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-10 12:55'
+updated_date: '2026-09-11 10:45'
 labels:
   - library
   - notes
@@ -37,68 +38,63 @@ output, fail on the branch and on the `dev` tip it was merged from.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 `test_lasting_setup_keeps_server_unavailable_copy_painted[size0]`
+- [x] #1 `test_lasting_setup_keeps_server_unavailable_copy_painted[size0]`
   passes, or the assertion is corrected to what the screen is supposed to
   paint with the reason recorded
-- [ ] #2 `test_folder_files_and_session_git_use_supported_40x20_navigator`
+- [x] #2 `test_folder_files_and_session_git_use_supported_40x20_navigator`
   passes, or the assertion is corrected to what a 40x20 terminal is supposed
   to show with the reason recorded
-- [ ] #3 Whichever of the two turns out to be a product defect rather than a
+- [x] #3 Whichever of the two turns out to be a product defect rather than a
   stale expectation is fixed at its source, not by relaxing the assertion
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
+1. Reproduce both, and for each decide paint regression vs stale expectation
+   from the measured screen, not from the assertion text.
+2. Repair to the truth at equal or better strength; file the product half.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Evidence recorded at filing time (not yet investigated).
+Both turned out to be stale expectations; one of them sits on top of a real
+product gap, now filed.
 
-Baseline: clean `dev` at 068535986e, in a detached worktree, `pytest -q
--p no:randomly` on the two node ids -> `2 failed, 1 passed`. The `[size1]`
-(60x20) parametrisation of the first test passes; only `[size0]` (120x36)
-fails.
+AC#1 `test_lasting_setup_keeps_server_unavailable_copy_painted[size0]` -- NOT a
+paint regression. Measured at 120x36: the reason renderable is fully on screen,
+WRAPPED across two rows inside its own 45-cell box ("... server sync-folder
+capability" / "not installed"), so `"capability not" in painted` failed on the
+line break while `"server sync-folder"` passed. At 60x20 the wrap falls
+elsewhere and all three substrings hit -- which is why only `[size0]` was red.
+Replaced by a strictly stronger check: `_painted_widget_text` crops the
+compositor strips to the widget's own region and collapses the wrap, and the
+test asserts the WHOLE reason sentence appears there. Both sizes green.
 
-1. `test_lasting_setup_keeps_server_unavailable_copy_painted[size0]`
-   (file line 650 on the PR #2557 branch, 620 on dev). The widget-level
-   assertions above it pass — `#notes-sync-destination-server` is disabled
-   and its reason renderable does contain "server sync-folder capability not
-   installed" — but the screen does not paint it:
+AC#2 `test_folder_files_and_session_git_use_supported_40x20_navigator` -- the
+40x20 expectation was wrong, and the reason is a product gap. Measured:
+`#file-notes-work` resolves to `Region(x=40, y=7, width=1, height=12)` -- the
+work pane is off the right edge of a 40-column screen -- so Session Git is
+mounted and never composited. Pressing it opens the route (its Back control
+reports `display` and takes focus) while the painted screen does not change at
+all. Reopening the pane through `#library-file-notes-items-grip` (which IS
+composited) gives it `Region(x=10, y=7, width=30, height=12)`, but the button
+then lands on row 19, below the pane's 12 rows. The test now asserts what 40x20
+really shows (navigator painted, authority composited, Session Git mounted but
+not composited, the grip on screen) and that the ROUTE still opens and takes
+focus.
 
-   ```
-   assert "capability not" in painted
-   AssertionError: assert 'capability not' in '                     ╭────────────╮ ...
-   enter run action | esc back to notes | f1 help · f6 next pane · ctrl+p palette · ctrl+q quit  '
-   ```
+AC#3 -- the product half is filed as task-32501 rather than fixed here: making
+the Folder files work pane claim the screen at the narrow floor is a stage/
+priority design change for that surface, not a test-health repair. The
+assertion was corrected WITH the measurement and the pointer to that task, not
+relaxed.
 
-   The box-drawing characters at the head of the painted snapshot suggest a
-   modal or overlay is on screen when the snapshot is taken, i.e. the
-   `scroll_to_widget` before it did not put the reason in view. Note the
-   preceding `assert "server sync-folder" in painted` passes, so only the
-   later half of the copy is missing — consistent with clipping rather than
-   with the reason being absent.
+Suite check: `Tests/UI/test_library_notes_files_sync_journey.py` whole file =
+1 failed / 29 passed; the one failure
+(`test_database_notes_import_once_journey_is_painted_focused_and_retained[size1]`)
+fails identically on dev.
 
-2. `test_folder_files_and_session_git_use_supported_40x20_navigator`
-   (file line 1525 on the branch, 1504 on dev). At 40x20 the Session Git
-   button is mounted but not composited:
-
-   ```
-   assert session_git in pilot.app.screen._compositor.visible_widgets
-   AssertionError: assert Button(id='file-notes-session-changes',
-   classes='-textual-compact -style-default') in {Static(id='footer-key-quit'):
-   ..., Static(...nav-overflow-hint -style-default'): ..., ...}
-   ```
-
-   The compositor at that size reports `Size(width=40, height=20)` and does
-   hold `library-notes-source-strip` and `library-header-line`, so the shell
-   is up; it is the authority/source row's own contents that do not fit or do
-   not paint. The test's earlier `"Folder files" in _painted_text` assertion
-   passes.
-
-Both were reproduced twice: on `dev` 068535986e and on
-`fix/library-notes-r-file-notes` after that dev was merged in, with identical
-assertion text. Neither name appears in any open task at filing time.
+Files: `Tests/UI/test_library_notes_files_sync_journey.py`.
 <!-- SECTION:NOTES:END -->

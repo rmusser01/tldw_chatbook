@@ -28,8 +28,10 @@ grips. Each pane remembers its own choice; collapsing the tree does not also
 collapse Library navigation or the Library notes list. On compact
 terminals, Library shows the Folder files canvas as the single visible stage so
 its controls remain on-screen; **Escape** or **Library notes** returns to the
-Library notes view. Either switch first saves any unsaved edits on the side
-you're leaving.
+Library notes view. Escape climbs one step at a time: from inside the file
+editor it first returns to the **Files** tree (the footer reads `esc files`),
+and the next press leaves Folder files for Library notes (`esc notes`). Either
+switch first saves any unsaved edits on the side you're leaving.
 
 The first editable file opened during a wide Notes work session closes Library
 navigation automatically once to make room. That temporary close does not
@@ -39,7 +41,10 @@ between Edit and Manage, autosaving, resolving a conflict, or resizing does
 not close it again. The automatic close resets only when you close or clear
 the open Folder files file, switch between Folder files and Library notes,
 change the linked folder, clear the selected Library note, or leave Notes.
-Using compact **Back to navigator** does not reset it.
+Using compact **‹ Files** does not reset it. (Was "**Back to navigator**" —
+superseded by task-32553 below: the Session Git panel and the Folder-files
+work pane now use the same "‹ " cue as the Notes editor, naming where it
+goes.)
 
 ## Layout tour
 
@@ -73,9 +78,22 @@ Using compact **Back to navigator** does not reset it.
   "While a folder change runs" below) replaces this summary until you try
   again; the linked-folder detail stays available in the row's tooltip and
   in Details throughout.
+- **Authority line** (above the folder link row) — "Folder files · Folder:
+  \<folder\>", followed by this session's edit count once you have changed a
+  file: "· Git · N change(s)" when the folder has been confirmed to be a Git
+  repository (a `git rev-parse` check runs once per linked folder, and a
+  trusted Session Git repository counts too), and "· N session change(s)"
+  otherwise — a plain folder never says "Git" (task-32543). A running or
+  failed Git operation, or a folder problem, takes this slot instead.
 - **Folder navigator** (left) — a **New** action, a "File contents…" search
   input, the **Files** tree of everything under the linked folder, and a
-  **Search results** tree that appears only while a query is active. Its grip
+  **Search results** tree that appears only while a query is active. Every
+  folder whose name starts with a dot is hidden — `.git`, and Obsidian's own
+  `.obsidian` and `.trash` alike (task-32552); Folder files edits the folder
+  in place, so those stay exactly as they are on disk, just out of the tree
+  and out of search. A file under such a folder that an earlier version had
+  indexed is simply forgotten on the next scan, not listed under "Recently
+  deleted". Its grip
   collapses or restores this tree independently of Library navigation and the
   Library notes list. Large folders and direct-path
   search fallbacks show 100 rows at a time; activate **Load more** to append
@@ -87,7 +105,9 @@ Using compact **Back to navigator** does not reset it.
   Manage groups path details, file actions, Session Git, and Danger.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
-  from the row list, **Esc** or **Back to navigator** returns to the files.
+  from the row list, **Esc** or **‹ Files** returns to the files.
+  In the file editor itself, **Esc** returns to the **Files** tree; a second
+  **Esc** leaves Folder files.
   During commit or push, **Esc** follows the phase-specific safe action in the
   keyboard table below.
 
@@ -389,6 +409,9 @@ not available.
 
 | Key | Action |
 |---|---|
+| Ctrl+End / Ctrl+Home (file editor) | Move the caret to the end / start of the file; the footer shows `ctrl+end end of file` while the editor has focus |
+| Esc (file editor) | Return to the **Files** tree without leaving Folder files (footer: `esc files`) |
+| Esc (Files tree, or anywhere else in Folder files) | Leave Folder files for Library notes (footer: `esc notes`) |
 | Esc (named path task) | Cancel New, Move, or Save copy and return to the action that opened it |
 | Up / Down (Session Git panel) | Select a row |
 | Tab (Session Git panel) | Move into the selected row's actions |
@@ -565,7 +588,8 @@ capture.)*
 per Notes source. This page, the canvas authority line and the F1 Escape row
 all say **Folder files** and **Library notes**; the capitalised "Folder Files"
 and the "back to Database" footer chip are retired. Escape from Folder files
-now reads `esc back to Library notes`.)*
+read `esc back to Library notes` — superseded by task-32552 below: `esc files`
+in the editor, `esc notes` elsewhere.)*
 
 *Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32248,
 task-32265, task-32264, task-32251 AC#5. Session Git now honours the keyboard
@@ -586,3 +610,30 @@ Git repository?") → focus on the row list → Tab to **Stage** → **Commit
 staged (1)** → the commit review → committed; the "Choose File Notes Folder"
 picker's pre-filled **Folder path** selects on the click that focuses it; the
 hidden-frontmatter line reads as described.)*
+
+*Verified against fix/library-notes-w4-file-notes — 2026-09-14 (task-32543,
+task-32552: the authority line said "Git · 1 change" on a folder with no
+`.git`; it now reads "Folder files · Folder: vault-plain · 1 session change"
+there and "· Git · 1 change" only on a real repository — driven live on
+`w4-file-notes/vault-plain` and `vault-git`, at 235x52 and 100x30, after one
+Ctrl+S. Ctrl+End then typing lands at the end of the file on disk (it used to
+land at the click); the tree lists no dot-folder at all, so `.trash` no longer
+differs from `.obsidian`, and a file a previous build had already indexed
+under one leaves "Recently deleted" on the next scan; Escape from the editor
+returns to the Files tree and only the second press leaves Folder files, with
+the footer reading `esc files | ctrl+end end of file` in the editor and
+`esc notes` on the tree. Wrapping, measured rather than assumed: at 100x30
+the editor frame is 32 cells and its text wraps at 27, so
+`![[attachments/diagram.png]]` — 28 cells, one unbreakable token — still
+splits across two rows there. Nothing can render it on one row at that width,
+which is why task-32552 AC#4 is qualified to lines the pane can hold; every
+such line in that note does render on one row, and the wider layouts show the
+embed whole.)*
+
+*Verified against fix/library-notes-w4-import-kbd — 2026-09-14 (task-32553, at
+235x52 and 60x24 on a scratch power profile): the Session Git panel's header
+control reads **‹ Files** (`wave4-caps/import-kbd/import-21-back-cue-files`),
+and the compact Folder-files work pane's return control reads **‹ Files** at
+60x24 (`import-25-files-60x24`) — both were "Back to navigator". The Notes
+editor keeps its own task-32139 wording ("‹ Notes" wide, "‹ Back to list"
+compact), so the grammar is now one cue plus the destination everywhere.)*

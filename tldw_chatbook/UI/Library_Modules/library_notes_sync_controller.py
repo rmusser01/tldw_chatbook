@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from datetime import datetime
+from pathlib import Path
 from typing import Never, Protocol
+
+from loguru import logger
+
+from tldw_chatbook.Notes.note_import_discovery import OBSIDIAN_MARKER_DIRECTORY
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
@@ -15,9 +21,11 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncReviewSource,
     LastingSyncReceiptRow,
     LastingSyncRootRow,
+    LastingSyncWriteReceipt,
     LibraryNotesLastingSyncSnapshot,
     build_reconciliation_review,
     check_failure_line,
+    check_failure_row,
     initial_lasting_sync_snapshot,
     set_setup_value,
     validate_lasting_sync_history_page,
@@ -36,11 +44,14 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
 )
 from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncControlResult,
+    NotesSyncRootRuntimeSnapshot,
     NotesSyncRootSetup,
     NotesSyncRuntimeSnapshot,
     RuntimeConflictHistoryRow,
+    RuntimeBindingLabel,
     RuntimeConflictLabel,
     RuntimeConflictReceipt,
+    RuntimeWriteReceipt,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
     NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
@@ -48,6 +59,21 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncDirection,
     NotesSyncOperationState,
 )
+
+
+def _carries_obsidian_marker(folder: str) -> bool:
+    """Return whether the chosen folder is an Obsidian vault (task-32535).
+
+    The same marker Import once looks for. An unreadable or missing folder is
+    simply not a vault -- setup validation already has the say on those.
+    """
+
+    if not folder.strip():
+        return False
+    try:
+        return (Path(folder) / OBSIDIAN_MARKER_DIRECTORY).is_dir()
+    except OSError:
+        return False
 
 
 class LastingSyncRuntimePort(Protocol):
@@ -83,6 +109,10 @@ class LastingSyncRuntimePort(Protocol):
     async def conflict_labels(
         self, root_id: str, observation_token: str
     ) -> tuple[RuntimeConflictLabel, ...]: ...
+
+    async def binding_labels(
+        self, root_id: str, binding_ids: tuple[str, ...]
+    ) -> tuple[RuntimeBindingLabel, ...]: ...
 
     async def active_conflict_receipts(
         self, root_id: str
@@ -120,6 +150,10 @@ class LastingSyncRuntimePort(Protocol):
     ) -> NotesSyncControlResult: ...
 
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> object: ...
+
+    async def write_receipts(
+        self, root_id: str, *, limit: int = 20
+    ) -> tuple[RuntimeWriteReceipt, ...]: ...
 
 
 class _ImportOncePort(Protocol):
@@ -209,6 +243,11 @@ class InertLastingSyncRuntime:
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> object:
         return await self._blocked()
 
+    async def write_receipts(
+        self, root_id: str, *, limit: int = 20
+    ) -> tuple[RuntimeWriteReceipt, ...]:
+        return ()
+
 
 _STATUS_LABELS = {
     "up_to_date": "✓ Up to date",
@@ -237,6 +276,16 @@ _ACTION_LABELS = {
     "finish_upgrade": "Finish upgrade",
     "close_other_process_and_restart": "Close other process and restart",
 }
+#: task-32534 AC#3: what one completed journal row did, in the user's terms.
+#: The journal names a direction ("update_file" = Notes -> disk); the row
+#: has to say which side ended up carrying the text.
+_RECEIPT_EFFECTS = {
+    "create_file": "Created file from note",
+    "update_file": "Wrote note to file",
+    "move_file": "Moved file",
+    "create_note": "Created note from file",
+    "update_note": "Updated note from file",
+}
 _ROOT_PAGE_SIZE = 20
 # TASK-21112: "not_configured" is the boot-deferred runtime — nothing is set
 # up yet, but first-time setup must be offered (review_setup live-starts the
@@ -261,12 +310,19 @@ class LibraryNotesSyncController:
         import_controller: _ImportOncePort,
         publish_snapshot: Callable[[LibraryNotesLastingSyncSnapshot], None]
         | None = None,
+        refresh_notes: Callable[[], object] | None = None,
     ) -> None:
         self._runtime = runtime
         self._import_controller = import_controller
         self._publish_snapshot = publish_snapshot
+        # task-32518: the one seam that tells the Notes list to refetch after
+        # this controller wrote notes or their managed folder -- the same
+        # callback shape as the import controller's refresh_after_settlement,
+        # and the screen wires both to the same refresh.
+        self._refresh_notes = refresh_notes
         self._review_plan: ReconciliationPlan | None = None
         self._review_labels: dict[str, RuntimeConflictLabel] = {}
+        self._review_binding_labels: dict[str, RuntimeBindingLabel] = {}
         self._selections: dict[tuple[str, str], NotesSyncConflictChoice] = {}
         self._apply_in_flight: set[tuple[str, str]] = set()
         self._activate_in_flight: set[tuple[str, str]] = set()
@@ -282,7 +338,18 @@ class LibraryNotesSyncController:
             lasting_available=runtime.snapshot().status in _SETUP_READY_STATUSES
         )
         self._all_roots: tuple[LastingSyncRootRow, ...] = ()
+        # task-32534 AC#1: root_id -> (failure phrase, next action) for the
+        # last refused action on that root. The runtime's own projection only
+        # knows what the last successful pass saw, so without this a refusal
+        # left "✓ Up to date" standing beside the failure.
+        self._root_failures: dict[str, tuple[str, str]] = {}
         self.refresh_roots()
+
+    def _notes_changed(self) -> None:
+        """Ask the Notes list to refetch after a write reached the database."""
+
+        if self._refresh_notes is not None:
+            self._refresh_notes()
 
     def _current_selections(self) -> tuple[ConflictSelection, ...]:
         plan = self._review_plan
@@ -331,6 +398,7 @@ class LibraryNotesSyncController:
         source: LastingSyncReviewSource | None = None,
         labels: dict[str, RuntimeConflictLabel] | None = None,
         selections: tuple[ConflictSelection, ...] | None = None,
+        binding_labels: dict[str, RuntimeBindingLabel] | None = None,
     ) -> LastingSyncReview:
         projected_labels = self._review_labels if labels is None else labels
         review = build_reconciliation_review(
@@ -341,6 +409,11 @@ class LibraryNotesSyncController:
             ),
             stale=stale,
             activation=activation,
+            labels=(
+                self._review_binding_labels
+                if binding_labels is None
+                else binding_labels
+            ),
         )
         return replace(
             review,
@@ -358,6 +431,67 @@ class LibraryNotesSyncController:
         )
 
     async def _load_review_facts(
+        self, plan: ReconciliationPlan
+    ) -> tuple[dict[str, RuntimeConflictLabel], dict[str, RuntimeBindingLabel]]:
+        """Return (conflict labels, binding labels) for one reviewed plan.
+
+        task-32535: every row with a binding is named by path and destination,
+        not only eligible conflicts. Both projections are fetched under the
+        runtime's review authority, so a label for a changed file is refused
+        as stale rather than rendered wrong -- but a name is decoration, so a
+        refused or unavailable binding-label projection leaves the rows
+        unnamed instead of discarding a review the user can still act on.
+        """
+
+        conflict_labels = await self._load_conflict_labels(plan)
+        try:
+            binding_labels = await self._load_binding_labels(plan)
+        except Exception as error:
+            # Keeping the review usable is right; losing the reason is not.
+            # Unnamed rows ARE the defect task-32535 removed, so a recurrence
+            # has to be findable. Metadata only: no message, no path.
+            logger.debug(
+                "lasting sync binding labels unavailable error_type={}",
+                type(error).__name__,
+            )
+            binding_labels = {}
+        return conflict_labels, binding_labels
+
+    async def _load_binding_labels(
+        self, plan: ReconciliationPlan
+    ) -> dict[str, RuntimeBindingLabel]:
+        # ponytail: this costs a SECOND full folder walk per projection --
+        # `binding_labels` re-observes the root to prove the plan still holds,
+        # as `conflict_labels` does, on top of the check's own walk. Acceptable
+        # while a root is a local folder the discovery pass caches; if a wide
+        # root makes the check feel slow, hand the labels out of the check's
+        # own observation instead of re-taking one.
+        binding_ids = tuple(
+            sorted(
+                {
+                    item.binding_id
+                    for item in (
+                        *plan.safe_actions,
+                        *plan.attention,
+                        *plan.managed_placement_effects,
+                    )
+                    if item.binding_id is not None
+                }
+            )
+        )
+        if not binding_ids:
+            return {}
+        labels = await self._runtime.binding_labels(plan.root_id, binding_ids)
+        if type(labels) is not tuple or any(
+            type(label) is not RuntimeBindingLabel for label in labels
+        ):
+            raise RuntimeError("invalid binding label projection")
+        projected = {label.binding_id: label for label in labels}
+        if len(projected) != len(labels) or set(projected) != set(binding_ids):
+            raise RuntimeError("incomplete binding label projection")
+        return projected
+
+    async def _load_conflict_labels(
         self, plan: ReconciliationPlan
     ) -> dict[str, RuntimeConflictLabel]:
         managed = {effect.binding_id for effect in plan.managed_placement_effects}
@@ -398,7 +532,7 @@ class LibraryNotesSyncController:
         try:
             if expected_root_id is not None and plan.root_id != expected_root_id:
                 raise RuntimeError("review root changed")
-            labels = await self._load_review_facts(plan)
+            labels, binding_labels = await self._load_review_facts(plan)
         except Exception:
             if not self._lifecycle_is_current(expected_root_id, epoch):
                 return None
@@ -406,6 +540,7 @@ class LibraryNotesSyncController:
                 self._selections.clear()
                 self._clear_comparison()
             self._review_labels.clear()
+            self._review_binding_labels.clear()
             self._state = replace(
                 self._state,
                 review=build_reconciliation_review(
@@ -427,6 +562,7 @@ class LibraryNotesSyncController:
             self._clear_comparison()
         selections = self._selections_for_plan(plan)
         self._review_labels = labels
+        self._review_binding_labels = binding_labels
         self._review_plan = plan
         self._state = replace(
             self._state,
@@ -436,6 +572,7 @@ class LibraryNotesSyncController:
                 source=source,
                 labels=labels,
                 selections=selections,
+                binding_labels=binding_labels,
             ),
             conflict_focus_binding_id=None,
         )
@@ -473,6 +610,7 @@ class LibraryNotesSyncController:
     def _invalidate_review_authority(self) -> None:
         self._selections.clear()
         self._review_labels.clear()
+        self._review_binding_labels.clear()
         self._clear_comparison()
         if self._review_plan is not None:
             self._project_review(stale=True)
@@ -591,7 +729,7 @@ class LibraryNotesSyncController:
             )
         if runtime.status == "failed":
             return "Lasting folder sync could not start. Review settings and restart."
-        return "Lasting folder sync is unavailable until the reviewed cutover."
+        return "Keeping a folder synced isn't ready on this profile yet."
 
     @property
     def snapshot(self) -> LibraryNotesLastingSyncSnapshot:
@@ -607,18 +745,7 @@ class LibraryNotesSyncController:
         runtime = self._runtime.snapshot()
         available = runtime.status in _SETUP_READY_STATUSES
         self._all_roots = tuple(
-            LastingSyncRootRow(
-                root.root_id,
-                "Sync folder (name unavailable before cutover)",
-                root.status,
-                root.next_action,
-                _STATUS_LABELS.get(root.status, root.status.replace("_", " ").title()),
-                _ACTION_LABELS.get(
-                    root.next_action, root.next_action.replace("_", " ").title()
-                ),
-                root.action_id,
-            )
-            for root in runtime.roots
+            self._project_root(root) for root in runtime.roots
         )
         page_count = max(
             1, (len(self._all_roots) + _ROOT_PAGE_SIZE - 1) // _ROOT_PAGE_SIZE
@@ -634,6 +761,111 @@ class LibraryNotesSyncController:
         )
         if publish:
             self._publish()
+
+    def _project_root(self, root: NotesSyncRootRuntimeSnapshot) -> LastingSyncRootRow:
+        """Project one runtime root, with its last refusal laid over the top."""
+
+        failure, failed_action = self._root_failures.get(root.root_id, ("", ""))
+        # Fix round 1: the overlay owns the LABELS only. Rewriting ``status``
+        # made an offline root's row render an enabled Check and a Pause,
+        # because the canvas suppresses both by reading ``status`` -- the same
+        # defect this overlay fixes for Resume, on a sibling status.
+        status, next_action = root.status, root.next_action
+        action_label = failed_action or next_action
+        return LastingSyncRootRow(
+            root.root_id,
+            "Sync folder (name unavailable before cutover)",
+            status,
+            next_action,
+            _STATUS_LABELS["needs_attention"]
+            if failure
+            else _STATUS_LABELS.get(status, status.replace("_", " ").title()),
+            _ACTION_LABELS.get(action_label, action_label.replace("_", " ").title()),
+            root.action_id,
+            failure=failure,
+            failed_action=failed_action,
+        )
+
+    def _record_root_failure(
+        self, root_id: str, error: BaseException, *, verb: str
+    ) -> str:
+        """Name one refused root action on its row, and return the status line.
+
+        task-32534 AC#1/#2: the four bare ``except Exception`` branches on
+        this controller used to set a generic line, leave the row at its last
+        projection and log nothing. ``check_failure_row`` is the one site
+        that logs the refusal (metadata only) and names it.
+        """
+
+        failure, next_action = check_failure_row(error, root_id=root_id, verb=verb)
+        self._root_failures[root_id] = (failure, next_action)
+        self.refresh_roots(publish=False)
+        return f"{failure}. Next: {_ACTION_LABELS.get(next_action, 'Check changes')}."
+
+    def _clear_root_failure(self, root_id: str) -> bool:
+        """Drop a root's refusal overlay once an action on it succeeds."""
+
+        if self._root_failures.pop(root_id, None) is None:
+            return False
+        self.refresh_roots(publish=False)
+        return True
+
+    def _restate_root(self, root_id: str) -> None:
+        """Replace a cleared refusal's status line with the row's own truth.
+
+        Fix round 1: pause/resume set no line of their own, so a Resume that
+        cleared "Check failed — folder is paused. Next: Resume." left that
+        sentence standing beside a row reading "✓ Up to date" -- the AC#1
+        contradiction, inverted. No new copy: the line restates the row.
+        """
+
+        row = next((r for r in self._state.roots if r.root_id == root_id), None)
+        if row is None:
+            return
+        self._state = replace(
+            self._state,
+            status_line=f"{row.status_label} · Next: {row.next_action_label}.",
+        )
+
+    async def refresh_receipts(self) -> None:
+        """Project the newest completed writes across the visible roots.
+
+        task-32534 AC#3: lasting sync writes to disk and into notes on its
+        own schedule; before this the only trace was the file itself.
+        """
+
+        collected: list[tuple[int, LastingSyncWriteReceipt]] = []
+        for row in self._state.roots:
+            try:
+                receipts = await self._runtime.write_receipts(row.root_id)
+            except Exception as error:  # noqa: BLE001 - bounded, metadata only
+                # Fix round 1: one root that cannot answer used to abort the
+                # loop and blank every other root's receipts.
+                logger.warning(
+                    "notes sync receipts unavailable for one root; error_type={}",
+                    type(error).__name__,
+                )
+                continue
+            for receipt in receipts:
+                collected.append(
+                    (
+                        receipt.completed_at,
+                        LastingSyncWriteReceipt(
+                            datetime.fromtimestamp(
+                                receipt.completed_at / 1e9
+                            ).strftime("%Y-%m-%d %H:%M"),
+                            _RECEIPT_EFFECTS.get(receipt.kind, "Synced"),
+                            receipt.relative_path,
+                            receipt.note_title,
+                        ),
+                    )
+                )
+        collected.sort(key=lambda entry: entry[0], reverse=True)
+        self._state = replace(
+            self._state,
+            write_receipts=tuple(receipt for _, receipt in collected[:20]),
+        )
+        self._publish()
 
     def set_root_page(self, page: int) -> None:
         """Show one bounded path-free page of roots."""
@@ -691,6 +923,15 @@ class LibraryNotesSyncController:
 
     def set_setup(self, field: str, value: str) -> None:
         self._state = set_setup_value(self._state, field, value)
+        if field == "folder":
+            # task-32535: the toggle is only offered for a real vault, so
+            # detection re-runs on every folder change -- the user may pick a
+            # vault, change their mind, and pick a plain folder.
+            self._state = set_setup_value(
+                self._state,
+                "obsidian_vault",
+                "on" if _carries_obsidian_marker(self._state.setup.folder) else "off",
+            )
         self._publish()
 
     async def check_root(self, root_id: str) -> None:
@@ -802,6 +1043,7 @@ class LibraryNotesSyncController:
                     canonical_path=setup.folder,
                     note_scope_id=setup.note_scope_id,
                     direction=direction,
+                    obsidian_mode=setup.obsidian_vault and setup.obsidian_mode,
                 )
             )
         except Exception as error:
@@ -1013,17 +1255,18 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return
             self._selections.clear()
             self._clear_comparison()
             self._project_review(stale=True)
+            status_line = self._record_root_failure(root_id, error, verb="Apply")
             self._state = replace(
                 self._state,
                 phase="review",
                 review=replace(self._state.review, next_action="Check again"),
-                status_line="Apply failed. Review root status, then Check again.",
+                status_line=status_line,
             )
             self._publish()
             return
@@ -1036,6 +1279,11 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
+        # task-32518: the write is durable by now, so the Notes list refreshes
+        # before any lifecycle return -- Back during the apply would otherwise
+        # skip it and re-create the stale list.
+        if result.safe_completed + result.conflicts_resolved > 0:
+            self._notes_changed()
         if not self._lifecycle_is_current(root_id, epoch):
             return
         receipt_generation = self._start_receipt_request(root_id)
@@ -1120,8 +1368,10 @@ class LibraryNotesSyncController:
                 status_line=(
                     f"{applied} applied · no conflicts remain{receipt_suffix}."
                 ),
-                receipt_line=f"{applied} applied · durable receipt recorded",
+                receipt_line=f"{applied} applied · listed under Receipts",
             )
+        # Fix round 1: an apply that ran supersedes the last refusal too.
+        self._clear_root_failure(root_id)
         self.refresh_roots(publish=False)
         self._publish()
 
@@ -1135,18 +1385,18 @@ class LibraryNotesSyncController:
         self._publish()
         try:
             plan = await self._runtime.request_sync_now(root_id)
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return
+            status_line = self._record_root_failure(root_id, error, verb="Check")
             self._state = replace(
-                self._state,
-                phase="roots",
-                status_line="Manual check failed. Review root status, then try again.",
+                self._state, phase="roots", status_line=status_line
             )
             self._publish()
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
+        self._clear_root_failure(root_id)
         if type(plan) is not ReconciliationPlan or plan.root_id != root_id:
             self._state = replace(
                 self._state,
@@ -1177,18 +1427,22 @@ class LibraryNotesSyncController:
         epoch = self._begin_bound_control_lifecycle(root_id)
         try:
             await self._runtime.resolve_cleanup(root_id, operation_id)
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return
+            status_line = self._record_root_failure(root_id, error, verb="Recovery")
             self._state = replace(
-                self._state,
-                phase="roots",
-                status_line="Recovery needs attention. Review root status, then try again.",
+                self._state, phase="roots", status_line=status_line
             )
             self._publish()
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
+        # Fix round 1: `_CHECK_FAILURE_ROW` sends a recovery refusal here, so
+        # this is exactly the route whose success has to drop the overlay --
+        # otherwise the row keeps saying "Next: Resolve recovery" beside a
+        # status line reporting the recovery was reviewed.
+        self._clear_root_failure(root_id)
         self._state = replace(
             self._state,
             phase="roots",
@@ -1868,6 +2122,10 @@ class LibraryNotesSyncController:
                 )
                 self._publish()
                 return False
+            # task-32518: same as apply -- the activation wrote the notes and
+            # their folder; refresh before the lifecycle check can return.
+            if type(result) is NotesSyncControlResult and result.accepted:
+                self._notes_changed()
             if not self._lifecycle_is_current(root_id, epoch):
                 return False
             if type(result) is not NotesSyncControlResult:
@@ -1896,7 +2154,7 @@ class LibraryNotesSyncController:
                     else "Activation needs attention. Review settings, then check again."
                 ),
                 receipt_line=(
-                    f"{applied_count} applied · durable receipt recorded"
+                    f"{applied_count} applied · listed under Receipts"
                     if accepted
                     else ""
                 ),
@@ -1984,13 +2242,12 @@ class LibraryNotesSyncController:
 
         try:
             result = await operation
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return False
+            status_line = self._record_root_failure(root_id, error, verb="Action")
             self._state = replace(
-                self._state,
-                phase="roots",
-                status_line="Control failed. Review root status, then try its next action.",
+                self._state, phase="roots", status_line=status_line
             )
             self._publish()
             return False
@@ -2004,6 +2261,12 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return False
+        # task-32534 AC#1: the control ran, so the runtime has re-published
+        # this root and the last refusal is history -- keeping the overlay
+        # left "Next: Resume" on the row beside a status line naming a
+        # different action (the live walk's Resume-after-a-failed-Check).
+        if self._clear_root_failure(root_id) and result.accepted:
+            self._restate_root(root_id)
         if result.accepted is False:
             self._state = replace(
                 self._state,

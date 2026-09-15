@@ -13,7 +13,6 @@ from textual.widgets import Button, Static
 from Tests.textual_test_utils import widget_pilot  # noqa: F401
 from Tests.UI.consolidated_css import (
     APP_STYLESHEETS,
-    BUNDLED_STYLESHEET,
     ConsolidatedCSSApp,
 )
 from tldw_chatbook.Library.library_notes_state import (
@@ -264,7 +263,7 @@ async def test_completed_import_receipt_has_focusable_back_action_at_60_columns(
         await pilot.pause()
 
         assert app.focused is back
-        assert str(back.label) == "Back to Notes"
+        assert str(back.label) == "‹ Notes"
         assert back.disabled is False
 
 
@@ -347,7 +346,8 @@ async def test_lasting_setup_retained_wrapper_preserves_input_and_pins_action_at
         await pilot.pause()
         assert primary in app.screen._compositor.visible_widgets
         hint = app.query_one("#notes-sync-fold-hint", Static)
-        assert "Additional setup content is scrollable" in str(hint.renderable)
+        # task-32545 AC#3: was "Additional setup content is scrollable."
+        assert "More below — scroll." in str(hint.renderable)
         assert hint in app.screen._compositor.visible_widgets
         assert canvas.region.right <= 60 and canvas.region.bottom <= 20
 
@@ -892,7 +892,7 @@ async def test_pager_focus_survives_failure_retry_and_retry_loading_recompose() 
     )
 
     class PagerFocusApp(ConsolidatedCSSApp):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self) -> ComposeResult:
             yield LibraryNotesCanvas(list_state=_list_state(), tree_projection=idle)

@@ -25,7 +25,6 @@ stylesheet, so contrast/paint assertions made there are void.
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -50,6 +49,7 @@ from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
     INGEST_PATH_LABEL_COPY,
     LibraryIngestCanvas,
 )
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 
 _INSTALLED_PATCH = "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed"
@@ -96,12 +96,7 @@ class _CssTrueCanvasHost(_CanvasHost):
     loads (the ``_CssTrueConsoleHarness`` lesson).
     """
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 def _preflight(type_groups: dict[str, list[str]], warnings=None) -> PreflightResult:

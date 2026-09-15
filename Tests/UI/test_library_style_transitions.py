@@ -2,7 +2,7 @@
 
 import pytest
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_library_honesty_accessibility import _DatabaseNoteEditorApp
 from Tests.UI.test_library_media_toolbar_adapt import _browse_state, _CanvasApp
 from Tests.UI.test_library_shell import (
@@ -18,11 +18,11 @@ from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanva
 
 
 class _NotesHost(_DatabaseNoteEditorApp):
-    CSS_PATH = BUNDLED_STYLESHEET
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 class _MediaHost(_CanvasApp):
-    CSS_PATH = BUNDLED_STYLESHEET
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 @pytest.mark.asyncio
@@ -80,7 +80,7 @@ async def test_navigation_handle_replaces_the_base_button_width():
     from tldw_chatbook.Widgets.Library.library_rail import LibraryNavigationRailHandle
 
     class HandleHost(ConsolidatedCSSApp):
-        CSS_PATH = BUNDLED_STYLESHEET
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self):
             yield LibraryNavigationRailHandle(id="handle")

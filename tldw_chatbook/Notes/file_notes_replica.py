@@ -308,6 +308,32 @@ class FileNotesReplica:
             )
         return True
 
+    def forget_file(self, root: str, relative_path: str) -> bool:
+        """Drop one replica row and its FTS row without leaving a tombstone.
+
+        task-32552: a file the walk no longer visits (it sits under a
+        dot-directory) has not been deleted; tombstoning it would list it
+        under "Recently deleted" and keep it searchable.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+
+        Returns:
+            ``True`` when a row was removed.
+        """
+        with self._transaction() as cursor:
+            self._delete_fts(cursor, root, relative_path)
+            cursor.execute(
+                """
+                DELETE FROM files
+                WHERE root = ? AND relative_path = ?
+                """,
+                (root, relative_path),
+            )
+            removed = cursor.rowcount > 0
+        return removed
+
     def list_deleted(self, root: str) -> list[str]:
         """List tombstoned paths for one canonical root.
 

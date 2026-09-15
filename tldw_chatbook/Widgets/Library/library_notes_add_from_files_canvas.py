@@ -6,6 +6,7 @@ scroll body so a 60x20 terminal never hides what the user is about to do.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any
 
 from textual import on
@@ -14,14 +15,22 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
+from tldw_chatbook.Library.library_note_import_state import UNIFORM_RUN_MIN
+from tldw_chatbook.Library.library_shell_state import (
+    back_cue_label,
+    library_disabled_action_label,
+    library_disabled_reason_line,
+)
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
     LastingSyncHistoryRow,
+    LastingSyncReview,
     LastingSyncReviewRow,
     LastingSyncReviewSource,
     LibraryNotesLastingSyncSnapshot,
+    review_group_key,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictComparison,
@@ -29,6 +38,12 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
 )
 from tldw_chatbook.Notes.notes_sync_models import validate_notes_sync_opaque_id
 from tldw_chatbook.Utils.Utils import elide_path_middle
+from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+    bounded_row_name,
+    group_heading,
+    run_disclosure,
+    uniform_runs,
+)
 
 
 _CHOICE_SLUGS = {
@@ -260,17 +275,46 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         )
         with VerticalScroll(id="notes-sync-body"):
             yield from self._compose_phase()
+        history_reason = self._history_disabled_reason()
+        if history_reason:
+            # task-32549: "○ Resolution history" said that history was off
+            # and nothing about why -- the reason was on a tooltip, which
+            # does not render in a TUI. The shared `.library-disabled-reason`
+            # line, above the pinned bar rather than inside the label: that
+            # bar is a single `max-height: 3` row of actions, and the
+            # sentence is 33 cells wider than the label it would have to fit
+            # in a 50-column work pane at 60x24. Same treatment "○ Server
+            # notes" has carried in this canvas since task-32257.
+            yield Static(
+                history_reason,
+                id="notes-sync-history-disabled-reason",
+                classes="library-disabled-reason",
+                markup=False,
+            )
         if self._expects_body_overflow():
             yield Static(
-                "Additional setup content is scrollable."
-                if self.snapshot.phase == "configure"
-                else "Additional reviewed effects are scrollable.",
+                "More below — scroll.",
                 id="notes-sync-fold-hint",
                 classes="library-disabled-reason",
                 markup=False,
             )
         with Horizontal(id="notes-sync-pinned-actions", classes="ds-toolbar"):
             yield from self._compose_pinned_actions()
+
+    def _history_disabled_reason(self) -> str:
+        """Why the Resolution history opener is blocked, for the screen.
+
+        Returns:
+            The reason sentence, or ``""`` while the opener is absent or
+            reachable.
+        """
+        if self.snapshot.phase not in {"review", "receipt"} or not self._root_id():
+            return ""
+        if self.snapshot.review.source in {"root", "migration"}:
+            return ""
+        return library_disabled_reason_line(
+            "Resolution history", "it starts after this root is activated"
+        )
 
     def _expects_body_overflow(self) -> bool:
         """Name scrollability only for phases whose bounded body can overflow."""
@@ -323,12 +367,13 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             keep.tooltip = (
                 None
                 if lasting
-                else "Unavailable until the reviewed lasting-sync cutover."
+                else "Keeping a folder synced isn't ready on this profile yet."
             )
             yield keep
             if not lasting:
                 yield Static(
-                    "Unavailable until the reviewed lasting-sync cutover. Nearest valid action: Import once.",
+                    "Keeping a folder synced isn't ready on this profile yet. "
+                    "Nearest valid action: Import once.",
                     classes="library-disabled-reason",
                     markup=False,
                 )
@@ -365,6 +410,23 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 classes="library-canvas-action",
                 compact=True,
             )
+            # task-32535: offered only for a real vault, exactly as Import
+            # once offers it -- and saying the same thing, because the two
+            # paths now run the same pass over the same folder.
+            if setup.obsidian_vault:
+                yield Checkbox(
+                    "Obsidian vault",
+                    value=setup.obsidian_mode,
+                    id="notes-sync-obsidian",
+                )
+                yield Static(
+                    "Skips .obsidian/, .trash/ and Templates/, and empty files. "
+                    "Note properties become the title and keywords and stay in "
+                    "the note. Turning it off lasts until you quit Chatbook: a "
+                    "vault is offered it again, on, on the next start.",
+                    classes="destination-purpose",
+                    markup=False,
+                )
             yield Static("Notes destination", markup=False)
             with Horizontal(classes="ds-toolbar"):
                 yield Button(
@@ -423,7 +485,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 yield from self._compose_receipts()
             yield Static(
                 f"{review.safe_count} safe · {review.attention_count} need attention · "
-                f"{review.skip_count} skipped · {review.managed_count} managed placements",
+                f"{review.skip_count} skipped · {review.managed_count} folder moves",
                 id="notes-sync-review-summary",
                 markup=False,
             )
@@ -433,18 +495,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     classes="library-disabled-reason",
                     markup=False,
                 )
-            for index, row in enumerate(review.rows):
-                with Vertical(
-                    id=f"notes-sync-review-row-{index}",
-                    classes="library-notes-sync-review-row",
-                ):
-                    yield Static(
-                        f"{row.category.title()} item {index + 1}",
-                        classes="destination-section",
-                        markup=False,
-                    )
-                    yield Static(row.effect, markup=False)
-                    yield from self._compose_review_row_body(index, row)
+            yield from self._compose_review_rows(review)
             if review.page_count > 1:
                 yield Static(
                     f"Page {review.page} of {review.page_count}",
@@ -485,6 +536,89 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         if phase == "history":
             yield from self._compose_history()
 
+    # task-32535: the review used to read "Safe item N / Create a Library
+    # note" sixty times over. Rows now follow Import once's grammar (path ·
+    # what happens · where), sit under a heading per effect with its count,
+    # and a uniform run collapses to one summary row with a disclosure.
+    def _compose_review_rows(self, review: LastingSyncReview) -> ComposeResult:
+        groups: dict[tuple[str, str], list[tuple[int, LastingSyncReviewRow]]] = {}
+        for index, row in enumerate(review.rows):
+            groups.setdefault(review_group_key(row), []).append((index, row))
+        # `review.rows` is ONE page: counting the heading off it renders
+        # "Create a Library note (100)" under a "240 safe" counts line on a
+        # 240-file vault. `group_totals` is counted over every page, and
+        # `group_heading` says "N of M on this page" when they differ.
+        totals = {
+            (category, effect): total
+            for category, effect, total in review.group_totals
+        }
+        for (category, effect), members in groups.items():
+            # A plan orders its actions by binding id -- a digest -- so a
+            # vault's forty-five Archive files arrive shuffled among the other
+            # folders and no run is uniform. Path order both collapses them
+            # and is the order the user reads a folder in.
+            members.sort(key=lambda member: (member[1].relative_path, member[0]))
+            yield Static(
+                group_heading(
+                    "Skipped" if category == "skipped" else effect,
+                    rendered=len(members),
+                    total=totals.get((category, effect), len(members)),
+                ),
+                classes="notes-sync-review-group-heading destination-section",
+                markup=False,
+            )
+            for run in uniform_runs(tuple(members), key=self._run_key):
+                if len(run) < UNIFORM_RUN_MIN or category not in {"safe", "skipped"}:
+                    for index, row in run:
+                        yield from self._compose_review_row(index, row)
+                    continue
+                with run_disclosure(
+                    self._run_summary(run),
+                    dom_token=str(run[0][0]),
+                    id_prefix="notes-sync-run",
+                    classes="notes-sync-run",
+                ):
+                    for index, row in run:
+                        yield from self._compose_review_row(index, row)
+
+    @staticmethod
+    def _run_key(member: tuple[int, LastingSyncReviewRow]) -> tuple[str, ...]:
+        _, row = member
+        return (
+            PurePosixPath(row.relative_path).parent.as_posix(),
+            row.category,
+            row.effect,
+            row.destination,
+        )
+
+    @staticmethod
+    def _run_summary(run: tuple[tuple[int, LastingSyncReviewRow], ...]) -> str:
+        _, first = run[0]
+        folder = PurePosixPath(first.relative_path).parent.as_posix()
+        where = bounded_row_name(folder) if folder != "." else "top level"
+        parts = (where, f"{len(run)} files", first.effect, first.destination)
+        return " · ".join(part for part in parts if part)
+
+    @staticmethod
+    def _review_row_line(row: LastingSyncReviewRow) -> str:
+        path = row.relative_path or row.conflict_relative_path
+        parts = (bounded_row_name(path) if path else "", row.effect, row.destination)
+        return " · ".join(part for part in parts if part)
+
+    def _compose_review_row(
+        self, index: int, row: LastingSyncReviewRow
+    ) -> ComposeResult:
+        with Vertical(
+            id=f"notes-sync-review-row-{index}",
+            classes="library-notes-sync-review-row",
+        ):
+            yield Static(
+                self._review_row_line(row),
+                classes="notes-sync-review-line",
+                markup=False,
+            )
+            yield from self._compose_review_row_body(index, row)
+
     def _compose_review_row_body(
         self, index: int, row: LastingSyncReviewRow
     ) -> ComposeResult:
@@ -500,12 +634,6 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 row.conflict_title,
                 id=f"notes-sync-conflict-title-{index}",
                 classes="notes-sync-conflict-title",
-                markup=False,
-            )
-            yield Static(
-                row.conflict_relative_path,
-                id=f"notes-sync-conflict-path-{index}",
-                classes="notes-sync-conflict-path",
                 markup=False,
             )
             yield ReviewActionButton(
@@ -652,7 +780,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     def _compose_receipts(self) -> ComposeResult:
         if self.snapshot.receipts_unavailable:
             yield Static(
-                "At-action receipts are unavailable. Open Resolution history.",
+                "Per-change receipts aren't available here. Open Resolution history.",
                 classes="library-disabled-reason",
                 markup=False,
             )
@@ -814,7 +942,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         phase = self.snapshot.phase
         if phase == "choose":
             yield Button(
-                "Back to Notes",
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -884,10 +1012,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     "migration",
                 }
                 yield ReviewActionButton(
-                    (
-                        "Resolution history"
-                        if history_reachable
-                        else "○ Resolution history"
+                    library_disabled_action_label(
+                        "Resolution history", not history_reachable
                     ),
                     review_root_id=root_id,
                     review_observation_token=self.snapshot.review.observation_token,
@@ -916,10 +1042,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     "migration",
                 }
                 yield ReviewActionButton(
-                    (
-                        "Resolution history"
-                        if history_reachable
-                        else "○ Resolution history"
+                    library_disabled_action_label(
+                        "Resolution history", not history_reachable
                     ),
                     review_root_id=root_id,
                     review_observation_token=self.snapshot.review.observation_token,
@@ -935,7 +1059,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     ),
                 )
             yield Button(
-                "Back to Notes",
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -974,7 +1098,16 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         previous_phase = self.snapshot.phase
         previous_snapshot = self.snapshot
         self.snapshot = snapshot
-        if previous_phase == snapshot.phase == "configure":
+        if (
+            previous_phase == snapshot.phase == "configure"
+            # task-32535: this fast path patches the form's fields in place so
+            # a snapshot cannot eat what the user is typing. It can only do
+            # that while the form's SHAPE is unchanged -- the Obsidian row
+            # exists for a vault and not for a plain folder, so a pick that
+            # flips that answer has to rebuild.
+            and previous_snapshot.setup.obsidian_vault
+            == snapshot.setup.obsidian_vault
+        ):
             status = self.query("#notes-sync-status")
             if status:
                 status.first(Static).update(snapshot.status_line)
@@ -1042,7 +1175,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             review = snapshot.review
             summary.first(Static).update(
                 f"{review.safe_count} safe · {review.attention_count} need attention · "
-                f"{review.skip_count} skipped · {review.managed_count} managed placements"
+                f"{review.skip_count} skipped · {review.managed_count} folder moves"
             )
         apply = self.query("#notes-sync-apply")
         if apply:
@@ -1245,6 +1378,13 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         field = fields.get(event.input.id or "")
         if field:
             self.post_message(self.SetupChanged(field, event.value))
+
+    @on(Checkbox.Changed)
+    def _obsidian_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "notes-sync-obsidian":
+            self.post_message(
+                self.SetupChanged("obsidian_mode", "on" if event.value else "off")
+            )
 
     @on(Button.Pressed)
     def _button_pressed(self, event: Button.Pressed) -> None:

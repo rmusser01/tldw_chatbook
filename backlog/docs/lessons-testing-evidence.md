@@ -11,7 +11,7 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ## A zero regex count can hide an unchanged visual write
 
-**TASK-32532, 2026-09-14 recovery.** The interrupted Python migration had an
+**TASK-32596, 2026-09-14 recovery.** The interrupted Python migration had an
 empty regex baseline, but AST inspection found 567 new `set_styles` calls
 containing 579 covered visual writes. Changing assignment syntax had bypassed
 the test. The dimension matcher also missed five declarations whose first value
@@ -25,7 +25,7 @@ proof that the inventory is complete.
 
 ## Class migration must release retained inline geometry
 
-**TASK-32532, 2026-09-14.** Mounted Console Settings transitions retained widths
+**TASK-32596, 2026-09-14.** Mounted Console Settings transitions retained widths
 12/27 when switching to a full-width class, even with `!important`. Inline values
 still won. Library emergency resizing retained fractional classes in the reverse
 transition, and its one-cell navigation handle inherited an eleven-cell class.
@@ -36,7 +36,7 @@ loads consolidated defaults alone does not load the app-tier utility sheet.
 
 ## Removing CSS comments can alter selector meaning
 
-**TASK-32532, 2026-09-14 byte-budget paydown.** Replacing comments with spaces
+**TASK-32596, 2026-09-14 byte-budget paydown.** Replacing comments with spaces
 changed `Button/* note */.active` into a descendant selector. A token comparison
 that discarded all whitespace missed the error. Remove only comment bytes,
 preserve quoted strings and original whitespace boundaries, and compare parsed
@@ -2151,6 +2151,16 @@ introspection APIs, check the interpreter version and inspect the raw API output
 before patching application code. Re-run collection under a supported project
 interpreter to distinguish an interpreter-assumption failure from a product
 regression, and record both results.
+
+**Recurrence, agent-orchestration remaining-work review, 2026-09-12.** Root
+launched the AST-only diagnostic inventory with the host `python3`, which was
+Apple Python 3.9. It failed on an unchanged `match` statement in
+`UI/LLM_Management/vllm_setup_view.py`, before producing any drift verdict.
+The original command/traceback/exit are preserved in the workstream evidence.
+Use the already provisioned supported project interpreter for AST inspection
+as well as pytest; a stdlib-only checker can still require the project's
+Python grammar. This incident did not justify changing source syntax or
+regenerating the inventory without reviewing its result.
 
 ---
 
@@ -11654,6 +11664,14 @@ AND the owning screen's split sheet (`screen_agentic_console|library|settings.tc
 in the app's order. When a bundle grep says a Settings/Console/Library class has no
 rule, grep the split sheets before concluding the state is unstyled.
 
+**PR2665 integration, 2026-09-13:** the real multi-sheet harness exposed a
+second trap: splitting moved the generic `.settings-input-row` rule after the
+bundle while leaving `.agents-enabled-row` in it. Their equal specificity let
+the generic one-row height clip the three-row Switch. Both production-width
+checks failed before scoping the specialized rule to `#agents-form`, then
+passed with unchanged paint, focus, content-bounds and Space-toggle assertions.
+Source-module order alone does not prove precedence after stylesheet splitting.
+
 ---
 
 ## Textual's `Color.hsl` hue is 0-1, not degrees
@@ -13655,3 +13673,473 @@ derivation), the landing pass runs the pin files of every sibling group that
 also touched it in the same wave — `git log -S'<function>' --oneline` on the
 wave's branches names them — not only your own. A contradiction between two
 pins is a product ruling to record in both task files, not a merge fix.
+
+## Reproduce geometry UNDER pytest — a bare probe reads the real user config
+
+**task-32184, 2026-09-11.** The Library width matrix was 16/24 red on dev. A
+standalone async probe that mirrored the test body exactly (same harness, same
+helpers, same waits) reported values that matched the test's expectations and
+contradicted the failures — it "proved" there was nothing to fix. The
+difference: run as a script it loaded the developer's real
+`~/.config/tldw_cli/config.toml`, where `items_width` is 40; under pytest the
+config is isolated and the default `ITEMS_TARGET_WIDTH` (50) applies, and 50 is
+what makes the Items pane stop fitting beside a 48-cell work floor at 100
+columns. Two of the six parametrised widths hinge on exactly that.
+
+**What to do.** Any probe whose answer depends on configuration — geometry,
+widths, feature gates, provider readiness — must run through pytest (a
+throwaway `Tests/UI/test_zz_*.py` you delete afterwards, `-s` and a `print`)
+rather than as a script. If a bare probe disagrees with a pytest failure,
+believe pytest and look for the config seam.
+
+## A fake missing a seam fails SILENTLY behind a `callable()` guard
+
+**task-32201, 2026-09-11.** Three tests reported "the filter never reaches the
+search service", and the task was filed as a product defect. The product was
+fine: since the Notes folder tree, the filter submits through
+`search_note_tree_placements`, and the shared fake
+(`StaticLibraryNotesScopeService`) still carried only `search_notes`.
+`_run_library_notes_filter` starts with
+`method = getattr(service, "search_note_tree_placements", None)` /
+`if not callable(method): return` — so with that fake the filter returned
+before calling anything, silently. Every filter assertion in every Library
+suite had been measuring a filter that did nothing, and the tests that passed
+did so because they asserted on state the no-op happened to leave alone.
+
+**What to do.** When a test says "X never reached the service", check FIRST
+which service method the current code calls and whether the fake has it —
+`grep` the production route for `getattr(service, ...)` guards. A fake is a
+contract copy; when production moves to a new seam, the fake keeps passing
+whatever it still implements. And treat a production `if not callable(...):
+return` as a place where a missing seam becomes invisible, not as a safety net.
+
+## A green suite cannot see kwargs the production adapter swallows
+
+**TASK-32477, 2026-09-12.** The agent-routing feature's spawn integration passed
+every test — 152 green across three suites — because the tests stubbed
+`chat_call` with a capturing fake and asserted on the captured kwargs. The task's
+own gateway trace then found the PRODUCTION adapter
+(`_StreamingModelAdapter.chat_call`, console_agent_bridge.py) accepted
+`api_endpoint` and never referenced it, and dropped `api_base_url` plus all 13
+sampling kwargs into `**_ignored`, always streaming via the parent's fixed
+resolution. The feature was completely inert in production behind a green suite;
+a whole plan task (6B) had to be added to make routed calls actually route. The
+final review independently re-verified the fix end-to-end through
+`resolve_for_send` → `stream_chat` → `_chat_api_kwargs_from_prepared` →
+`chat_api_call`.
+
+**What to do.** When a feature's contract crosses a seam the tests stub, "the
+seam forwards my kwargs" is a claim to verify against the real implementation —
+read the production adapter's body once (grep for the kwargs; watch for
+`**_ignored`), and have the integration review trace one call end-to-end. A
+capturing stub proves what you EMIT, never what the other side CONSUMES.
+
+## Completed first-run setup is not a send-ready Console (TASK-13154.4, 2026-09-12)
+
+Six approval-card tests still reached a blocking provider-setup modal after the app factory marked first-run setup complete. A fixed 250 ms grace appeared to repair focus/geometry, but review exposed its scheduling assumption. Waiting for the actual attach reconciliation and resume-state projection exposed six modal assertion failures; persisting the existing send-ready llama_cpp fixture made all six pass. Mounted decision tests need both the real provider-ready fixture and observable startup completion before injecting pending state. Do not replace those conditions with a longer pause or patch away setup guards.
+
+
+## Paging checks must reject full-history reads in ownership lookups
+
+**TASK-18601, 2026-09-12.** The bounded segment reader reconstructed a 3 MB UTF-8 record correctly, but the combined viewer review found that its parent-ownership helper still called `subagent_run`/`get_run`, hydrating the entire database step log before every page. Switching that helper to `get_run_metadata` removed the hidden allocation. A real SQLite/scratch-authority regression now makes `get_run` and `_batch_hydrate_steps` fail while reading first/later primary and child pages and probing availability; the final affected integration selection passed 61 tests.
+
+**What to do.** Qualify the whole read path, including target and ownership resolution. A page-size assertion proves little if a helper materializes the complete history first. Seed real stored history, forbid its hydration in the bounded path, and separately verify that metadata lookups run off the UI thread.
+
+## Reusable workers change the test cleanup boundary
+
+**TASK-31511, 2026-09-12.** Replacing per-event webhook threads with a reusable worker left the old enabled-scheduler test passing while its module worker remained alive for 30 seconds after fake transports were restored. Independent review also found that polling a mutable current-thread field could return before the exact thread exited. The corrected tests inject an isolated worker, capture each started Thread under a delivery gate, and release/join those exact objects in finally before dependency restoration; all 25 webhook tests passed. When production resource lifetime grows, revisit existing test ownership, not only new tests.
+
+
+## Nested interpreter tests must inherit both dependencies and test isolation
+
+**TASK-31210 preparation, 2026-09-12.** Four workspace-executor tests failed because their temporary interpreter copied only `site.getsitepackages()` from a parent virtualenv whose dependencies came through a `.pth` file. Adding the missing dependency site in a test-only control exposed another defect: three harnesses replaced the environment with PATH and locale alone, losing the pytest-owned HOME/config boundary and reading the live config before returning an unrelated refusal. Preserving the owned config/data/keyring/offline values and installing the test network guard before product imports made all four original subprocess cases pass. The contained worker environment was unchanged.
+
+**What to do.** Inspect both the nested interpreter search path and the outer harness environment before running product imports. A parent pytest sandbox does not reach a subprocess whose explicit environment discards it; dependency repair can uncover that hidden leak. Preserve the worktree source-path assertion and keep test harness isolation separate from the production worker allowlist.
+
+
+## Approval metadata can change permission selection unless absence and fallback stay exact
+
+**TASK-18929, 2026-09-12.** Adding exact-call approval metadata initially made a new proceed entry override an id-less same-name refusal; a failing builder regression exposed the accidental dispatch widening. Independent review then found the opposite change: wrapping a raw None stamp made MCP skip its fresh policy/callback gate. Six real invocation cases comparing absent and None-valued stamps across Allow/Off/Ask reproduced three failures before the fix; all81MCP tests passed afterward.
+
+**What to do.** Treat lookup precedence and raw absence as part of the existing permission contract. Settle the original refusal map before adding observational entries, and keep metadata-wrapper presence separate from decision presence. Exercise actual builders and invocation owners with exact/name keys, id-less rows, unanswered choices and malformed stamps; testing the new metadata field alone can miss both broader and narrower permissions.
+
+
+## Verify retries through the runtime that failed (TASK-18929)
+
+During denial-breaker verification, a Console test initially used a real store and controller but disabled the agent runtime for its next submit. That passed while proving only ordinary-chat retry acceptance. Root review corrected the harness to use the real ConsoleAgentBridge with temporary AgentRunsDB, assert the failed state and unchanged partial answer, then observe completion of the next agent submit. The final six-case selection passed. A post-failure retry test must cross the same runtime/admission path whose recovery it claims to verify; a shared controller alone does not establish that boundary.
+
+
+## A pinned worktree cwd does not pin Git's shared metadata
+
+**TASK-31210/31211 qualification, 2026-09-12.** A real spawned worker held both source and linked-child directory pins, then waited on an owned Pipe. After the source was renamed and a temporary replacement received copied Git metadata, a commit from the still-pinned original child advanced the replacement repository's agent branch; the original repository stayed at its base. A separate CREATE probe similarly reopened a replacement through an absolute Git-dir argument. The races reproduced against actual Git2.39.5 on macOS, before any new product implementation.
+
+**What to do.** Verify bytes, index and refs in both original and replacement repositories, not just the worker cwd or command exit. Trace administrative paths Git follows; a source-local CREATE control does not establish atomic protection for later operations. In this incident, treating the stronger guarantee as a prerequisite also expanded two UI/persistence tasks into a replacement-execution project and disabled existing worktree creation. The user challenged that scope and approved restoring ordinary Git with authorization/identity checks; ADR-155 records that correction. Preserve the experimental result and explicitly state the accepted concurrent-replacement limit. Do not describe an unresolved design choice as a missing external backend.
+
+
+## Pytest helpers outside Tests do not inherit the repository isolation
+
+**TASK-13154.6, agent preset verification, 2026-09-12.** Three artifact attempts
+used a helper under `.superpowers/sdd` rather than under `Tests/`. Although
+invoked with pytest and the isolated interpreter, they did not load
+`Tests/conftest.py`; importing the UI helper read and merged the real user
+configuration. The default sandbox then blocked an append-open of the data-root
+lock. The traces do not prove zero earlier import side effects. A later
+`-k regenerate` selection repeated the mistake because it matched the helper
+filename and selected sibling artifact nodes too. Final UI probes were moved
+under `Tests/UI`, run with its conftest isolation, and removed after capture.
+
+**What to do.** Put any temporary probe that imports product/UI code below
+`Tests/`, inspect its collected node list before execution, and select the exact
+node when a helper contains unrelated tests. Merely running `python -m pytest`
+or importing another test module does not activate that module's conftest. Keep
+exports under the plan's evidence directory, but keep the executable probe under
+the isolated test tree. Never retry an isolation failure by loosening the
+sandbox; qualify actual reads and failed writes from preserved traces without
+reopening user configuration.
+
+
+## Recovery tests must cross accepted close and actual picker routing
+
+**TASK-31210/31211, Console recovery, 2026-09-12.** The initial lifetime test replaced the entire accepted-close/drain method and passed while new manual recovery remained admissible during a real session close. Gating the actual fleet-drain await exposed that late admission and three premature-cancellation cases: stale revision, refused close and provisional voice close. The fix uses the existing runtime admission fence and signals recovery only after the exact close ticket is accepted. The four cases failed before the fix and passed afterward.
+
+A second gap survived direct helper-to-confirmation tests and native visual inspection: the actual recovery picker put its payload in Button.action, a Textual routing attribute, so pressing its button did not emit the expected event. A mounted command action → async list → real picker → inline card → Git test reproduced it; renaming the payload to recovery_action restored the flow. Test the application's actual entry and lifetime boundary, and gate only the external wait needed for determinism. A working helper or correctly painted button does not establish that callers can reach it.
+
+
+## Protect the gap before a background worker starts
+
+**TASK-31210/31211 final integration, 2026-09-12, e135a085f2.** Git reader threads were started before the process cleanup finally block; manual recovery allocated a capacity owner before submitting its worker but released it only inside that worker. Eleven focused failures reproduced live gated processes after reader-start failure, false positive drain after denied retirement, and lost or leaked ownership around submission. A fixture using a real executor also queued work and then raised at the submission boundary, showing why an exception alone is not proof that no worker can run.
+
+The correction protects resources immediately after creation and uses a standard Future to arbitrate worker entry versus revoked admission. Tests assert process retirement and absence of later Git effects before fallback test cleanup. For ambiguous submission they release queued work after revocation and prove no engine/DB entry; an already-entered worker remains owned even after its waiter is cancelled. Include these pre-entry cases alongside ordinary running-worker cancellation tests. A worker's finally block cannot clean up an allocation if that worker never starts.
+
+
+## Cancelled DNS waiters do not prove native resolver retirement
+
+**PR2665 review, 2026-09-13.** A full webhook deadline fixed queue progress,
+but real executor-backed DNS remained alive after cancellation. With only a
+worker-count cap, eight timed-out arrivals still admitted eight native jobs.
+A cancellation-before-entry test exposed the same problem when the queued
+native Future could be cancelled and release its slot early. Bound admission
+until the actual native Future settles, and test it with releasable gates.
+
+A second regression refused only the event loop's shutdown-helper thread start.
+Runner cleanup then exited while the held DNS thread still ran. Join the retained
+executor on the existing delivery thread before publishing retirement; if
+settlement cannot be confirmed, retain the nonaccepting owner. Assert refusal
+and ownership before releasing the gate, then join every exact owned thread.
+A coroutine timeout alone proves neither physical cleanup nor prompt process exit.
+
+## Test newly allocated paths through their strict recovery consumer
+
+**PR2665 review, 2026-09-13.** Canonical recovery fixtures hid macOS's normal
+`/var` to `/private/var` temporary-directory alias. A real Git checkout created
+through a symlinked temp base, stored in SQLite, then passed to recovery failed
+with `invalid_path`. Canonicalizing the new allocation parent before Git creation
+made that roundtrip pass. Keep loaded ownership paths strict: resolving an
+application-owned new allocation does not justify normalizing a stored authority.
+
+
+## A saved endpoint is only pinned if the real gateway honors it
+
+**PR #2651 recovery, 2026-09-13.** Routing tests used a gateway fake that copied
+`selection.base_url`, so they passed while the real gateway preferred an edited
+registry URL over a child's saved target. Review also found same-provider
+sampling overlays retaining parent-only optional values absent from the child's
+snapshot. Regression tests failed before the fixes; joined adapter → real gateway
+checks then verified both generic and llama.cpp children dispatch and discover
+against the saved URL while ordinary sessions still follow registry edits.
+
+**What to do.** Assert the effective transport resolution through the real
+consumer of saved configuration, with conflicting live values as controls. An
+omitted optional setting must also be exercised: overlaying present keys does
+not establish that a child owns the absent ones.
+
+## A first reactive read can reenter a loader before its arguments finish evaluating
+
+**TASK-32565, 2026-09-13.** The native slow-directory picker showed duplicate
+rows despite passing partial-loading and cancellation tests. Both scan iterators
+returned unique names, but 3,370 published records contained only 1,698 unique
+paths. Evaluating `self.show_files` in the worker-launch argument list initialized
+a Textual reactive, called its watcher, and reentered `_load`. The inner load
+replaced the queue/token before the outer call evaluated those arguments, so both
+scans published into the same queue. Reading reactive inputs before assigning
+worker ownership isolated the queues; the next native run finished with exactly
+4,000 unique entries. A mounted regression recreates the descriptor's first-read
+state and proves superseded queues/tokens differ. Read potentially reentrant
+inputs before mutating ownership, and check uniqueness AND completed enumeration
+before calling a performance run complete.
+
+## Direct action calls can miss a keyboard-dispatch race
+
+**TASK-32565 review, 2026-09-13.** A picker regression called `action_select()`
+while a sorted listing was partially rebuilt and correctly did nothing with no
+highlight. The same mounted state followed by `pilot.press("enter")` navigated
+to the parent: the key handler invalidated highlight restoration, a publication
+batch installed the parent fallback, then the binding activated it. Restricting
+restoration invalidation to navigation keys and actual type-ahead matches fixed
+both picker families. For safety during asynchronous UI replacement, exercise
+real key dispatch as well as direct actions; verify an intentional movement key
+still overrides restoration.
+
+
+## Deliver queued Buddy notifications after the screen stack closes
+
+**TASK-32506, 2026-09-13.** The installed app passed its lifecycle probe locally
+but failed Linux release run 34791909137 during shutdown: a queued ContentsRebuilt
+message read `app.screen` after Textual emptied the stack. The related BuddyChanged
+route could do the same. Delivering both actual messages after the real shutdown
+order reproduced ScreenStackError deterministically. Empty-stack guards fixed both
+paths; all 29 Buddy lifecycle tests passed. A local successful shutdown alone did
+not establish that late queued messages were harmless.
+
+## Run the would-be regression pin on unpatched dev before writing the fix
+
+**task-32538, 2026-09-14.** Critique #3 filed "the chrome strip's word count is
+wrong on a long note: 404 words for 5,407 tokens", with an inferred mechanism
+("404 is the character length of the list's first row title") and a plausible
+stale-count story — the strip keeps the last count fed to it and repaints from
+that on caret moves and resizes, so a count painted for the previously open
+note *could* stick. Nobody had checked the number itself. Live on the seeded
+power profile the strip read `441 words · 1:1` for "Markdown showcase" and
+then `5,427 words · 1:1` for the 37,519-character note opened straight after
+it; `SELECT content` from the profile database gives exactly 5,427 `\S+`
+tokens. The critique's own captures read "5,404 words · 1:1" and "5,407 words
+· 363:22": "404 words" was those numbers with the thousands separator dropped
+in the reading. The decisive artefact was cheap — the two regression pins
+written for the bug PASS on unpatched `origin/dev`, which is proof there is
+nothing to fix, in a form a reviewer can re-run.
+
+**What to do.** Before implementing a fix for a reported-value bug, write the
+pin and run it against the unpatched baseline tree. Green there means the
+report is a reading error or a different route, and the pin still ships — it
+is the evidence that the behaviour is right, and it fails if someone breaks it
+later. Verify the number against the source of truth (the database row, not
+the screen) rather than against the reporter's transcription, and be
+especially suspicious of a report whose stated mechanism ("404 is the length
+of a title") does not survive being checked: "Markdown showcase" is 17
+characters.
+
+## Three filed sites are three instances; the shared predicate's call sites are the defect
+
+**TASK-32461, fix round 1, 2026-09-14.** The task named three seams that read
+`_flush_library_prompt_save()` and refused in silence. All three were wired,
+pinned red-first and mutation-tested, and the task passed spec review. The
+review then grepped the predicate: **8** call sites, and the one the task did
+not name (`library_inspection_admission.py:230`, the barrier every navigation
+INTO Library crosses) was both silent AND the only one a user reaches by hand
+today — it returns before the deep-link seam the branch had spent its scope
+argument on, so the newly shipped line there was correct but dormant. It sat
+five lines above a skill veto that already spoke.
+
+**What to do.** When a defect is "callers of X do not do Y", the unit of work
+is `grep -n "X()" -r` and a disposition for every hit — speaks / deliberately
+silent / unreachable-with-this-state, each with its evidence — recorded in the
+task. The filed list of sites is a sample someone took by hand, not the
+population. That sweep costs one grep and would have caught this before review.
+
+
+## Two worktrees running the same app-booting suite at once DEADLOCK, and it reads as "slow"
+
+**task-32536 / task-32555, 2026-09-14.** The branch-vs-dev-baseline comparison
+is normally two pytest runs fired together, one per worktree. For
+`Tests/UI/test_first_run_wizard_live_contract.py` — 95 node ids, each booting a
+real app under `run_test` — that pair sat at **one completed test each for over
+fifteen minutes**, burning 18 s of CPU in ten minutes of wall clock. It looked
+exactly like CPU starvation (the box genuinely was loaded: another session was
+running the `tldw_Server_API` suite at 99 %), so the first instinct was to wait
+it out. Twice. Killing one side and running the first six of the same node ids
+alone finished them in **8.68 s**. Separate worktrees are not separate
+environments here: these tests share a per-user data directory and its instance
+lock, so two app boots serialise on each other and the wait is invisible in
+pytest's dot output.
+
+**What to do.** Run the branch side and the baseline side **sequentially** for
+any suite that boots the app, never as a parallel pair — the whole comparison
+is still faster. Diagnose an apparently-stalled pytest by CPU time, not wall
+clock (`ps -o pid,etime,time`): near-zero CPU accumulation means blocked, not
+starved, and no amount of waiting fixes blocked. And before concluding a long
+file cannot be run, check whether the change is even reachable from it: a
+repo-wide scan showed the new test was the only test anywhere that pressed
+Enter in `#setup-provider-api-key`, which bounded the risk far better than the
+full file would have.
+
+## A pin that mounts a fresh host per state never exercises the UPDATE path
+
+**task-32535, 2026-09-14.** `test_sync_setup_offers_the_obsidian_toggle_on_for_a_vault`
+drove the real controller, asserted `obsidian_vault is True`, mounted
+`_Host(controller.snapshot)` and found the checkbox. Green. In the running app
+at 235x52 the checkbox never appeared: picking the folder leaves the setup form
+already mounted, and `LibraryNotesAddFromFilesCanvas.sync_state` keeps a fast
+path that PATCHES the configure form's fields in place (so a snapshot cannot
+eat what the user is typing) and returns before `refresh(recompose=True)`.
+Patching can update a Static or a Button label; it can never add a widget that
+only exists for some states. The pin mounted a new host per snapshot, so it
+composed the vault state from scratch every time and never took that path.
+
+**What to do.** When a change makes a widget CONDITIONAL, the pin has to mount
+once and then push the new state through the real update seam (`sync_state`,
+`watch_*`, the publish callback) — `app.query_one(Canvas).sync_state(...)`,
+then assert. Also grep the widget's update method for early `return`s before
+the recompose: each one is a shape the snapshot cannot change, and each is
+invisible to a compose-once test.
+
+## A pin that CONSTRUCTS the state it asserts proves the renderer, never the producer (task-32545, 2026-09-14)
+
+**task-32545, 2026-09-14.** `test_sync_copy_uses_no_engineering_terms` rendered
+the lasting-sync receipt phase from a hand-built snapshot
+(`replace(base, phase="receipt", receipt_line="60 applied · listed under
+Receipts")`) and asserted no engineering terms were painted. It passed. The
+live walk's very first activation then printed "60 applied · durable receipt
+recorded": the copy had been fixed at `apply_reviewed`'s site and missed at
+`activate_root`'s, and the test could never have caught it, because the test
+supplied the string it was checking. Two sibling defects surfaced the same way
+and only live — a row-reason table whose keys a filter upstream could never
+return, and a button set keyed on a status the fix itself rewrites.
+
+**What to do.** When a fix changes a string or a state a PRODUCER computes,
+at least one pin must drive the producer's route (here: `await
+controller.activate_root(...)`, then assert `snapshot.receipt_line`), not
+construct the snapshot. A canvas-level render pin is still worth having for
+layout, but it is evidence about the widget only. Corollary from the same
+task: `git grep` the exact old string across `tldw_chatbook/` after the edit —
+two call sites producing the same line is the normal case, not the odd one.
+
+## A duplicate dict key is a silent overwrite, and only the SOURCE can show it (task-32534, 2026-09-14)
+
+**task-32534 fix round 1, 2026-09-14.** Three reason codes were added to
+`_CHECK_REFUSAL_COPY` after a live walk showed them unclassified. They were
+already defined 60 lines above. Python keeps the last literal, so three shipped
+user-facing strings were replaced — `root_lease_unavailable`, the "another
+Chatbook is holding this folder" case, lost "Close any other Chatbook window
+using it" and began sending the reader to a Reconnect that cannot help. The
+diff read as pure addition, no test pinned the old strings, and a test that
+inspects the dict OBJECT cannot see it: by then the duplicate is gone.
+
+**What to do.** When appending to a keyed table, grep the table for the key
+first — a table long enough to need appending is long enough to hide the key.
+Pin it with an `ast` scan over the module source (`ast.Dict`, count
+`ast.Constant` keys) rather than a per-string assertion, so the guard covers
+every future row instead of the three you happened to notice. Same round, same
+disease in a different organ: a sibling suite asserted `"unavailable" in
+status_line.casefold()` as a proxy for "the line is truthful", so rewording the
+line turned that pin red with no clue why — proxy substring assertions on copy
+decay into tripwires. Assert the sentence, and find these by diffing the
+FAILED-name SET over whole files against a detached `origin/dev`, not by
+running your own new ids.
+
+## A pane's `content_region.width` is not the width its text wraps at — measure `wrap_width`, and stamp only what you measured
+
+**task-32552, 2026-09-13/14.** AC#4 said an embed line must not wrap mid-token
+at 100x30. The first pin asserted `editor.content_region.width >= len(EMBED)`
+and passed, and the guide stamp went out saying the 28-cell
+`![[attachments/diagram.png]]` "renders on one row in the 32-cell editor".
+Driven live at 100x30 it does not: the frame is 32 cells, but a document
+taller than the pane paints a vertical scrollbar inside it and the text wraps
+at **27**, so the embed splits as `![[attachments/diagram.png]` / `]`. The pin
+had been green because its fixture note was short enough not to scroll — a
+different widget from the one the critique saw — and because
+`content_region.width` counts cells the scrollbar and padding then take back.
+
+**What to do.** For any "does this line fit" claim, assert against the
+widget's own wrap width (`TextArea.wrap_width`) and make the fixture produce
+the same scrollbar state as the real screen — for a scrolling pane, assert
+`wrapped_document.height > content_region.height` so the pin fails if the
+fixture ever stops measuring the scrolled case. And never put a layout outcome
+in a "Verified against" stamp that you did not read off a capture: this stamp
+asserted the opposite of what the terminal showed, and the pin agreed with it
+for a day.
+
+## A layout pin proves one width, and only that width — and a new row has a price
+
+**task-32549, 2026-09-14.** Wave-4's `layout` group added a disabled reason to
+three Library controls. The first shape put the reason in the button label
+("○ Sort unavailable — clear the filter") and shipped a pin that mounted the
+canvas at the pane a 235-column terminal gives the Notes list — 138 cells. Green.
+Live at **100x30**, where the same production resolver gives that list **42**
+cells, the label cost 41 with its button chrome and painted "○ Sort unavailable
+— clear the" against the grip: the exact half-word defect the two sibling tasks
+in the same group were fixing.
+
+The second shape moved the reason onto a `.library-disabled-reason` line of its
+own. Every pin in the group stayed green — and
+`test_library_note_60x20_navigator_state_allocation[selection]`, a geometry pin
+in `test_library_shell.py` that the branch never touched, went red: the new line
+cost `#library-notes-list` a row at 60x20 (height 7, expected 8). It is green on
+`origin/dev`. Nothing in the group's own suite could have caught it; what caught
+it was running the **full** touched files and diffing the FAILED-name **set**
+against a detached `origin/dev` worktree. The third shape put the reason on the
+count line that was already under the strip ("0 selected — Export selected
+unavailable") — same information, zero new rows, and the untouched pin went green
+again without being edited.
+
+**What to do.** For anything that changes what a pane paints:
+
+- Parametrise width pins over every width the control is reachable at (this repo:
+  235, 100, 60), and take the pane width from the production resolver rather than
+  typing a constant — `resolve_adaptive_reader_layout(...)` gave 138 / 42 / 50 for
+  the same list.
+- Treat a NEW ROW as a change with a cost, not as free chrome. A compact terminal
+  is 20-24 rows; look for a line that already exists and can carry the words
+  before adding one.
+- Assert on the mounted regions, not on the string you passed in: the instrument
+  that found the first defect live was `region.right > canvas.region.right`, and
+  the one that found the second was a name-set diff, not a pass/fail count.
+
+**And a third incident in the same group, for the same discipline.** task-32557's
+first fix made a width-shaped widget decide its shape from its OWN measured width
+instead of the width the screen had resolved for it. Instrumenting `on_resize`
+over one 60 → 170 → 60 round trip logged widths of 110, 106, 46, 48, 68, 40, **1**
+and 72 — a resize delivers a run of MID-LAYOUT numbers, and deciding anything from
+them recomposed the widget on transients. A widget's own `region.width` is the
+truth about what it can PAINT this instant; it is not a stable input to a policy
+decision. Take the settled number from whoever computed the layout.
+
+The pin for that fix also had to be written twice: the first version poked the
+canvas's `styles.width` directly and **passed with the fix disabled**, because in
+that harness the canvas had never been told a pane width at all and fell back to
+measuring itself — not the state the defect lives in. Always run a would-be
+regression pin with the fix disabled, not only against unpatched `dev`: a pin that
+never enters the defective state is green for the wrong reason.
+
+
+## A seam the shared fake does not implement is a seam your pin cannot see (task-32539, 2026-09-14)
+
+**The incident.** After a confirmed Notes delete, focus was nowhere: the next
+Tab restarted at the toolbar's "New", leaving **Undo** — the only recovery
+action on screen — seven stops away. The fix looked like one line: hand the
+delete's `_sync_library_canvas` a `then=` that focuses `#library-notes-delete-
+undo`. The new pin went GREEN, and the app at 235x52 behaved exactly as
+before: receipt painted, nothing focused.
+
+The cause was a THIRD sync. `queue_after_recompose` **replaces**, and in
+production every delete also starts a Trash-reload worker that ends in a
+target-less `_sync_library_canvas`. It landed between the delete's sync and
+its recompose, evicted "focus the Undo", and installed the generic identity
+restore in its place — which had captured "nothing focused". The pin could
+not see any of it because `StaticLibraryNotesScopeService` has no
+`list_deleted_notes`, so `_load_library_notes_trash` returned before its sync
+and that worker never ran in tests at all.
+
+**What to take from it.**
+
+1. **A green pin over a fake that is missing a production seam is not
+   evidence.** Before believing a focus/ordering pin, list what production
+   starts on that gesture (workers, reloads, reconcilers) and check the fake
+   implements each one. Here the missing method was visible in ten seconds:
+   `grep list_deleted_notes Tests/` returned nothing.
+2. **Reproduce the race on the real route rather than widening the shared
+   fake.** Attaching `list_deleted_notes` to the service instance inside the
+   one test kept every other suite's "Recently deleted" state unchanged, and
+   that pin fails on detached `origin/dev` with the exact live string
+   ("focus is 'library-notes-filter'"). A pin that reproduces the live
+   symptom is the one worth keeping.
+3. **"Last writer wins" queues need a not-clobbering rule, once, at the
+   queue.** The media branch of `canvas_sync` had guarded its own default
+   restore this way since task-31567 and the notes branch had not; the fix
+   was to move the rule to the single place every kind queues through — a
+   sync carrying only a DEFAULT restore (`then is None`) no longer overwrites
+   a follow-up an action queued. Two sites with the same rule and one of them
+   missing it is the shape this bug had.
+4. **Live-verify the gesture, not the unit.** Both rounds of this fix passed
+   their tests. Only the tmux walk distinguished them, and only a patched
+   `queue_after_recompose`/`recompose` pair printing what was queued and what
+   ran located the eviction.

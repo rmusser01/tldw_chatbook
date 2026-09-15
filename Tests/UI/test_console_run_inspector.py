@@ -15,7 +15,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleDisplayRow,
     ConsoleInspectorAction,
@@ -1210,7 +1210,7 @@ async def test_inspector_group_heading_shares_a_left_edge_with_its_rows():
     # `.console-inspector-group-heading`'s own padding never applies and an
     # alignment assertion against it passes vacuously.
     class StyledInspectorHarness(InspectorHarness):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     app = StyledInspectorHarness(
         _base_state(

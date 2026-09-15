@@ -169,6 +169,9 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         )
         recent.source_type = item.source_type
         recent.record_id = item.record_id
+        # task-32461 fix round 1: carried so a refused open can name what was
+        # pressed, beside the (source_type, record_id) pair it already routes on.
+        recent.record_title = item.title
         return recent
 
     @staticmethod

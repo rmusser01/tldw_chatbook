@@ -226,7 +226,7 @@ Matched casefolded, like the skip map below: Windows and macOS preserve a
 marker's casing but compare it case-insensitively.
 """
 
-_OBSIDIAN_SKIPPED_ROOT_FOLDERS = {
+OBSIDIAN_SKIPPED_ROOT_FOLDERS = {
     OBSIDIAN_MARKER_DIRECTORY: "obsidian_config",
     ".trash": "obsidian_trash",
     "templates": "obsidian_template",
@@ -1177,7 +1177,7 @@ def _obsidian_skip_reason(
         return always
     if not state.obsidian_mode or not state.vault_detected or relative_parts:
         return None
-    return _OBSIDIAN_SKIPPED_ROOT_FOLDERS.get(name.casefold())
+    return OBSIDIAN_SKIPPED_ROOT_FOLDERS.get(name.casefold())
 
 
 def _add_skip(

@@ -265,6 +265,8 @@ $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
 
+$ds-console-settings-wide-max-width: 196;
+
 
 .tldw-agentic-split-preamble-end { }
 
@@ -659,6 +661,21 @@ $ds-theme-preview-invalid: #808080;
    neither shifts nor is clipped, and `outline: none` suppresses the generic
    `*:focus{outline:solid}` fallback (core/_reset.tcss). */
 .library-rail-row:focus {
+    border-left: thick $ds-action-focus;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    outline: none;
+}
+
+/* task-32546 (critique #3, B D16): the Library landing's "From your
+   Library" rows are the first thing Tab and F6 reach on the way into
+   Notes, and they marked focus with a background colour alone
+   (rgb(30,30,30) -> rgb(28,70,102), read off an ANSI capture) -- the same
+   colour-only cue task-32359 removed from the rail rows one pane away.
+   Same shape and the same reasons: the house bar replaces the row's own
+   left padding so the label neither shifts nor is clipped, and
+   `outline: none` suppresses the generic `*:focus{outline:solid}`
+   fallback (core/_reset.tcss). */
+.library-hub-recent:focus {
     border-left: thick $ds-action-focus;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;

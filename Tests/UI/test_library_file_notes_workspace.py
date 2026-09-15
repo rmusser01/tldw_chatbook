@@ -21,7 +21,10 @@ from textual.screen import ModalScreen, Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+)
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -114,7 +117,7 @@ def test_static_content_gate_skips_equal_copy_but_updates_changed_copy() -> None
 class _WorkspaceHarness(ConsolidatedCSSApp):
     """Mount one retained workspace without the rest of Library."""
 
-    CSS_PATH = BUNDLED_STYLESHEET
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:
         super().__init__()
@@ -127,12 +130,7 @@ class _WorkspaceHarness(ConsolidatedCSSApp):
 class _CssTrueWorkspaceHarness(_WorkspaceHarness):
     """Mount File Notes with the production bundle and shipped themes."""
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def on_mount(self) -> None:
         for theme in ALL_THEMES:
@@ -142,7 +140,7 @@ class _CssTrueWorkspaceHarness(_WorkspaceHarness):
 class _TwoWorkspaceHarness(ConsolidatedCSSApp):
     """Mount two workspaces that share one process owner."""
 
-    CSS_PATH = BUNDLED_STYLESHEET
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(
         self,
@@ -163,7 +161,7 @@ class _TwoWorkspaceHarness(ConsolidatedCSSApp):
 class _DynamicWorkspaceHarness(ConsolidatedCSSApp):
     """Mount a second workspace after the first is already running."""
 
-    CSS_PATH = BUNDLED_STYLESHEET
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:
         super().__init__()
@@ -2985,7 +2983,10 @@ async def test_folder_files_authority_merges_save_and_git_in_either_update_order
         assert _static_text(workspace, "#file-notes-save-detail") == (
             f"Content detail: {save_detail}"
         )
-        assert "Git · 1 change" in expected
+        # task-32543: no Git service is attached here, so nothing confirmed
+        # a repository -- the count is this session's edits, never "Git".
+        assert "1 session change" in expected
+        assert "Git" not in expected
         assert "Next:" in content
 
         workspace._navigator_mode = "git"
@@ -3040,6 +3041,64 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
         assert workspace.query_one("#file-notes-body").region.height >= 8
 
     replica.close()
+
+
+def test_header_never_says_git_for_a_non_repository_with_changes() -> None:
+    """task-32543 AC#2/#3: session edits in a plain folder are not "Git".
+
+    Critique #3 (A 57; B 40, 50): a fresh vault with no ``.git`` read
+    "Folder files · Folder: vault · Git · 1 change" after one edit, because
+    the resolver built the suffix from the session change count alone.
+    """
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        resolve_file_note_status_channels,
+    )
+
+    channels = resolve_file_note_status_channels(
+        root="/notes/vault",
+        git_changes=1,
+        repository_confirmed=False,
+    )
+
+    assert channels.authority_git == (
+        "Folder files · Folder: vault · 1 session change"
+    )
+    assert "Git" not in channels.authority_git
+    plural = resolve_file_note_status_channels(
+        root="/notes/vault",
+        git_changes=3,
+        repository_confirmed=False,
+    )
+    assert plural.authority_git.endswith("· 3 session changes")
+    assert "Git" not in plural.authority_git
+
+
+def test_header_says_git_only_after_a_confirmed_repository() -> None:
+    """task-32543 AC#1: the "Git · …" suffix needs a confirmed repository."""
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        resolve_file_note_status_channels,
+    )
+
+    confirmed = resolve_file_note_status_channels(
+        root="/notes/vault",
+        git_changes=1,
+        repository_confirmed=True,
+    )
+    assert confirmed.authority_git == "Folder files · Folder: vault · Git · 1 change"
+
+    # Git activity words (a running or failed operation) can only come from
+    # a Git operation, which presupposes the repository -- they stay.
+    failed = resolve_file_note_status_channels(
+        root="/notes/vault",
+        git_changes=1,
+        git_failure="Commit failed",
+        repository_confirmed=True,
+    )
+    assert failed.authority_git.endswith("· Git · Commit failed")
+
+    # The gate is opt-in for callers that do not know: absent, no "Git".
+    unknown = resolve_file_note_status_channels(root="/notes/vault", git_changes=1)
+    assert "Git" not in unknown.authority_git
 
 
 def test_configured_root_authority_state_table_is_two_line_and_bounded(
@@ -3100,7 +3159,12 @@ def test_configured_root_authority_state_table_is_two_line_and_bounded(
         elif push_value in {"checking", "pushing"}:
             assert "Git ·" in authority
         elif git_count:
-            assert f"{git_count} change" in authority
+            # task-32543: no Git service is attached to this workspace, so
+            # nothing has confirmed a repository -- the count is this
+            # session's edits and the line never says "Git". (The two
+            # branches above are Git OPERATIONS, which presuppose one.)
+            assert f"{git_count} session change" in authority, (context, authority)
+            assert "Git" not in authority, (context, authority)
         else:
             assert "Git" not in authority
 
@@ -3317,8 +3381,9 @@ async def test_file_notes_navigation_and_key_guidance_use_one_phrase() -> None:
         git_back = workspace.query_one("#file-notes-git-back", Button)
         guide = _static_text(workspace, "#file-notes-git-guide")
 
-        assert str(editor_back.label) == "Back to navigator"
-        assert str(git_back.label) == "Back to navigator"
+        # task-32553: one back-cue grammar, "‹ <where it goes>".
+        assert str(editor_back.label) == "‹ Files"
+        assert str(git_back.label) == "‹ Files"
         assert guide == "Up/Down select · Tab actions · Enter run · Esc back"
         assert "|" not in guide
 
@@ -3839,9 +3904,10 @@ async def test_saved_authority_with_session_git_paints_at_60x20(
         assert "Saved" in _static_text(workspace, "#file-notes-save-status")
         if push_copy:
             assert push_copy in painted
-            assert "1 change" not in painted
+            assert "1 session change" not in painted
         else:
-            assert "1 change" in painted
+            assert "1 session change" in painted
+            assert "Git" not in painted
 
     replica.close()
 
@@ -6888,7 +6954,8 @@ async def test_file_notes_merged_recovery_authority_paints_at_60x20_shell(
         assert "Folder: Resear" in painted
         assert "name" in painted
         assert state_copy in content_words
-        assert "Git · 1 change" in painted
+        assert "1 session change" in painted
+        assert "Git" not in painted
         assert next_copy in content_words
         assert detail not in _static_text(workspace, "#file-notes-authority")
         assert detail not in _static_text(workspace, "#file-notes-save-status")

@@ -466,3 +466,6 @@ $ds-theme-preset-dark-4: #656565;
 $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
+
+/* Wide Conversation settings dialog preserved from upstream. */
+$ds-console-settings-wide-max-width: 196;

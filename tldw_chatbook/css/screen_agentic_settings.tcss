@@ -265,6 +265,8 @@ $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
 
+$ds-console-settings-wide-max-width: 196;
+
 
 .tldw-agentic-split-preamble-end { }
 

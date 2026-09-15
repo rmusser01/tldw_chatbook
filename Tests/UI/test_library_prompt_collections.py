@@ -12,7 +12,7 @@ import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.containers import VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, Checkbox, Input, Static
@@ -728,7 +728,7 @@ class _ManagerHost(ConsolidatedCSSApp):
 
 
 class _StyledManagerHost(_ManagerHost):
-    CSS_PATH = LibraryHarness.CSS_PATH
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 class _MutationManagerHost(ConsolidatedCSSApp):

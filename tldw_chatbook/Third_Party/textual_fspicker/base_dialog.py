@@ -24,12 +24,17 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Input, ListView, ListItem, Static
+from textual.widgets import Button, Label, Input, ListView, ListItem, Static, Select
 
 ##############################################################################
 # Local imports.
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
+from ...Utils.input_validation import (
+    validate_file_picker_sort_direction,
+    validate_file_picker_sort_key,
+)
 from .parts import DirectoryNavigation, DriveNavigation
+from .parts.progressive_directory_navigation import SORT_OPTIONS
 from .path_maker import MakePath
 
 
@@ -243,6 +248,26 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     SAFE_MODAL_CONTENT = "#file-system-picker-dialog"
 
     DEFAULT_CSS = """
+        FileSystemPickerScreen #listing-controls {
+            height: auto;
+            width: 1fr;
+        }
+        FileSystemPickerScreen #listing-sort-label {
+            width: auto;
+            content-align: center middle;
+        }
+        FileSystemPickerScreen #listing-controls Select {
+            width: 1fr;
+        }
+        FileSystemPickerScreen #listing-controls SelectCurrent Static#label {
+            text-wrap: nowrap;
+            text-overflow: ellipsis;
+        }
+        FileSystemPickerScreen #listing-progress {
+            height: auto;
+            color: $text-muted;
+        }
+
     FileSystemPickerScreen {
         align: center middle;
 
@@ -356,6 +381,7 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         }
 
         InputBar {
+            dock: bottom;
             height: auto;
             align: right middle;
             padding-top: 1;
@@ -474,6 +500,51 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         # parameter; otherwise use it as-is as it'll be a string.
         return label(default) if callable(label) else label or default
 
+    def _listing_controls(self) -> ComposeResult:
+        with Horizontal(id="listing-controls"):
+            yield Label("Sort", id="listing-sort-label")
+            yield Select(
+                SORT_OPTIONS,
+                value="discovery",
+                allow_blank=False,
+                compact=True,
+                id="listing-sort",
+            )
+            yield Select(
+                [("Ascending", "ascending"), ("Descending", "descending")],
+                value="ascending",
+                allow_blank=False,
+                compact=True,
+                id="listing-direction",
+                disabled=True,
+            )
+        yield Static("Scanning…", id="listing-progress", markup=False)
+
+    @on(Select.Changed, "#listing-sort")
+    @on(Select.Changed, "#listing-direction")
+    def _change_listing_sort(self, event: Select.Changed) -> None:
+        event.stop()
+        navigation = self.query_one(DirectoryNavigation)
+        try:
+            if event.select.id == "listing-sort":
+                value = validate_file_picker_sort_key(event.value)
+                navigation.sort_key = value
+                self.query_one("#listing-direction", Select).disabled = (
+                    value == "discovery"
+                )
+            elif event.select.id == "listing-direction":
+                value = validate_file_picker_sort_direction(event.value)
+                navigation.sort_descending = value == "descending"
+        except ValueError:
+            return
+
+    @on(DirectoryNavigation.ListingChanged)
+    def _listing_changed(self, event) -> None:
+        event.stop()
+        self.query_one("#listing-progress", Static).update(
+            event.navigation.listing_status
+        )
+
     def compose(self) -> ComposeResult:
         """Compose the child widgets.
 
@@ -509,6 +580,8 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             yield Static(
                 _listing_column_headers(), id="file-dialog-column-headers"
             )
+
+            yield from self._listing_controls()
 
             # Main directory navigation
             with Horizontal():
@@ -620,9 +693,10 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         self._set_error()
 
     @on(DirectoryNavigation.PermissionError)
-    def _show_permission_error(self) -> None:
+    def _show_permission_error(self, event: DirectoryNavigation.PermissionError) -> None:
         """Show any permission error bubbled up from the directory navigator."""
-        self._set_error(self.ERROR_PERMISSION_ERROR)
+        if event.path == event.control.location:
+            self._set_error(self.ERROR_PERMISSION_ERROR)
 
     def check_action(
         self, action: str, parameters: tuple[object, ...]
@@ -812,23 +886,55 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             except Exception:
                 pass
 
+    _MAX_VISIBLE_BREADCRUMBS = 5
+    """Segment count above which the middle collapses (task-32554 AC#3).
+
+    Note the off-by-two in the name, inherited deliberately: a collapsed
+    trail renders the root plus the last ``_MAX_VISIBLE_BREADCRUMBS - 2``
+    segments -- four crumbs, not five. The value and the arithmetic are
+    copied verbatim from ``EnhancedFileDialog._update_breadcrumbs`` so the
+    two pickers agree on how deep a path is "deep"; renaming it here alone
+    would make them look different when they are not.
+    """
+
     def _update_breadcrumbs(self, path: Path) -> None:
-        """Update breadcrumb navigation."""
+        """Update breadcrumb navigation, collapsing a deep path in the middle.
+
+        task-32554 AC#3 (critique #3, assessor A 27): every segment was
+        rendered, so a 100+ character location ran straight off the dialog's
+        right edge and the crumbs that name where you ARE -- the last few --
+        were the ones clipped away. Root + "…" + the tail keeps the current
+        directory and its parents on one line; each crumb still carries its
+        own absolute path as its tooltip, and ``#current_path_display`` above
+        still shows the location in full.
+        """
         try:
             breadcrumb_container = self.query_one("#path-breadcrumbs", Horizontal)
             breadcrumb_container.remove_children()
 
             parts = path.parts
-            for i, part in enumerate(parts):
+            max_visible = self._MAX_VISIBLE_BREADCRUMBS
+            if len(parts) > max_visible:
+                visible_indices = [0, *range(len(parts) - max_visible + 2, len(parts))]
+            else:
+                visible_indices = list(range(len(parts)))
+
+            for position, i in enumerate(visible_indices):
                 partial_path = Path(*parts[: i + 1])
 
+                # A gap since the previous shown crumb gets one ellipsis.
+                if i > 0 and i != visible_indices[position - 1] + 1:
+                    breadcrumb_container.mount(
+                        Label("…", classes="breadcrumb-separator breadcrumb-ellipsis")
+                    )
+
                 # Create button for each path component
-                btn = Button(part, variant="default", classes="breadcrumb-btn")
+                btn = Button(parts[i], variant="default", classes="breadcrumb-btn")
                 btn.tooltip = str(partial_path)  # Store full path in tooltip
                 breadcrumb_container.mount(btn)
 
                 # Add separator if not last
-                if i < len(parts) - 1:
+                if position < len(visible_indices) - 1:
                     breadcrumb_container.mount(
                         Label("/", classes="breadcrumb-separator")
                     )

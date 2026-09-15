@@ -215,3 +215,28 @@ def test_forward_loguru_to_standard_keeps_rendered_exception_type(caplog):
         for record in records
     )
     assert all(not hasattr(record, "private_value") for record in records)
+
+
+def test_synthetic_frame_names_stay_greppable(sink):
+    """TASK-32533 review, Minor #3: `<lambda>` must not serialize to "invalid".
+
+    CPython names synthetic frames `<lambda>`, `<module>`, `<genexpr>` and
+    `<listcomp>`; none is an identifier, so the crash-site fields used to lose
+    exactly the frames this codebase produces most (lambdas handed to
+    `call_later`). Brackets off, name kept -- still no path, still no message.
+    """
+    path, handler = sink
+    persist_event(
+        "app",
+        "unhandled_exception",
+        level=logging.ERROR,
+        exception_type="RuntimeError",
+        raise_function="<lambda>",
+        site_function="<module>",
+        raise_module="tldw_chatbook.app",
+    )
+    handler.flush()
+    written = path.read_text()
+    assert "raise_function=lambda" in written
+    assert "site_function=module" in written
+    assert "invalid" not in written

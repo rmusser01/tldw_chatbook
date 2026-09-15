@@ -34,7 +34,7 @@ import pytest
 from rich.text import Text
 from textual.widgets import Static
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_console_workspace_context_rail import (
     _base_grouped_workspace_state,
@@ -411,7 +411,7 @@ def _tray_harness():
     state = replace(_base_grouped_workspace_state(), workspace_name="Research Lab")
 
     class TrayApp(ConsolidatedCSSApp):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self):
             yield ConsoleWorkspaceContextTray(

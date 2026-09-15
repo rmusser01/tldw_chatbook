@@ -44,6 +44,10 @@ from tldw_chatbook.Chat.console_settings_apply import (
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.select_values import (
+    assign_select_value,
+    select_value_or_blank,
+)
 from .console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -72,6 +76,9 @@ class ConsoleModelPopoverResult:
 _CONSOLE_POPOVER_TEMPERATURE_MIN = 0.0
 _CONSOLE_POPOVER_TEMPERATURE_MAX = 2.0
 _FULL_SETTINGS_ACTION = "full_settings"
+#: Viewport width where the popover's wide tier engages, matching the
+#: Conversation settings modal's wide tier (PR #2670).
+_CONSOLE_POPOVER_WIDE_VIEWPORT_COLUMNS = 150
 
 
 class DraftRebaser(Protocol):
@@ -161,6 +168,19 @@ class ConsoleModelPopover(
         border: tall $surface-lighten-1;
         background: $panel;
         padding: 1 2;
+    }
+
+    /* Wide-terminal tier (viewport >= 150 columns): the fixed 60-column
+       quick popover reads as cramped next to the wide-tiered Conversation
+       settings modal on wide terminals, so grow the container to 85% of
+       the viewport, capped at 170 columns -- deliberately below the
+       settings modal's 196 so the quick surface stays visually lighter.
+       The class is toggled by Python from the app viewport width -- the
+       container's own width cannot drive this without a chicken-and-egg
+       loop. Everything else (height, padding, borders) is unchanged. */
+    #console-model-popover.-console-popover-wide {
+        width: 85%;
+        max-width: 170;
     }
 
     #console-model-popover-body {
@@ -433,10 +453,17 @@ class ConsoleModelPopover(
                 error.display = False
                 yield error
                 yield Static("Provider", classes="console-popover-field-label")
+                # TASK-32533: a no-provider draft carries "" and a stale draft
+                # can carry a key the option builder no longer lists; Textual's
+                # Select raises InvalidSelectValueError at mount for either,
+                # and that exit took the whole app with it (critique #3 P0).
+                # Same guard as the model select below, and as the update path
+                # in `_sync_controls_from_draft`.
                 yield Select(
                     provider_options,
-                    value=settings.provider,
+                    value=select_value_or_blank(provider_options, settings.provider),
                     id="console-popover-provider",
+                    allow_blank=True,
                 )
                 yield Static("Model", classes="console-popover-field-label")
                 model_select = Select(
@@ -640,9 +667,37 @@ class ConsoleModelPopover(
         """Settle the narrow-height fold affordance after first layout."""
         self._sync_default_content()
         self.call_after_refresh(self._sync_fold_hint)
+        self.call_after_refresh(self._sync_responsive_width)
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Recompute the fold affordance when the terminal size changes."""
+        """Re-sync the fold hint and the responsive width tier on resize.
+
+        One terminal resize now drives two syncs, each re-run after the
+        resize settles via ``call_after_refresh``: the narrow-height fold
+        affordance (``_sync_fold_hint``) and the wide-terminal width tier
+        (``_sync_responsive_width``), which itself re-chains the fold hint
+        because a tier flip changes body overflow.
+
+        Args:
+            _event: The terminal resize event; unused directly because
+                the wide tier reads the app viewport width, not the
+                event's size.
+        """
+        self.call_after_refresh(self._sync_fold_hint)
+        self.call_after_refresh(self._sync_responsive_width)
+
+    def _sync_responsive_width(self) -> None:
+        """Derive the wide-terminal layout tier from the viewport width."""
+        try:
+            container = self.query_one("#console-model-popover", Vertical)
+        except NoMatches:
+            return
+        # The wide tier keys off the app viewport, never the container's own
+        # width: sizing the container from the container would oscillate.
+        container.set_class(
+            self.app.size.width >= _CONSOLE_POPOVER_WIDE_VIEWPORT_COLUMNS,
+            "-console-popover-wide",
+        )
         self.call_after_refresh(self._sync_fold_hint)
 
     def _sync_fold_hint(self) -> None:
@@ -824,7 +879,10 @@ class ConsoleModelPopover(
             provider_select = self.query_one("#console-popover-provider", Select)
             if provider_select.value != settings.provider:
                 with provider_select.prevent(Select.Changed):
-                    provider_select.value = settings.provider
+                    # TASK-32533 (review fix 1): the mount is guarded, and so is
+                    # this. A blank popover plus Custom ID plus one keystroke
+                    # rebases the draft to `provider=""` and lands here.
+                    assign_select_value(provider_select, settings.provider)
             temperature = self.query_one("#console-popover-temperature", Input)
             with temperature.prevent(Input.Changed):
                 temperature.value = (

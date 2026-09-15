@@ -319,6 +319,9 @@ $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
 
+
+$ds-console-settings-wide-max-width: 196;
+
 /* ===== MODULE: core/_reset.tcss ===== */
 
 
@@ -1820,6 +1823,21 @@ Select.-textual-compact:focus > SelectCurrent {
     background: $ds-input-focus-bg;
 }
 
+FileSystemPickerScreen #listing-controls {
+    height: $ds-control-height-compact;
+}
+FileSystemPickerScreen #listing-sort-label {
+    padding: $ds-space-0 $ds-space-inline;
+}
+FileSystemPickerScreen #listing-controls Select {
+    width: $ds-width-fill;
+    height: $ds-control-height-compact;
+}
+FileSystemPickerScreen #listing-progress {
+    min-height: $ds-control-height-compact;
+    color: $ds-text-muted;
+}
+
 /* ===== MODULE: components/_navigation.tcss ===== */
 
 
@@ -2143,6 +2161,12 @@ FileOpen InputBar Select,
 EnhancedFileDialog InputBar Select {
     width: $ds-size-24;
     margin-bottom: $ds-space-0;
+}
+
+
+FileSystemPickerScreen Button:focus {
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
 }
 
 
@@ -7385,14 +7409,15 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     color: $ds-text-muted;
 }
 
+
 .console-setup-modal-action {
     width: auto;
     min-width: $ds-size-12;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     padding: $ds-space-0 $ds-space-1;
-    border: none;
+    border: round $ds-grid-line;
     background: $ds-focus-bg;
     color: $ds-text-primary;
     content-align: left middle;
@@ -7401,7 +7426,10 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 .console-setup-modal-action:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
-    text-style: bold underline;
+    border: round $ds-focus-accent;
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+    text-style: bold;
 }
 
 #console-chat-tabs {
@@ -7700,6 +7728,12 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
 ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
     height: $ds-size-1;
     min-height: $ds-size-1;
+}
+
+
+#console-settings-modal.-conversation-settings-wide {
+    width: $ds-percent-85;
+    max-width: $ds-console-settings-wide-max-width;
 }
 
 .console-settings-error {
@@ -9570,6 +9604,56 @@ ConsolePromptsModal.-narrow #console-prompts-search {
 }
 #console-agent-progress { width: $ds-width-fill; height: $ds-size-1; min-height: $ds-size-1; margin: $ds-space-1 $ds-space-0; }
 
+
+#chat-worktree-confirm-card {
+    height: auto;
+    max-height: $ds-size-22;
+    padding: $ds-space-inset;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    border: solid $ds-status-approval-required;
+}
+#worktree-action, .worktree-recovery-title {
+    height: auto;
+    text-style: $ds-text-strong;
+}
+#worktree-details {
+    height: auto;
+    max-height: $ds-size-12;
+}
+#worktree-source, #worktree-destination, #worktree-diffstat, #worktree-consequence,
+.worktree-recovery-context, .worktree-recovery-row Static {
+    height: auto;
+    width: $ds-width-full;
+}
+#worktree-buttons, .worktree-recovery-actions, #worktree-recovery-footer {
+    height: $ds-control-height;
+}
+#worktree-buttons Button, .worktree-recovery-actions Button,
+#worktree-recovery-footer Button {
+    margin-right: $ds-space-inline;
+    min-width: $ds-size-10;
+}
+WorktreeRecoveryDialog {
+    align: center middle;
+}
+#worktree-recovery-dialog {
+    width: $ds-percent-90;
+    max-width: $ds-size-110;
+    height: $ds-percent-90;
+    padding: $ds-space-inset;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+#worktree-recovery-rows {
+    height: $ds-height-fill;
+}
+.worktree-recovery-row {
+    height: auto;
+    margin-bottom: $ds-space-section;
+}
+
 /* ===== MODULE: features/_library.tcss ===== */
 
 
@@ -9733,6 +9817,71 @@ ConsolePromptsModal.-narrow #console-prompts-search {
     color: $ds-text-primary;
     text-style: bold;
 }
+
+
+.agents-preset-row {
+    height: $ds-size-4;
+    min-height: $ds-size-4;
+}
+
+#agents-preset-select {
+    width: $ds-width-fill;
+    min-width: $ds-size-12;
+}
+
+#agents-load-preset-button {
+    width: auto;
+    min-width: $ds-size-13;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+}
+
+
+#agents-instructions-area {
+    height: $ds-size-5;
+    min-height: $ds-size-3;
+}
+
+
+#agents-form .settings-compact-input {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    min-width: $ds-size-0;
+    border: none;
+    outline: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.agents-field-row {
+    layout: grid;
+    grid-size: $ds-size-2;
+    grid-columns: $ds-size-24 1fr;
+    overflow-x: hidden;
+}
+
+#agents-form .settings-compact-input:focus {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    border: none;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#agents-enabled-switch {
+    width: auto;
+    min-width: $ds-size-8;
+}
+
+
+#agents-form .agents-enabled-row {
+    height: $ds-control-height;
+    min-height: $ds-control-height;
+}
+
 
 .settings-input-label {
 

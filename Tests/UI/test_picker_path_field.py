@@ -25,6 +25,7 @@ from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import (
     InputBar,
     PathInput,
 )
+from tldw_chatbook.Third_Party.textual_fspicker.parts import DirectoryNavigation
 
 
 class _DialogHost(App[None]):
@@ -95,6 +96,12 @@ async def test_file_picker_field_is_replaced_by_a_typed_absolute_path(tmp_path):
         await pilot.pause()
         field = dialog.query_one(InputBar).query_one(Input)
         assert isinstance(field, PathInput)
+        # task-32540: this dialog now OPENS with the field focused, so
+        # reaching the click-to-focus seam means leaving it first -- the
+        # user who browses the listing and then clicks back into the field.
+        assert field.has_focus
+        dialog.query_one(DirectoryNavigation).focus()
+        await pilot.pause()
         field.value = str(tmp_path)
         await pilot.pause()
         await _click_to_focus(pilot, field)

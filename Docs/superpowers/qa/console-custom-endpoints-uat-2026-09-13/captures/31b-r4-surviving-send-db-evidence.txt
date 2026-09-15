@@ -1,0 +1,5 @@
+=== DB evidence for R4 surviving send ===
+assistant|OK
+user|Confirm still working: reply OK
+assistant|UAT2-CE003-OK
+user|Reply with exactly: UAT2-CE003-OK

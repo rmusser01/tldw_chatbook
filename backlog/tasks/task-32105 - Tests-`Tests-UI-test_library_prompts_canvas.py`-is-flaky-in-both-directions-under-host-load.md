@@ -26,3 +26,26 @@ During the critique-8 wave two full runs of this file on the same pair of commit
 - [ ] #1 The flaky names are identified and either stabilised or marked with the reason
 - [ ] #2 A full run of the file on a loaded host gives the same failing-name set twice
 <!-- AC:END -->
+
+## Evidence
+
+<!-- Appended by task-32461 fix round 1 (2026-09-14) -- three full runs of this
+file on ONE tree, by two different sessions, disagreeing in both directions. -->
+
+Full-file runs (`-q -p no:cacheprovider --timeout=300`), same checkout:
+
+    implementer, branch    20 failed / 322 passed   701.55s
+    implementer, baseline  18 failed / 324 passed   711.07s   (3-line diff, none of it reachable by these tests)
+    reviewer,   branch     17 failed / 325 passed   664.27s   (identical tree to run 1)
+
+16 of the reviewer's 17 names are in the implementer's baseline set. Names that
+moved between runs on the identical tree:
+
+    test_library_prompt_compatibility_editor_discard_returns_to_current_list
+    test_library_prompt_open_existing_button_shows_only_in_name_in_use_state_and_opens_it
+    test_library_prompt_conflict_save_as_new_replaces_source_history_identity
+    test_library_prompt_pager_first_and_filter_failure_states[size0]
+
+All three of the first group pass in isolation on the branch
+(`3 passed` in one run), which is AC#2's disagreement in its cleanest form:
+same file, same tree, three runs, three different failing-name sets.

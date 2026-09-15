@@ -1,8 +1,11 @@
 ---
 id: TASK-32518
-title: "Library Notes: activating a lasting-sync root leaves the Notes list stale until restart"
-status: To Do
-assignee: []
+title: >-
+  Library Notes: activating a lasting-sync root leaves the Notes list stale
+  until restart
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-13 00:30'
 updated_date: '2026-09-13 03:40'
 labels:
@@ -68,7 +71,33 @@ the database was read directly between b06 and b10 (`notes` 70 rows,
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 After Activate reviewed root, returning to the Notes list shows the managed folder row and a count that includes the synced notes, without restarting the app
-- [ ] #2 A manual Check changes that applies changes refreshes the list the same way
-- [ ] #3 A test on a seeded profile (existing notes and folders) pins the refresh; the fresh-profile path keeps working
+- [x] #1 After Activate reviewed root, returning to the Notes list shows the managed folder row and a count that includes the synced notes, without restarting the app
+- [x] #2 A manual Check changes that applies changes refreshes the list the same way
+- [x] #3 A test on a seeded profile (existing notes and folders) pins the refresh; the fresh-profile path keeps working
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce on the real route: mount LibraryScreen (Tests/UI/test_library_notes_files_sync_journey.py harness) over a REAL NotesScopeService/CharactersRAGDB seeded with existing notes and a real lasting-sync runtime (build_notes_sync_runtime_owner) over a vault of .md files; walk Add from files -> Keep a folder synced -> Check changes -> Activate reviewed root -> Back. RED: the list still paints the pre-activation count and no managed folder row.
+2. Cause: the lasting-sync path has no counterpart of the import path's refresh_after_settlement. LibraryNotesSyncController.activate_root/apply_reviewed end in a receipt and refresh_roots() only; nothing tells the Notes list to refetch. Fix: give LibraryNotesSyncController one optional refresh_notes callback (same shape as the import controller's refresh_after_settlement), invoked after an accepted activation and after an apply that changed anything; the screen wires it to the existing _refresh_after_library_note_import (source snapshot + tree initial load) -- the same path a note import uses. No second refresh mechanism.
+3. Keep the fresh-profile journey green (existing test_lasting_review_activation_receipt_and_remount_recovery_journey).
+4. Live-verify on a seeded scratch profile at 235x52 and 100x30; captures under wave3-caps/sync-tail/.
+5. Guide: note the refresh in the lasting-sync chapter and stamp.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Cause (now proven by test): the lasting-sync path had no counterpart of the import path's refresh_after_settlement. LibraryNotesSyncController.activate_root / apply_reviewed ended in a receipt and refresh_roots() only, so the Notes list kept its pre-activation source snapshot and tree until restart; a fresh profile hid it because the empty list recomposes on its own.
+
+Fix: LibraryNotesSyncController takes one optional refresh_notes callback (tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py; same shape as the import controller's refresh_after_settlement), invoked after an accepted activation and after an apply that changed anything (applied > 0); LibraryScreen wires it to the existing _refresh_after_library_note_import (source snapshot worker + tree initial load) -- the same refresh an import uses, no second mechanism. Undo / cleanup paths are not wired (they change note content, not the count or folder rows).
+
+Tests (Tests/UI/test_library_notes_files_sync_journey.py): test_activating_a_lasting_root_refreshes_a_seeded_notes_list mounts the real LibraryScreen over a real NotesScopeService/CharactersRAGDB seeded with 2 notes + a folder and a real runtime over a 3-file vault, walks Add from files -> Keep synced -> Check -> Activate -> Back and sees 'Notes (5)' plus the managed folder row (RED on origin/dev: 'list count never refreshed after activation'); test_applying_a_reviewed_conflict_refreshes_the_notes_list_once pins apply refreshes once and a bare Check does not. The fresh-profile journey stays green.
+
+Live: 235x52 seeded profile (10 notes, 58-file vault): Activate '60 applied' -> Back -> 'Notes (70)' + '▸ t13 sync ⇄ Sync managed' at once (wave3-caps/sync-tail/06, 07); 100x30 second root: '5 applied' -> 'Notes (75)' + 't13 second' (26, 27). Guide: notes.md step 5 + new stamp.
+
+Fix round 1 (review): the refresh sat behind the `_lifecycle_is_current` early returns in both `apply_reviewed` and `activate_root`, while the runtime write was already durable -- Back during an in-flight apply/activation (`return_to_roots()` -> `_begin_unbound_lifecycle()`) skipped it. Hoisted to right after the result type is validated at both sites; pinned by `test_notes_refresh_follows_the_durable_write_not_the_review_lifecycle[apply|activate]` on the real stack (runtime call gated on an Event, `return_to_roots()` fired mid-flight; RED at HEAD~, GREEN after).
+
+Honesty notes from the review: (1) `test_applying_a_reviewed_conflict_refreshes_the_notes_list_once` is RED on dev only structurally (`TypeError` on the new `refresh_notes` kwarg); the behavioural REDs are the seeded UI walk ("list count never refreshed after activation") and the lifecycle test above. (2) The 32519 `[failed]` seed variant is not reachable in one click from the UI: after a restart with `last_status_code='failed'` the start-time inventory publishes failed/review_changes for the paused root and the roots canvas offers Review/Pause/Recovery, not Resume (it keys on `status == "paused"`); Review -> `check_root` re-publishes `paused`/`resume_sync`, after which Resume appears and works -- two steps, not this task's AC; rider candidate (offer Resume by root state).
+<!-- SECTION:NOTES:END -->
