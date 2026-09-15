@@ -579,10 +579,19 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         and got a vault rendered as ``Reading, scratch.txt, Inbox, Archive,
         Projects, Daily, ... attachments`` -- files and folders interleaved,
         unsorted, in a dialog whose whole job is choosing between the folders.
-        Every other picker keeps "Discovery order", where rows appearing in
-        the order the disk yields them is the point (the listing is usable
-        before enumeration finishes), and "Discovery order" stays on the menu
-        for both.
+        A picker that can only return a FILE keeps "Discovery order", where
+        rows appearing in the order the disk yields them is the point (the
+        listing is usable before enumeration finishes), and "Discovery order"
+        stays on the menu for both.
+
+        Deliberately app-wide, and worth saying out loud because the review
+        asked: this is keyed on the declarative fact, so EVERY folder-choosing
+        dialog changed, not only the three Notes doors -- skill-folder import,
+        workspace bind, TTS model and voice directories, external model
+        directories, podcast export, and `EnhancedSelectDirectory`'s Personas
+        and vLLM callers. Scoping it to three doors would have meant a second
+        list to keep in step with `RETURNS_A_FOLDER`, and folders-first is the
+        right default wherever the folders ARE the choice.
 
         Keyed on ``RETURNS_A_FOLDER`` -- the one declarative fact task-32606
         introduced for exactly this question -- so ``FileOpen``'s per-instance

@@ -62,9 +62,17 @@ shipped rides the seam that already does bounded per-row filesystem work:
 `_hydrate_visible`, the worker that stats only the rows in and near the
 viewport. For a folder row it now also calls `read_folder_summary`, which is
 ONE `os.scandir` of that folder, depth 1, no recursion, stopping at
-`NOTE_COUNT_CEILING` (500) entries **read**, not merely displayed -- pinned
-with a counting `scandir` wrapper, so the ceiling is a work bound and not a
-formatting rule. Past it the badge reads "500+ notes". The result is rendered
+`NOTE_COUNT_CEILING` (500) entries **read** -- pinned with a counting
+`scandir` wrapper against a deliberately mixed fixture (36 non-notes, 4
+notes), so the ceiling is a work bound and not a formatting rule. Past it the
+count is a FLOOR and the badge says "48+ notes", meaning at least 48.
+
+Review round 1 caught this claim being false when it was first written: the
+cap was on notes MATCHED, so 20 000 `.log` files plus one `.md` at `ceiling=3`
+read all 20 001, and the pin could not see it because its fixture was all
+`.md` -- matches and reads were the same number. Both are fixed; the RED text
+against the original code is `the ceiling must bound ENTRIES READ; it read 21
+of 40`. The result is rendered
 through `FileRecord.size_text`, the column a directory has always left blank,
 so both the vendored row and `EnhancedFileDialog`'s responsive one show it
 with no renderer change and no new column.

@@ -2296,9 +2296,13 @@ folder** / **Cancel** — the same one Folder files uses, so all three Notes
 folder doors arrive on their field, show one hint
 (`Enter Open  ·  Select folder to use this folder`) and name the folder-
 committing button the same way. All three also default their listing to
-**Folders first**, name-ascending, instead of discovery order; folder rows in
-them carry a note count and a `· vault` marker read from the folder itself
-only (never a sub-tree walk, at most 500 entries); and **Ctrl+R** offers the
-roots that door returned before, focused, so Enter takes one. Pinned in
-`Tests/UI/test_library_notes_w5_picker_followon.py` — 18 tests, 15 of them red
-at dev 48d40df8ce.)*
+**Folders first**, name-ascending, instead of discovery order — and so does
+every other folder-choosing picker in the app, because the default is keyed on
+"can this dialog answer with a folder?" rather than on a list of doors;
+"Discovery order" stays on the Sort menu everywhere. Folder rows in the three
+Notes pickers carry a note count and a `· vault` marker read from the folder
+itself only (never a sub-tree walk, and never more than 500 entries READ of
+one folder — past that the count says "48+ notes", meaning at least 48); and
+**Ctrl+R** offers the roots that door RETURNED before, focused, so Enter takes
+one. Pinned in `Tests/UI/test_library_notes_w5_picker_followon.py` — 22 tests
+collected, 18 of them red at dev 48d40df8ce.)*

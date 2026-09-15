@@ -790,11 +790,16 @@ of the file-and-folder one whose field said "File name" — so all three Notes
 folder doors show one hint, `Enter Open  ·  Select folder to use this folder`,
 and one name for the button that commits a folder. (b) Their listings default
 to **Folders first**, name-ascending, rather than to discovery order, which
-was interleaving a vault's files and folders unsorted; the other pickers in
-the app are unchanged and "Discovery order" stays on the Sort menu. (c) Folder
-rows in those three pickers carry a note count and a `· vault` marker, both
-read from the folder itself only — never a sub-tree walk, and never more than
-500 entries of one folder — and **Ctrl+R** offers the roots that door
-returned before, focused, so Enter takes one. Pinned by
-`Tests/UI/test_library_notes_w5_picker_followon.py` (18 tests; 15 of them red
-at dev 48d40df8ce).)*
+was interleaving a vault's files and folders unsorted. That default is keyed
+on "can this dialog answer with a folder?", so every other folder-choosing
+picker in the app changed with them — skill-folder import, workspace bind, TTS
+model and voice directories, external model directories, podcast export;
+file-only pickers still open on discovery order, and "Discovery order" stays
+on the Sort menu everywhere. (c) Folder rows in the three Notes pickers carry
+a note count and a `· vault` marker, both read from the folder itself only —
+never a sub-tree walk, and never more than 500 entries READ of one folder,
+past which the count says "48+ notes", meaning at least 48 — and **Ctrl+R**
+offers the roots that door RETURNED before (a folder you only browsed through
+on the way to a file is not one), focused, so Enter takes one. Pinned by
+`Tests/UI/test_library_notes_w5_picker_followon.py` (22 tests collected; 18 of
+them red at dev 48d40df8ce).)*

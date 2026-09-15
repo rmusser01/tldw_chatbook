@@ -311,13 +311,17 @@ flags beside it.
   the MRO -- so `EnhancedFileDialog`, which builds its own navigation in its
   own `compose`, is covered without a second copy of the two lines.
 - **The folder badge is bounded, and off by default.** `FileRecord` gained
-  `note_count` / `is_vault` / `folder_summary_loaded`, rendered through
-  `size_text` (the column a directory has always left blank) and
-  `display_name` -- so both the vendored row and `EnhancedFileDialog`'s
+  `note_count` / `note_count_partial` / `is_vault` / `folder_summary_loaded`,
+  rendered through `size_text` (the column a directory has always left blank)
+  and `display_name` -- so both the vendored row and `EnhancedFileDialog`'s
   responsive one show them with no renderer change. The count is one
   `os.scandir` of that folder, no recursion, capped at `NOTE_COUNT_CEILING`
-  (500) entries READ, not just displayed; it rides the existing
-  visible-rows-only metadata hydration worker. `show_folder_notes` is off
+  (500) entries READ; it rides the existing visible-rows-only metadata
+  hydration worker. The bound is on reads rather than on matches because that
+  is where the work is -- review round 1 caught the first version capping on
+  matches, which walked a 20 000-entry folder of `.log` files to its end
+  looking for notes it had no reason to expect. A folder that runs out of
+  budget returns its notes-so-far as a floor and the badge says "48+ notes". `show_folder_notes` is off
   unless the caller passed a `notes_context`, because "12 notes" is a useful
   badge when choosing where notes live and noise in a model-file or
   character-card picker. `_wants_hydration` asks the badge question
