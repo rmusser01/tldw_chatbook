@@ -91,6 +91,8 @@ Reason: record the user-approved stable-file exchange contract (2026-09-15); ADR
 
 ## Implementation evidence
 
+Historical checkpoint before the separately approved static qualification below:
+
 Implementation: `a1f47397eb1a7d62117707df914b63a8ad050998`.
 Detailed report: `.superpowers/sdd/2026-09-14-workflows-authoring-dev/task-1-report.md`
 (committed at `7eeed1efb13d9ad91b8c5e90a379c6ec1c91c58b`).
@@ -134,3 +136,17 @@ ADR-138 records this narrow acceptance amendment.
    and request a scoped follow-up from the existing reviewer on this gate only.
 4. Mark the Backlog task Done only if the approved gate and all other scoped DoD
    requirements are met. Preserve the branch; no merge, push or infrastructure work.
+
+## Completion
+
+Qualification code62ab9ebc04 and evidence7c46af626c pass the approved gate:
+711 retained lint findings and64formatter edits across5files all map exactly
+to baseline, with zero unmatched findings. All25newPythonfiles and the rewritten
+screen are clean. Two changed test import blocks were sorted; no production changes.
+Fresh targeted verification:15affected destination/Console passes plus35authoring/
+storage passes. The original reviewer approved this scoped follow-up without new
+Critical/Important findings; full report:
+`.superpowers/sdd/2026-09-14-workflows-authoring-dev/static-gate-review.md`.
+All task ACs and the approved scoped DoD are satisfied; TASK-32601 was marked Done
+via CLI. Historical whole-file failures remain nonzero, and capture cleanup is a
+tracked nonblocking follow-up. No merge, push, runtime or infrastructure work.

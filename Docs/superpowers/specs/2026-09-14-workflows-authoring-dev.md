@@ -1,6 +1,7 @@
 # Workflows authoring-only dev port
 
 Status: Approved in conversation on 2026-09-14; implementation of the existing editor, not a new runtime design.
+Qualification: completed on 2026-09-15 under the separately approved stable-file and no-new-static-debt contracts in ADR-138; authoring only, no merge or execution claim.
 Task: TASK-32601.
 ADR required: yes — amendment to existing ADR-138, not a new ADR number.
 ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.

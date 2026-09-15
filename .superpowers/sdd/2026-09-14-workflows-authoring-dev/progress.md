@@ -34,7 +34,7 @@ The parked integration's failing lifetime-lock alias regression and four R1 sour
 - [x] Targeted behavioral checks and clean new-file static checks.
 - [x] Task review and actual rendered UI review; alias finding closed under user-approved contract.
 - [x] Final branch review recorded; handoff retains unresolved DoD gate.
-- [ ] Full DoD: incumbent-file lint/format gate remains unsuccessful and unwaived.
+- [x] Scoped DoD: no-new-static-debt gate accepted by user and verified/reviewed; baseline whole-file failures remain documented.
 
 Coordinator owns docs/verification handoff; implementer owns production and tests listed in Task 1.
 
@@ -307,3 +307,23 @@ Whole-file commands still fail as documented; only the approved gate can pass.
 Ampere resumed for a scoped review of this qualification and2import-block fix,
 not another broad branch/UI audit. Task stays In Progress until that disposition.
 Capture cleanup and Requests/Kokoro warning minors remain tracked and nonblocking.
+
+Task 1: complete (commits c5711892ab..7c46af626c, technical review and approved
+static gate pass). Ampere's scoped disposition is static-gate-review.md: original
+Important static gate ADDRESSED under the user-approved no-new-debt rule; all
+findings addressed, no new Critical/Important breakage. Reviewed1,225-line package,
+verified34-filecoverage/totals/settings; did not rerun tests or broader review.
+Whole-file711lint/fiveformatter results remain nonzero and source-attributed.
+Reviewer closed after return. AC5 checked and Backlog CLI marked TASK-32601 Done; this
+records the scoped authoring delivery only, not execution/sync or merge authority.
+
+Final DoD check: all functional outcomes have real SQLite, mounted interaction,
+app lifecycle and targeted integration coverage;50freshpasses in this final
+qualification, earlier374/visualevidence explicitly historical. New/rewritten26
+files lint/format clean; all remaining static edits source-attributed. Existing
+technical/storage/UI reviews and stable-file approval retained. No production,
+dependency or license changes in this qualification; prior port is same-project
+source reuse and no dependency/license metadata changed against dev. Source and
+parked branches and their WIP rechecked unchanged. No full suite, model/server
+call, capture, deletion, infrastructure, merge or push. Committed evidence and
+worktree stay available; capture cleanup remains a nonblocking follow-up.

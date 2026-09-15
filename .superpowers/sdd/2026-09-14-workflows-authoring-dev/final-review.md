@@ -3,6 +3,11 @@
 Reviewer: Ampere (`01a0a38d-2267-78c0-a6f2-7c2334081dae`), resumed original task reviewer.
 Range: `77eb2601a6..e7a54a992f`. Recorded by coordinator from the full returned assessment; file references are repository-relative.
 
+Current disposition: the historical static gate below was subsequently resolved
+under the separately user-approved TASK-32601 no-new-static-debt qualification.
+See [scoped follow-up](static-gate-review.md) and [evidence](static-gate.md).
+The original stable-file limitation and nonblocking capture-cleanup minor remain.
+
 ## Spec compliance — finding disposition
 
 Original Important alias finding: **CLOSED UNDER APPROVED SCOPE; not technically fixed.**

@@ -1,10 +1,11 @@
 ---
 id: TASK-32601
 title: Restore the authoring-only Workflows editor on dev
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-15 04:09'
+updated_date: '2026-09-15 15:02'
 labels: []
 dependencies: []
 ---
@@ -21,11 +22,12 @@ Deliver the approved portable workflow editor on current dev while keeping unfin
 - [x] #2 The library, step navigator, overview and collapsed continuous form remain usable with keyboard and at supported terminal sizes.
 - [x] #3 Drafts survive navigation and restart, failed persistence stays recoverable, and opaque server fields survive round trips.
 - [x] #4 Only existing SQLite safety utilities are used; new execution and process-ownership infrastructure remain absent.
-- [ ] #5 The authoring slice meets the user-approved no-new-static-debt gate: introduced findings are fixed and retained baseline failures are source-attributed and documented.
+- [x] #5 The authoring slice meets the user-approved no-new-static-debt gate: introduced findings are fixed and retained baseline failures are source-attributed and documented.
 <!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 ADR required: yes — amendment to existing ADR-138, not a new ADR number.
 ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md; ADR-125 and ADR-150 also apply.
 Reason: record the user-approved stable-file exchange contract (2026-09-15) for authoring on current dev; runtime and the unapproved helper-owned-lock proposal are excluded.
@@ -41,13 +43,27 @@ Reason: record the user-approved stable-file exchange contract (2026-09-15) for 
 ## ID provenance
 
 The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans already contained IDs through 32600. Only this newly created file/header was moved to the checked-free TASK-32601 before implementation. No existing task was renumbered.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
-**Current review gate:** In Progress for static qualification. The user has now
-separately approved the no-new-static-debt gate in ADR-138; source attribution,
-necessary scoped corrections and gate review are in progress. The earlier
-unwaived findings below remain historical evidence, not the current acceptance rule.
+<!-- SECTION:NOTES:BEGIN -->
+**Current qualification:** all ACs and the approved scoped DoD are satisfied.
+The separately user-approved no-new-static-debt gate in ADR-138 passes:711
+remaining lint findings and64formatter edits across5files map exactly to baseline;
+zero unmatched. All25newPythonfiles and the rewritten screen are clean. Two changed
+test import blocks were sorted. The existing reviewer accepted the gate with no
+new Critical/Important findings. Fresh tests:50passed across two targeted selections.
+Task marked Done via Backlog CLI; no merge/push or runtime authority.
+
+Final evidence: `.superpowers/sdd/2026-09-14-workflows-authoring-dev/static-gate.md`,
+machine-readable attribution in `static-gate-results.json`, and reviewer disposition
+in `static-gate-review.md`. Code62ab9ebc04, evidence7c46af626c. Whole-file lint and
+format still fail as documented; this is an approved no-new-debt qualification,
+not a claim that baseline debt was removed. Capture cleanup remains nonblocking.
+
+The following records the earlier implementation/review checkpoints; statements
+that the static gate was unwaived or In Progress describe those historical states.
 
 On 2026-09-15 the user approved retaining
 file-picker exchange under the stable-file assumption now recorded in ADR-138,
@@ -84,7 +100,7 @@ retain raw-editor focus visibility and settle test modal mounting. Full failing
 test names, diagnoses, exact RED/GREEN commands and final evidence are in
 `.superpowers/sdd/2026-09-14-workflows-authoring-dev/task-1-report.md`.
 
-Task remains **In Progress** pending the static-analysis gate and full DoD.
+At that checkpoint the task remained **In Progress** pending the static-analysis gate and full DoD.
 Existing whole-file Ruff/formatter debt is reported separately, not waived or
 suppressed. New/rewritten authoring files pass Ruff and formatting. All work is
 confined to the named authoring-dev worktree; preserved checkouts are untouched.
@@ -102,12 +118,14 @@ Final assessment and scope-based closure are recorded in
 `.superpowers/sdd/2026-09-14-workflows-authoring-dev/final-review.md`.
 Fresh coordinator run after the documentation amendment: 35 passed, one existing
 warning in 21.53s; dedicated new/rewritten Python files pass Ruff and format
-(26 files). No production edits in this approval turn. Whole-file baseline remains
-713 Ruff findings and five formatter failures; no task-specific exception has
-been approved. Resolving this gate requires separate direction, not SQLite work.
+(26 files). No production edits in that approval turn. At that checkpoint the
+whole-file baseline was 713 Ruff findings and five formatter failures, without
+a task-specific exception. The later approved qualification above resolves that
+gate without SQLite work and reduces the retained findings to 711.
 
 Nonblocking review follow-up: the standalone QA capture script needs an explicit
 owned bootstrap-profile lifetime and factory cleanup in finally. Current success
 captures remain evidence, but repeated runs can leave disposable profiles behind
 and capture failures skip factory cleanup. Recorded separately from the authoring
 ACs; no data deleted or cleanup code added in this turn.
+<!-- SECTION:NOTES:END -->
