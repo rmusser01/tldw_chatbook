@@ -123,6 +123,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, get_ident
+from types import MethodType
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 from uuid import uuid4
 
@@ -793,6 +794,10 @@ class _CanvasNativeViewBinding:
     bridge_prepare: Callable[[Any], Callable[[str], None]] | None
     auto_open: Callable[[str, Any], None] | None
     publication_guard: Callable[[Any], bool] | None
+    source_scope_resolver: Callable[[str], Any]
+    controller: Any
+    view: Any
+    attachment_generation: int | None
 
 
 #: **The one enumerated list of screen-owned hook slots.** `attach_view`
@@ -2657,20 +2662,24 @@ class ConsoleRuntime:
             self._raise_if_disposed_or_session_fenced(session_id)
             return scope_resolver(session_id)
 
-        binding = _CanvasNativeViewBinding(
-            scope_resolver=resolve_live_scope,
-            bridge_sink=bridge_sink,
-            bridge_prepare=bridge_prepare,
-            auto_open=auto_open,
-            publication_guard=publication_guard,
-        )
         if not self._canvas_enabled():
             return None
         with self._canvas_native_lock:
             if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:
                 return None
-            self._canvas_native_view_binding = binding
             controller = self._canvas_controller
+            binding = _CanvasNativeViewBinding(
+                scope_resolver=resolve_live_scope,
+                bridge_sink=bridge_sink,
+                bridge_prepare=bridge_prepare,
+                auto_open=auto_open,
+                publication_guard=publication_guard,
+                source_scope_resolver=scope_resolver,
+                controller=controller,
+                view=self.view,
+                attachment_generation=self._attached_generation,
+            )
+            self._canvas_native_view_binding = binding
             if controller is not None:
                 controller.add_settlement_listener(self._canvas_settlement_listener)
             authority = self._canvas_native_authority
@@ -2683,6 +2692,50 @@ class ConsoleRuntime:
                     publication_guard=binding.publication_guard,
                 )
             return authority
+
+    def canvas_native_view_is_bound(
+        self,
+        view: Any,
+        *,
+        scope_resolver: Callable[[str], Any],
+        bridge_sink: Callable[[Any, str], None] | None = None,
+        bridge_prepare: Callable[[Any], Callable[[str], None]] | None = None,
+        auto_open: Callable[[str, Any], None] | None = None,
+        publication_guard: Callable[[Any], bool] | None = None,
+    ) -> bool:
+        """Check installed callbacks for UI idempotence, never execution permission."""
+        with self._canvas_native_lock:
+            binding = self._canvas_native_view_binding
+            if (
+                self._disposed
+                or self._canvas_disabled_latched
+                or self._canvas_maintenance_closed
+                or view is None
+                or self.view is not view
+                or self._attached_generation is None
+                or binding is None
+                or binding.view is not view
+                or binding.attachment_generation != self._attached_generation
+                or self._canvas_controller is None
+                or binding.controller is not self._canvas_controller
+            ):
+                return False
+            return all(
+                current is proposed
+                or (
+                    type(current) is MethodType
+                    and type(proposed) is MethodType
+                    and current.__self__ is proposed.__self__
+                    and current.__func__ is proposed.__func__
+                )
+                for current, proposed in (
+                    (binding.source_scope_resolver, scope_resolver),
+                    (binding.bridge_sink, bridge_sink),
+                    (binding.bridge_prepare, bridge_prepare),
+                    (binding.auto_open, auto_open),
+                    (binding.publication_guard, publication_guard),
+                )
+            )
 
     def _canvas_scope_for_run(self, session_id: str) -> Any:
         """Resolve a live run's exact owner independently of the selected view.

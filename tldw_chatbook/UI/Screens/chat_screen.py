@@ -10012,14 +10012,16 @@ class ChatScreen(BaseAppScreen):
             if workspace_context is not None:
                 store.set_workspace_context(workspace_context)
         runtime = self._console_runtime()
-        if runtime.canvas_controller is not None:
-            runtime.bind_canvas_native_view(
-                scope_resolver=self._console_canvas_scope,
-                bridge_sink=self._prefill_console_canvas_repair,
-                bridge_prepare=self._prepare_console_canvas_submit,
-                auto_open=self._schedule_console_canvas_tool_open,
-                publication_guard=self._console_canvas_publication_is_current,
-            )
+        if runtime.canvas_controller is not None and runtime.view is self:
+            callbacks = {
+                "scope_resolver": self._console_canvas_scope,
+                "bridge_sink": self._prefill_console_canvas_repair,
+                "bridge_prepare": self._prepare_console_canvas_submit,
+                "auto_open": self._schedule_console_canvas_tool_open,
+                "publication_guard": self._console_canvas_publication_is_current,
+            }
+            if not runtime.canvas_native_view_is_bound(self, **callbacks):
+                runtime.bind_canvas_native_view(**callbacks)
         return store
 
     def _ensure_console_agent_bridge(self) -> Any:
