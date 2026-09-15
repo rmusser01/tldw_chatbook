@@ -1,0 +1,38 @@
+[
+  {
+    "file": "Tests/UI/test_library_prompts_canvas.py",
+    "baseline_count": 24,
+    "current_count": 24,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "baseline_count": 16,
+    "current_count": 16,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Library_Modules/prompt_history_region.py",
+    "baseline_count": 1,
+    "current_count": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Screens/library_screen.py",
+    "baseline_count": 205,
+    "current_count": 205,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Library/library_prompts_canvas.py",
+    "baseline_count": 1,
+    "current_count": 1,
+    "introduced": []
+  },
+  {
+    "file": "Tests/UI/test_library_prompt_history_journeys.py",
+    "baseline_count": 0,
+    "current_count": 0,
+    "introduced": []
+  }
+]

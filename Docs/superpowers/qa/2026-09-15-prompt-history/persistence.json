@@ -1,0 +1,49 @@
+{
+  "read_only_sqlite": true,
+  "records": [
+    {
+      "prompt_id": 14,
+      "version": 13,
+      "deleted": false,
+      "user_prompt": "Version 1\n\nKeep [bold] literal text.",
+      "retained_versions": [
+        13,
+        12,
+        11,
+        10,
+        9,
+        8,
+        7,
+        6,
+        5,
+        4,
+        3,
+        2,
+        1
+      ],
+      "oldest_snapshot_unchanged": true
+    },
+    {
+      "prompt_id": 15,
+      "version": 13,
+      "deleted": false,
+      "user_prompt": "Version 1\n\nKeep [bold] literal text.",
+      "retained_versions": [
+        13,
+        12,
+        11,
+        10,
+        9,
+        8,
+        7,
+        6,
+        5,
+        4,
+        3,
+        2,
+        1
+      ],
+      "oldest_snapshot_unchanged": true
+    }
+  ]
+}

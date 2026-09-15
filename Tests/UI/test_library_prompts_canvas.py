@@ -8615,6 +8615,11 @@ async def test_library_prompt_history_collapse_during_restore_detail_fetch_stays
             assert persisted is not None and persisted["version"] == 3
             assert screen._prompts_state.version == 2
 
+            # The service has finished, but its region may still be replacing
+            # the busy controls. Act on the disclosure mounted with the outcome.
+            await _wait_for_selector(
+                screen, pilot, "#library-prompt-history-outcome"
+            )
             disclosure = screen.query_one(
                 "#library-prompt-history-collapsible", Collapsible
             )

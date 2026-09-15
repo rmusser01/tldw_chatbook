@@ -1,0 +1,56 @@
+{
+  "pid": 34635,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "prompt_id": 14,
+      "name": "Native history 34635 170 caf\u00e9",
+      "versions_created_through_ui": 12,
+      "history_from_basic_reveals_info": true,
+      "first_page_count": 10,
+      "older_page_count": 12,
+      "literal_read_only_preview": true,
+      "older_page_focus_version": 2,
+      "cancel_returns_restore_focus": true,
+      "restore_current_version": 13,
+      "restored_user_body": "Version 1\n\nKeep [bold] literal text."
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "prompt_id": 15,
+      "name": "Native history 34635 80 caf\u00e9",
+      "versions_created_through_ui": 12,
+      "history_from_basic_reveals_info": true,
+      "first_page_count": 10,
+      "older_page_count": 12,
+      "literal_read_only_preview": true,
+      "older_page_focus_version": 2,
+      "cancel_returns_restore_focus": true,
+      "restore_current_version": 13,
+      "restored_user_body": "Version 1\n\nKeep [bold] literal text."
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "passed": true,
+  "normal_quit_requested": true,
+  "quit_size": [
+    80,
+    24
+  ],
+  "app_run_returned": true,
+  "shell_exit_code": 0,
+  "observed_shell": "zsh",
+  "observed_shell_size": [
+    80,
+    24
+  ]
+}

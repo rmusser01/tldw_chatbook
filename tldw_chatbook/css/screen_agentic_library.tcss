@@ -2769,7 +2769,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
-    min-height: $ds-size-3;
+    min-height: $ds-size-4;
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     content-align: left middle;
 }

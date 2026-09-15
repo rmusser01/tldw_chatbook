@@ -290,3 +290,28 @@ provider interaction were not qualified; existing startup/worker notices remain.
 
 Next: History, Collections and Use in Console, followed by Skills and the other
 Library destinations. Integration into `dev` remains pending.
+
+
+## Prompt retained History — TASK-32630
+
+The [History review](../qa/2026-09-15-prompt-history/README.md) closes the saved
+Prompt History journey. More actions now reveals and focuses History from Basic
+while closing its menu. Version rows retain readable multiline labels when
+focused. Selection, paging, retry and modal return preserve keyboard position;
+successful restore returns to the new History title. Live draft fields and
+existing immutable scope, restore and concurrency contracts remain intact.
+
+Verification: **226 targeted checks pass** (76 mounted History/journey checks,
+124 controller/state/DB/normalization checks and 26 token/bundle/wiring checks).
+There are no new Ruff diagnostics; no full repository sweep was run. The final
+private native run passes at 170×48 dark and 80×24 light through 12 saved
+versions, paging, literal read-only preview, Cancel and restoring v1 as v13.
+Six rendered captures show the focused version, Restore return and updated
+History title. Normal Ctrl+Q returned exit 0 to the observed shell; read-only
+SQLite confirms both active v13 records and the retained version sequence.
+The existing success toast can temporarily overlay lower rows; its focused
+History title remains readable. Native error injection was not part of this
+run; targeted tests cover those branches.
+
+Next: Prompt Collections and Use in Console, followed by Skills and the other
+Library destinations. Integration into `dev` remains pending.

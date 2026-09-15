@@ -16,7 +16,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
     LibraryPromptDeleteReceipt,
@@ -559,16 +559,6 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             self.query_one("#library-prompt-memberships-manage", Button).press()
         except NoMatches:
             return
-
-    @on(Button.Pressed, "#library-prompt-more-history")
-    def _open_more_history(self, event: Button.Pressed) -> None:
-        event.stop()
-        try:
-            history = self.query_one("#library-prompt-history-collapsible", Collapsible)
-        except NoMatches:
-            return
-        history.collapsed = False
-        history.focus()
 
     def on_key(self, event: events.Key) -> None:
         if event.key != "escape" or not self.more_actions_open:

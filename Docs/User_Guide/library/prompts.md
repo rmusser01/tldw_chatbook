@@ -284,6 +284,13 @@ disclosure lazily loads the newest bounded page. Use **Load older versions** to
 request another page. A failed count or page load offers **Retry** without
 changing the editor.
 
+From a clean saved Prompt, choose **More actions → History**. This closes the
+menu and reveals **Info** when you were in Basic; Advanced and Info keep their
+current view. Focus lands on the History title. Press **Tab** to reach version
+rows and **Enter** to select one. Selecting a row keeps keyboard focus there;
+loading older versions moves it to the first newly loaded row. The live editor
+fields stay mounted while you inspect snapshots.
+
 Retained history contains create and update snapshots, not a complete audit
 log. Each row shows its version, timestamp, artifact type, and changed-field
 summary. Selecting a row reveals literal, read-only metadata plus its stored
@@ -304,7 +311,10 @@ does not rewrite the retained row. The confirmation also calls out a
 Prompt↔Recipe type change. If the Prompt changed after history was loaded, use
 the editor's **Reload** conflict action before retrying. Restoring content that
 already matches the current version reports `no_change` and creates no extra
-version.
+version. **Cancel** returns focus to Restore. A completed restore returns to
+the History title with its updated retained count; a retryable failure keeps
+Restore available. Late loading results do not take focus from another control
+you have moved to.
 
 Newer snapshots restore their captured keywords. Older snapshots that predate
 keyword capture keep the current keywords and disclose that choice. Validation,
@@ -574,3 +584,11 @@ another screen, and routing back into Library, already explained themselves
 before this change and still do — fix round 1 added the same sentence to the
 Library admission barrier behind them as defence in depth, after a caller sweep
 of all eight sites, with no user-visible change.)*
+
+
+*History journey review: 2026-09-15, TASK-32630. Production-CSS/SQLite tests
+cover wide/compact dark/light keyboard journeys and recovery. The private native
+app passed 170×48 dark and 80×24 light through paging, preview, Cancel and
+restore, with normal exit 0 and read-only persistence checks. See the
+[verification record](../../superpowers/qa/2026-09-15-prompt-history/README.md).
+No full repository sweep was run.*

@@ -1,5 +1,21 @@
 # Lessons: what counts as evidence a change works
 
+
+## Retained History needs both focus identity and painted labels (TASK-32630)
+
+**2026-09-15.** The Prompt History keyboard walk retained the correct selected
+Button and valid geometry while painting only “User”: its three-row multiline
+label lost the version line under the focus outline. A four-row token-backed
+minimum made both lines visible. Assert identifying text in compositor output,
+not just focus identity or a nonempty region.
+
+The same walk found that starting restore in the modal result callback cleared
+the opener before `ScreenResume`, allowing automatic focus to choose global
+Home. Scheduling admission after the returning screen's refresh preserved the
+History handoff. A pre-existing collapse-during-fetch test also acted on busy
+controls being replaced after service completion; waiting for the mounted
+outcome kept its collapse assertion on the live disclosure.
+
 Working knowledge about testing in this repo. Not decisions (see `backlog/decisions/`)
 and not point-in-time audits — these are traps that have actually cost time here, kept
 so the next person does not rediscover them.

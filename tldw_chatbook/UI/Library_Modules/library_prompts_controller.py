@@ -347,7 +347,7 @@ from rich.markup import escape as escape_markup
 from textual import on
 from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
-from textual.widgets import Button, Checkbox, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 from textual.worker import Worker
 
 from ...DB.Prompts_DB import ConflictError as PromptConflictError
@@ -2008,10 +2008,38 @@ class LibraryPromptsController:
         self._library_prompt_detail_loading = False
         self._library_prompt_detail_error = ""
         self._library_prompt_detail_retryable = False
+        restore_history_focus = False
+        if expected_history_scope is not None:
+            region = self.query_one(
+                "#library-prompt-history-region", LibraryPromptHistoryRegion
+            )
+            focused = self.focused
+            restore_history_focus = (
+                focused is not None and region in focused.ancestors
+            ) or (focused is None and region.has_pending_focus_restore)
+            if restore_history_focus:
+                region.screen.set_focus(None)
         self._adopt_library_prompt_persisted_detail(
             detail,
             open_history=open_history,
         )
+        adopted_history = self._library_prompt_history_state
+
+        def arm_editor() -> None:
+            self._arm_library_prompt_editor()
+            if (
+                restore_history_focus
+                and self.focused is None
+                and adopted_history is not None
+                and self._library_prompt_history_controller.matches_scope(
+                    prompt_uuid=adopted_history.prompt_uuid,
+                    scope_token=adopted_history.scope_token,
+                )
+            ):
+                self.query_one(
+                    "#library-prompt-history-region", LibraryPromptHistoryRegion
+                ).focus_disclosure()
+
         self._load_library_prompt_memberships()
         if self.is_mounted:
             # See the skills twin: arming must not be lost to the
@@ -2019,7 +2047,7 @@ class LibraryPromptsController:
             synced = _sync_library_canvas(
                 self,
                 "prompts",
-                then=self._arm_library_prompt_editor,
+                then=arm_editor,
                 allow_screen_fallback=not entry_origin,
             )
             if entry_origin:
@@ -2270,7 +2298,9 @@ class LibraryPromptsController:
         )
         self.app.push_screen(
             modal,
-            lambda confirmed: self._confirm_library_prompt_history_restore(
+            # Let modal return finish before disabling/replacing its opener.
+            lambda confirmed: self.call_after_refresh(
+                self._confirm_library_prompt_history_restore,
                 bool(confirmed),
                 prompt_uuid=target.prompt_uuid,
                 change_id=target.change_id,
@@ -2460,6 +2490,7 @@ class LibraryPromptsController:
     @on(Button.Pressed, "#library-prompt-mode-basic")
     @on(Button.Pressed, "#library-prompt-mode-advanced")
     @on(Button.Pressed, "#library-prompt-mode-info")
+    @on(Button.Pressed, "#library-prompt-more-history")
     async def handle_library_prompt_editor_mode(self, event: Button.Pressed) -> None:
         """Switch the three mounted Prompt projections without replacing the draft."""
         event.stop()
@@ -2468,6 +2499,13 @@ class LibraryPromptsController:
             "library-prompt-mode-advanced": "advanced",
             "library-prompt-mode-info": "info",
         }.get(event.button.id, "basic")
+        open_history = event.button.id == "library-prompt-more-history"
+        if open_history:
+            requested = (
+                self._library_prompt_editor_mode
+                if self._library_prompt_editor_mode in {"advanced", "info"}
+                else "info"
+            )
         state = self._current_library_prompt_editor_state()
         if requested == "basic" and self._library_prompt_basic_unavailable_reason(
             state,
@@ -2494,6 +2532,12 @@ class LibraryPromptsController:
         except NoMatches:
             return
         await canvas.set_editor_mode(requested)
+        if open_history:
+            canvas.more_actions_open = False
+            canvas.query_one("#library-prompt-more-actions-region").display = False
+            history = canvas.query_one("#library-prompt-history-collapsible", Collapsible)
+            history.collapsed = False
+            history.screen.set_focus(history.query_one("CollapsibleTitle"))
         self._library_prompt_editor_mode = requested
         library_config = self.app_instance.app_config.setdefault("library", {})
         if isinstance(library_config, dict):
