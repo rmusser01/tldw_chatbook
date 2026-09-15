@@ -1,0 +1,54 @@
+{
+  "revision": "e4f8aa7a62ea9800e3867d47036fafb4a1ec6b5f",
+  "product_selection": "replacement-default-evals",
+  "verified_artifact_files": 37,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.374,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 10,
+      "counts": {
+        "passed": 10
+      },
+      "seconds": 1658.204,
+      "failures": [],
+      "skips": []
+    }
+  },
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "5b41e80b3857302988b1820aae48e58490e1d96f6c2e1c6d7891722f6285deb5",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "source_files": 16558,
+  "git_blob_verification": {
+    "revision": "e4f8aa7a62ea9800e3867d47036fafb4a1ec6b5f",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/34880766232",
+  "review": "windows-e4f8-default-review-20260914.md",
+  "limits": "Existing 900-second later child and 2400-second composite test limits unchanged. Earlier failures/variability preserved; this does not resolve startup or mounted-support failures.",
+  "evidence_hashes": {
+    "/private/tmp/uat-windows-e4f8-default/verification.json": "ce6f2aa3382786cf8f5bc76f5a0afb5e877030ff309881eae5e6a392879ee58c",
+    "/private/tmp/uat-windows-e4f8-default/git-blob-verification.json": "6a254d01267784088d303150fdd2841f3b2d0003db09fa602671859940cd250b",
+    "/private/tmp/uat-windows-e4f8-default-review-summary.json": "61d8cb33c21a1bf23ba75fade4891aece32b4c9e2e21dcbb0505d2ff65b61f7b"
+  }
+}

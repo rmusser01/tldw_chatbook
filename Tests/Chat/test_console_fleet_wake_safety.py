@@ -40,21 +40,22 @@ from Tests.Chat.test_console_agent_swap import (
     _fence,
     _tool_dict,
 )
+from Tests.Chat.test_console_chat_controller import FakePersistence
 from Tests.Chat.test_console_fleet_wake import (
     _drain,
     _survivor,
     _terminal_subagent_run,
 )
-from Tests.Chat.test_console_chat_controller import FakePersistence
 from Tests.Chat.test_fleet_attention import _AppStub
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunStatus,
 )
+from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
-from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -99,7 +100,8 @@ async def _quiet(predicate, seconds: float = 0.5) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path):
+@private_profile_test
+async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path, request):
     """The floor, end to end on the WAKE path: the wake turn's model calls
     an ask-state tool; the card surfaces through the real round trip; the
     wake's own injected notice resolves NOTHING (the round sits undecided
@@ -191,7 +193,9 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
+    request,
     tmp_path,
 ):
     """The other direction: the card was already pending (a MANUAL turn's
@@ -278,7 +282,9 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_session_close_fence_discards_a_late_child_drain_without_waking(
+    request,
     tmp_path,
     monkeypatch,
 ):
@@ -337,7 +343,8 @@ async def test_session_close_fence_discards_a_late_child_drain_without_waking(
 
 
 @pytest.mark.asyncio
-async def test_session_fence_releases_uncooperative_delivery_task_reference():
+@private_profile_test
+async def test_session_fence_releases_uncooperative_delivery_task_reference(request):
     """A terminal fence must not retain a wrapper that may never settle."""
 
     coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace())
@@ -388,7 +395,9 @@ def test_disposed_wake_coordinator_never_releases_a_session_fence():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
+    request,
     tmp_path,
 ):
     """Capture-level twin pin: manual send and wake send through the SAME
@@ -445,7 +454,8 @@ async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
 
 
 @pytest.mark.asyncio
-async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_path):
+@private_profile_test
+async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_path, request):
     """The second automatic slot does not resolve or bypass the first card."""
     controller, store, runs_db = _controller(
         tmp_path,

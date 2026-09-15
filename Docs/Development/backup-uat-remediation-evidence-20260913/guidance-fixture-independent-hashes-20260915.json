@@ -1,0 +1,32 @@
+{
+  "verdict": "approved_fixture_alignment",
+  "head": "92f8f9224bc3cadfc22ba9fe997597b1ce89a05a",
+  "files": {
+    "/private/tmp/uat-guidance-unmounted-probe.py": "b88d05598b89caafec2d29e8c2536e27312f01093231d26fdb7719f2b3b1cbc7",
+    "/private/tmp/test_guidance_unmounted_independent.py": "00e321fecd49e7e3636f43190130efb7324661a478dee8d26494efcafcb2aa64",
+    "/private/tmp/chatbook-backup-pr-20260912/Tests/Backup_Recovery/test_console_guidance_readiness.py": "935a899a2c2737dfcfbacc6f78c58c978957e04236c43a5011f00d77e9a29536"
+  },
+  "assertion_body_AST_identical": true,
+  "whole_script_changes": [
+    "run_test replaced by app._context",
+    "mounted phase renamed context_ready",
+    "finally awaits real app._shutdown and rethrows app._exception"
+  ],
+  "native_cases": [
+    {
+      "name": "test_original_guidance_body_without_unrelated_ui_mount[freshness]",
+      "seconds": 4.952,
+      "passed": true
+    },
+    {
+      "name": "test_original_guidance_body_without_unrelated_ui_mount[display_pairs]",
+      "seconds": 5.096,
+      "passed": true
+    }
+  ],
+  "suite_seconds": 12.13,
+  "subprocess_limit_seconds": 45,
+  "log": "/private/tmp/uat-guidance-unmounted-independent.log",
+  "xml": "/private/tmp/uat-guidance-unmounted-independent.xml",
+  "windows_timeout_cause_proved": false
+}

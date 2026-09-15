@@ -123,7 +123,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: cost; the count grows for intentional feature surface, not drift.
 #: Owner sign-off recorded in PR #2651. Snapshot refreshed via
 #: ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
-MAX_TLDW_MODULES_AT_UI_READY = 975
+#: 975 -> 1022 (2026-09-14, PR #2642, TASK-32562): owner-approved ADR-097
+#: exception for backup startup admission/activation and registered storage
+#: participants. Same-probe dev/current measurements: 975/1022 modules.
+#: Preserve existing headroom; timing and absent-family guards are unchanged.
+MAX_TLDW_MODULES_AT_UI_READY = 1022
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

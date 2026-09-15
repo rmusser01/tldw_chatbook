@@ -1,0 +1,56 @@
+{
+  "revision": "e4f8aa7a62ea9800e3867d47036fafb4a1ec6b5f",
+  "product_selection": "replacement-persona",
+  "verified_artifact_files": 64,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.349,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 21,
+      "counts": {
+        "passed": 21
+      },
+      "seconds": 3967.07,
+      "failures": [],
+      "skips": []
+    }
+  },
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "2f7c5c26653e88430427658948206b70b1bca813c5b625af841f018fd53e006e",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "source_files": 16558,
+  "git_blob_verification": {
+    "revision": "e4f8aa7a62ea9800e3867d47036fafb4a1ec6b5f",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/34880766232",
+  "review": "windows-e4f8-persona-review-20260914.md",
+  "provenance": "F9 uses the installed wheel. The 20 Persona cases use native source-checkout code; the installed receipt does not cover their imports.",
+  "limits": "All 19 negative bodies executed. Existing limits unchanged. Prior shared-fixture lock causality remains unknown; no manual first-time or all-platform completion claim.",
+  "evidence_hashes": {
+    "/private/tmp/uat-windows-e4f8-persona/verification.json": "a0a52c7422d7a29e769d46c4f131342606969617c955dd9b1b01e42d59f2dce7",
+    "/private/tmp/uat-windows-e4f8-persona/git-blob-verification.json": "6a254d01267784088d303150fdd2841f3b2d0003db09fa602671859940cd250b",
+    "/private/tmp/uat-windows-e4f8-persona/case-accounting.json": "3d3daae9544ccd5da36d00633347ea64a97bef6371f2b9e649b85b0d4c6f9e50",
+    "/private/tmp/uat-windows-e4f8-persona-review.md": "a5257cab3c2a52093950ebee53af4f4cc403081ca393e356dfef702d60175f65"
+  }
+}

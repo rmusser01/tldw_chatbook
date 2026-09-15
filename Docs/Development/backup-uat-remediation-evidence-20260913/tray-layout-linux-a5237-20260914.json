@@ -1,0 +1,16 @@
+{
+  "pytest_returncode": 0,
+  "revision": "a5237449584d5b6d0090c15adabb4b12846a4aaa",
+  "source_tracked_unchanged": true,
+  "status": {
+    "collected": 14,
+    "counts": {
+      "failed": 0,
+      "passed": 14,
+      "skipped": 0
+    },
+    "exitstatus": 0,
+    "failed_ordinals": [],
+    "unfinished": 0
+  }
+}

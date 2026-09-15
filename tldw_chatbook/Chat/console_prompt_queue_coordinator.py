@@ -131,6 +131,36 @@ class ConsolePromptQueueCoordinator:
             OrderedDict()
         )
         self._shutting_down = False
+        self._maintenance_paused = False
+        self._maintenance_suspended: dict[str, int] = {}
+
+    def maintenance_close_admission(self) -> None:
+        """Stop admissions and next claims, leaving the accepted turn intact."""
+        self._maintenance_paused = True
+
+    def maintenance_resume(self) -> tuple[tuple[str, int], ...]:
+        """Return only maintenance-suspended queues for guarded redispatch."""
+        self._maintenance_paused = False
+        return tuple(self._maintenance_suspended.items())
+
+    def _maintenance_refusal(self, session_id: str) -> PromptQueueMutationResult:
+        return PromptQueueMutationResult(
+            QueueMutationStatus.INVALID, self.registry.snapshot(session_id),
+            detail="Console generation is paused for backup maintenance.",
+        )
+
+    async def resume_after_maintenance(
+        self, session_id: str, revision: int
+    ) -> PromptQueueMutationResult:
+        """Resume only an unchanged maintenance pause, never a user edit."""
+        if self._maintenance_paused:
+            return self._maintenance_refusal(session_id)
+        if self._maintenance_suspended.get(session_id) != revision:
+            return self._maintenance_refusal(session_id)
+        self._maintenance_suspended.pop(session_id, None)
+        if self.registry.snapshot(session_id).revision != revision:
+            return self._maintenance_refusal(session_id)
+        return await self.resume_and_drain(session_id)
 
     def authorizes(
         self,
@@ -363,6 +393,8 @@ class ConsolePromptQueueCoordinator:
         custody_request: ConsoleTurnCustodyRequest | None = None,
     ) -> PromptQueueMutationResult:
         """Admit text only behind an accepted turn or an existing queue."""
+        if self._maintenance_paused:
+            return self._maintenance_refusal(session_id)
 
         if self._has_staged_rider(session_id):
             snapshot = self.registry.snapshot(session_id)
@@ -397,6 +429,8 @@ class ConsolePromptQueueCoordinator:
         self, session_id: str, *, expected_revision: int
     ) -> PromptQueueMutationResult:
         """Cancel pause-after-turn and refresh the activity cache."""
+        if self._maintenance_paused:
+            return self._maintenance_refusal(session_id)
 
         result = self.registry.keep_draining(
             session_id, expected_revision=expected_revision
@@ -411,6 +445,12 @@ class ConsolePromptQueueCoordinator:
         initial_turn: Callable[[], Awaitable["ConsoleSubmitResult"]],
     ) -> "ConsoleSubmitResult":
         """Run one manual turn and sequentially drain accepted queued turns."""
+        if self._maintenance_paused:
+            from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
+
+            return ConsoleSubmitResult(
+                False, False, "Console generation is paused for backup maintenance."
+            )
 
         if session_id in self._chains:
             return await initial_turn()
@@ -635,6 +675,20 @@ class ConsolePromptQueueCoordinator:
                 )
                 self._finish_visible_terminal(session_id, status)
                 return
+            if self._maintenance_paused:
+                if snapshot.waiting_count and snapshot.mode is PromptQueueMode.DRAINING:
+                    paused = self.registry.pause(
+                        session_id, reason=PromptQueuePauseReason.MANUAL,
+                        expected_revision=snapshot.revision,
+                    )
+                    if paused.applied:
+                        self._maintenance_suspended[session_id] = paused.snapshot.revision
+                elif not snapshot.waiting_count:
+                    self.registry.finalize_empty_chain(
+                        session_id, expected_revision=snapshot.revision,
+                    )
+                self._finish_visible_terminal(session_id, status)
+                return
             if self._context_epoch(session_id) != snapshot.expected_context_epoch:
                 if snapshot.total_count:
                     self.registry.pause(
@@ -788,6 +842,8 @@ class ConsolePromptQueueCoordinator:
 
     def resume(self, session_id: str) -> PromptQueueMutationResult:
         """Reacquire a slot and resume a manually/dispatch-paused queue."""
+        if self._maintenance_paused:
+            return self._maintenance_refusal(session_id)
 
         snapshot = self.registry.snapshot(session_id)
         if session_id in self._dispatch_recoveries:
@@ -957,6 +1013,8 @@ class ConsolePromptQueueCoordinator:
         reviewed_context_epoch: int,
     ) -> PromptQueueMutationResult:
         """Adopt an explicitly reviewed epoch, then visibly reacquire a slot."""
+        if self._maintenance_paused:
+            return self._maintenance_refusal(session_id)
 
         snapshot = self.registry.snapshot(session_id)
         current_epoch = self._context_epoch(session_id)

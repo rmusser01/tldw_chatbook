@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Failed: restoring
+  backup_operation_failed
+
+  Excluded profile:8da6048f8999247ca9652103:notes.sync_bindings:sqlite-shm: intentionally_excluded
+  Excluded profile:8da6048f8999247ca9652103:notifications.client:sqlite-wal: intentionally_excluded
+  Excluded profile:8da6048f8999247ca9652103:notifications.client:sqlite-shm: intentionally_excluded                                                          ▅
+  Excluded profile:8da6048f8999247ca9652103:quiz.local:sqlite-wal: intentionally_excluded                                                                    ▅
+  Excluded profile:8da6048f8999247ca9652103:quiz.local:sqlite-shm: intentionally_excluded
+  Excluded profile:8da6048f8999247ca9652103:study.local:sqlite-wal: intentionally_excluded
+  Excluded profile:8da6048f8999247ca9652103:study.local:sqlite-shm: intentionally_excluded
+  Excluded recovery.control:fixed-bootstrap: intentionally_excluded
+  Excluded shared_config:unknown:config.toml.lock: unsupported
+  Excluded control:130d47652f5d2c801e504b644d34e0e72a1852219d4dd618d2b3f09eb3a0983c: intentionally_excluded
+  Captured files: 134
+  Captured bytes: 26716920
+  unsupported
+  unsupported_owner
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊                                                                                                                                                         ▎
+  ▊  Restore as isolated profile                                                                                                                         ▼  ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  Choose local destination roots. Archived paths are never defaults.
+
+  profile:8da6048f8999247ca9652103:chat.dictionaries (archive_root)
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/isolated/root-01                                                                              ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  profile:8da6048f8999247ca9652103:persona.assets (archive_root)
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/isolated/root-02                                                                              ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  profile:8da6048f8999247ca9652103:persona.visual_identity_builtin (archive_root)
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/isolated/root-03                                                                              ▎
+
+
+                       Inspect                                         Cancel operation                                           Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

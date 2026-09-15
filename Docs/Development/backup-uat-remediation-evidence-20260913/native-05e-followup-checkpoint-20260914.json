@@ -1,0 +1,423 @@
+{
+  "revision": "05e07702abedcd3b1dac1058385dddb6f880c343",
+  "linux": {
+    "installed_files": 2867,
+    "mismatches": 0,
+    "python_sources": 2475,
+    "revision": "05e07702abedcd3b1dac1058385dddb6f880c343",
+    "tracked_source_unchanged": true,
+    "wheel_sha256": "9c7c0677edf2a9d2a448b33a662ecc871c4b4d8339c77ce3c4a8608b43eef331"
+  },
+  "linux_tests": {
+    "passed": 9,
+    "failed": 0,
+    "skipped": 0,
+    "unfinished": 0,
+    "scope": "Eight database-status native cases and installed Library workflow"
+  },
+  "windows_focus": {
+    "revision": "05e07702abedcd3b1dac1058385dddb6f880c343",
+    "run": 34914057022,
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.639,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 13,
+      "passed": 12,
+      "failed": 1,
+      "db_status_passed": 8,
+      "tts_passed": 4,
+      "library": "failed: admission_timeout"
+    },
+    "verified_artifacts": 20,
+    "installed": [
+      {
+        "fixture": "product-pytest/f9-native-package0/native-package.json",
+        "files": 2867,
+        "wheel_sha256": "2a68112a517bf5af9ca51be67353c4389e3b2ada96634c07fbff24f21a2b8ad7",
+        "source_comparable_python_files": 2475,
+        "source_python_mismatches": []
+      }
+    ],
+    "git": {
+      "revision": "05e07702abedcd3b1dac1058385dddb6f880c343",
+      "source_clean": true,
+      "python_git_blobs": 2475,
+      "installed_receipts": 1,
+      "matching_modes": {
+        "windows_crlf": 2443,
+        "exact": 32
+      },
+      "mismatches": []
+    },
+    "phases": [
+      {
+        "phase": "construct_begin",
+        "elapsed": 0.016
+      },
+      {
+        "phase": "construct_complete",
+        "elapsed": 40.766
+      },
+      {
+        "phase": "mount_begin",
+        "elapsed": 40.766
+      },
+      {
+        "phase": "mount_yield",
+        "elapsed": 94.985
+      },
+      {
+        "phase": "service_close_begin",
+        "elapsed": 333.782
+      },
+      {
+        "phase": "service_close_complete",
+        "elapsed": 333.782
+      }
+    ],
+    "recovery_failure": [
+      {
+        "error_class": "AdmissionTimeout",
+        "frames": [
+          {
+            "file": "recovery_service.py",
+            "function": "run",
+            "line": 283
+          },
+          {
+            "file": "recovery_service.py",
+            "function": "backup",
+            "line": 1164
+          },
+          {
+            "file": "thread_diagnostics.py",
+            "function": "observed_capture",
+            "line": 507
+          },
+          {
+            "file": "capture_service.py",
+            "function": "capture",
+            "line": 220
+          },
+          {
+            "file": "contextlib.py",
+            "function": "__enter__",
+            "line": 137
+          },
+          {
+            "file": "admission.py",
+            "function": "_admit",
+            "line": 600
+          },
+          {
+            "file": "contextlib.py",
+            "function": "enter_context",
+            "line": 526
+          },
+          {
+            "file": "contextlib.py",
+            "function": "__enter__",
+            "line": 137
+          },
+          {
+            "file": "admission.py",
+            "function": "_lock",
+            "line": 173
+          },
+          {
+            "file": "admission.py",
+            "function": "_check",
+            "line": 188
+          }
+        ],
+        "errno": null,
+        "winerror": null
+      }
+    ],
+    "runtime_settlement_artifact_present": false,
+    "slowest_group": {
+      "namespaces": 21,
+      "total_roots": 21,
+      "unique_roots": 21,
+      "total_depth": 298,
+      "max_depth": 15,
+      "unique_ancestors": 23,
+      "thread_id": 8032,
+      "caller": {
+        "file": "admission.py",
+        "function": "pause_requested",
+        "line": 702
+      },
+      "completed": 1,
+      "errors": 0,
+      "wall_ns": 80377966500,
+      "thread_cpu_ns": 265625000,
+      "process_cpu_ns": 80718750000,
+      "calls": {
+        "_tokens": {
+          "started": 21,
+          "completed": 21,
+          "errors": 0,
+          "wall_ns": 80374705400
+        }
+      },
+      "started_wall_ns": 1950068858900
+    },
+    "cpu_window": {
+      "wall_s": 56.625,
+      "main_thread": 8028,
+      "main_cpu_s": 52.8125,
+      "process_cpu_s": 56.84375
+    }
+  },
+  "windows_prior_support": {
+    "run": 34912765803,
+    "job": 104203707615,
+    "revision": "238564276d7efc84e0954ace75f4c6e62493db3c",
+    "verified_artifact_files": 163,
+    "native": {
+      "passed": 42,
+      "failed": 0,
+      "skipped": 0,
+      "missing": 0
+    },
+    "product": {
+      "collected": 317,
+      "passed": 313,
+      "failed": 4,
+      "skipped": 0,
+      "missing": 0,
+      "seconds": 2680.336
+    },
+    "installed_receipts": [
+      {
+        "fixture": "product-pytest/f9-native-package0/native-package.json",
+        "files": 2867,
+        "wheel_sha256": "00b52985a2cc44d404278e3baa8d806eeb83bdfae4aa9794fc08e9487d79cd57",
+        "source_comparable_python_files": 2475,
+        "source_python_mismatches": []
+      },
+      {
+        "fixture": "product-pytest/f9-native-package1/native-package.json",
+        "files": 2867,
+        "wheel_sha256": "06b58335058a51c4bd22c922a9211d34f366b0c98a52cd6978c44209c3d57812",
+        "source_comparable_python_files": 2475,
+        "source_python_mismatches": []
+      }
+    ],
+    "budget_cases": [
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_later_observation_spends_only_remaining_setup_headroom[linux-0-650]",
+        "status": "passed",
+        "seconds": 0.007
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_later_observation_spends_only_remaining_setup_headroom[linux-50-600]",
+        "status": "passed",
+        "seconds": 0.007
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_later_observation_spends_only_remaining_setup_headroom[linux-500-150]",
+        "status": "passed",
+        "seconds": 0.007
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_later_observation_spends_only_remaining_setup_headroom[linux-610-40]",
+        "status": "passed",
+        "seconds": 0.007
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_later_observation_spends_only_remaining_setup_headroom[darwin-50-150]",
+        "status": "passed",
+        "seconds": 0.011
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_later_observation_spends_only_remaining_setup_headroom[win32-50-900]",
+        "status": "passed",
+        "seconds": 0.006
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_exhausted_observation_budget_starts_no_later_child[650]",
+        "status": "passed",
+        "seconds": 0.007
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_exhausted_observation_budget_starts_no_later_child[651]",
+        "status": "passed",
+        "seconds": 0.007
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_redistribution_still_requires_every_native_completion_marker[persona-later]",
+        "status": "passed",
+        "seconds": 0.006
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_redistribution_still_requires_every_native_completion_marker[persona-restored-reopen]",
+        "status": "passed",
+        "seconds": 0.007
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_redistribution_still_requires_every_native_completion_marker[persona-restored-capture]",
+        "status": "passed",
+        "seconds": 0.01
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_persona_observation_budget::test_later_child_timeout_is_preserved_without_running_final_checks",
+        "status": "passed",
+        "seconds": 0.006
+      }
+    ],
+    "sqlite_config_cases": [
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[cached]",
+        "status": "passed",
+        "seconds": 6.135
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[reopened]",
+        "status": "passed",
+        "seconds": 6.606
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[getter]",
+        "status": "passed",
+        "seconds": 6.205
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[pause_before]",
+        "status": "passed",
+        "seconds": 4.846
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[pause_during]",
+        "status": "passed",
+        "seconds": 5.731
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[error]",
+        "status": "passed",
+        "seconds": 6.755
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[cancel]",
+        "status": "passed",
+        "seconds": 6.599
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[error_selector]",
+        "status": "passed",
+        "seconds": 6.628
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[cancel_selector]",
+        "status": "passed",
+        "seconds": 6.579
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[selector_after_open]",
+        "status": "passed",
+        "seconds": 6.584
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[failed_close]",
+        "status": "passed",
+        "seconds": 6.383
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_sqlite_inside_config_scope::test_native_sqlite_reopen_has_independent_admission_inside_config[custom]",
+        "status": "passed",
+        "seconds": 6.225
+      }
+    ],
+    "mounted_cases": [
+      {
+        "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]",
+        "status": "passed",
+        "seconds": 283.716
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+        "status": "failed",
+        "seconds": 377.946,
+        "full_traceback_path": "/private/tmp/uat-windows-238564-support/junit-failures/fba1b81bd111b8be.txt"
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+        "status": "failed",
+        "seconds": 420.3,
+        "full_traceback_path": "/private/tmp/uat-windows-238564-support/junit-failures/344f17c907ca7f60.txt"
+      }
+    ],
+    "failures": [
+      {
+        "id": "Tests.Backup_Recovery.test_recovery_restart::test_actual_handoff_execs_fresh_recovery_ui[handoff]",
+        "status": "failed",
+        "seconds": 111.873,
+        "full_traceback_path": "/private/tmp/uat-windows-238564-support/junit-failures/d061c3e25d6c54c2.txt"
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_recovery_restart::test_actual_handoff_execs_fresh_recovery_ui[later]",
+        "status": "failed",
+        "seconds": 70.008,
+        "full_traceback_path": "/private/tmp/uat-windows-238564-support/junit-failures/f339fa553c45a2ce.txt"
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+        "status": "failed",
+        "seconds": 377.946,
+        "full_traceback_path": "/private/tmp/uat-windows-238564-support/junit-failures/fba1b81bd111b8be.txt"
+      },
+      {
+        "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+        "status": "failed",
+        "seconds": 420.3,
+        "full_traceback_path": "/private/tmp/uat-windows-238564-support/junit-failures/344f17c907ca7f60.txt"
+      }
+    ],
+    "causal_limits": {
+      "console": "Actual capture/resumed-write pass; historical WAL writer still unidentified",
+      "settings": "Scheduler drain false29.954s followed by native EX-lease AdmissionTimeout",
+      "library": "Startup retirement succeeded; parent420s timeout during progressing under-maintenance discovery/native Workspaces validation",
+      "handoff": "Original parent70s timeout; fresh UI completion not proved",
+      "later": "Fresh recovery UI completion marker observed; normal child exit not observed inside remaining0.813s"
+    }
+  },
+  "windows_startup": {
+    "run": 34914010324,
+    "job": 104207556802,
+    "revision": "05e07702abedcd3b1dac1058385dddb6f880c343",
+    "log_sha256": "32efe7ebc8e3cbc2eba12d36b4e059d2595e3f14ff1776f5104e285d2e8a6be3",
+    "outcome_lines": [
+      "2026-09-15T00:40:18.8775904Z 31 passed in 9.55s",
+      "2026-09-15T00:41:26.2241313Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:41:26.2852318Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:42:30.7977274Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:42:30.8557804Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:43:35.3178932Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:43:35.3649690Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:44:39.8529774Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:44:39.8918285Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:44:39.9131570Z ##[error]Process completed with exit code 1.",
+      "2026-09-15T00:45:52.6589807Z 1 passed, 1 warning in 51.11s",
+      "2026-09-15T00:47:01.1318942Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:47:01.1455724Z +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++",
+      "2026-09-15T00:47:01.1701616Z ##[error]Process completed with exit code 1."
+    ],
+    "profile_count": 8,
+    "all_profile_sources_match": true,
+    "observer_errors": []
+  },
+  "sources": {
+    "/private/tmp/uat-windows-05e077-native-close-review.md": "ce2caa029af5d097382ae5770d57e06d81bb3a067ad533ac4212536e3b4fac15",
+    "/private/tmp/uat-windows-238564-support-review.md": "746825eacde85c0e233e7b25f996bb41c399fdc7a3632346e9c9f62760b17250"
+  },
+  "acceptance_complete": false,
+  "merge_authorized": false
+}

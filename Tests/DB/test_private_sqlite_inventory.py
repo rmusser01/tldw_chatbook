@@ -357,6 +357,7 @@ _PUBLIC_PRIVATE_SQLITE_SEAMS = {
     "discard_profile_migration_destination",
     "migrate_profile_store_to_candidate",
     "open_canonical_profile_migration_destination",
+    "open_recovery_validation",
     "restore_private_sqlite",
 }
 
@@ -466,6 +467,91 @@ def _literal_string_argument(
     return None
 
 
+_CORE_RECOVERY_OWNERS = frozenset({
+    "db.chachanotes.primary", "db.media.primary", "db.prompts.primary",
+    "db.library_collections", "db.library_ingest_jobs",
+})
+
+
+def _qualified_core_recovery_dispatch(source_path, symbol, call):
+    """Review only the frozen installed five-owner dispatch, never arbitrary IDs."""
+    if symbol not in {
+        "_CoreAdapter.capture", "_CoreAdapter.validate",
+        "_CoreAdapter.validate_dependencies", "_CoreAdapter.discover",
+        "_CoreAdapter.temporary_video_references",
+    }:
+        return False
+    expression = call.args[0] if call.args else None
+    if expression is None or ast.unparse(expression) not in {
+        "self.backup_owner_id", "adapters[owner].backup_owner_id",
+    }:
+        return False
+    tree = _parse_source(source_path)
+    factory = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "core_adapters"), None)
+    if factory is None:
+        return False
+    returns = [node.value for node in ast.walk(factory) if isinstance(node, ast.Return)]
+    if len(returns) != 1 or not isinstance(returns[0], ast.Tuple):
+        return False
+    declarations = returns[0].elts
+    if len(declarations) != 5 or any(
+        not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name)
+        or node.func.id != "_CoreAdapter" or not node.args
+        or not isinstance(node.args[0], ast.Constant) for node in declarations
+    ):
+        return False
+    if {node.args[0].value for node in declarations} != _CORE_RECOVERY_OWNERS:
+        return False
+    adapter = next((node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "_CoreAdapter"), None)
+    if adapter is None:
+        return False
+    owner_property = next((node for node in adapter.body if isinstance(node, ast.FunctionDef) and node.name == "backup_owner_id"), None)
+    expected = ast.parse('"recovery.core." + self.owner_id.removeprefix("db.").removesuffix(".primary")', mode="eval").body
+    return owner_property is not None and len(owner_property.body) == 1 and isinstance(owner_property.body[0], ast.Return) and ast.dump(owner_property.body[0].value) == ast.dump(expected)
+
+
+def _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
+    """Admit the six reviewed restore sites only with their fixed declarations."""
+    declarations = {
+        "tldw_chatbook/DB/recovery_operations": ("_SubscriptionsAdapter", "db.subscriptions"),
+        "tldw_chatbook/Backup_Recovery/recovered_media": ("_RecoveredAdapter", "recovered.media"),
+    }
+    if production_module not in declarations or not call.args:
+        return False
+    class_name, owner_id = declarations[production_module]
+    if symbol not in {
+        f"{class_name}.validate_restore",
+        f"{class_name}.relocate_restore",
+        f"{class_name}.validate_restore_dependencies",
+    } or ast.unparse(call.args[0]) != "self.owner_id":
+        return False
+    tree = _parse_source(source_path)
+    if class_name == "_SubscriptionsAdapter":
+        constructors = [node for node in ast.walk(tree)
+                        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                        and node.func.id == class_name]
+        return len(constructors) == 1 and _literal_string_argument(
+            constructors[0], 0, "owner_id"
+        ) == owner_id
+    adapter = next((node for node in tree.body
+                    if isinstance(node, ast.ClassDef) and node.name == class_name), None)
+    if adapter is None:
+        return False
+    assignments = [node for node in adapter.body if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == "owner_id"
+                           for target in node.targets)]
+    return len(assignments) == 1 and isinstance(assignments[0].value, ast.Constant) and assignments[0].value.value == owner_id
+
+
+def _qualified_file_notes_core_read(source_path, symbol, call):
+    if symbol != "_FileNotesAdapter.discover" or not call.args or ast.unparse(call.args[0]) != "core.backup_owner_id":
+        return False
+    tree = _parse_source(source_path)
+    expected = ast.parse('core = next(a for a in core_adapters() if a.owner_id == "db.chachanotes.primary")').body[0]
+    return any(isinstance(node, ast.Assign) and ast.dump(node) == ast.dump(expected)
+               for node in ast.walk(tree))
+
+
 def _private_sqlite_seam_violations(
     source_path: Path,
     production_module: str,
@@ -473,6 +559,26 @@ def _private_sqlite_seam_violations(
     calls = _qualified_private_sqlite_calls(source_path)
     violations: list[str] = []
     for symbol, seam_name, call in calls:
+        if seam_name == "open_recovery_validation":
+            if _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
+                continue
+            if (
+                (production_module, symbol) in {
+                    ("tldw_chatbook/Backup_Recovery/sqlite_validation", "_validate_candidate"),
+                    ("tldw_chatbook/Backup_Recovery/credentials", "_rewrite_database"),
+                    ("tldw_chatbook/Backup_Recovery/credentials", "_material"),
+                }
+                and call.args
+                and ast.unparse(call.args[0]) == "installed.owner_id"
+                and (
+                    "installed = _installed_owner(owner.owner_id)" in source_path.read_text()
+                    or (symbol == "_rewrite_database" and "installed = _installed_owner(owner_id)" in source_path.read_text())
+                    or (symbol == "_material" and "installed = _installed_owner(CITATION_OWNER)" in source_path.read_text())
+                )
+            ):
+                continue
+            violations.append(f"{production_module}:{symbol}: unqualified recovery validation")
+            continue
         if seam_name in {
             "backup_profile_migration_boundary",
             "close_profile_migration_destination",
@@ -491,6 +597,10 @@ def _private_sqlite_seam_violations(
                 keyword_name,
             )
             if owner_id is None:
+                if production_module == "tldw_chatbook/DB/recovery_core" and _qualified_core_recovery_dispatch(source_path, symbol, call):
+                    continue
+                if production_module == "tldw_chatbook/Notes/recovery" and _qualified_file_notes_core_read(source_path, symbol, call):
+                    continue
                 violations.append(
                     f"{production_module}:{symbol}: non-literal {keyword_name}"
                 )
@@ -555,14 +665,14 @@ def _assert_raw_connection_census(
         return
 
     # The seam owns a prepared file open, a filesystem-free memory open, and
-    # the exclusive descriptor view. The ordinary file open keeps sqlite3's
+    # separate POSIX and Windows descriptor views. The ordinary file open keeps sqlite3's
     # factory seam; only descriptor views use the captured original callable.
-    assert current[seam_site] == 3
+    assert current[seam_site] == 4
     # The TTS runtime probe is a separate, fixed, argument-free capability
     # check. Its one raw call is admitted only by the strict source guard below.
     assert current[runtime_probe_site] == 1
     assert current == Counter(
-        {seam_site: 3, runtime_probe_site: 1, child_proof_site: 1}
+        {seam_site: 4, runtime_probe_site: 1, child_proof_site: 1}
     )
 
 
@@ -623,8 +733,8 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # authority before any profile-store open. C45/C46 are descriptor-bound
         # publisher/recovery validation through the centralized SQLite seam;
         # C47 is the exact admitted restore source retained during canonical
-        # candidate preparation. C48 is retired: exact-current proof now lives
-        # only in the isolated child, with a separately guarded raw seam. C49 is the external
+        # candidate preparation. C48 retains native Windows exact-current
+        # proof; POSIX proof lives in the separately guarded child. C49 is the external
         # Watchlists agent's non-mutating view of existing subscription data.
         # C50 is the device-private Notes import receipt and future lasting-sync
         # state owner. C51 is the pre-boot "upgrading database..." notice's
@@ -639,11 +749,13 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 58)
-        if number not in {10, 48}
+        # C89 validates recovered-media restore edges against staged catalog
+        # rows and archive-relative payload topology under the existing owner.
+        # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
+        for number in range(1, 92) if number not in {10, 75}
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 18) if number not in {10, 11, 12, 16}
+        f"B{number:02d}" for number in range(1, 39) if number not in {10, 11, 12, 16, 34}
     ]
 
 
@@ -693,13 +805,13 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({seam_site: 3, runtime_probe_site: 1, child_proof_site: 1}),
+        Counter({seam_site: 4, runtime_probe_site: 1, child_proof_site: 1}),
         seam_exists=True,
     )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({seam_site: 4, runtime_probe_site: 1, child_proof_site: 1}),
+            Counter({seam_site: 5, runtime_probe_site: 1, child_proof_site: 1}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
@@ -708,7 +820,7 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
             Counter(
                 {
                     legacy_site: 7,
-                    seam_site: 3,
+                    seam_site: 4,
                     runtime_probe_site: 1,
                     child_proof_site: 1,
                 }
@@ -732,7 +844,7 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({seam_site: 3, runtime_probe_site: 2, child_proof_site: 1}),
+            Counter({seam_site: 4, runtime_probe_site: 2, child_proof_site: 1}),
             seam_exists=True,
         )
     for child_count in (0, 2):
@@ -740,7 +852,7 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
             _assert_raw_connection_census(
                 documented,
                 Counter(
-                    {seam_site: 3, runtime_probe_site: 1, child_proof_site: child_count}
+                    {seam_site: 4, runtime_probe_site: 1, child_proof_site: child_count}
                 ),
                 seam_exists=True,
             )
@@ -1091,6 +1203,33 @@ def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
         assert row["disposition"].strip()
 
 
+def test_restricted_validation_authorities_are_exact_and_not_backup_sources():
+    policies = {
+        key: policy for key, policy in SQLITE_OWNER_REGISTRY.items()
+        if key.startswith("recovery.validation")
+    }
+    assert set(policies) == {"recovery.validation", "recovery.validation_schema"}
+    assert policies["recovery.validation"].allowed_target_kinds == frozenset({
+        SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.READ_ONLY_URI,
+    })
+    assert policies["recovery.validation_schema"].allowed_target_kinds == frozenset({SQLiteTargetKind.MEMORY})
+    assert all(not policy.centralized_backup_allowed and not policy.recovery_capture_allowed for policy in policies.values())
+    assert not set(policies) & {row["owner_id"] for row in _inventory_rows("B")}
+
+
+def test_validation_guard_rejects_unqualified_candidate_open(tmp_path):
+    source = tmp_path / "unqualified.py"
+    source.write_text(
+        "from tldw_chatbook.DB.private_sqlite import open_recovery_validation as open_candidate\n"
+        "def validate_candidate(owner, path):\n"
+        "    return open_candidate(owner.owner_id, path, writable=True)\n"
+    )
+    _, violations = _private_sqlite_seam_violations(
+        source, "tldw_chatbook/Backup_Recovery/sqlite_validation"
+    )
+    assert len(violations) == 1 and "unqualified recovery validation" in violations[0]
+
+
 def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
     # Selected by id, not by position: this row was the newest when the test
     # was written, but the inventory keeps growing (C51, task-21100) and the
@@ -1150,11 +1289,13 @@ def test_connection_and_backup_rows_record_completed_helper_migrations() -> None
                 if row["id"] == "C42"
                 else (
                     "connect_private_sqlite_descriptor"
-                    if row["id"] in {"C45", "C46"}
+                    if row["id"] in {"C45", "C46", "C48"}
                     else "connect_private_sqlite"
                 )
             )
         )
+        if row["id"] == "C86":
+            helper = "open_recovery_validation"
         assert row["disposition"].startswith(f"Migrated via `{helper}`.")
     for row in backup_rows:
         assert row["disposition"].startswith(f"Migrated via `{row['operation']}`.")
@@ -1215,10 +1356,10 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
 
     assert Counter(row["operation"] for row in backup_rows) == Counter(
         {
-            "backup_connection_to_private": 4,
-            "backup_open_connections_to_private": 1,
+            "backup_connection_to_private": 3,
+            "backup_open_connections_to_private": 2,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 6,
+            "copy_private_sqlite": 26,
             "migrate_profile_store_to_candidate": 1,
         }
     )
@@ -1313,6 +1454,12 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
 
     expected_calls = Counter(
         {
+            ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter.capture", "copy_private_sqlite"): 1,
+            ("tldw_chatbook/DB/recovery_core", "_CoreAdapter.capture", "copy_private_sqlite"): 1,
+            ("tldw_chatbook/TTS/recovery", "_Profiles.capture", "copy_private_sqlite"): 1,
+            ("tldw_chatbook/Research_Interop/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
+            ("tldw_chatbook/Writing_Interop/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
+            ("tldw_chatbook/Evals/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
             (
                 "tldw_chatbook/DB/ChaChaNotes_DB",
                 "CharactersRAGDB.backup_database",
@@ -1341,7 +1488,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             (
                 "tldw_chatbook/TTS/profile_repository",
                 "TTSProfileRepository._worker_create_recovery_backup",
-                "backup_connection_to_private",
+                "backup_open_connections_to_private",
             ): 1,
             (
                 "tldw_chatbook/TTS/profile_migration_candidate",
@@ -1355,6 +1502,18 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             ): 1,
         }
     )
+    expected_calls.update({
+        ('tldw_chatbook/Scheduling/recovery', '_ScheduledTasksAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Sync_Interop/recovery', '_SyncAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Notes/recovery', '_FileNotesAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Backup_Recovery/rag_indexing', '_Indexing.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Kanban_Interop/recovery', '_KanbanAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/DB/recovery_operations', '_WorkspacesAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/DB/recovery_operations', '_AgentRunsAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/DB/recovery_operations', '_SubscriptionsAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Notifications/recovery', '_NotificationsAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Notifications/recovery', '_EventsAdapter.capture', "copy_private_sqlite"): 1,
+    })
     actual_calls: Counter[tuple[str, str, str]] = Counter()
     for source_path in PRODUCTION_ROOT.rglob("*.py"):
         module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
@@ -1551,11 +1710,123 @@ def test_explicit_exclusions_and_absence_of_async_owner_are_documented() -> None
         for node in json_storage.body
         if isinstance(node, ast.FunctionDef) and node.name == "_create_backup"
     )
-    assert any(
-        isinstance(node, ast.Call) and _is_named_call(node, "shutil", "copy2")
-        for node in ast.walk(json_backup)
+    assert all(
+        any(
+            isinstance(node, ast.Call) and _is_named_call(node, "raw", method)
+            for node in ast.walk(json_backup)
+        )
+        for method in ("_file", "_replace")
     )
     assert not any(
         isinstance(node, ast.Call) and _is_sqlite3_connect(node)
         for node in ast.walk(json_backup)
     )
+
+
+@pytest.mark.parametrize("damage", ["expression", "site", "factory"])
+def test_core_recovery_dispatch_exception_does_not_broaden(tmp_path, damage):
+    source = (PROJECT_ROOT / "tldw_chatbook/DB/recovery_core.py").read_text()
+    if damage == "expression":
+        source = source.replace("copy_private_sqlite(self.backup_owner_id,", "copy_private_sqlite(requested_owner,")
+        # Formatting may split the argument onto its own line.
+        source = source.replace("self.backup_owner_id, item.path", "requested_owner, item.path")
+        source = source.replace("self.backup_owner_id,\n", "requested_owner,\n")
+    elif damage == "site":
+        source += '\nfrom tldw_chatbook.DB.private_sqlite import copy_private_sqlite\ndef unreviewed(self, source, target):\n    copy_private_sqlite(self.backup_owner_id, source, target)\n'
+    else:
+        source = source.replace('"db.media.primary", "media_db_path"', '"db.unreviewed", "media_db_path"')
+    candidate = tmp_path / "recovery_core.py"
+    candidate.write_text(source)
+    _, violations = _private_sqlite_seam_violations(candidate, "tldw_chatbook/DB/recovery_core")
+    assert any("non-literal owner_id" in violation for violation in violations)
+
+
+def test_core_recovery_factory_exactly_matches_registered_backup_authority():
+    from tldw_chatbook.DB.recovery_core import core_adapters
+    adapters = core_adapters()
+    assert {a.owner_id for a in adapters} == _CORE_RECOVERY_OWNERS
+    assert all(a.__dataclass_params__.frozen for a in adapters)
+    installed_domain_authority = {
+        "recovery.domain.research", "recovery.domain.writing",
+        "recovery.domain.evals", "recovery.domain.study",
+    }
+    installed_domain_authority |= {
+        'recovery.operations.workspaces',
+        'recovery.operations.agent_runs',
+        'recovery.operations.subscriptions',
+        'recovery.operations.scheduled_tasks',
+        'recovery.operations.notifications',
+        'recovery.operations.events',
+        'recovery.operations.sync',
+        'recovery.operations.file_notes',
+        'recovery.operations.agent_logs',
+        'recovery.operations.kanban',
+        'recovery.operations.note_bindings',
+        'recovery.files.persona',
+        'recovery.files.tts',
+        'recovery.recovered_media',
+        'recovery.rag_indexing',
+    }
+    assert {a.backup_owner_id for a in adapters} | installed_domain_authority == {
+        name for name, policy in SQLITE_OWNER_REGISTRY.items() if policy.recovery_capture_allowed
+    }
+    from tldw_chatbook.Research_Interop.recovery import recovery_adapters as research
+    from tldw_chatbook.Writing_Interop.recovery import recovery_adapters as writing
+    from tldw_chatbook.Evals.recovery import recovery_adapters as evals
+    from tldw_chatbook.Study_Interop.recovery import recovery_adapters as study
+    assert {a.owner_id for factory in (research, writing, evals, study) for a in factory()} == {
+        "research.local", "writing.local", "db.evals", "eval.definitions", "study.local", "quiz.local",
+    }
+    assert all(a.__dataclass_params__.frozen for factory in (research, writing, evals, study) for a in factory())
+
+
+def test_rag_candidate_authority_is_read_only_and_backup_excluded(tmp_path):
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    policy = SQLITE_OWNER_REGISTRY["recovery.rag_projection_validation"]
+    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.READ_ONLY_URI})
+    assert not policy.centralized_backup_allowed and not policy.recovery_capture_allowed
+    assert not policy.foreign_read_only_source
+    assert not any(row["owner_id"] == "recovery.rag_projection_validation" for row in _inventory_rows("B"))
+    with pytest.raises(ValueError):
+        connect_private_sqlite("recovery.rag_projection_validation", tmp_path / "must-not-create.db")
+    assert not (tmp_path / "must-not-create.db").exists()
+
+
+@pytest.mark.parametrize(
+    "module,class_name,owner_id",
+    [
+        ("tldw_chatbook/DB/recovery_operations", "_SubscriptionsAdapter", "db.subscriptions"),
+        ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter", "recovered.media"),
+    ],
+)
+@pytest.mark.parametrize("damage", ["expression", "site", "declaration"])
+def test_fixed_restore_dispatch_rejects_changed_authority(
+    tmp_path, module, class_name, owner_id, damage
+):
+    source = (PROJECT_ROOT / f"{module}.py").read_text()
+    if damage == "expression":
+        source = source.replace("self.owner_id, candidate, writable=", "requested_owner, candidate, writable=")
+    elif damage == "site":
+        source = source.replace("def validate_restore(", "def unreviewed_restore(")
+    else:
+        source = source.replace(f'"{owner_id}"', '"unreviewed.owner"')
+    candidate = tmp_path / "changed.py"
+    candidate.write_text(source)
+    _, violations = _private_sqlite_seam_violations(candidate, module)
+    assert any("unqualified recovery validation" in value for value in violations)
+
+
+@pytest.mark.parametrize("damage", ["expression", "site", "selection"])
+def test_file_notes_core_read_requires_exact_selected_authority(tmp_path, damage):
+    source = (PROJECT_ROOT / "tldw_chatbook/Notes/recovery.py").read_text()
+    if damage == "expression":
+        source = source.replace("core.backup_owner_id", "requested_owner")
+    elif damage == "site":
+        source = source.replace("def discover(self, config):", "def unreviewed(self, config):")
+    else:
+        source = source.replace('a.owner_id == "db.chachanotes.primary"', 'a.owner_id == requested_owner')
+    candidate = tmp_path / "changed.py"
+    candidate.write_text(source)
+    _, violations = _private_sqlite_seam_violations(candidate, "tldw_chatbook/Notes/recovery")
+    assert any("non-literal owner_id" in value for value in violations)

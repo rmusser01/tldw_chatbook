@@ -1,0 +1,71 @@
+{
+  "revision": "b5343709820bec1e9be611865c3443ce50086d1d",
+  "verified_artifact_hashes": 109,
+  "junit_counts": {
+    "passed": 74
+  },
+  "collected": 74,
+  "seconds": 1196.024,
+  "pytest_returncode": 0,
+  "installed": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "1e487e4154a1de599b816b4f24dcc9b28d6d06868aba41437d1c469ac4c4637c",
+      "verified_python_git_blobs": 2474
+    },
+    {
+      "fixture": "product-pytest/f9-native-package1/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "af136d72f74042ef660bd6d34e62f5e480bb83b1007213374768ba86341f56e9",
+      "verified_python_git_blobs": 2474
+    },
+    {
+      "fixture": "product-pytest/f9-native-package2/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "67153ba967437d3a3d331231842219d1769baa00a2d26217e3da1b52974a9987",
+      "verified_python_git_blobs": 2474
+    },
+    {
+      "fixture": "product-pytest/f9-native-package3/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "65be0360448a9b6b5ab0df976be293d9d4f4613ef35f3925b856bce8c662370e",
+      "verified_python_git_blobs": 2474
+    }
+  ],
+  "failures": [],
+  "native_identity": {
+    "machine": "arm64",
+    "native_identity": {
+      "arch": "arm64",
+      "filesystem": "apfs",
+      "flags": 76583040,
+      "os": "Darwin",
+      "python": "3.12.11",
+      "release": "25.5.0"
+    },
+    "operations": {
+      "admission": [
+        true,
+        "qualified_native_evidence"
+      ],
+      "publish_directory": [
+        true,
+        "qualified_native_evidence"
+      ],
+      "publish_file": [
+        true,
+        "qualified_native_evidence"
+      ],
+      "publish_new": [
+        true,
+        "qualified_native_evidence"
+      ]
+    },
+    "os_name": "posix",
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "python": "3.12.11",
+    "release": "25.5.0",
+    "system": "Darwin"
+  }
+}

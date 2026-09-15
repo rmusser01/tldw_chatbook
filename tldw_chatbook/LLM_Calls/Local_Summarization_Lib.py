@@ -18,6 +18,8 @@
 #
 ###############################
 # Import necessary libraries
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 import json
 import os
 
@@ -40,6 +42,7 @@ from tldw_chatbook.Internal_Prompts import get_internal_prompt
 #
 
 
+@_provider_recovery.unqualified
 def summarize_with_local_llm(
     input_data, custom_prompt_arg, temp, system_message=None, streaming=False
 ):
@@ -228,6 +231,7 @@ def _resolve_provider_credential(parameter_key, modern: dict, legacy: dict):
     return "" if declared else None
 
 
+@_provider_recovery.unqualified
 def summarize_with_llama(
     input_data,
     custom_prompt,
@@ -523,6 +527,7 @@ def summarize_with_llama(
 
 
 # https://lite.koboldai.net/koboldcpp_api#/api%2Fv1/post_api_v1_generate
+@_provider_recovery.unqualified
 def summarize_with_kobold(
     input_data,
     api_key,
@@ -783,6 +788,7 @@ def summarize_with_kobold(
 
 
 # https://github.com/oobabooga/text-generation-webui/wiki/12-%E2%80%90-OpenAI-API
+@_provider_recovery.unqualified
 def summarize_with_oobabooga(
     input_data,
     api_key,
@@ -1036,6 +1042,7 @@ def summarize_with_oobabooga(
         return f"Ooba API: Unexpected error occurred: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_tabbyapi(
     input_data,
     custom_prompt_input,
@@ -1280,6 +1287,7 @@ def summarize_with_tabbyapi(
             return f"TabbyAPI: Unexpected error in summarization process: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_vllm(
     api_key,
     input_data,
@@ -1512,6 +1520,7 @@ def summarize_with_vllm(
         return f"vLLM Summarization: Unexpected error occurred: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_ollama(
     input_data,
     custom_prompt,
@@ -1795,6 +1804,7 @@ def summarize_with_ollama(
         return f"Ollama: Error occurred while summarizing: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_custom_openai(
     api_key,
     input_data,
@@ -2052,6 +2062,7 @@ def summarize_with_custom_openai(
         return f"Custom OpenAI API: Unexpected error occurred: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_custom_openai_2(
     api_key,
     input_data,

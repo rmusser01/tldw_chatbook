@@ -1,0 +1,36 @@
+{
+  "bandit": {
+    "ours": {
+      "B101": 18
+    },
+    "current": {
+      "B101": 36
+    }
+  },
+  "ruff": [],
+  "main_body_ast_unchanged": true,
+  "source_sha256": {
+    "Tests/Backup_Recovery/later_failure_diagnostics.py": "632172b97bd879fdccab44af5ff6f68886634b668d934300324e0aa62c9da6fe",
+    "Tests/Backup_Recovery/test_later_failure_diagnostics.py": "7bb47f3c942fa72b4513bee04ae172fd02791c93cdc103e0dd1c1eacf0ccbf2a",
+    "Tests/Backup_Recovery/test_mounted_console_backup.py": "daa3ba8deadd7f3ada98312fb91065a553defdcd88258381eda72f395b3e75c9",
+    "Tests/Backup_Recovery/run_platform_product.py": "6d1c49cb7bb68334c1d908823c234f2c6a354d2e1f342e4157b20726da40c252"
+  },
+  "base": "e4f8aa7a62ea9800e3867d47036fafb4a1ec6b5f",
+  "root_tests": "152 passed in8.42s",
+  "independent_tests": "33 passed in2.42s",
+  "red": "12 failed,3 passed in1.45s",
+  "support_collection": "275 tests collected in3.58s",
+  "limits_and_product": "unchanged",
+  "native_console_failure_attribution": "pending next Windows support run",
+  "review_receipt": {
+    "base_head": "e4f8aa7a62ea9800e3867d47036fafb4a1ec6b5f",
+    "main_body_ast_unchanged": true,
+    "runner_existing_selection_order_unchanged": true,
+    "sha256": {
+      "Tests/Backup_Recovery/later_failure_diagnostics.py": "632172b97bd879fdccab44af5ff6f68886634b668d934300324e0aa62c9da6fe",
+      "Tests/Backup_Recovery/test_later_failure_diagnostics.py": "7bb47f3c942fa72b4513bee04ae172fd02791c93cdc103e0dd1c1eacf0ccbf2a",
+      "Tests/Backup_Recovery/test_mounted_console_backup.py": "daa3ba8deadd7f3ada98312fb91065a553defdcd88258381eda72f395b3e75c9",
+      "Tests/Backup_Recovery/run_platform_product.py": "6d1c49cb7bb68334c1d908823c234f2c6a354d2e1f342e4157b20726da40c252"
+    }
+  }
+}

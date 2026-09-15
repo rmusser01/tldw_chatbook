@@ -1,0 +1,108 @@
+{
+  "support": {
+    "revision": "b560d806b4f5601d0f760a00864cba546d167ef8",
+    "artifact_hashes_verified": 102,
+    "installed": [
+      {
+        "installed_files": 2866,
+        "python_sources": 2474,
+        "mismatches": [],
+        "wheel_sha256": "6ae8a8bc6adc1b056b496a1488c8da83bb9738db62d6039951b69856ad7cd5c6"
+      },
+      {
+        "installed_files": 2866,
+        "python_sources": 2474,
+        "mismatches": [],
+        "wheel_sha256": "53427167b6339452c21cb4ecf981bbdf0d5dbe85a30f6a5a612fad9f4785480b"
+      }
+    ],
+    "phases": {
+      "native": {
+        "pytest_returncode": 0,
+        "junit": {
+          "collected": 42,
+          "failed": [],
+          "parse_error": null,
+          "skipped": []
+        }
+      },
+      "product": {
+        "pytest_returncode": 1,
+        "junit": {
+          "collected": 154,
+          "failed": [
+            "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+            "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]"
+          ],
+          "parse_error": null,
+          "skipped": []
+        }
+      }
+    },
+    "passed": 152,
+    "failed": 2,
+    "failure_issue": "admission_timeout for both Settings and Library"
+  },
+  "replacement": {
+    "revision": "0811768fa4c4685613dddc194dfa7900d4089dd1",
+    "artifact_hashes_verified": 62,
+    "installed": [
+      {
+        "installed_files": 2866,
+        "python_sources": 2474,
+        "mismatches": [],
+        "wheel_sha256": "e50533f3d7044a4cb98173c9fbbdb8083fbb3f63b00981af5110a1dff25c12f5"
+      },
+      {
+        "installed_files": 2866,
+        "python_sources": 2474,
+        "mismatches": [],
+        "wheel_sha256": "7c3c7dba99f0bc0483ff3f7a0281ec2da8d2c4f6407a6104979090ab807acb76"
+      }
+    ],
+    "phases": {
+      "native": {
+        "pytest_returncode": 0,
+        "junit": {
+          "collected": 42,
+          "failed": [],
+          "parse_error": null,
+          "skipped": []
+        }
+      },
+      "product": {
+        "pytest_returncode": 124,
+        "junit": {
+          "collected": 0,
+          "failed": [],
+          "parse_error": "pytest did not produce JUnit XML",
+          "skipped": []
+        }
+      }
+    },
+    "partial_terminal_outcomes": {
+      "passed": 2,
+      "failed": 1,
+      "without_terminal_outcome": 28,
+      "phase_timed_out": true,
+      "later_parent_error": "TimeoutExpired"
+    }
+  },
+  "linux": {
+    "revision": "4a50a22cffd5ae0ca029dad4c1e10eada8a2c3a5",
+    "collected": 78,
+    "passed": 77,
+    "failed": 1,
+    "skipped": 0,
+    "unfinished": 0,
+    "exitstatus": 1,
+    "evidence": "Direct pytest numeric status hooks; no diagnostic logs read",
+    "failure_diagnosis": "Prior diagnostic disclosure approval remains pending"
+  },
+  "keyboard": {
+    "revision": "4a50a22cffd5ae0ca029dad4c1e10eada8a2c3a5",
+    "state": "Final replacement review traversal unfinished; last status remains aborted, no replacement/later rollback acceptance claimed",
+    "fixture_preserved": true,
+    "review_agents": "Stopped at account usage limit"
+  }
+}

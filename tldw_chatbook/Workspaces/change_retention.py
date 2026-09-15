@@ -88,109 +88,111 @@ def prune_change_history(
     Returns:
         A :class:`PruneReport` of what happened.
     """
-    if retention_days is None:
-        retention_days = change_review_setting(
-            "retention_days", DEFAULT_RETENTION_DAYS
-        )
-    if retention_days <= 0:
-        return PruneReport()
-    if now is None:
-        now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=retention_days)
-    cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+    with acquire_storage(service._data_dir):
+        if retention_days is None:
+            retention_days = change_review_setting(
+                "retention_days", DEFAULT_RETENTION_DAYS
+            )
+        if retention_days <= 0:
+            return PruneReport()
+        if now is None:
+            now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=retention_days)
+        cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-    rows_pruned = 0
-    try:
-        rows_pruned = db.delete_change_snapshots_older_than(cutoff_iso)
-    except Exception:  # noqa: BLE001 -- retention must never crash the app
-        logger.opt(exception=True).warning(
-            "change_review: retention row-prune failed"
-        )
-    try:
-        live_roots = db.roots_with_change_snapshots()
-    except Exception:  # noqa: BLE001
-        logger.opt(exception=True).warning(
-            "change_review: could not list live roots; skipping repo sweep"
-        )
-        return PruneReport(rows_pruned=rows_pruned)
-
-    repos_reset = 0
-    repos_gcd = 0
-    orphans_removed = 0
-    data_dir = getattr(service, "_data_dir", None)
-    if data_dir is None or not Path(data_dir).is_dir():
-        return PruneReport(rows_pruned=rows_pruned)
-
-    # Layout: <data_dir>/<root-hash>/git (plus hooks/ and the lockdir) --
-    # each CONTAINER dir is one root's shadow state; removal takes the
-    # whole container so hooks and stale locks go with it.
-    git_exe = getattr(service, "_git", None) or "git"
-    for container in sorted(Path(data_dir).iterdir()):
-        git_dir = container / "git"
-        if not container.is_dir() or not (git_dir / "HEAD").exists():
-            continue
-        # Qodo #1251 finding 4: destructive sweep moves must not race an
-        # active snapshot. Take the SAME cross-process lockdir the repo
-        # protocol uses; a held lock skips the container this pass.
-        lock_dir = container / "lock.d"
+        rows_pruned = 0
         try:
-            lock_dir.parent.mkdir(parents=True, exist_ok=True)
-            lock_dir.mkdir()
-        except OSError:
-            logger.debug(
-                f"change_review: retention skipping locked container {container}"
-            )
-            continue
-        try:
-            root = _repo_root(git_dir, git_exe)
-            if root is None or not Path(root).is_dir():
-                # Orphan: the bound root vanished. Old orphans are dead
-                # weight; fresh ones may still be re-bound.
-                age = now.timestamp() - git_dir.stat().st_mtime
-                if age > retention_days * 86400:
-                    shutil.rmtree(container, ignore_errors=True)
-                    orphans_removed += 1
-                continue
-            if root not in live_roots:
-                # No rows left for this root — nothing the Review screen
-                # can show needs these objects. Reset; next snapshot
-                # re-initializes. This is the shrink move: ancestry keeps
-                # every snapshot reachable, so gc alone cannot collect it.
-                shutil.rmtree(container, ignore_errors=True)
-                repos_reset += 1
-                continue
-            repo = service.repo_for_root(root)
-            # The sweep already holds this container's cross-process
-            # lockdir (above) -- taking repo._locked() here would deadlock
-            # on the very same lock.d.
-            repo._run(  # noqa: SLF001 -- retention is a peer op
-                "reflog", "expire", "--expire=now", "--all", check=False
-            )
-            repo._run(  # noqa: SLF001
-                "gc", "--prune=now", "--quiet", check=False
-            )
-            repos_gcd += 1
-        except Exception:  # noqa: BLE001 -- one bad repo must not stop the sweep
+            rows_pruned = db.delete_change_snapshots_older_than(cutoff_iso)
+        except Exception:  # noqa: BLE001 -- retention must never crash the app
             logger.opt(exception=True).warning(
-                f"change_review: retention sweep failed for {git_dir}"
+                "change_review: retention row-prune failed"
             )
-        finally:
+        try:
+            live_roots = db.roots_with_change_snapshots()
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "change_review: could not list live roots; skipping repo sweep"
+            )
+            return PruneReport(rows_pruned=rows_pruned)
+
+        repos_reset = 0
+        repos_gcd = 0
+        orphans_removed = 0
+        data_dir = getattr(service, "_data_dir", None)
+        if data_dir is None or not Path(data_dir).is_dir():
+            return PruneReport(rows_pruned=rows_pruned)
+
+        # Layout: <data_dir>/<root-hash>/git (plus hooks/ and the lockdir) --
+        # each CONTAINER dir is one root's shadow state; removal takes the
+        # whole container so hooks and stale locks go with it.
+        git_exe = getattr(service, "_git", None) or "git"
+        for container in sorted(Path(data_dir).iterdir()):
+            git_dir = container / "git"
+            if not container.is_dir() or not (git_dir / "HEAD").exists():
+                continue
+            # Qodo #1251 finding 4: destructive sweep moves must not race an
+            # active snapshot. Take the SAME cross-process lockdir the repo
+            # protocol uses; a held lock skips the container this pass.
+            lock_dir = container / "lock.d"
             try:
-                lock_dir.rmdir()
+                lock_dir.parent.mkdir(parents=True, exist_ok=True)
+                lock_dir.mkdir()
             except OSError:
-                pass  # removed with the container, or never released cleanly
-    report = PruneReport(
-        rows_pruned=rows_pruned,
-        repos_reset=repos_reset,
-        repos_gcd=repos_gcd,
-        orphans_removed=orphans_removed,
-    )
-    logger.info(
-        "change_review: retention pass "
-        f"rows={report.rows_pruned} reset={report.repos_reset} "
-        f"gc={report.repos_gcd} orphans={report.orphans_removed}"
-    )
-    return report
+                logger.debug(
+                    f"change_review: retention skipping locked container {container}"
+                )
+                continue
+            try:
+                root = _repo_root(git_dir, git_exe)
+                if root is None or not Path(root).is_dir():
+                    # Orphan: the bound root vanished. Old orphans are dead
+                    # weight; fresh ones may still be re-bound.
+                    age = now.timestamp() - git_dir.stat().st_mtime
+                    if age > retention_days * 86400:
+                        shutil.rmtree(container, ignore_errors=True)
+                        orphans_removed += 1
+                    continue
+                if root not in live_roots:
+                    # No rows left for this root — nothing the Review screen
+                    # can show needs these objects. Reset; next snapshot
+                    # re-initializes. This is the shrink move: ancestry keeps
+                    # every snapshot reachable, so gc alone cannot collect it.
+                    shutil.rmtree(container, ignore_errors=True)
+                    repos_reset += 1
+                    continue
+                repo = service.repo_for_root(root)
+                # The sweep already holds this container's cross-process
+                # lockdir (above) -- taking repo._locked() here would deadlock
+                # on the very same lock.d.
+                repo._run(  # noqa: SLF001 -- retention is a peer op
+                    "reflog", "expire", "--expire=now", "--all", check=False
+                )
+                repo._run(  # noqa: SLF001
+                    "gc", "--prune=now", "--quiet", check=False
+                )
+                repos_gcd += 1
+            except Exception:  # noqa: BLE001 -- one bad repo must not stop the sweep
+                logger.opt(exception=True).warning(
+                    f"change_review: retention sweep failed for {git_dir}"
+                )
+            finally:
+                try:
+                    lock_dir.rmdir()
+                except OSError:
+                    pass  # removed with the container, or never released cleanly
+        report = PruneReport(
+            rows_pruned=rows_pruned,
+            repos_reset=repos_reset,
+            repos_gcd=repos_gcd,
+            orphans_removed=orphans_removed,
+        )
+        logger.info(
+            "change_review: retention pass "
+            f"rows={report.rows_pruned} reset={report.repos_reset} "
+            f"gc={report.repos_gcd} orphans={report.orphans_removed}"
+        )
+        return report
 
 
 def run_retention_for_app(
@@ -219,7 +221,12 @@ def run_retention_for_app(
         if not service.available:
             return None
         runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
-        return prune_change_history(runs_db, service)
+        try:
+            return prune_change_history(runs_db, service)
+        finally:
+            # This pass constructs and owns this instance; retire its calling-
+            # thread connection before the finite worker returns.
+            runs_db.close()
     except Exception:  # noqa: BLE001 -- maintenance must never crash the app
         logger.opt(exception=True).warning(
             "change_review: retention pass failed"

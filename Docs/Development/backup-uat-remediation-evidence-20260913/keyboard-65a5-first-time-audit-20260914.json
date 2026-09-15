@@ -1,0 +1,22 @@
+{
+  "revision": "65a5c152b31e77f33506fceac5ec5921b61ef040",
+  "product_tree": "f0765ec60b6ba603fb6741c214b60fdcb08ba493",
+  "wheel_sha256": "9fa4dbc9d04388960a9f78f1d7e45fd18baa376956d686d346c079f7449ed06e",
+  "installed_files_unchanged": 5349,
+  "source_python_files_at_build": 2474,
+  "archive_sha256": "5ac44ce33b274e6b725b4e04f3b89e7546ec5cd565a6d7811a1e9b571eedb385",
+  "archive_files_verified": 134,
+  "archive_bytes_verified": 26729208,
+  "archive_classification_ui": "Complete",
+  "manifest_consistency": "coherent",
+  "credential_policy": "exclude",
+  "note_rows_verified": 1,
+  "normal_quit_exit": 0,
+  "keyboard_actions": 37,
+  "method": "ordinary module entry in real tmux terminal; keyboard only; immutable wheel; no product patches or test-mode variables",
+  "navigation_mistakes": [
+    "Initial synthetic body was typed into title. Ctrl+A moved to the start instead of selecting all, leaving a prefixed title; that exact saved title and the separately entered body were verified in the archive.",
+    "PageDown on the fixed Review button and Ctrl+End did not scroll. Focused form with Shift+Tab and used Home/End/PageUp/Down to read Complete coverage."
+  ],
+  "scope": "First-time onboarding, saved note, Complete plain backup and normal Quit; no replacement or rollback repeated on this revision."
+}

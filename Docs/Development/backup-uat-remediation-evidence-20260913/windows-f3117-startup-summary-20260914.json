@@ -1,0 +1,1446 @@
+{
+  "revision": "f311792948ffc252657eb208cb63ceb57fface3d",
+  "product_revision": "6b20175799c47f44cf287065207630ab1ad86e93",
+  "run": 34930406527,
+  "job": 104257246915,
+  "sha256": {
+    "uat-f3117-windows-startup-job.log": "02071f11dc1da1ef1f550944265d5947d18306183a1fd164b9c88d6487c33c5d",
+    "uat-f3117-startup-profiles.json": "da9bbd0a1e00407b6bc019a8ae5ae5f0fcac3f7be7860ce21d78ac40ab9e5eb0"
+  },
+  "records": 23,
+  "source_matches": true,
+  "observer_errors": 0,
+  "cprofile_enabled": false,
+  "non_ui": {
+    "pass": 31,
+    "seconds": 9.76
+  },
+  "primary": {
+    "pass": 0,
+    "timeout": 4,
+    "limit_seconds": 60
+  },
+  "pairs": [
+    {
+      "case": "llamacpp",
+      "label": "dev",
+      "outcome": "pass",
+      "call_seconds": 42.59,
+      "session_seconds": 51.89,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_focus": 1,
+        "test_close": 1
+      },
+      "completed_test_scopes": {
+        "test_settle": {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 8440,
+          "elapsed_seconds": 0.400719,
+          "thread_cpu_seconds": 0.15625
+        },
+        "test_mount": {
+          "function": "test_mount",
+          "outcome": "returned",
+          "thread": 8440,
+          "elapsed_seconds": 12.876769,
+          "thread_cpu_seconds": 8.28125
+        },
+        "test_focus": {
+          "function": "test_focus",
+          "outcome": "returned",
+          "thread": 8440,
+          "elapsed_seconds": 15.541099,
+          "thread_cpu_seconds": 3.0625,
+          "completed_focus_steps": 42
+        },
+        "test_close": {
+          "function": "test_close",
+          "outcome": "returned",
+          "thread": 8440,
+          "elapsed_seconds": 7.419406,
+          "thread_cpu_seconds": 0.21875
+        },
+        "test_case": {
+          "function": "test_case",
+          "outcome": "returned",
+          "thread": 8440,
+          "elapsed_seconds": 42.588047,
+          "thread_cpu_seconds": 13.8125
+        }
+      },
+      "final_active": [],
+      "sampled_test_progress": [
+        {
+          "seconds": 10.219,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1361
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 112
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 20.235,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1361
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 116
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 30.235,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1526
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_focus",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_press_until_focus",
+                "line": 252
+              },
+              "completed_focus_steps": 6
+            }
+          ]
+        },
+        {
+          "seconds": 40.235,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1526
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_focus",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_press_until_focus",
+                "line": 252
+              },
+              "completed_focus_steps": 30
+            }
+          ]
+        },
+        {
+          "seconds": 50.25,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1593
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_close",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_close_context",
+                "line": 143
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 53.219,
+          "active": []
+        }
+      ]
+    },
+    {
+      "case": "llamacpp",
+      "label": "candidate",
+      "outcome": "timeout",
+      "call_seconds": null,
+      "session_seconds": null,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 561,
+        "user_directory": 25,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "completed_test_scopes": {},
+      "final_active": [
+        {
+          "function": "test_case",
+          "thread": 5868,
+          "phase": "running",
+          "elapsed_seconds": 55.248345,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "frames": [
+            {
+              "file": "windows_files.py",
+              "function": "info",
+              "line": 428
+            },
+            {
+              "file": "windows_files.py",
+              "function": "open_handle",
+              "line": 575
+            },
+            {
+              "file": "windows_files.py",
+              "function": "open",
+              "line": 711
+            },
+            {
+              "file": "native_files.py",
+              "function": "pinned_directory",
+              "line": 31
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "admission.py",
+              "function": "_directory",
+              "line": 116
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "control_records.py",
+              "function": "_existing_admission_authority",
+              "line": 145
+            },
+            {
+              "file": "control_records.py",
+              "function": "admission_authority",
+              "line": 137
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_acquire_storage",
+              "line": 907
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "acquire_storage",
+              "line": 840
+            },
+            {
+              "file": "raw_participants.py",
+              "function": "_scope",
+              "line": 699
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_provider_selection_uncached",
+              "line": 9613
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_provider_selection",
+              "line": 9605
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_chat_core_state",
+              "line": 10381
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 18442
+            },
+            {
+              "file": "image.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 206
+            },
+            {
+              "file": "image.py",
+              "function": "_load_recovered_images",
+              "line": 372
+            },
+            {
+              "file": "events.py",
+              "function": "_run",
+              "line": 88
+            },
+            {
+              "file": "base_events.py",
+              "function": "_run_once",
+              "line": 1999
+            }
+          ]
+        },
+        {
+          "function": "test_mount",
+          "thread": 5868,
+          "phase": "running",
+          "elapsed_seconds": 55.248292,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          },
+          "frames": [
+            {
+              "file": "windows_files.py",
+              "function": "info",
+              "line": 428
+            },
+            {
+              "file": "windows_files.py",
+              "function": "open_handle",
+              "line": 575
+            },
+            {
+              "file": "windows_files.py",
+              "function": "open",
+              "line": 711
+            },
+            {
+              "file": "native_files.py",
+              "function": "pinned_directory",
+              "line": 31
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "admission.py",
+              "function": "_directory",
+              "line": 116
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "control_records.py",
+              "function": "_existing_admission_authority",
+              "line": 145
+            },
+            {
+              "file": "control_records.py",
+              "function": "admission_authority",
+              "line": 137
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_acquire_storage",
+              "line": 907
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "acquire_storage",
+              "line": 840
+            },
+            {
+              "file": "raw_participants.py",
+              "function": "_scope",
+              "line": 699
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_provider_selection_uncached",
+              "line": 9613
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_provider_selection",
+              "line": 9605
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_chat_core_state",
+              "line": 10381
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 18442
+            },
+            {
+              "file": "image.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 206
+            },
+            {
+              "file": "image.py",
+              "function": "_load_recovered_images",
+              "line": 372
+            },
+            {
+              "file": "events.py",
+              "function": "_run",
+              "line": 88
+            },
+            {
+              "file": "base_events.py",
+              "function": "_run_once",
+              "line": 1999
+            }
+          ]
+        },
+        {
+          "function": "config_operation",
+          "thread": 5868,
+          "phase": "running",
+          "elapsed_seconds": 0.043582,
+          "frames": [
+            {
+              "file": "windows_files.py",
+              "function": "info",
+              "line": 428
+            },
+            {
+              "file": "windows_files.py",
+              "function": "open_handle",
+              "line": 575
+            },
+            {
+              "file": "windows_files.py",
+              "function": "open",
+              "line": 711
+            },
+            {
+              "file": "native_files.py",
+              "function": "pinned_directory",
+              "line": 31
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "admission.py",
+              "function": "_directory",
+              "line": 116
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "control_records.py",
+              "function": "_existing_admission_authority",
+              "line": 145
+            },
+            {
+              "file": "control_records.py",
+              "function": "admission_authority",
+              "line": 137
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_acquire_storage",
+              "line": 907
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "acquire_storage",
+              "line": 840
+            },
+            {
+              "file": "raw_participants.py",
+              "function": "_scope",
+              "line": 699
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_provider_selection_uncached",
+              "line": 9613
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_provider_selection",
+              "line": 9605
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_chat_core_state",
+              "line": 10381
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 18442
+            },
+            {
+              "file": "image.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 206
+            },
+            {
+              "file": "image.py",
+              "function": "_load_recovered_images",
+              "line": 372
+            },
+            {
+              "file": "events.py",
+              "function": "_run",
+              "line": 88
+            },
+            {
+              "file": "base_events.py",
+              "function": "_run_once",
+              "line": 1999
+            }
+          ]
+        }
+      ],
+      "sampled_test_progress": [
+        {
+          "seconds": 10.0,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": null,
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": null,
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 20.016,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1367
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 112
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 30.016,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1367
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 112
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 40.016,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1367
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 114
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 50.031,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1367
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 114
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 60.031,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1367
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 114
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "llamafile",
+      "label": "dev",
+      "outcome": "pass",
+      "call_seconds": 35.49,
+      "session_seconds": 39.39,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_focus": 1,
+        "test_close": 1
+      },
+      "completed_test_scopes": {
+        "test_settle": {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 8636,
+          "elapsed_seconds": 0.94749,
+          "thread_cpu_seconds": 0.40625
+        },
+        "test_mount": {
+          "function": "test_mount",
+          "outcome": "returned",
+          "thread": 8636,
+          "elapsed_seconds": 10.058438,
+          "thread_cpu_seconds": 5.953125
+        },
+        "test_focus": {
+          "function": "test_focus",
+          "outcome": "returned",
+          "thread": 8636,
+          "elapsed_seconds": 10.847275,
+          "thread_cpu_seconds": 2.53125,
+          "completed_focus_steps": 39
+        },
+        "test_close": {
+          "function": "test_close",
+          "outcome": "returned",
+          "thread": 8636,
+          "elapsed_seconds": 7.644478,
+          "thread_cpu_seconds": 0.15625
+        },
+        "test_case": {
+          "function": "test_case",
+          "outcome": "returned",
+          "thread": 8636,
+          "elapsed_seconds": 35.491861,
+          "thread_cpu_seconds": 11.765625
+        }
+      },
+      "final_active": [],
+      "sampled_test_progress": [
+        {
+          "seconds": 10.0,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1361
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 116
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 20.015,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1526
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_focus",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_press_until_focus",
+                "line": 252
+              },
+              "completed_focus_steps": 4
+            }
+          ]
+        },
+        {
+          "seconds": 30.015,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1547
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 40.015,
+          "active": []
+        },
+        {
+          "seconds": 41.515,
+          "active": []
+        }
+      ]
+    },
+    {
+      "case": "llamafile",
+      "label": "candidate",
+      "outcome": "timeout",
+      "call_seconds": null,
+      "session_seconds": null,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 514,
+        "user_directory": 23,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "completed_test_scopes": {},
+      "final_active": [
+        {
+          "function": "test_case",
+          "thread": 9416,
+          "phase": "running",
+          "elapsed_seconds": 54.754883,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "frames": [
+            {
+              "file": "threading.py",
+              "function": "wait",
+              "line": 364
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "initializing",
+              "line": 244
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_acquire_storage",
+              "line": 878
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "acquire_storage",
+              "line": 840
+            },
+            {
+              "file": "raw_participants.py",
+              "function": "_scope",
+              "line": 703
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness_uncached",
+              "line": 9878
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness",
+              "line": 9859
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_console_provider_blocker_copy",
+              "line": 15002
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_transcript_guidance",
+              "line": 15129
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_transcript",
+              "line": 18234
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 18515
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_reconcile_console_after_attach",
+              "line": 16579
+            },
+            {
+              "file": "_callback.py",
+              "function": "_invoke",
+              "line": 58
+            },
+            {
+              "file": "_callback.py",
+              "function": "invoke",
+              "line": 96
+            },
+            {
+              "file": "screen.py",
+              "function": "_invoke_and_clear_callbacks",
+              "line": 1272
+            },
+            {
+              "file": "_callback.py",
+              "function": "_invoke",
+              "line": 58
+            },
+            {
+              "file": "_callback.py",
+              "function": "invoke",
+              "line": 96
+            },
+            {
+              "file": "message_pump.py",
+              "function": "_flush_next_callbacks",
+              "line": 702
+            },
+            {
+              "file": "message_pump.py",
+              "function": "_dispatch_message",
+              "line": 741
+            }
+          ]
+        },
+        {
+          "function": "test_mount",
+          "thread": 9416,
+          "phase": "running",
+          "elapsed_seconds": 54.75483,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          },
+          "frames": [
+            {
+              "file": "threading.py",
+              "function": "wait",
+              "line": 364
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "initializing",
+              "line": 244
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_acquire_storage",
+              "line": 878
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "acquire_storage",
+              "line": 840
+            },
+            {
+              "file": "raw_participants.py",
+              "function": "_scope",
+              "line": 703
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness_uncached",
+              "line": 9878
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness",
+              "line": 9859
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_console_provider_blocker_copy",
+              "line": 15002
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_transcript_guidance",
+              "line": 15129
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_transcript",
+              "line": 18234
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 18515
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_reconcile_console_after_attach",
+              "line": 16579
+            },
+            {
+              "file": "_callback.py",
+              "function": "_invoke",
+              "line": 58
+            },
+            {
+              "file": "_callback.py",
+              "function": "invoke",
+              "line": 96
+            },
+            {
+              "file": "screen.py",
+              "function": "_invoke_and_clear_callbacks",
+              "line": 1272
+            },
+            {
+              "file": "_callback.py",
+              "function": "_invoke",
+              "line": 58
+            },
+            {
+              "file": "_callback.py",
+              "function": "invoke",
+              "line": 96
+            },
+            {
+              "file": "message_pump.py",
+              "function": "_flush_next_callbacks",
+              "line": 702
+            },
+            {
+              "file": "message_pump.py",
+              "function": "_dispatch_message",
+              "line": 741
+            }
+          ]
+        },
+        {
+          "function": "config_operation",
+          "thread": 9416,
+          "phase": "running",
+          "elapsed_seconds": 0.133353,
+          "frames": [
+            {
+              "file": "threading.py",
+              "function": "wait",
+              "line": 364
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "initializing",
+              "line": 244
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_acquire_storage",
+              "line": 878
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "acquire_storage",
+              "line": 840
+            },
+            {
+              "file": "raw_participants.py",
+              "function": "_scope",
+              "line": 703
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness_uncached",
+              "line": 9878
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness",
+              "line": 9859
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_console_provider_blocker_copy",
+              "line": 15002
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_transcript_guidance",
+              "line": 15129
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_transcript",
+              "line": 18234
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 18515
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_reconcile_console_after_attach",
+              "line": 16579
+            },
+            {
+              "file": "_callback.py",
+              "function": "_invoke",
+              "line": 58
+            },
+            {
+              "file": "_callback.py",
+              "function": "invoke",
+              "line": 96
+            },
+            {
+              "file": "screen.py",
+              "function": "_invoke_and_clear_callbacks",
+              "line": 1272
+            },
+            {
+              "file": "_callback.py",
+              "function": "_invoke",
+              "line": 58
+            },
+            {
+              "file": "_callback.py",
+              "function": "invoke",
+              "line": 96
+            },
+            {
+              "file": "message_pump.py",
+              "function": "_flush_next_callbacks",
+              "line": 702
+            },
+            {
+              "file": "message_pump.py",
+              "function": "_dispatch_message",
+              "line": 741
+            }
+          ]
+        }
+      ],
+      "sampled_test_progress": [
+        {
+          "seconds": 10.0,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": null,
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": null,
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 20.0,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": null,
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": null,
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 30.0,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1367
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 112
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 40.015,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1367
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 112
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 50.015,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1367
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 114
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        },
+        {
+          "seconds": 60.015,
+          "active": [
+            {
+              "function": "test_case",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+                "line": 1367
+              },
+              "completed_focus_steps": null
+            },
+            {
+              "function": "test_mount",
+              "suspended_at": {
+                "file": "test_llm_gguf_source_modes.py",
+                "function": "_mount_models",
+                "line": 114
+              },
+              "completed_focus_steps": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,365 @@
+{
+  "revision": "f311792948ffc252657eb208cb63ceb57fface3d",
+  "artifact": "/private/tmp/uat-windows-f3117-restore/backup-platform-windows-2022-py3.12-restore-diagnostic-f311792948ffc252657eb208cb63ceb57fface3d",
+  "verified_artifact_hashes": 20,
+  "source_clean_receipt": true,
+  "source_execution": "private_tracked_head_copy",
+  "source_files": 16656,
+  "source_paths_missing_from_git": [],
+  "installed_receipts": 1,
+  "installed_files": 2867,
+  "all_installed_source_git_comparable": 2800,
+  "installed_not_source_git_comparable": [
+    "bin/tldw-cli.exe",
+    "bin/tldw-serve.exe",
+    "tldw_chatbook-0.2.2.dist-info/INSTALLER",
+    "tldw_chatbook-0.2.2.dist-info/METADATA",
+    "tldw_chatbook-0.2.2.dist-info/RECORD",
+    "tldw_chatbook-0.2.2.dist-info/REQUESTED",
+    "tldw_chatbook-0.2.2.dist-info/WHEEL",
+    "tldw_chatbook-0.2.2.dist-info/direct_url.json",
+    "tldw_chatbook-0.2.2.dist-info/entry_points.txt",
+    "tldw_chatbook-0.2.2.dist-info/licenses/LICENSE",
+    "tldw_chatbook-0.2.2.dist-info/top_level.txt",
+    "tldw_profile_core/__init__.py",
+    "tldw_profile_core/canonical.py",
+    "tldw_profile_core/enums.py",
+    "tldw_profile_core/fixtures/v1/01-manifest.json",
+    "tldw_profile_core/fixtures/v1/02-scope.json",
+    "tldw_profile_core/fixtures/v1/03-active-record.json",
+    "tldw_profile_core/fixtures/v1/04-deleted-tombstone.json",
+    "tldw_profile_core/fixtures/v1/05-proposal.json",
+    "tldw_profile_core/fixtures/v1/06-unknown-field-version.json",
+    "tldw_profile_core/fixtures/v1/07-working-context-expiry.json",
+    "tldw_profile_core/fixtures/v1/08-missing-proposal-base.json",
+    "tldw_profile_core/fixtures/v1/09-deleted-with-content.json",
+    "tldw_profile_core/fixtures/v1/10-working-context-missing-expiry.json",
+    "tldw_profile_core/fixtures/v1/11-kind-payload-mismatch.json",
+    "tldw_profile_core/fixtures/v1/12-update-missing-content.json",
+    "tldw_profile_core/fixtures/v1/13-create-missing-content.json",
+    "tldw_profile_core/fixtures/v1/14-pending-89-day-expiry.json",
+    "tldw_profile_core/fixtures/v1/15-proposal-identity-mismatch.json",
+    "tldw_profile_core/fixtures/v1/16-proposal-base-mismatch.json",
+    "tldw_profile_core/fixtures/v1/17-multibyte-canonical-overflow.json",
+    "tldw_profile_core/fixtures/v1/18-pending-deleted-proposed-record.json",
+    "tldw_profile_core/fixtures/v1/19-jcs-conformance.json",
+    "tldw_profile_core/fixtures/v1/20-invalid-manifest-timestamp.json",
+    "tldw_profile_core/fixtures/v1/21-naive-scope-timestamp.json",
+    "tldw_profile_core/fixtures/v1/22-manifest-timestamp-order.json",
+    "tldw_profile_core/fixtures/v1/23-scope-timestamp-order.json",
+    "tldw_profile_core/fixtures/v1/24-record-timestamp-order.json",
+    "tldw_profile_core/fixtures/v1/25-record-expiry-order.json",
+    "tldw_profile_core/fixtures/v1/26-resolved-proposal-timestamp-order.json",
+    "tldw_profile_core/fixtures/v1/27-submillisecond-timestamp.json",
+    "tldw_profile_core/fixtures/v1/28-unsafe-manifest-integer.json",
+    "tldw_profile_core/fixtures/v1/29-proposed-record-timestamp-order.json",
+    "tldw_profile_core/fixtures/v1/30-numeric-epoch-timestamp.json",
+    "tldw_profile_core/fixtures/v1/31-space-datetime-syntax.json",
+    "tldw_profile_core/fixtures/v1/32-lowercase-datetime-syntax.json",
+    "tldw_profile_core/fixtures/v1/33-four-digit-fraction-timestamp.json",
+    "tldw_profile_core/fixtures/v1/34-string-manifest-counter.json",
+    "tldw_profile_core/fixtures/v1/35-boolean-manifest-counter.json",
+    "tldw_profile_core/fixtures/v1/36-integral-float-manifest-counter.json",
+    "tldw_profile_core/fixtures/v1/37-string-no-expiry.json",
+    "tldw_profile_core/fixtures/v1/38-numeric-no-expiry.json",
+    "tldw_profile_core/fixtures/v1/39-string-proposal-confidence.json",
+    "tldw_profile_core/fixtures/v1/40-boolean-proposal-confidence.json",
+    "tldw_profile_core/fixtures/v1/41-integer-proposal-confidence.json",
+    "tldw_profile_core/fixtures/v1/42-integral-float-schema-version.json",
+    "tldw_profile_core/fixtures/v1/43-boolean-schema-version.json",
+    "tldw_profile_core/fixtures/v1/44-string-schema-version.json",
+    "tldw_profile_core/fixtures/v1/45-out-of-range-proposal-confidence.json",
+    "tldw_profile_core/interview.py",
+    "tldw_profile_core/models.py",
+    "tldw_profile_core/payloads.py",
+    "tldw_profile_core/schema_export.py",
+    "tldw_profile_core/schemas/personal-context-v1-meta.json",
+    "tldw_profile_core/schemas/personal-context-v1.json",
+    "tldw_profile_core/semantic.py",
+    "tldw_profile_core/tool_contracts.py"
+  ],
+  "all_installed_git_matching_modes": {
+    "windows_crlf": 2642,
+    "exact": 158
+  },
+  "python_git_verification": {
+    "revision": "f311792948ffc252657eb208cb63ceb57fface3d",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "phases": {
+    "native": {
+      "collected": 59,
+      "counts": {
+        "passed": 59
+      },
+      "session_seconds": 1.847,
+      "cases": [
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[..]",
+          "seconds": 0.002
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[.]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[a/b]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[a\\\\b]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[x:y]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[x\\x00y]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[file.]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[file ]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[CON]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[nul.txt]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_simple_component_is_preserved",
+          "seconds": 0.0
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_other_user_read_grant_is_not_private",
+          "seconds": 0.0
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_other_user_delete_child_grant_is_not_trusted_parent",
+          "seconds": 0.0
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_inherit_only_public_grant_requires_private_leaf_hardening",
+          "seconds": 0.0
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_unknown_ace_fails_closed",
+          "seconds": 0.0
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_private_relative_file_and_exclusive_rename",
+          "seconds": 0.035
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_independent_native_handles_contend_on_shared_and_exclusive_locks",
+          "seconds": 0.016
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_directory_junction_is_refused",
+          "seconds": 0.013
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_pinned_directory_retains_identity_after_native_publication",
+          "seconds": 0.032
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_native_timestamp_and_alternate_stream_detection",
+          "seconds": 0.015
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_actual_public_acl_is_detected_then_hardened",
+          "seconds": 0.022
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_local_facade_operation_identity_is_stable",
+          "seconds": 0.0
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_native_stat_keeps_stdlib_type_and_nanoseconds",
+          "seconds": 0.014
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_inherit_only_public_acl_hardened_before_ordinary_children",
+          "seconds": 0.379
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_directory_namespace_barriers_after_empty_create_rename_and_remove",
+          "seconds": 0.024
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_owner_rights_resolves_only_to_measured_current_owner[True]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_owner_rights_resolves_only_to_measured_current_owner[False]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_owner_rights_does_not_trust_an_unknown_or_different_owner[None]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_owner_rights_does_not_trust_an_unknown_or_different_owner[another-user]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_owner_rights_does_not_mask_other_public_inheritance",
+          "seconds": 0.0
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_stdlib_private_mkdir_and_ordinary_children_are_private",
+          "seconds": 0.141
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_native_replace_updates_existing_target_without_changing_noreplace",
+          "seconds": 0.036
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_atomic_private_write_replaces_existing_config",
+          "seconds": 0.223
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[38]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[5]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[87]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[234]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_native_directory_stream_enumeration_detects_named_data[empty]",
+          "seconds": 0.018
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_native_directory_stream_enumeration_detects_named_data[populated]",
+          "seconds": 0.018
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_readonly_open_does_not_require_regular_file",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_files::test_nested_directory_publication_and_installed_metadata",
+          "seconds": 0.286
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_repeated_bytes_still_acquire_and_free_each_native_descriptor",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_changed_permissions_are_observed_on_the_same_handle",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_directory_flag_and_current_user_are_part_of_decode_identity",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_warm_decode_never_hides_a_fresh_native_acquisition_failure",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_failed_decode_is_not_cached_and_releases_the_acquired_descriptor",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_native_decoder_refusal_is_not_cached_or_replaced_by_an_older_result[owner]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_native_decoder_refusal_is_not_cached_or_replaced_by_an_older_result[dacl]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_native_decoder_refusal_is_not_cached_or_replaced_by_an_older_result[ace]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_ineligible_descriptors_keep_the_original_uncached_decoder[options0]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_ineligible_descriptors_keep_the_original_uncached_decoder[options1]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_successful_decode_retention_has_a_fixed_entry_bound",
+          "seconds": 0.006
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_changed_null_or_unknown_acl_remains_public[null_dacl-511]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_changed_null_or_unknown_acl_remains_public[unknown_ace-447]",
+          "seconds": 0.001
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_real_warm_decode_cannot_hide_invalid_handle",
+          "seconds": 0.011
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_equal_acl_decode_does_not_hide_replaced_path_identity",
+          "seconds": 0.02
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_native_decode_reuse_preserves_fresh_acquisition_and_records_cost",
+          "seconds": 0.053
+        },
+        {
+          "id": "Tests.Utils.test_windows_security_decode::test_real_warm_acl_observes_public_grant_and_hardening",
+          "seconds": 0.02
+        }
+      ]
+    },
+    "product": {
+      "collected": 1,
+      "counts": {
+        "passed": 1
+      },
+      "session_seconds": 337.903,
+      "cases": [
+        {
+          "id": "Tests.ProductionApp.test_backup_restore_end_to_end::test_f9_created_archive_restores_and_opens_through_actual_controls[plain]",
+          "seconds": 337.758
+        }
+      ]
+    }
+  },
+  "effective_returncode": 0,
+  "selection": "restore-diagnostic",
+  "wheel_sha256": "e9c330a1e86788e6f515376adf7431b9480a2dfa46364756bd4b6201add598ed",
+  "artifact_index_sha256": "730fb2c4c47674de564d88bdc4ea2cd9c2002936438d66a49e80eb2fc99f1391",
+  "job_log_sha256": "172e40ece46d7c43c298ade62cbdd05594d521701224d990653012e7be80a213",
+  "relocated_profile_core_git_matches": {
+    "windows_crlf": 56
+  },
+  "generated_installer_files": 11
+}

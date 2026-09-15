@@ -1,0 +1,39 @@
+{
+  "collected_test_logs": 43,
+  "effective_returncode": 0,
+  "installed_package_receipts": 2,
+  "phases": {
+    "native": {
+      "junit": {
+        "collected": 42,
+        "failed": [],
+        "parse_error": null,
+        "skipped": []
+      },
+      "pytest_returncode": 0,
+      "tests": [
+        "Tests/Utils/test_windows_files.py"
+      ]
+    },
+    "product": {
+      "junit": {
+        "collected": 2,
+        "failed": [],
+        "parse_error": null,
+        "skipped": []
+      },
+      "pytest_returncode": 0,
+      "tests": [
+        "Tests/Backup_Recovery/test_f9_replacement_workflow.py::test_full_f9_replacement_after_explicit_safety_and_credential_review",
+        "Tests/Backup_Recovery/test_default_service_replacement.py"
+      ]
+    }
+  },
+  "product_selection": "replacement",
+  "schema": 2,
+  "tests": [
+    "Tests/Utils/test_windows_files.py",
+    "Tests/Backup_Recovery/test_f9_replacement_workflow.py::test_full_f9_replacement_after_explicit_safety_and_credential_review",
+    "Tests/Backup_Recovery/test_default_service_replacement.py"
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "base": "29baddc0357583bf8808fe033b7c6e9c56ac1874",
+  "change": "Test-only snapshot failure metadata: fixed member, phase and changed-field names derived from existing unequal states in the terminal original copy frame. No path, raw value, extra filesystem observation or product change.",
+  "root_verification": {
+    "red": "Six native main/WAL copy failures reached original refusal/cleanup then failed on absent source_change.",
+    "review_red": "Invalid ValueError payload invoked custom equality; exact built-in string guard corrected it.",
+    "final": "63 passed in4.04s",
+    "ruff": "pass",
+    "compile": "pass",
+    "bandit_before": {
+      "B101": 172,
+      "B105": 1
+    },
+    "bandit_after": {
+      "B101": 183,
+      "B105": 1
+    },
+    "new_nonassert_findings": 0
+  },
+  "independent": {
+    "base": "29baddc035",
+    "files": {
+      "Tests/Backup_Recovery/thread_diagnostics.py": "1194abc1b4351c53bb2910e1d05f5cab34b94d8f5f7d26e59553a0359b4767cb",
+      "Tests/Backup_Recovery/test_thread_diagnostics.py": "55d303f1ce6493662dc5dfea2e9cddfe4b4b9a8abc0f48947bfff206e3627683"
+    },
+    "independent_result": "25 passed, 40 deselected in 3.43s",
+    "log": "/private/tmp/uat-snapshot-fields-final-independent.log",
+    "disposition": "approved",
+    "native_platform": "macOS; Windows execution not performed in this review"
+  },
+  "logs_sha256": {
+    "uat-snapshot-fields-red.log": "d76ccc999d6cb23d75e2402739d7bd5b28aecbbf673916aaa3fc216fbafdd37a",
+    "uat-snapshot-fields-green.log": "28809a72b98ca94a7c13735da0179321f074d0b20fd4442edc52be461f7f11c1",
+    "uat-snapshot-fields-invalid-arg-red.log": "a90620769c6573ee09d2f5104578b00375461b895e985355a6772c71a5b0f349",
+    "uat-snapshot-fields-final2.log": "44e9864168bc5b93d23193e358576eaa08251a6cf893626fda0e0a0e4cb962fb",
+    "uat-snapshot-fields-final-independent.log": "49ec504f4ff97b97fad1704d75cc1c33a07f097447b6c591326a281c24b9fd1c",
+    "uat-snapshot-fields-bandit-final2.json": "cad90a48a87a800094749c9b87f54a3b09fb37a1e1616bb6311336d83df9e541"
+  },
+  "causal_limits": "Metadata can identify the changed member/field but cannot establish its writer. Existing Windows789960 failure predates this observer. Native Windows repeat pending."
+}

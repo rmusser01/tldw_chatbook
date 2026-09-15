@@ -1,0 +1,158 @@
+{
+  "parent": "a5237449584d5b6d0090c15adabb4b12846a4aaa",
+  "source_sha256": {
+    "tldw_chatbook/Widgets/Console/console_bounded_section.py": "e8391c8792bce8bd070390fd59589dcf7f7bd8687f1dda6be839b484f61ae9f2",
+    "Tests/Backup_Recovery/test_console_bounded_layout.py": "446d3b79aab38771974a0d9c6a57645b2e791bee9e9bbe2e2b22af0dfbcb3692",
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "935a899a2c2737dfcfbacc6f78c58c978957e04236c43a5011f00d77e9a29536",
+    "Tests/Backup_Recovery/run_platform_product.py": "ccdc3fa0deb265dd9885febbdddbc5bcfb8efeae0502a3fc2c3dcd63f4b83093"
+  },
+  "root_final": {
+    "path": "/private/tmp/uat-bounded-final.xml",
+    "sha256": "9a82912117a72147fabfe6334f8acc2db2bd3afb3b27c31a321fa95c615bdb07",
+    "collected": 19,
+    "passed": 19
+  },
+  "baseline_original_resize": {
+    "path": "/private/tmp/uat-guidance-bounded-baseline-78tgzlwo/pytest.xml",
+    "sha256": "8dfee32b649dc0ea15fd12c15502c3aae6ecc9f6234a380992653b37c08d58fb",
+    "collected": 1,
+    "passed": 1
+  },
+  "original_compatibility": [
+    {
+      "path": "/private/tmp/uat-guidance-bounded-corrected-0-jksu77om/pytest.xml",
+      "sha256": "6a12508329d7ae573765fed4e18c6f8f6cb1e0ef0b726afeef2bc46b72ec2046",
+      "collected": 1,
+      "passed": 1
+    },
+    {
+      "path": "/private/tmp/uat-guidance-bounded-corrected-1-_pfxjk3e/pytest.xml",
+      "sha256": "100d072fd9a3febff69f462df9807b8a7413e7baf64f729c5c1a50a83a4743c8",
+      "collected": 1,
+      "passed": 1
+    },
+    {
+      "path": "/private/tmp/uat-guidance-bounded-corrected-2-h4ywbmse/pytest.xml",
+      "sha256": "b2357e2cf638882fbef7e22eb60f289d54f25af9799057fbc9138adb9dc891e7",
+      "collected": 1,
+      "passed": 1
+    },
+    {
+      "path": "/private/tmp/uat-guidance-bounded-corrected-3-q2fxnxol/pytest.xml",
+      "sha256": "c07a61b3b6693173a298e35908d9530292456331347d92defaa9b0de50c0f250",
+      "collected": 1,
+      "passed": 1
+    },
+    {
+      "path": "/private/tmp/uat-guidance-bounded-corrected-4-byp8hcql/pytest.xml",
+      "sha256": "f3daf5d111c8814dff5b67496cbf76e2ce892a2345ccd558bb5c7ba07497fba7",
+      "collected": 1,
+      "passed": 1
+    },
+    {
+      "path": "/private/tmp/uat-guidance-bounded-corrected-5-r05iav78/pytest.xml",
+      "sha256": "3d41319b10c6586c7a415733ccd9595aed405d850ddd632300db27737b77534c",
+      "collected": 1,
+      "passed": 1
+    },
+    {
+      "path": "/private/tmp/uat-guidance-bounded-corrected-6-368bpql1/pytest.xml",
+      "sha256": "f8312d609f3b33ddfa58f9bdc586b591e3707e0c89064c011cd5328e0498ffe3",
+      "collected": 1,
+      "passed": 1
+    },
+    {
+      "path": "/private/tmp/uat-guidance-bounded-scoped-final-upe4tr74/pytest.xml",
+      "sha256": "cf4a874da15abd3f6d9800d3deeee622e315c1b7df961fb512e237bd371617ad",
+      "collected": 1,
+      "passed": 1
+    }
+  ],
+  "red_log": "/private/tmp/uat-bounded-layout-red.log",
+  "initial_candidate_compatibility_failure": "/private/tmp/uat-guidance-bounded-compat-2-fu_tdezj/pytest.xml",
+  "invalid_multiple_node_fixture": "/private/tmp/uat-guidance-bounded-original-ozjcx127/pytest.log",
+  "static": {
+    "parent": {
+      "ruff": {
+        "I001": 1,
+        "PLR1730": 2,
+        "RUF022": 1
+      },
+      "bandit": {},
+      "bandit_errors": []
+    },
+    "product": {
+      "ruff": {
+        "PLR1730": 2,
+        "RUF022": 1
+      },
+      "bandit": {},
+      "bandit_errors": []
+    },
+    "test": {
+      "ruff": {},
+      "bandit": {},
+      "bandit_errors": []
+    },
+    "native": {
+      "ruff": {},
+      "bandit": {
+        "B101": 16
+      },
+      "bandit_errors": []
+    },
+    "runner": {
+      "ruff": {},
+      "bandit": {},
+      "bandit_errors": []
+    }
+  },
+  "guidance_static": {
+    "parent": {
+      "I001": 3,
+      "B023": 4
+    },
+    "native": {
+      "I001": 3,
+      "B023": 4
+    }
+  },
+  "guidance_native_bandit": {
+    "B101": 57
+  },
+  "guidance_phase_logs_collected": 2,
+  "acceptance": "in_progress",
+  "installed_macos": {
+    "passed": 3,
+    "seconds": 193.06,
+    "xml": "/private/tmp/uat-bounded-installed.xml",
+    "xml_sha256": "845f65594186cb07b2b55140c889110e4b8ffa8bd87ed28e4a3bab38f8820f23",
+    "cases": [
+      {
+        "name": "test_mounted_console_complete_capture_and_resumed_writes[console]",
+        "time": "56.506"
+      },
+      {
+        "name": "test_mounted_console_complete_capture_and_resumed_writes[settings]",
+        "time": "54.617"
+      },
+      {
+        "name": "test_mounted_console_complete_capture_and_resumed_writes[library]",
+        "time": "81.844"
+      }
+    ],
+    "source_verification": "/private/tmp/uat-bounded-installed-source-verification.json",
+    "source_verification_sha256": "6c4e2297e1cba58761ff3ecbd333cd7d2f0eafa2b75f4f3916fc9c8cd606cc56",
+    "package_python_matches": 2475,
+    "installed_files": 2867
+  },
+  "independent_native": {
+    "passed": 8,
+    "seconds": 11.9,
+    "review": "bounded-layout-implementation-review-20260914.md"
+  },
+  "collected_selections": {
+    "native-close-diagnostic": 58,
+    "restore-diagnostic": 16
+  }
+}

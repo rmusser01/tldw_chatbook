@@ -1,0 +1,17 @@
+# Approved budget/import independent review
+
+APPROVED, no actionable findings in the four-file delta against bd6ba3b126. This review implements no changes. Independent focused budget tests:12PASS1.09s, exit0, /private/tmp/uat-approved-budget-import-independent.log, unique basetemp /private/tmp/uat-approved-budget-import-independent-fixtures. No full app/first-use workflow was executed by this reviewer while parent testing runs.
+
+Linux Persona budget: the original child ceilings total860s (70+70+120+150+90+150+90+120). The new later allowance is860 minus actual setup elapsed minus the unchanged final210s reserve; at the full original500s setup allowance it remains150s, with faster setup lending only unused time. Nonpositive remaining allowance refuses before launching later. Linux outer900s remains unchanged; macOS150s and Windows900s later limits and all their other limits remain unchanged. The40s difference between aggregate child allowance and Linux outer limit remains overhead headroom, not an unlimited cleanup guarantee. Native subprocess timeout/cleanup and pytest outer enforcement are unchanged.
+
+Budget tests exercise the actual existing parent workflow and preparation ordering, replacing only child execution and monotonic clock. Six platform/timing cases, two exhaustion boundaries, three missing final markers and exact timeout propagation prove the redistribution and retention of mandatory final checks. They do not claim native rollback performance or correctness; existing native workflow still supplies that evidence. AST verification confirms all prior child scripts, assertions and other statements are unchanged outside the approved timing calculation/time import.
+
+Product imports: removing only the intended imports from both baseline/current ASTs yields exact equality. Notes parser helpers now load only after _lifted_note_metadata's existing non-Obsidian/nontext early return; all parser calls/bounds and producer/offload checks remain intact. Console helper imports occur in compose and after _sync_controls_from_draft's unmounted early return, retaining all guarded value assignment, prevent/flag and fallback behavior. No Settings edits, authority/cache changes or module unloading. Caps686/1022 are untouched. A fresh census is still required to demonstrate the resulting module count; structural deferral alone is not a count/pass claim.
+
+Existing first-use coverage inspected: Tests/UI/test_console_model_popover_no_provider.py covers empty/unknown-provider composition and a real Custom ID keystroke driving _sync_controls_from_draft; test_console_model_popover_registry_options checks actual option parity. Notes test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_frontmatter and executor test_create_note_lifts_frontmatter_title_and_tags_into_the_note cover real frontmatter behavior. Parent should preserve qualified profile fixture setup for these merged Notes tests. Those behaviors must pass after deferral; no new mirrored import-literal test is needed.
+
+Exact reviewed SHA256:
+- `Tests/Backup_Recovery/test_created_persona_subtree_rollback.py`: `9cd678b3d6c04c423ba7937ef72877eda33c84c4660d1e5e76bef32b0eddc7d2`
+- `Tests/Backup_Recovery/test_persona_observation_budget.py`: `4cf756f5dc3cca51ad184a88a132f96631ffc91c4faf20f220ca55c054950c0e`
+- `tldw_chatbook/Notes/notes_sync_runtime.py`: `40919323806080d12fcbcd7fafd5170d38b37e26408bb26f3715c5799a231e07`
+- `tldw_chatbook/Widgets/Console/console_model_popover.py`: `23c1ce28b98a86a17702cfdae3ae353c65ccef5bb790b94928e73a1480df1425`

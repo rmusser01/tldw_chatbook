@@ -1,0 +1,20 @@
+{
+  "baseline": "d58650f42ebc1ee6a0f3b3aa9220ce14e312d1e7",
+  "root_independent_tests": {
+    "passed": 16,
+    "failed": 0,
+    "seconds": 26.24
+  },
+  "next_windows_focused_selection": 77,
+  "acceptance": "Installed handoff verified locally; actual keyboard rollback and native Windows acceptance still required. Existing failed attempts remain preserved.",
+  "evidence": {
+    "later-rollback-handoff-report-20260914.md": "c0b6d4fa8c4feb56e534c8c6ee3fe84d34a64b97170c740ff2ada14fae7cdd83",
+    "later-rollback-log-refusal-review-20260914.md": "b987365bcbedb410b67bac408159adcace282d288d76f9fbad984d77f0158006",
+    "keyboard-d308-later-refusal-20260914.md": "55469c40563b9bde99b9d27d6b5e18ab055eeb62c60a15463bdfe76327eb3ae3",
+    "later-rollback-handoff-root-verification-20260914.json": "fb924f1a3c3cb28b31fa12373908c659a4232bd5a89f9033ada377ce6847284a",
+    "later-rollback-handoff-root-tests-20260914.xml": "06c6469a9c5778246e8f7d43c3aba487a14d887f1dfb02d4a5bc1ac0cbbe6e7c",
+    "later-rollback-handoff-independent-review-20260914.md": "144aa6bb838c2b9b338b83723435232827349f155f241e47b69a5bd311017b3d",
+    "later-rollback-keyboard-repeat-scope-20260914.md": "350b2444d877e5ccb14778f8c0a49a391fceec06e40bb14e2898271ea0ba0880"
+  },
+  "independent_review": "Approved; final14 tests pass and installed product hashes match."
+}

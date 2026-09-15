@@ -428,3 +428,52 @@ def test_strict_loader_rejects_damaged_v2_closure_or_catalog(
         ValueError, match="Canvas runtime profile catalog is unavailable"
     ):
         load_profile_snapshot()
+
+
+def test_native_crlf_checkout_preserves_verified_canvas_profiles(tmp_path, monkeypatch):
+    """Git's Windows checkout must retain the package's hash-verified bytes."""
+    import os
+    import subprocess  # nosec B404 - fixed local Git commands in a disposable repo.
+
+    from tldw_chatbook.Canvas import profiles, runtime_assets
+
+    catalog = json.loads((STATIC / "profile-catalog.json").read_bytes())
+    resources = {"profile-catalog.json"}
+    for record in catalog["profiles"]:
+        resources.add(record["manifest"])
+        manifest = json.loads((STATIC / record["manifest"]).read_bytes())
+        resources.update(manifest["outputs"])
+        resources.update(record["library"]["files"])
+    checkout = tmp_path / "checkout"
+    packaged = checkout / "tldw_chatbook" / "Canvas"
+    (packaged / "static").mkdir(parents=True)
+    shutil.copyfile(STATIC.parents[2] / ".gitattributes", checkout / ".gitattributes")
+    for name in resources:
+        shutil.copyfile(STATIC / name, packaged / "static" / name)
+    executable = shutil.which("git")
+    assert executable is not None, "Git is required for the native checkout regression"
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+
+    def git(*arguments):
+        subprocess.run(  # nosec B603 - fixed Git executable/args, isolated repo, no network.
+            [executable, *arguments], cwd=checkout, env=environment,
+            check=True, capture_output=True, timeout=15,
+        )
+
+    git("init", "--quiet")
+    git("config", "core.autocrlf", "false")
+    git("add", "--", ".gitattributes", "tldw_chatbook/Canvas/static")
+    for name in resources:
+        (packaged / "static" / name).unlink()
+    git("config", "core.autocrlf", "true")
+    git("checkout-index", "--force", "--all")
+    monkeypatch.setattr(profiles, "files", lambda _package: packaged)
+    monkeypatch.setattr(runtime_assets, "files", lambda _package: packaged)
+    snapshot = load_profile_snapshot()
+    for diagrams, expected in ((False, "canvas-v1"), (True, "canvas-v2-mermaid-1")):
+        selected = resolve_profile(
+            snapshot, operation="create", parent_profile=None, has_diagrams=diagrams
+        )
+        assert selected.profile_id == expected and selected.executable
+        assert runtime_assets_for(snapshot, expected) is not None

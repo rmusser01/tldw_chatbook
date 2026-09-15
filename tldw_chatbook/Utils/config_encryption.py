@@ -8,6 +8,7 @@ Provides authenticated encryption to ensure both confidentiality and integrity.
 import base64
 import os
 import secrets
+import sys
 from typing import Dict, Any
 
 from Cryptodome.Cipher import AES
@@ -15,6 +16,22 @@ from Cryptodome.Protocol.KDF import scrypt
 from loguru import logger
 
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
+
+def unlock_recovery_value(value: str) -> str:
+    """Read an encrypted config value using only an already unlocked session.
+
+    Recovery never imports configuration bootstrap, prompts for, persists, or
+    exports the password. Missing unlock is an explicit coverage failure.
+    """
+    owner = sys.modules.get("tldw_chatbook.config")
+    password = owner.get_encryption_password() if owner is not None else None
+    if not password:
+        raise ValueError("credential_unlock_required")
+    try:
+        return ConfigEncryption().decrypt_value(value, password)
+    except (ValueError, TypeError):
+        raise ValueError("credential_unlock_required") from None
 
 
 class ConfigEncryption:

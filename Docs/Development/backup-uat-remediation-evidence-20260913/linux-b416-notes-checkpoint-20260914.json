@@ -1,0 +1,31 @@
+{
+  "revision": "b416cf4c1a09f6993af7f3e0307c46315793c3b8",
+  "source": "/home/ml-user/Working/chatbook-backup-linux-20260912/source-final-b416cf4c1a-k9zji7e6",
+  "fixture": "/home/ml-user/Working/chatbook-backup-linux-20260912/native-final-b416cf4c1a-vq6s6lj_",
+  "results": {
+    "collected": 69,
+    "counts": {
+      "failed": 0,
+      "passed": 69,
+      "skipped": 0
+    },
+    "exitstatus": 0,
+    "failed_ordinals": [],
+    "unfinished": 0
+  },
+  "tested_modules": [
+    "Tests/Backup_Recovery/test_file_notes_maintenance.py",
+    "Tests/Backup_Recovery/test_notes_recovery_review.py",
+    "Tests/Backup_Recovery/test_merged_service_producer_maintenance.py"
+  ],
+  "source_checked_clean_after_run": true,
+  "numeric_only_status": true,
+  "raw_diagnostic_logs_read": false,
+  "evidence": {
+    "/private/tmp/uat-linux-b416-notes-status.log": "1c87ad4121798efbee42fd60616a44039f5db8c0c009d709f5ff0dbde720bdef",
+    "/private/tmp/uat-linux-notes-numeric-ordinals.py": "eb5f94493944f28dae86e44b12a94f87df0a1bd35959d4c12310ffbf31c65de2"
+  },
+  "limits": "Native source-checkout tests in fresh fixed private profiles. This is not a rerun or diagnosis of the older failed nested Persona case and is not installed full keyboard UAT.",
+  "harness_ast_unchanged_except_test_tuple": true,
+  "original_numeric_harness_sha256": "9625c3500df9c258846f2d2c02d557fa83ae5604e640a6ed84d3b06f0794e2e6"
+}

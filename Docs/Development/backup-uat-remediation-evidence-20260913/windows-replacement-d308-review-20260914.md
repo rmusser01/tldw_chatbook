@@ -1,0 +1,13 @@
+# Windows replacement d308 verification
+
+Run 34831305822 failed at clean exact source d3082ef98211e3ad42273ac2d2dcbbf43b6d93cc. All 62 artifact SHA-256 entries verify. Both installed receipts contain 2,866 files and match all 2,474 comparable Python Git blobs (32 exact, 2,442 Windows CRLF-only). These verify downloaded receipts, not a new read of the remote installation. Verification and case-accounting JSON files are adjacent.
+
+Native: 42 passed, zero skipped, 1.677 seconds. Product: 31 collected; enclosing 80-minute product phase expired (return 124) without JUnit/final traceback output. Verbose log records one pass, two failures and 28 cases without completed outcomes. No pytest skip was observed; unselected workflow jobs are not test skips. Per-case durations cannot be recovered accurately.
+
+- Explicit F9 replacement: PASS.
+- Default replacement/later rollback: FAIL. Replacement reached restoration_validated; ordinary reopen after Abort and replacement completed at 107.906 and 87.985 seconds. Later child records credential review, untouched Abort, acknowledgements, and `changed_acknowledgement_reviewed_again`, then ends without traceback/terminal state. The precise later failure is unresolved; do not attribute it to ordinary startup. Preserve the child error/timeout with bounded phase metadata on the next targeted invocation before choosing any deadline/product change.
+- Nested Persona lifecycle: FAIL at embedded `_LATER` line 67, `assert len(matches)==1`, in the safety-archive payload readback. Earlier assertions establish actual pack retirement, committed rollback, verified recovery copy and valid archive. Portable seed, real replacement and ordinary reopen/write completed. The fixture saves `str(path.relative_to(pack))`, which has backslashes on Windows, and compares it against slash-separated archive paths. PureWindowsPath reproduces false matching with str and true matching with as_posix; proof JSON is adjacent. Smallest correction: serialize that fixture relative key with as_posix, retaining all payload/hash/owner assertions. This does not justify a product change.
+- Remaining 19 Persona negatives: no completed outcomes; the first source-parent node was in fixture preparation at the enclosing timeout.
+- Evals retention nine cases: not reached, not skipped.
+
+Preserved evidence is the downloaded artifact's pytest-output.log, test-logs/product-pytest/test_default_profile_service_r0/{f9-child.log,later-child.log,home/ordinary-reopen-*-phases.json.log}, and test_native_nested_persona_pac0/target/capture-persona-{replacement,reopen,later}.log. Original sanitized files were not modified. No source, workflow, timeout, guard or running-job changes were made during verification.

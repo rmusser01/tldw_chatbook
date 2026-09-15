@@ -1,0 +1,8 @@
+{
+  "utc": "2026-09-14T00:35:54.977602+00:00",
+  "pid": 62808,
+  "command": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -P -m tldw_chatbook",
+  "observed_running_capturing": true,
+  "signal": "SIGKILL",
+  "elapsed_until_signal": 0.48784158285707235
+}

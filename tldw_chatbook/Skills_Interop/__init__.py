@@ -1,10 +1,20 @@
-"""Local and server SKILL.md interoperability services."""
+"""Exact lazy public exports; recovery declarations do not bootstrap runtime."""
 
-from .local_skills_service import LocalSkillsService, default_local_skills_store_dir
-from .server_skills_service import ServerSkillsService
-from .skill_trust_service import SkillTrustService
-from .skill_trust_models import SkillTrustBlockedError, SkillTrustStatus
-from .skills_scope_service import SkillsBackend, SkillsScopeService
+from importlib import import_module
+
+_EXPORTS = {
+    "LocalSkillsService": (".local_skills_service", "LocalSkillsService"),
+    "default_local_skills_store_dir": (
+        ".local_skills_service",
+        "default_local_skills_store_dir",
+    ),
+    "ServerSkillsService": (".server_skills_service", "ServerSkillsService"),
+    "SkillTrustService": (".skill_trust_service", "SkillTrustService"),
+    "SkillTrustBlockedError": (".skill_trust_models", "SkillTrustBlockedError"),
+    "SkillTrustStatus": (".skill_trust_models", "SkillTrustStatus"),
+    "SkillsBackend": (".skills_scope_service", "SkillsBackend"),
+    "SkillsScopeService": (".skills_scope_service", "SkillsScopeService"),
+}
 
 __all__ = [
     "LocalSkillsService",
@@ -16,3 +26,12 @@ __all__ = [
     "SkillsScopeService",
     "default_local_skills_store_dir",
 ]
+
+
+def __getattr__(name):
+    if name not in _EXPORTS:
+        raise AttributeError(name)
+    module, symbol = _EXPORTS[name]
+    value = getattr(import_module(module, __name__), symbol)
+    globals()[name] = value
+    return value

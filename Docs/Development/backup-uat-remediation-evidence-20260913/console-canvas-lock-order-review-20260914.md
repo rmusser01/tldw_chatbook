@@ -1,0 +1,9 @@
+# Canvas native lock-order implementation review
+
+APPROVED at exact final hashes in /private/tmp/uat-console-canvas-order-hashes.json (product7de3ce68, test0e0baa50). Both current file hashes verified independently. No actionable finding.
+
+The product changes only the two approved Canvas policy reads: each runs before the Canvas lock, then rechecks both monotonic lifetime flags under the lock. Existing callback storage, singleton construction, actual live effect checks and fail-closed policy semantics remain intact. Final tests retain the exact default native policy reader in their two-thread deadlock regression; later explicit disable/disposal wins, stale true policy permits only inert state, actual confirmed settlement cannot publish/open after native policy changes, and native pause still latches refusal with retired operations.
+
+Independent focused native selection5PASS6.48s (/private/tmp/uat-console-canvas-order-independent.log), completed before the separate config-order implementation begins, covering both concurrency paths, real stale-policy effect refusal and both native-pause cases. Author full15PASS18.49s plus3 unchanged existing singleton/rebind/publication bodies in native bound fixture7.04s. Existing broader65 suite's16 fixture failures reproduce unchanged baseline; they are not new passing acceptance. Final test formatting changes preserve full AST including embedded child scripts; product unchanged. Ruff/Bandit baseline comparison has zero new findings.
+
+The separately proven config REBUILD/FILE inversion is outside this two-method change and remains independently tracked; it does not invalidate this exact Canvas-to-config edge correction. No claim that these native concurrency regressions reproduce or resolve a particular Windows startup timeout. Native Windows acceptance is pending.

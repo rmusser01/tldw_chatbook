@@ -1,0 +1,20 @@
+{
+  "revision": "f69a11ecb0720db043d9e89616ff46dc789f8bad",
+  "revision_type": "tree",
+  "method": "ordinary keyboard against existing synthetic default profile",
+  "target_config": "/private/tmp/chatbook-backup-uat-repeat-20260913-7vgu3k5p/novice/home/.config/tldw_cli/config.toml",
+  "archive": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/replacement/archive/novice-complete.tldw-backup.zip",
+  "archive_sha256": "5662ed8c027c5bda5a36ba5ce283ddd3f616fe882dd913b765bfdff3afbd4643",
+  "archive_provenance": "prior keyboard Complete backup after diagnostic restart, not counted as first-time success",
+  "before_notes": [
+    [
+      "Backup",
+      "Diagnostic saved note before capture. NOTE-THEN-BACKUP-20260913."
+    ],
+    [
+      "Novice backup acceptance note",
+      "My first saved note must survive backup and restore. Reference NOVICE-REPEAT-20260913."
+    ]
+  ],
+  "source_database": "/private/tmp/chatbook-backup-uat-repeat-20260913-7vgu3k5p/novice/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db"
+}

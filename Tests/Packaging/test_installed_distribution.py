@@ -1744,9 +1744,10 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+        "tldw_chatbook/Backup_Recovery/native_qualification.json",
         SEMANTIC_TRACE_MIGRATION_PATH,
         SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-    } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
+    } | RUNTIME_MIGRATION_PATHS | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     required_wheel = {
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
@@ -1755,9 +1756,10 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+        "tldw_chatbook/Backup_Recovery/native_qualification.json",
         SEMANTIC_TRACE_MIGRATION_PATH,
         SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-    } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
+    } | RUNTIME_MIGRATION_PATHS | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
     development_launcher = "scripts/run_speculative_voice_dev.py"

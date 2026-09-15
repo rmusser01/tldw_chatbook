@@ -1,18 +1,20 @@
 ---
 id: TASK-31993
 title: Integrate maintenance participants across persistence owners
-status: To Do
-assignee: []
-created_date: '2026-09-07 23:53'
+status: Done
+assignee:
+- '@codex'
+created_date: 2026-09-07 23:53
+updated_date: 2026-09-12 02:26
 labels:
-  - backup-recovery
+- backup-recovery
 dependencies:
-  - task-31978
-  - task-31988
-  - task-31989
-  - task-31990
-  - task-31991
-  - task-31992
+- task-31978
+- task-31988
+- task-31989
+- task-31990
+- task-31991
+- task-31992
 ---
 
 ## Description
@@ -23,21 +25,1244 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every participating persistence owner drains safely and is covered by the shared admission protocol.
-- [ ] #2 Unsaved drafts and unfinished cross-store work are neither discarded nor falsely reported captured.
-- [ ] #3 Real multi-process evidence proves coherent ownership boundaries and safe resumption without deadlocks.
+- [x] #1 Every participating persistence owner drains safely and is covered by the shared admission protocol.
+- [x] #2 Unsaved drafts and unfinished cross-store work are neither discarded nor falsely reported captured.
+- [x] #3 Real multi-process evidence proves coherent ownership boundaries and safe resumption without deadlocks.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Establish the uncovered persistent owner behavioral RED regression and exact installed producer census.
+2. Bind installed app and headless participants to the reviewed shared admission protocol, including raw writers and shared files; propose coordinator API changes before implementing them.
+3. Close new mutation admission, drain actual transactions, handles and cross-store publication, stop watchers at safe boundaries, and preserve dirty editor save/discard decisions.
+4. Preserve unresolved/pending work, release normal holds only after proven retirement, and resume in reverse dependency order after exclusive capture release.
+5. Verify real two-process coherent DB/assets and config/registry boundaries, timeout, app-close, failures and deadlock ordering.
+6. Run required focused participant, SQLite, census and service-composition guards plus scoped static checks and self-review.
+7. Record exact evidence, source handoffs and ADR-126 in notes/report; retain In Progress and unchecked criteria pending independent review.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved persistence, admission and recovery lifecycle contract.
+
+### Phase10 implementation plan (before production)
+
+1. Reproduce real Persona/dictionary/citation core-file and cached-state pause gaps using actual SQLite/files and independent native observation.
+2. Obtain controller ruling on exact installed source binding and simultaneous existing core/raw scopes before implementing the new compound interface.
+3. Bind actual canonical app-created source relationships, preselect every core/file/temp member before effects, preserve ordinary custom/no-file/memory behavior and source-thread native borrower retirement.
+4. Cover source reads/mutations/cache rollback/publication and concrete dictionary threaded scope dispatch through actual completion, including repeated cancellation.
+5. Run targeted behavioral/domain/shared/census and scoped static checks, self-review, update exact source handoffs and evidence, and commit only this phase. Preserve all unchecked ACs and unavailable runtime/startup/Complete coverage.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct source-lifetime implementation; any approved compound interface decision will amend ADR126. ADR024 citation provenance and ADR037 persona separation remain unchanged.
+
+### Phase12 implementation plan — actual Persona Visual lifetimes
+
+1. Establish behavioral RED at actual file publication/core activation and workspace/native/UI boundaries; obtain controller source-backed ruling before helper expansion.
+2. Bind exact configured Persona Visual sources and finite preselected publication, workspace, import and runtime members; preserve custom ordinary routes and source-native uncertainty.
+3. Integrate actual screen creator, executor and result lifetimes, source-thread DB retirement, dirty editor preservation and retained cleanup evidence.
+4. Verify targeted source/domain/native/census guards and static checks, self-review and commit this bounded phase; preserve In Progress and unchecked ACs.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved persistence lifecycle; preserve ADR074/067/032 and record the bounded controller ruling.
+
+### Phase13 implementation plan — Shared Visual Identity source/native lifetimes
+
+1. Reproduce actual post-rename/core pause RED, then obtain the controller ruling for this concrete source/native bridge before production.
+2. Bind exact configured profile/core/source identities; reserve before candidate, seed, runtime and publication selectors; preserve existing candidate/seed locks and public ordinary behavior.
+3. Preselect finite source/output/cleanup members, retain actual native resources and committed/uncertain outcomes, and integrate concrete reaction-pack save/cleanup caller retirement.
+4. Verify actual pause, identity, dirty draft, fork/stale graph, native uncertainty and ordinary portability with targeted source/domain/UI/native cases only.
+5. Update ADR126 rationale, source inventories and concrete remaining generation/app/headless routes; self-review scoped diff, run focused guards/static checks, commit and dual-report. Keep Task31993 In Progress and all ACs unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of approved maintenance lifetimes under ruling74; ADR067/074 separation and ADR032 package immutability remain.
+
+### Phase14 implementation plan — TTS repository lifecycle foundation
+
+1. Preserve actual first-open and paused-CRUD behavioral REDs, then implement controller ruling79 using the existing owner loop, state/lifecycle locks and serialized executor.
+2. Reserve before first-open selectors/native creation; close new admission separately from terminal/generation, retain actual worker futures and explicit result-publication completion, and clean only on the source worker.
+3. Prove bounded reversible drain, timeout/repeated cancellation, exact native retirement, stale source refusal, competing repository exclusion and definitive close compatibility with synthetic real SQLite/private native observers.
+4. Keep finite migration/backup/reference native scopes and actual app/runtime/dirty editor aggregation as exact immediate Task10 continuation; this foundation grants no across-pause callback capability or repository/Complete qualification.
+5. Run focused affected domain/shared/census/static checks, self-review, update ADR126/source inventory/evidence and scoped commit plus identical dual report. Keep In Progress and every AC unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct approved maintenance lifecycle implementation under ruling79, preserving ADR028/040/051/023 and existing schema/native authority policy.
+
+### Phase14b implementation plan — exact TTS backup native ownership
+
+1. Establish actual public backup native-close and foreign-temporary cleanup REDs on real SQLite/descriptors before production; obtain the controller ruling for any source capability expansion or subdivision.
+2. Retain the actual source/generation, finite selected backup resources, native destination/descriptor/parent/lease references and committed result independently of native uncertainty; do not retry uncertain close or clean foreign namespaces.
+3. Preserve pure construction, definitive public close, the existing serialized worker/owner-loop publication lifecycle and ordinary custom-source behavior. No generic callback, directory-wide authority, second executor or startup release.
+4. Trace and record exact immediate source binding, migration/restore, candidate-validation copy graph, reference BLOB/materializer/bundle and app/runtime safe points; qualify only concretely implemented and verified resources in this phase.
+5. Verify affected native failure/partial allocation/cancellation/publication and ordinary backup cases plus scoped census/static checks, self-review, document exact remaining routes and commit/report. Keep In Progress and all three ACs unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct maintenance native-lifetime implementation; preserve ADR028/040/051/023. Record controller scope ruling before production.
+
+### Phase14c implementation plan — standalone candidate native job (ruling81)
+
+1. Preserve six actual BASE file-effect, real FD/SQLite close-before/after and foreign-namespace REDs; apply controller ruling81 before production.
+2. Register one concrete ordinary synchronous validation job before selectors/callbacks, admit each native allocation, and retain actual source/copy/parent/SQLite resources through positive independent cleanup without granting installed or callback authority.
+3. Preserve disposable-only historical migration, deadline and first control-flow/error precedence; isolate exact unsafe cleanup expectations and cover partial allocation, callback pause, independent native admission and affected backup/schema contracts.
+4. Run affected targeted tests, source census and static checks; self-review, document exact native limits and immediate configured-source/preselection/pin/journal/BLOB/outer-reader continuation, and commit scoped files.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct ordinary native-lifetime implementation of ADR126 under ruling81; ADR028/040/051/023 ownership and schema contracts remain unchanged.
+
+### Phase14d implementation plan — configured TTS source and delegated native pins
+
+1. Preserve actual configured app/source and delegated pin behavioral REDs, correcting profile fixture to general.users_name; follow controller rulings82–84.
+2. Retain shared SQLite pin jobs under existing ordinary or validated capture ownership, including partial allocation, once-only independent retirement and body/cleanup association; preserve helper policies and copy/restore contracts.
+3. Bind only the exact app-created repository to original loaded config functions, effective/cache source, selected user-data/profile and TTS path; check admission, worker generation and publication without constructor IO or callback authority.
+4. Verify truthful completed refusal with actual worker/result/native/temp settlement, plus source/copy/reload/custom/cancellation and capture native uncertainty in private fixtures.
+5. Run targeted affected helper/domain/source/census/static checks, self-review, update ADR126 and exact remaining native routes, and scoped commit with identical dual reports. Preserve In Progress and all AC unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct maintenance source/native lifetime integration under rulings82–84; no capture policy or scope expansion, no Complete/startup promotion.
+
+### Phase14e implementation plan — outer TTS snapshot and delegated journal lifetime
+
+1. Establish real public backup/restore snapshot-close, outer unreturned allocation and native journal substitution REDs; obtain controller ownership ruling before production.
+2. Reuse concrete outer backup state for exact ordinary backup/recovery resources; associate nested validation uncertainty, record unresolved allocations, preserve original errors and native close-once retention without a new connection registry.
+3. Qualify exact native destination journal creation/identity/retirement, abort observed substitution without manual sidecar deletion or callback authority expansion.
+4. Verify targeted public/native/cancellation/result settlement and ordinary reference round trips, affected source census/static checks and self-review.
+5. Update scoped ADR126/inventory/notes, commit and identical dual reports; retain Task31993 In Progress, all AC unchecked and exact remaining Task10 native/runtime obligations.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct approved native ownership integration, preserving ADR028/040/051/023; controller ruling governs any bounded association change.
+
+### Phase14f implementation plan — exact current TTS native retirement
+
+1. Establish actual native dual-SQLite/descriptor, shared profile-lock and reference BLOB close-before/after and constructor-return behavioral evidence through public callers.
+2. Obtain controller ownership rulings before production changes; reuse exact wrapper, retained cleanup exception and source-worker lifecycle, preserving native namespace quarantine and ordinary error precedence.
+3. Retain unresolved outcomes without close retries or false closed-field proof; prove independent native exclusion and positive ordinary retirement using private subprocesses without host SemLock.
+4. Verify affected repository/reference/candidate/capture behavior, exact source census and scoped static checks; self-review and document native limits and immediate migration/runtime continuation.
+5. Commit this bounded phase and write identical dual reports, preserving In Progress and all three AC unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of approved native resource ownership, preserving ADR028/040/051/023; controller ruling precedes each ownership change.
+
+### Phase14g implementation plan — TTS migration and restore native lifetimes
+
+1. Establish actual initialize/migration/publication/recovery/restore native and namespace behavioral RED using genuine historical SQLite schemas and private native observers.
+2. Obtain controller source-backed rulings before ownership/interface changes; reuse retained repository generation, ordinary leases, exact opaque destination and journal authority, preserving public PONR and error precedence.
+3. Retain native uncertainty and pending compound work through actual completion or a verified durable recoverable boundary; prove failed acquisition, cancellation, competing maintenance and source-worker resume without granting callback/capture authority.
+4. Run only affected repository/schema/publication/recovery tests, exact census and scoped static checks; self-review and update ADR126, inventory and actual evidence notes.
+5. Commit bounded phase and identical dual reports; leave Task31993 In Progress with all three criteria unchecked and all later mandatory cohorts explicit.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of approved native storage lifetimes under controller rulings; preserve ADR028/040/051/023 and existing publication/recovery contracts.
+
+### Phase14h implementation plan — clone reference materializer
+
+1. Reproduce actual live-handle and native close uncertainty with real private WAV files and an independent maintenance process; obtain controller ruling before source/native production changes.
+2. Retain ordinary native allocation and cleanup outcomes on exact materializer records, preserving opaque handles, namespace identities, source selectors and custom ordinary behavior.
+3. Add reversible owner-loop admission/drain/resume that preserves response-owned assets and all unresolved work; retain actual workers through repeated cancellation.
+4. Verify bootstrap, sweep/create/validate/cleanup, native constructor/close faults, substitution, response transfer and exact affected request/app cases only.
+5. Update ADR126/source inventory/notes, self-review, scoped commit and dual reports; preserve In Progress and all three ACs unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of approved native/source lifetimes; preserve ADR051 exact clone-reference ownership.
+
+### Phase14i implementation plan — retained voice bundle native operations
+
+1. Reproduce actual public inspection/export close failures with selected native identities and independent process admission.
+2. Apply ruling113: retain concrete original bundle operation outcomes, selected finite paths, ordinary admission and exact native creation/stream cleanup through public privacy mapping.
+3. Preserve export acknowledgement/no-replace/convergence/temp retention, and review session TTL/count/single-use across reversible gate/drain/resume.
+4. Establish separate original app-factory source drift RED and controller ruling before source binding.
+5. Verify targeted native allocation/close/namespace/cancellation/publication/session/source behavior and original affected domain cases; update exact census, ADR126 and notes; scoped commit and full dual report.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct approved native/source maintenance contract; Task10 remains In Progress with all three AC unchecked.
+
+### Phase14j implementation plan (before production)
+
+1. Establish source-backed sample native, post-DB caller, actual Library modal/action/export behavioral RED; obtain controller rulings before each coordination expansion.
+2. Retain complete original service calls and exact selected sample native outcomes through final result/evidence, preserving artifact-before-consumer order, public/custom APIs and ordinary source admission.
+3. Qualify original app/service source relationships after reached drift evidence, without accessor replay or callback authority.
+4. Add non-destructive Library safe point, reversible admission and retained action/page/review/export lifetimes after actual pilot/native evidence; preserve dirty drafts, generations and explicit consent.
+5. Run affected targeted native/domain/UI/app/request tests, census and scoped static checks; self-review, document exact evidence and remaining runtime obligations, then scoped commit and identical dual report.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct approved Task10 continuation, ruling115 and subsequent controller service/UI decisions; preserve ADR028/023/051/031. No startup/Complete qualification.
+
+Phase14j ruling118 continuation: coordinate only actual same-process fixed-root initialization on existing pending _Acquisition records under _lock/_changed, with waits outside lock, exact cancellation/identity checks and finally release. Preserve incomplete/foreign/control fail-closed outcomes and native-unqualified compatibility. Verify unwarmed original128 evidence, deterministic follower/pause/failure/recursive/fork/order cases; retain exact shared-source BASE reproduction provenance. ADR126 applies; no new mutex/registry/repair or startup qualification.
+
+Phase14j ruling119: preserve original export overwrite semantics using selected parent/target native descriptors and identity checks before truncation; ordinary target/parent admission precedes snapshots, missing output uses no-replace creation, stream and each FD have one explicit closer. Retain unknown/first cleanup outcomes; never delete caller/foreign output. Verify exact selected substitution, existing/new bytes and new FD cleanup edges. ADR126 applies.
+
+### Phase15 implementation plan — concrete loose voices and blends
+
+1. Preserve exact a98dd73f9 constructor/save behavioral REDs and inspect actual configured selector, catalog, backend, native and UI source boundaries before production.
+2. Obtain controller rulings for each concrete source/native/helper extension; reserve existing pending admission before selected constructor/read/write effects, keep ordinary custom/portable behavior and original shared roots.
+3. Account finite metadata/audio/import/export/backup/cache and actual native lifetimes, including error/dirty state, namespace substitution, first uncertain cleanup and independent maintenance observation.
+4. Integrate actual VoiceCloning/Speech queued, synchronous, dialog and final-result lifetimes; preserve unsaved drafts and pending export snapshots. Keep model/generation/player work explicitly pending within Task10.
+5. Resolve exact discovery/path-census omissions against actual provider precedence and fixed catalog sources without changing baseline ownership, copying/moving shared assets or granting generic file exemptions.
+6. Verify only changed-function/native/census selections, scoped static checks and self-review; update source inventory/ADR126/evidence, scoped commit and identical dual report. Keep Task31993 In Progress and every AC unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct approved source/native maintenance implementation; preserve ADR040 shared location versus baseline ownership, ADR023 runtime and ADR028 profile contracts.
+
+### Phase15 ruling156 — original Kokoro blend call foundation
+
+1. Preserve the nine reached original late-result count failures and the two JSON tuple/list fixture corrections; implement only the controller-approved finite source/call extension.
+2. Bind definition-time Kokoro call/base identities, select its original effective root/fixed JSON/parent under pending admission, and count exact constructor/default/save/delete/preset edges through original results without changing private/atomic helpers.
+3. Verify actual ordinary path/config/custom behavior, early and nested pause, fresh callbacks, source changes and exact cancellation. Preserve separate atomic-native, constructor and cache/default publication debts and report any required fresh-helper continuation refusal.
+4. Run scoped default/fatal lint, formatting and exact census/diff checks; append dual report. Keep phase15 active, no commit/source promotion/Task10 completion.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of ruled concrete admission lifecycle; preserve ADR040 paths and ADR023 runtime boundaries.
+
+### Phase15 ruling157 — fixed Kokoro readonly JSON and constructor read failure
+
+1. Preserve reached original reader3, malformed1 and namespace2 REDs plus ordinary JSON/alias9; implement the separately ruled finite read owner only.
+2. Prepare the exact constructor reader after directory verification and before its unchanged load line; pin selected readonly descriptors/stream and retain first native/source outcomes, with context-only failure linkage before defaults.
+3. Preserve original parsed-before-close/direct return and non-dict/empty/missing semantics; verify native cleanup/partial allocation, aliases, source drift, controls, prepared and incomplete pause boundaries with actual resources.
+4. Run scoped static/format/census, append dual evidence and retain atomic/default-save/cache/directory-native/installed/UI debts. No phase commit or completion.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct concrete lifecycle implementation under157; no model/input ownership or private writer authority expansion.
+
+### Phase15 ruling158 — one configured-parent Kokoro atomic write
+1. Implement distinct one-write _KokoroBlendWrite for original standalone save and public put/delete edges with existing configured parent only; preselect fixed target, finite trusted parents and exact single temporary before cache mutation/pause.
+2. Thread a private concrete record through exact original JSON/text/atomic helpers, checking source/edge/execution/live leases; preserve original serialization once and ordinary/custom/default/application-owned exclusions.
+3. Observe all selected traversal, target-hardening and temporary native outcomes, exclusive publication and identity-limited cleanup; close independent known owners once and retain first uncertainty/partial effects with exact primary control.
+4. Verify actual atomic2, corrected hardening/traversal4, unchanged put pause, compatibility/native/source/cleanup controls; scoped static/census and dual append-only evidence report. Preserve eight-default preparation, application-owned directory, cache/default truth and installed/UI debt for subsequent rulings.
+ADR required: no new ADR
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct bounded158 lifecycle implementation under approved recovery interfaces; no generic native, capture or installed-source authority.
+
+### Phase15 ruling159 — one configured Kokoro public cache mutation
+1. Preserve the early raw builtin saved_blends identity and ordered exact-string key/value snapshot before original public membership/get/validation; keep custom mapping/name/getter and excluded default/application-owned/standalone routes ordinary.
+2. Attach one concrete same-call outer-map stage to original public save/delete and exact nested save, reuse158 native selection, serialize/count the stage once without prepublication receiver mutation, and publish only the selected key after positive original save/native/source/cache settlement.
+3. Retain foreign/partial/native/control outcomes without selected rollback; release obsolete references outside storage bookkeeping then recheck before completion. No nested metadata ownership, peer rebase, new global admission or installed-source authority.
+4. Reach current preflight8 plus ordinary/custom, callback/pause, clean refusal, native/log/control, restored cache/source and actual finalizer outcomes. Run scoped static/census and append dual159 report after exact158 prefix; keep all remaining phase15/Task10 dependencies active and uncommitted.
+ADR required: no new ADR
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct bounded159 implementation of the approved maintenance/publication contract; no broader owner or runtime boundary.
+
+### Phase15 ruling160 — finite configured Kokoro default native sequence
+
+1. Preserve reached native2 RED, corrected paused-constructor RED and ordinary eight-save3 controls, including initial pause fixture error provenance.
+2. Attach a distinct original default batch owner after unchanged builtin specification construction; preselect eight original distinct temporary roles under the existing counted configured-parent call, with no partial fallback or post-pause enrollment.
+3. Consume exact defaults→save→_save entries in order using158 native records and positive-only generation handoff; preserve parent/alias/helper/temporary evidence and all earlier errors.
+4. Stop on first actual failed save/native uncertainty/control before another write; preserve partial files/cache and original primary/cleanup. Keep default cache staging and constructor/application-owned native qualification mandatory later.
+5. Verify actual first/later native outcomes, handoff/source drift, collision, ordinary/custom and partial/fully selected pause with targeted checks; append dual report after159, retain In Progress and unchecked AC.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved coherent native-owner and result boundary.
+
+### Phase15 ruling161 — positive per-entry Kokoro default cache publication
+
+1. Preserve historical/current cache RED pairs, exact custom-map/getter/key ordinary controls and early-source preflight, with fixture-error distinctions.
+2. Attach distinct early raw-map/MRO/helper provenance to selected160 defaults; stage each original generated entry and serialize/count its private outer payload while keeping the original live cache unchanged.
+3. Commit only the current key after actual nested/publicTrue, positive native/source/cache settlement; preserve earlier prefixes and foreign edits, release obsolete references outside the bookkeeping lock and final-check before160 handoff.
+4. Keep validation acyclic and exact original bridge provenance; preserve ordinary custom callbacks,160 first native/control/pause behavior and159 separate owner. No global gate, whole-map swap, peer grant or unsupported-route qualification.
+5. Verify bounded early/final cache, helper/property drift, first/later failure/control/log/serialization, real finalizer, ordinary and pause controls; scoped static/census and append-only dual report after160. Task remains active/uncommitted.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct approved coherent per-owner cache/native publication contract.
+
+### Phase15 ruling162 — original Kokoro constructor directory selection and native settlement
+
+1. Preserve reached verify/secure native and source REDs, fixture distinctions and original/custom compatibility controls before production.
+2. Attach one finite constructor directory record before the existing missing-parent exists loop; retain partial namespace/source observations and original selector/helper provenance without replay.
+3. Route exact original verify/secure through explicit native records, retaining allocation generations, first close/mkdir/chmod outcomes and exact primary while independently closing known descriptors; no ambient raw/Visual borrowing.
+4. Preserve configured verification, missing/owned creation and hardening, trusted aliases and ordinary custom limits. Keep continuous source/path pins through read/default/config/final settlement and truthful clean-refusal versus uncertain retention.
+5. Verify bounded original native/source/control/partial and selected pause cases plus affected/shared controls; scoped static/census and append-only dual report after161. No application-owned writer/cache promotion or phase completion.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved concrete constructor ownership and first native outcome contract.
+
+### Phase15 Ruling163 implementation plan (before production)
+
+1. Preserve the reconciled162 report prefix574311 bytes/SHA c49f23118eb37d9476a015db6270770a4df2c7af7a2dcb695d8e0d7748177b7c; characterize original direct application-owned save, actual native failures/body pause and custom helper/serialization callback ordering before production.
+2. Select only exact original outer _save_blends with builtin owned flagTrue, unchanged positively completed162 original constructor and existing0700 parent. Attach a distinct write-directory native record and one atomic generation; preselect finite metadata/target/temp roles before the unchanged original body without native IO or selector replay.
+3. Preserve the original JSON→text→atomic→owned-parent→secure call once, exact non-None owned argument and original provider/code/execution guards. Share only concrete directory mechanics, with separate writer/constructor permissions and no source.constructor/raw/Visual native borrowing; no missing-parent creation or0755 handoff.
+4. Require positive directory and atomic outcomes, independent first cleanup, per-FD sticky ownership and final source before direct success. Preserve exact primary, published bytes and truthful clean refusals; leave owned public mutation/default gates and all standalone cache consistency work separate.
+5. Verify actual native/ordinary/source/partial-and-selected pause/callback/control and affected configured/shared helper cases; run scoped static/format/census and append exact evidence/limits after162. Keep task In Progress/allAC unchecked; no phase commit or acceptance.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of recorded163 finite original native lifetime under ADR126; no new ownership, capture or generic helper boundary.
+Scope/proposal: .superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase15-brief.md#active163-scope--existing-private-application-owned-parent-one-direct-original-write and /private/tmp/task10-phase15-kokoro-owned-write-design163.md.
+
+### Phase15 Ruling164 implementation plan (before production)
+
+1. Preserve the reconciled163 report prefix604921 bytes/SHA123b07a49852d1fc7d8c6c4b3177cd1c9298ce850d05bc424711e16073df3b88 and original owned public preflight6RED/ordinary2, custom8 and no-write2 evidence with exact original callback/order and fixture limitations.
+2. Extend only exact original owned public save_voice_blend/delete_voice_blend on the unchanged positive162 constructor/existing0700 source. Attach the early raw159 cache/name/MRO record; retain original prepare-write hook and an independent163 directory+one atomic generation with exact public-to-save and helper stages, never constructor native borrowing or flag-only activation.
+3. Validate the supported mutation through an acyclic directory guard before incremental observation/admission; preserve original custom/no-write behavior and selected/incomplete pause boundaries. Keep owned default, configured counterpart and missing/hardening generations excluded.
+4. Stage from recorded cache items, publish one builtin key only after actual nested True and both native/source outcomes; for owned calls derive expected ordered items from the private candidate, release obsolete refs outside the condition then revalidate. Preserve foreign changes, actual committed bytes/key, primary/first cleanup and final owned completion/result refusal.
+5. Adapt the exact original serializer/pause/native seams truthfully; verify replacement/new-key/delete success, measured ordinary callbacks, partial/source/publication/finalizer/logging/native/control and relevant direct/configured/shared regressions. Run scoped static/format/census and append164 evidence after163; keep In Progress/allAC unchecked with no commit or phase acceptance.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of recorded164 finite original owned public/native/cache boundary under ADR126; no new default, capture, installed or generic configured authority.
+Scope/proposal: final Ruling164 section of .superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase15-brief.md and /private/tmp/task10-phase15-kokoro-owned-public-design164.md.
+
+### Phase15 Ruling165 implementation plan (before production)
+
+1. Preserve the reconciled164 report629846-byte prefix/SHA03aea0b827fa1743539951d51ea8bbaa433542561647ad5d561d1e7a830b1d8b and original configured native/partial/candidate/final-result REDs, seed correction and configured default ordinary3 evidence.
+2. Apply existing selected source-before-reservation, admitted temporary flag, per-descriptor first ownership uncertainty and captured-code/direct native cleanup checks to configured nonordinary records without changing upfront source/helper/default eligibility or adding an owned directory. Include existing160 configured records via acyclic batch.check_source and positive-only generation handoff.
+3. Publish configured original public one-key cache expectations from the private candidate before the condition; retain original mapping/value identity, outside-lock reference release/final checks and foreign changes. Extend final completion reset/result deferral only to supported standalone/public default_batchNone, preserving exact own primary and all cleanup.
+4. Verify reached configured native4/partial2/candidate3/final3, admitted temp and parent FD guards, first observations/ordinary callbacks/finalizers/loggers, selected/partial pauses and bounded initial/direct/later default generation outcomes; run a small owned affected slice. Keep later batch-after-finish result/cache state and owned-default activation explicit separate mandatory work.
+5. Run scoped static/formatter/trace-marker/source census and append165 evidence after164. Keep Task31993 In Progress/allAC unchecked; no commit, phase acceptance, installed/capture/runtime or generic helper promotion.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of recorded165 existing configured per-write/candidate protections under ADR126; no new admission/source eligibility or owned default boundary.
+Scope/proposal: final Ruling165 section of .superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase15-brief.md and /private/tmp/task10-phase15-kokoro-configured-design165.md.
+
+### Phase15 Ruling166 implementation plan (before production)
+
+1. Preserve reconciled165 dual657820-byte prefix/SHAd32c100babf7b62f2a5786af8c6decd797329487e6769a9b6905fa5b99e0577f and original configured after-finish8/read2 fixtures with reached result-versus-completion failures and primary/ordinary controls.
+2. Add pure final-refusal bookkeeping for the attached exact nonordinary configured default batch at existing finish/writer/read/operation final catches. Preserve first concrete error, clear current batch/cache/operation completion, retain effects and existing deferred default error after independent cleanup with this call's own-primary precedence.
+3. Preserve historical per-generation native completion, existing cache prefix/foreign changes, check order, source/spec/helper/cache gates, eight saves/finite names/pause/ordinary contracts. No reader-wide, owned-default, source/admission or cleanup expansion.
+4. Verify unchanged reached10 with explicit added current-operation/native-history assertions, bounded late-cache/restored source, earlier finish-entry and exact/ambient primary, failed-save prefix/native, original default ordinary3 and small custom/one-write controls. Run scoped static/format/trace-marker/census and append166 after165.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of recorded166 existing configured batch final settlement under ADR126; no new default eligibility or runtime/source authority.
+Scope/proposal: final Ruling166 section of .superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase15-brief.md and /private/tmp/task10-phase15-kokoro-default-final-design166.md.
+
+### Phase15 Ruling167 implementation plan (before production)
+
+1. Preserve reconciled166 report678425-byte prefix/SHA97f88cfbfa27e0bd9a1f7ebd71839627801efb60db30df2ab5b446dc03b3f8b1 and reached owned predecessor/native/cache/pause/custom snapshots and exact fixture-counter chronology.
+2. Select only exact original owned initial defaults with the same clean prepared/used directory and valid consumed absent-or-completed read predecessor, or direct defaults with clean completed prior constructor. Keep initial constructor incomplete until its real settlement; no parsing/getter replay or resource borrowing.
+3. Reuse finite batch/cache protocol with8 distinct directory+atomic records, exact stack/current generation, acyclic predecessor/cache/source checks, admitted temp roles and positive-only handoff. Preserve8 original secure/save calls, forbid later mkdir/fchmod, stop on first failed entry and retain actual cache prefix/native uncertainty.
+4. Keep owned custom cache and upfront first-writer/helper/nonce/capability whole-batch ordinary before directory preparation. Preserve measured callbacks/nativeNone behavior. Route new owned batch final refusal through166 and restrict one-write completion resets to default_batchNone without changing existing direct/public calls.
+5. Explicitly adapt original legacy/native-dispatch fixtures; verify initial/direct native/resource/cache/pause/predecessor/final-source/primary and relevant configured/owned ordinary/custom/finalizer controls. Run scoped static/format/trace/census and append167 after166; keep In Progress/allAC unchecked, no commit/phase acceptance.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of recorded167 finite original owned default predecessor/generations under ADR126; no installed/runtime/source capture expansion.
+Scope/proposal: final Ruling167 section of .superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase15-brief.md and /private/tmp/task10-phase15-kokoro-owned-default-design167.md.
+
+### Phase15 Ruling168 implementation plan (before production)
+
+1. Preserve reconciled167 dual712265-byte prefix/SHA21df0ea5a9d4f29292676498958e22267aeb42104648d414fc0e531cd1bb0a38, actual original reader drift8/final1, callback/malformed/borrowed controls and original27/30 snapshots.
+2. Select one exact Kokoro reader_fields record before original get/list/preset. Keep per-method ownership: get selected-name/opaque value; list ordered members/direct fields/builtin length; preset selected profile/voices/builtin pairs. Use pure raw/MRO/argument/key/helper provenance and upfront ordinary gates; preserve unselected get/preset entries and exact nested reuse.
+3. Validate current row/pair before actual consumption, with finite entry/final selection checks and no all-cache/all-sequence rescan per item. Preserve original callbacks, format, order, borrowed identities, partial/sticky drift and unknown values; add no native/path admission.
+4. Defer observed final source/field refusal only for this exact supported reader, preserving first concrete error/own primary and current outer completion through existing final catches and cleanup. Keep other owners unchanged.
+5. Explicitly adapt original normal preludes; verify required positive/custom/malformed/source/partial/pause/current-execution/final controls and small affected slice. Run scoped static/format/trace/census and append168 after167; keep In Progress/allAC unchecked, no commit/phase acceptance.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of recorded168 finite saved-blend reader fields/results under ADR126, without runtime/native/capture scope expansion.
+Scope/proposal: final Ruling168 section of .superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase15-brief.md and /private/tmp/task10-phase15-kokoro-reader-design168.md.
+
+### Phase15 Ruling169 implementation plan (before production)
+
+1. Preserve reconciled168 dual740287-byte prefix/SHA56108b5d8e9d7220f25d9f18602e68043ab0f13e8e0b90fa24e13a87883ec9a6 and original/corrected manager overlap fixtures/logs, distinguishing historical native-list fixture failures from actual wrong-thread false refusal.
+2. Add one pure newest-current PID/Thread/task active-operation selector for six original manager contexts: create, metadata, delete, import, export and nested SoundFile. Apply the existing finite method/caller shape after selecting, never search older same-execution matches.
+3. Preserve source/native/check/fallback/first-error bodies and tokens. Keep correct parent/JSON/Higgs selection unchanged; leave constructor and wrapper-provenance debts separate. Add no acquisition, lock, paths, callback or serialization policy.
+4. Verify deterministic original overlap, actual reentrant newest-current edge, ordinary/primary/pause controls, already correct concurrent nested JSON/Higgs controls and individual affected create/delete/package/decoder nodes. No full sweep or optional dependency installation.
+5. Run scoped static/format/source-owner checks and append169 after168 with exact vectors and chronology. Keep Task31993 In Progress/all3 AC unchecked, no phase acceptance or commit.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: recorded169 selects among existing original operations under ADR126 without changing native ownership or global admission.
+Scope/proposal: final Ruling169 section of .superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase15-brief.md and /private/tmp/task10-phase15-manager-execution-design169.md.
+
+### Phase15 Ruling170 implementation plan (before production)
+
+1. Preserve exact169 dual758488-byte/SHA97fa6030fed05b50168859cfdc7596aec1b9c181e5a091e017ba89852cd6ff77 prefix and original constructor overlap fixtures/logs. Distinguish existing clean false refusal, absent fallback-created retained effects, and serialized mode fixture correction.
+2. Change only _voice_constructor_directory parent choice to existing pure _current_manager_operation(source). Keep every constructor-presence/caller/base/role/active/source/native/settlement/fallback condition and original mkdir mode behavior.
+3. Run unchanged corrected4 first, then actual reachable newest-current/reentrant and invalid caller/role guards without fabricated records or receiver completion. Run proposed original affected6 and169 metadata2/nested2.
+4. Run scoped static/format/source-owner checks and append exact170 evidence after169. Keep dynamic wrapper/original provenance and installed/assets/UI/runtime debts separate; no arbitrary half-initialized receiver concurrency guarantee, new native framework or admission policy.
+5. Task31993 stays In Progress/all3 AC unchecked; no full sweep, new agent, phase acceptance or commit.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: recorded170 corrects execution selection among already admitted constructor operations under ADR126.
+Scope/proposal: final Ruling170 section in phase15 brief and /private/tmp/task10-phase15-manager-constructor-proposal170.md.
+
+### Phase15 Ruling171 implementation plan (before production)
+
+1. Preserve reconciled170 dual776844-byte/SHA0e374ce7a16a4a3c414f3c40b2f61012131cb40d0c6a9ccfc048d4402e3aabba prefix and actual171 original fixtures/source/logs, including syntax-only first errors and actual4 callback/result failures.
+2. Pin only the two original manager definitions and24 decorated wrapper/closure/function/code/wrapped entries independently at definition time. Select fixed original versus upfront ordinary/unqualified source; never downgrade a selected changed source.
+3. Add a checked bound-method resolver at exact27 mapped original nested expressions, preserving actual caller and argument evaluation. Use independent entries for original-parent lookup. Apply only approved entry and9 existing ordinary helper gates; preserve original native/cleanup bodies.
+4. Make observed selected provenance refusal sticky, preserve own primary/first error and defer final failures after known cleanup. Adapt old ordinary/missing-metadata/count/native preludes explicitly; no arbitrary checker/global mutation guarantee.
+5. Verify late4/ordinary6 first, bounded source/primary/wrapper/closure guards, mapped original families/both restore paths,169170/base/ordinary/native affected controls. Run scoped static/format/census and AST reversal of27 changes; append171 exact evidence after170 without suite, new agent, commit or phase acceptance.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: recorded171 finite original-manager provenance and nested-edge enrollment under ADR126.
+Scope/proposal: Ruling171 in phase15 brief and /private/tmp/task10-phase15-manager-provenance-proposal171.md.
+
+### Phase15 Ruling172 implementation plan (before production)
+
+1. Preserve exact171 report810480/SHAa29645f52c5689530572abf70ecebab966cba9e2bf2752a729efd64e6b99ede0, original172 seven-case fixture and actual bound/unbound/fixture/RED logs.
+2. Amend ADR126 for the ruled explicit readonly ancestor role before producer changes. Admit concrete owned voice root first; issue distinct current-operation traversal reservations only for its verified strict lexical/canonical ancestors. Keep bare acquisition and external/default-config/capture policy unchanged.
+3. Integrate only manager common entry/constructor and finite original Higgs/Chatterbox/Kokoro backend constructor sites. Require normal owned mutation leases for mkdir/chmod/created targets; retain original source/native/primary/pause behavior.
+4. Adapt recorded traversal failure preludes explicitly and verify bound exact-root ctor/load/save, counterpart constructors, role/mutation refusal, source/alias/partial/prepared pause and bounded affected native/provenance controls. No default/direct-writer activation or external allowance.
+5. Scoped static/format/census and append-only dual172 evidence after171; no suite, new agent, commit or phase acceptance.
+ADR required: yes (amend existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: Ruling172 finite readonly traversal versus owned mutation admission under existing ADR126.
+Proposal: /private/tmp/task10-phase15-installed-roles-proposal172.md.
+
+### Phase15 Ruling173 implementation plan (before production)
+
+1. Reuse172 readonly strict-ancestor roles at original backend common entry after actual owned-root admission, atomic observe_parent and exact independent Kokoro WriteDirectory observation; existing eight default records use the same finite consumers.
+2. Validate actual current/final role and source associations before positive retirement after known cleanup; retain first error, own primary and attempt retirement. Keep owned checks at actual selected atomic mutation boundaries and known independent closes.
+3. Preserve existing validated upfront helper/target/alias ordinary fallback after harmless parent/target observation. Refused admission, source/role drift, partial temporary/native selection and pause cannot fall back or retry; retain exact selector counts, prepared continuation, cache/default predecessor/native-history contracts.
+4. Explicitly adapt original4 refusal preludes to successful bound getter/direct True/default8 outcomes. Run bounded common-entry/default/direct/missing-read, role/mutation/source/pause/primary and existing affected native/ordinary controls with saved argv, then scoped static/formatter/census and append-only dual evidence after corrected172868336/54d227 prefix.
+5. Keep external namespace lifetime/registration race, default-config siblings, references/JSON/UI/runtime/capture debts separate; no full sweep, commit, phase acceptance or Task31993 completion.
+
+ADR required: yes (amend existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: Ruling173 explicitly names the additional finite readonly-role consumers and final/owned-mutation guarantees under ADR126, without changing central scope or capture.
+Scope: final Ruling173 in phase15 brief and /private/tmp/task10-phase15-installed-consumer-proposal173.md, with recorded ordinary-fallback clarification controlling.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Foundation phase only; Task10 remains In Progress and all criteria remain unchecked.
+Under ADR-126 and controller rulings50–51, added the native pause-hint observation
+and moved process lease acquisition/retirement waits outside the coordinator RLock.
+Retiring native holds remain explicit; startup is not retired and no producer is
+promoted from participant_pending. Added the Participant protocol and conservative
+missing-coverage guard. Owner/app/headless integration remains the next phase.
+
+Behavioral RED: first missing-owner assertion failed with DID NOT RAISE; then native
+gate and blocked-acquisition lock-order tests failed (2 failed/1 passed). GREEN:
+16 focused cases and final79 combined participant/admission/bootstrap cases passed.
+Required guards:379 passed/1 skipped (existing Windows-only functional posture),
+using the approved Python3.12 interpreter and private pytest caches. Existing
+requests and AST SyntaxWarnings remain; no full suite ran. Exact commands, evidence
+limits, source handoffs and remaining work are in the task10 execution report.
+
+Files: Backup_Recovery/admission.py, storage_admission.py, new participants.py,
+Tests/Backup_Recovery/test_participants.py, owner inventory documentation and this
+task. No new ADR: direct implementation of ADR-126, retaining ADR-004 restart-required
+config mapping and ADR-036 ownership boundaries. No automatic startup-token release,
+GC drain, owner allowlist, output publication or diagnostic inventory refresh.
+
+### Phase2 implementation plan (before code)
+
+1. Establish behavioral RED for Event/Sync file connection native retirement and private local pause gate/pending acquisition refusal.
+2. Add reservation before path/authority lookup, opaque process-local pause and live installed repository operation provenance (PID, actual Thread/task identity, exact path/native scope); track actual SQLite resource retirement and same-holder probes.
+3. Integrate Event/Sync transaction scopes with finally-native-close on their creating thread; retain in-memory connection semantics. Never cancel writes as a drain mechanism.
+4. Verify real native SQLite/operation lifetimes, late/cancelled acquisition, descendant confinement, task/thread and stale capability refusal, close failures, and incomplete runtime-coverage refusal with startup retained.
+5. Run affected focused guards/static checks; self-review and commit this bounded phase. Preserve foundation evidence, In Progress status and unchecked ACs for whole Task10 review.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved lifecycle authority under controller rulings50–52. No new ADR; no startup-retirement success or production responder until later runtime cohorts.
+
+### Phase2 implementation notes
+
+Under ADR-126 and controller rulings52–53, implemented the private process-local
+pause gate, pre-root/bootstrap/authority acquisition accounting, live repository
+operation provenance and actual SQLite resource metadata/retirement. Event/Sync
+transactions now commit/rollback and finally-close file connections on the creating
+thread, retaining memory behavior. Ordinary custom constructor allocation and
+close/reinitialize failures retain exclusion conservatively. No startup lease is
+retired, no responder is installed, and runtime coverage remains incomplete.
+
+Evidence:32 focused cases pass, including real worker SQLite lifetimes and separate
+native maintenance observer processes.145 earlier affected admission/bootstrap/
+repository guards passed. Final required SQLite/census/service guards passed in a
+combined run (469 passed/1 existing Windows skip overall), whose additional core
+capture checks had1 failure/2 setup errors. Core alone passes62; the three failing
+cases alone pass3 and reduced service-plus-three ordering passes7. The exact combined
+command on immutable clean phase BASE0f4ff4ba reproduces the failure family (468
+passed/1 skip/1 failure/4 errors), establishing pre-phase2 app callback/bootstrap
+concurrency debt for the remaining Task10 lifecycle cohort. BASE's unexpected RAG
+metadata network attempts were blocked by Tests/network_guard; no download or
+network permission change occurred. Do not claim the combined-order run is green.
+
+Scoped ruff fatal checks, new-module formatting and diff checks pass. Self-review
+covered actual operation/handle accounting, cancellation/retirement, native scope,
+constructor and thread-affinity behavior, memory/rollback semantics and coverage
+limits. Source syntax counts are unchanged; inventory guards pass without source
+row changes. Updated owner inventory and the evidence lesson from the actual
+wrong-thread closed-handle assertion incident. Detailed APIs, exact commands,
+source handoffs and remaining cohorts are in task-10-phase2-report.md. Task31993
+stays In Progress with all acceptance criteria unchecked for whole-task review.
+
+Final self-review added three behavioral RED cases for forged/instance-shadowed
+validation callbacks, then enforced exact token type and direct class validation
+for operation/pause identity. The final32 focused cases and scoped static checks
+pass; no caller-supplied validation callback can confer authority.
+
+### Phase3 implementation plan (before code)
+
+1. Inspect the five concrete core SQLite owners and propose exact operation, borrower, native retirement and safe reuse APIs to the controller before shared edits.
+2. Establish behavioral RED for failed native-close reference retention, late mutation refusal, transaction ownership and native cached-handle drain; retain unresolved borrowers and actual thread-affinity blockers truthfully.
+3. Integrate the controller-approved bounded lifetime strategy for ChaChaNotes, Media, Prompts, Library Collections and Library Ingest Jobs. Preserve memory, managed/nested/borrowed transaction semantics and all-thread evidence; no generic close, rollback, garbage collection or caller-selected owner token qualifies drainage.
+4. Verify actual domain constructors/transactions and independent native maintenance exclusion, then targeted affected SQLite/domain/admission/census checks and scoped static/self-review checks.
+5. Record exact supported boundaries, remaining limitations and evidence, commit only this phase, and leave Task31993 In Progress with unchecked ACs.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved runtime lifetime contract, preserving ADR-004 mapping and ADR-036 ownership. No startup retirement, full runtime-coverage promotion or production responder in this phase.
+
+Phase3 plan refinement, controller ruling54 (before shared edits): retain native APIs and implement conservative explicit source-thread borrower retirement. Managed transaction exit does not invalidate escaped native connections/cursors. Installed all-thread handle records and actual ordinary leases remain until successful explicit native close; raw/escaped/foreign-idle consumers truthfully block drainage. Later Task10 caller/app/headless job ownership boundaries must positively retire those caches at proven source-thread safe points before idling. This is a phase division, not reduced Task10 acceptance or a permanent unsupported declaration. No generic facade or executor redesign.
+
+### Phase3 implementation notes
+
+Under ADR-126 and controller rulings54–55, five exact installed core SQLite owners
+now gate cached getters and managed scopes, strongly retain actual native handle/
+lease associations and reserve explicit source-thread retirement. Existing native
+connection/cursor, nested/borrowed transaction and memory APIs remain intact.
+Managed exit does not revoke escaped borrowers. Failed native close or live liveness
+probe keeps references and exclusion. Distinct thread caches retire independently;
+Ingest's shared cache protects every accessing thread. Independent nested installed
+operations preserve ordinary multi-instance calls only through fresh gate-checked
+admission; no descendant authority transfers. Native registry association cannot
+be stolen by a second same-path instance. Uninstalled subclasses remain ordinary,
+unqualified callers; exact raw/unmatched returns remain actual blockers.
+
+Behavioral RED/GREEN covers five owners' close failures, native observer exclusion,
+late getters, admitted work/escaped cursors, active-work close, safe cache reuse,
+source-thread races, liveness failure and same-path association. Combined focused
+core/phase2 lifetimes:91 passed; final association fix's8-case affected subset passed
+(no claimed92-case whole rerun). Final private SQLite guards:316 passed/1 existing
+Windows skip after16 test spies were corrected to honor their supplied real native
+factory. Final affected Prompts/Chatbooks guards:43 passed. Earlier capture checks:
+62 passed. Full exact commands, overlapping-run limits and failed intermediate
+runs are retained in task-10-phase3-report.md; no full suite was run.
+
+The earlier domain check had257 passed/3 failed: two new real Prompts trace callback
+conflict regressions were fixed under ruling55; the remaining Media historical-schema
+fixture independently fails on immutable phase BASEb778f3883e7174bba0a1887363d53cf02af49240
+with duplicate chunk_engine_version. Controller carries that malformed fixture to
+Task13 historical-schema qualification; no migration change or replacement fixture
+was made here. The known phase2 combined-order app callback/bootstrap failure remains
+an explicit Task10 app/lifecycle obligation. Removed incorrect new-directory test
+oracle/speculative constructor work is disclosed as abandoned self-review, not
+behavioral regression proof. Scoped fatal lint, touched focused-module formatting
+and diff checks pass; the actual callback incident is recorded in testing lessons.
+
+Phase3 is complete, **Task10 is incomplete**. Startup lifetime remains installed,
+runtime coverage refuses, and no responder is enabled. Actual Library pool-service
+jobs, app-owned ingest persistence/parser callbacks, Chatbooks/Persona compound
+producers and remaining raw/config/model/TTS/operational/app/headless cohorts need
+full mutation and positive source-thread handle retirement before idle. Idle foreign
+caches, escaped raw objects and dead affine threads remain truthful blockers; these
+are required next integration work, not reduced final acceptance. Updated owner
+inventory names the exact caller handoffs without promoting syntax rows. Existing
+ADR-126/design references remain authoritative; all31993 ACs remain unchecked and
+status In Progress pending whole-task implementation and independent review.
+
+### Phase4 implementation plan (before code)
+
+1. Establish behavioral RED for full Feedback/Grammar mutation refusal before cached state changes, template mkdir/save admission, and actual emoji worker lifetime.
+2. Add separate exact source-bound raw participants and pre-selector reservations. Admit fixed target/publication sidecar/missing-directory scope before memory or storage mutation; pin and recheck existing ancestor identity, retaining actual native leases and resource-close uncertainty. No repository token reuse or caller callback authority.
+3. Integrate constructors/direct helpers and full service mutations; preserve ordinary custom/built-in template destinations without expanding capture ownership, subclass ordinary behavior without installed pause descendants, and emoji app-owned unsynchronized last-write-wins behavior.
+4. Verify real temporary files/workers, native maintenance observers, pause/acquisition races, same-source serialization, failure/close uncertainty, cancellation and safe resume. Run only new focused tests, affected producer/domain/admission/participant and exact census guards.
+5. Self-review, record exact evidence/remaining cohorts, update inventory, and scoped commit. Retain In Progress and all unchecked ACs; no runtime coverage promotion, startup retirement, Complete capability or responder.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct approved raw storage lifetime integration, retaining ADR-004 mapping and ADR-036 ownership; controller approved separate raw registry and directional multi-target scope before shared edits.
+
+### Phase4 implementation notes
+
+Under ADR-126 and the controller-approved separate raw-source strategy, Feedback and
+Grammar full mutations/constructor reads/direct helpers, default Chunking template
+mkdir/read/save and actual emoji workers now retain source-bound ordinary admission.
+Fixed file/sidecar/mkdir paths are admitted before state or IO changes; native pins
+and descriptor-relative IO preserve parent identity, while real descriptors/wrappers
+and leases remain until positive native retirement. Cached service mutations roll
+back on refusal/error. Existing sidecars are preserved, successful publication
+consumes exact temporary inode ownership, and failed close/publication/cleanup
+preserves unresolved evidence and refuses later conflicting writes. No GC/callback/
+Future-cancellation authority or core-token transfer was introduced.
+
+Custom/built-in template paths and subclasses retain ordinary selected-path behavior
+without installed default-owner or pause-descendant coverage. Missing raw pinning
+primitives select ordinary path IO before access under ruling57; actual admission
+leases (including stronger native leases) and resource accounting remain, but no
+installed participant, pause-descendant grant, capture or startup qualification is
+created. Simulations do not qualify Windows. Existing trusted parent aliases retain
+physical identity checks; caller-owned aliases on the pinned route still refuse.
+Emoji stays app-owned,
+best-effort and unsynchronized last-write-wins; a canceled worker can remain an actual
+native drain blocker. Exact selector/callback/Thread/Task/native-scope identity is
+checked. All participant_pending declarations, startup holds and incomplete runtime
+coverage remain; no Complete/replacement capability, responder or app-wide coverage.
+
+Evidence: final raw+Feedback/Grammar domain run64 passed (58 raw cases +6 service
+cases); final exact producer census11 passed; earlier affected producer run30 passed/2 pre-existing server-only module
+skips; affected admission/participant/core/bootstrap/census guards182 passed.
+Behavioral RED/GREEN covers paused mutation/constructor/mkdir, native observers,
+parent/selector races, exact-file sidecar refusal, cancellation, path/native-close
+uncertainty, spoofed callback identity and actual two-process sidecar ownership.
+The initial native-observer test selected the wrong ambient hold and was corrected;
+three native-failure red checks required missing explicit descriptor metadata while
+already retaining native exclusion. These are disclosed separately from behavioral
+false-drain regressions. The portable disjoint fixture initially omitted its claimed
+config file; the alias fixture initially assumed an untrusted caller-owned alias
+was permitted. Corrected fixtures preserve bootstrap/link policy; the positive
+trusted-alias case explicitly simulates trust classification only. Requests/Pydantic/AST and joblib semaphore ENOSPC warnings
+remain; skips are not substituted for release evidence and no full suite ran.
+
+Changed six production modules including new raw_participants.py, the focused raw
+lifetime tests, source inventory and the actual sidecar-race testing lesson. Exact
+commands, overlapping run counts, scoped static/self-review checks, platform limits
+and remaining full Task10 integration are recorded in task-10-phase4-report.md.
+Task31993 remains In Progress, all ACs unchecked, pending remaining cohorts and
+independent whole-task review; ADR-126/design references are preserved.
+
+### Phase5 implementation plan (before code)
+
+1. Establish behavioral RED on actual Workspace, AgentRuns and ClientNotifications cached getters, native close/reference failures and active-work retirement refusal; extend to actual ScheduledTasks, Research and Writing scopes.
+2. Extend only the exact installed repository declarations and native policy associations. Preserve independent nested admission and actual wrapper/lease/path/Thread/Task association; leave BaseDB and ordinary subclasses unqualified.
+3. Gate/register fresh and cached native getter routes. Count the three cached sources' existing read/transaction scopes; reserve explicit source-thread close and retain live/uncertain caches. Count ScheduledTasks lexical read/transaction lifetimes through native close, AgentRuns' explicit fresh-read route, and Research/Writing path-backed lexical native contexts. Setup failures positively close or retain native evidence; memory/external injection behavior stays ordinary.
+4. Run focused behavioral cases with independent native observers for gates, pending/native setup, exact source association, nested scopes, threads, escaped native objects, close failures and reopening. Run only affected six-source/domain and shared participant/admission/private-SQLite/census guards; no full suite or collection sweep.
+5. Update exact owner/census and concrete caller handoffs, scoped fatal lint/new-test format/diff checks, self-review, report and scoped commit. Keep Task31993 In Progress with all three ACs unchecked; startup/native-unqualified holds and runtime coverage refusal remain.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of the approved native storage lifetime contract with existing ADR-004/036 boundaries; no schema/migration or new subsystem decision.
+
+### Phase5 implementation notes
+
+Under existing ADR-126, the six actual operational/domain SQLite sources now bind
+exact installed instances, selected paths, native policies and real handles to
+existing participant lifetimes. Workspace/AgentRuns/ClientNotifications managed
+read/transaction scopes retain per-thread caches through exit and preserve them on
+failed close/live probe; source-thread explicit close remains the retirement route.
+ScheduledTasks retains fresh closing read/transaction boundaries and counts its
+actual migration sequence. AgentRuns get_run_fresh retains its separate finally
+close. Research/Writing add counted lexical native contexts, preserve file close-on-
+exit and retained memory/external injection behavior, and bind relative files once.
+Native setup failure positively closes or leaves registered uncertainty; raw handles
+remain native APIs and independently block drain until explicit retirement.
+
+Controller-directed extension reproduced raw allocation and setup participant-gate
+races in the five earlier core owners plus Event/Sync. Their exact concrete source
+routes now recheck new allocations before returning; Event/Sync and Collections
+raw getters are gated and Event/Sync native file policy remains db.base. Ingest
+cleanup keeps the exact allocated handle local so mutable cache replacement cannot
+redirect refusal close to a pre-existing borrower. No BaseDB-wide authority or
+cross-store grant was added. Shared pre-admission missing-parent lookup preserves
+the existing typed PrivatePathError/UNSAFE_PARENT/missing_parent refusal; no parent
+is created and alias/trust checks are unchanged.
+
+Behavioral REDs: initial cached9, scope9, setup-close6, raw-allocation gate6,
+previous-owner gate7, all-source PRAGMA/setup gate13, and Ingest native-identity1.
+Final focused96 cases are included in the final222-case affected lifetime/interop/
+Ingest run (all passed). Earlier same-source domain167 passed; owning-thread fixture
+cleanup97 passed; previous-owner domain195 passed; Media55 passed with only its
+independently baselined malformed historical-schema case explicitly deselected.
+Shared guards452 passed/1 existing Windows skip/2 missing-parent failures; both
+failures were fixed and their complete interop file passed in the final222 run.
+No inflated sum of overlapping runs or full-suite claim. Exact commands/raw logs,
+initial wrong Scheduled first-row-vs-MAX test oracle and corrections are retained
+in task-10-phase5-report.md. The initial domain run's +371-descriptor warning exposed
+GC-dependent fixtures and worker tests; real owning-thread finalizers/close calls
+were added in five affected test files. The97-case cleanup run emitted no such
+threshold warning; this is not a zero-growth or production lifecycle claim.
+
+Self-review checked exact source/native associations, pending and nested gate races,
+Thread/Task identity, ambiguous closure retention, native borrowers, memory/external
+compatibility and concrete source callers. Scoped fatal lint, new-test/helper format
+and diff checks pass. Owner inventory records six-source lifetimes plus the earlier
+race corrections, with no producer-count/schema/capture promotion. Testing lesson
+records actual fixture-native retention evidence. Startup/native-unqualified holds,
+participant_pending rows and incomplete runtime coverage remain; no responder or
+Complete/replacement exposure. Task31993 stays In Progress, all three ACs unchecked.
+Required next work includes Console/settings/retention AgentRuns callers, Workspace
+service and Home notification pool jobs, notification/scheduler/research execution
+and cross-store followups, multi-scope Writing jobs, remaining storage cohorts,
+app/headless lifecycle and one independent whole-task review. The clean-BASE app
+callback/bootstrap issue remains Task10; Media historical-fixture debt stays Task13.
+
+### Phase6 implementation plan (before code)
+
+1. Establish behavioral RED for actual Evals/Subscriptions/FileNotes cached reads and safe close, constructor directory pause, Receipts and installed Kanban source scopes.
+2. Extend exact source declarations and native association only; bind Subscriptions read-only mode on every use and preserve different native write/read policies. Count existing lexical CRUD/schema/read/transaction bodies without changing borrowed native commit or cursor semantics.
+3. Integrate FileNotes constructor as two independent safe stages: exact constructor-only fixed directory admission and positive raw resource retirement, then fresh SQLite repository admission. Pause between stages may leave admitted directories but refuses SQLite creation. Preserve unsupported-platform ordinary behavior; no compound authority transfer.
+4. Count SiteConfigManager setup only through its actual lazily available exact source, retaining standalone helper ordinary status and separate CharactersRAGDB hybrid connections. Register exact allocation before setup, recheck gates, positively close failures or retain uncertain resources.
+5. Verify real SQLite/native process observers, active/foreign-thread refusal, pause/allocation/setup/selector races, native close failures/reopen, memory/relative/read-only/hybrid compatibility, and fresh per-operation close semantics. Run affected targeted domain/lifetime/private-SQLite/census guards, static checks and self-review.
+6. Update source inventory and exact caller handoffs, append evidence, scoped commit. Task31993 stays In Progress with three unchecked ACs; no startup retirement, responder, runtime coverage or Complete capability.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved persistence lifetime contract; controller approved exact source strategy and two-stage directory boundary, preserving ADR-004/036.
+
+### Phase6 implementation notes
+
+Under ADR-126 and controller-approved exact source strategy, Evals/Subscriptions/
+FileNotes/receipt/Kanban native scopes now use installed path/policy/Thread/Task
+associations and positive source-owned retirement. SiteConfigManager initial schema
+setup has a distinct exact source; hybrid core handles retain separate ownership.
+Lazy production-module lookup avoids eagerly loading these added sources. New
+cached/raw access is gated; fixed admitted scopes can finish; failed native close
+or live errors preserve references. FileNotes shared cache refuses foreign/active
+close, maps semantic notes.file_notes to native notes.file_notes_replica and keeps
+original memory-close behavior. Receipt/Kanban commit/rollback/finally.close and
+all pre-existing literal/schema payloads remain intact.
+
+FileNotes directory construction uses fixed ordinary raw admission and native pins,
+then positively retires before fresh SQLite admission. Pause may leave successfully
+admitted directories but refuses SQLite creation; path retarget and uncertain
+native directory retirement remain blockers. No composite raw-to-SQLite authority,
+new schema/migration, coverage promotion or startup retirement was introduced.
+Subscriptions resolves only an omitted config default before its DB operation so
+cold config values survive; explicit overrides win and intervening pause refuses
+mutation. Its entire actual schema tail remains in the original admitted scope.
+
+Evidence: final source run167 passed including83 focused cases; earlier combined
+source/domain302 passed. Shared earlier lifetimes/privateSQLite/census637 passed,
+with1 existing Windows posture skip. Exact Evals capture10 passed; the4 Subs
+catalog/capture/audio checks initially failed from changed SQL indentation and now
+pass after original plain/joined literal restoration. The incident is recorded in
+lessons-testing-evidence.md. Final FileNotes/new-lifetime94 passed before the last
+config/semantic tests. Counts overlap, never additive. Fatal lint, new/participant
+format checks and diff checks pass. No full suite ran.
+
+Retained test corrections include the unsafe initial native trace-callback close
+(exit139, not rerun or claimed OS evidence), intermediate Evals SyntaxError, wrong
+mkdir/policy/memory/nested-writer assumptions and one malformed census row. True
+retarget/schema-tail/memory/cold-config/semantic regressions have behavioral
+RED/GREEN. Explicit fixture/source-thread cleanup removed the initial+246 descriptor
+threshold warning in scoped reruns; this is not production worker qualification.
+Self-review used full/whitespace-insensitive diffs plus exact AST literal/control-flow
+comparison and real native/capture evidence. No schema allowlist was widened.
+
+Files: participants/raw_participants/storage_admission, actual five sources plus
+Kanban native helper and SiteConfigManager, focused tests, exact source fixture
+cleanup, owner inventory and evidence lesson. Full commands/results/source handoffs
+are in task-10-phase6-report.md. File Notes workspace shutdown currently may invoke
+close on a different executor thread then clear its reference; actual caller jobs
+must positively retire those handles. Evals/Subscriptions/Site jobs, Notes import/
+file/Git/sync/dirty editors and Kanban multi-scope methods remain later Task10 work,
+along with prior cohorts and app/headless responder/startup aggregation. Task31993
+stays In Progress with all3 ACs unchecked; no claim of Task10 completion.
+
+Final phase6 boundary review also reproduced a real Kanban DELETE-to-WAL setup
+mutation after exact source admission closed. The native helper now registers and
+checks only the supplied actual service before PRAGMAs; standalone calls retain
+ordinary semantics. The focused source rerun passed12 cases and the final Kanban/
+private-interop/mutation checks passed36; final source census passed11. Full exact
+late RED/GREEN commands and the corrected report boundary are recorded in the phase
+report. No additional runtime coverage or Task10 completion is claimed.
+
+### Phase7 implementation plan (before code)
+
+1. Inspect actual PromptHistory load/append and Console warm-load/recall/accepted-send callers, plus ChatScreen sidebar debounce, direct IO and unmount flush. Settle the exact two-source pending/queued/native cancellation strategy with the controller before production edits.
+2. Add behavioral RED tests for predispatch pause, queued cancellation and running cancellation without cache/dirty loss. Use source-bound pending reservations with independent worker admission; never transfer raw authority across tasks or threads.
+3. Integrate immutable history snapshots and serialized complete operations, fixed selected paths and pinned native IO, plus sidebar revision/failure tracking and a usable safe-point flush. Preserve ordinary custom/subclass behavior without installed authority and preserve best-effort accepted-send behavior.
+4. Exercise actual asyncio/Textual callers, late writes/cap rewrites, refusals, source/path/task provenance and positive/uncertain native retirement with independent native observers. Run focused domain/shared and source-census checks only.
+5. Update exact owner census and caller obligations, record RED/GREEN and fixture corrections, self-review, run scoped static checks, and commit this bounded phase. Keep Task31993 In Progress, all three ACs unchecked and earlier notes/Design references intact.
+
+ADR required: no (existing ADR applies).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of the approved full-operation admission/retirement contract for two existing async file sources. No startup retirement, runtime coverage promotion, responder, Complete or replacement capability.
+
+Phase7 controller refinement: retain the no-transfer/no-ack job strategy. The creator's post-IO work is only cache/dirty/error bookkeeping under its original pending reservation. Actual process startup retains the native hold until future whole-process local drain sees all pending work retired; this phase does not retire it. All file writes/publication/cleanup/native-close effects stay inside the worker raw scope. An initial test demanding a standalone per-job native hold during cache delivery omitted actual startup; replace that unsupported assumption with actual startup plus local pending drain and independent native observer evidence. Do not add a worker waiting on event-loop acknowledgement or its shutdown deadlock risk.
+
+### Phase7 implementation notes
+
+Implemented only PromptHistory and ChatScreen sidebar full async file jobs under
+ADR-126 (`backlog/decisions/126-complete-local-backup-and-recovery.md`). Source-bound
+queued records register pending work before selectors/snapshots, and actual worker
+threads acquire their own fixed raw scopes; no token/context/callback transfers
+permission. Queued cancellation atomically prevents source entry. Running and
+repeated cancellation retain source serialization through actual callback completion
+and result bookkeeping. A separate actual-worker result signal fixes independent
+executor-wrapper cancellation without waiting for an event-loop acknowledgement.
+Failure/uncertain close retains source evidence; startup retirement stays disabled.
+
+History load/append now share a lock, immutable writes publish cache on success,
+capped rewrites use an owned sidecar, and newly stashed drafts survive delayed writes.
+`persistence_safe_point()` exposes pending/error state without saving/discarding text.
+Sidebar keeps revision-safe dirty state across exclusive Textual worker cancellation,
+flushes through its actual source lock, preserves unrelated TOML via atomic sidecar
+publication, and refuses queued config-profile redirection. Direct sidebar read/save
+routes are admitted too. Initial state tracking is initialized before its first read.
+Accepted-send recording remains best effort; composer warm-load/recall uses the same
+source lifetime. Exact source bindings cannot demote to bypass a gate after config
+changes; raw IO accepts only explicit r/w/a modes with operation permission checks.
+
+Behavioral REDs covered paused writes, queued cache pollution, premature running
+cancellation, newer live-draft loss, an independently cancelled executor wrapper
+spinning in an isolated child, bound-source demotion and read-scope r+ file creation.
+A proposed per-job native-tail assertion omitted actual startup and was corrected
+per controller ruling: supported process startup plus pending/local-drain already
+protect creator bookkeeping. Two fixture corrections delayed the native observer
+until after admission and limited a json.loads gate to actual string history lines;
+no production admission was weakened. The old sidebar race fixture now gates actual
+TOML serialization instead of a spoofable instance writer callback.
+
+Final covering verification: 54 passed (20 new async/native, 25 existing history,
+6 prior Feedback/Grammar and 3 prior raw mode/scope cases); latest real Textual
+cancellation/profile-retarget cases 3 passed. Earlier complete focused UI/sidebar/
+composer domain 31 passed, accepted-send history subset 5 passed, shared raw/
+participant guards 74 passed and source census 11 passed. Counts overlap and are
+not additive. All subprocesses were reaped; actual native-close uncertainty and
+independent maintenance were exercised in private children. Final scoped static,
+format and diff checks are recorded in task-10-phase7-report.md. No full suite,
+network/download, real user data, shared environment mutation or per-phase reviewer.
+
+Changed paths: async_file_participants.py, raw_participants.py, prompt_history.py,
+chat_screen.py, composer warm-load comment, the new focused async test module,
+sidebar domain tests, accepted-send caller test, exact owner/source census and the
+cancellation lesson. Source owners and actual caller obligations are detailed in the
+inventory and phase report. Controller owns independent whole-Task10 review.
+
+Phase7 is complete; Task10 remains In Progress with all three ACs unchecked.
+App/headless composition must observe source safe-point failures/late dirty state,
+retain startup until all actual producers drain, reacquire before reopening, and
+qualify remaining source/jobs and persistent/queued diagnostic sinks. Neither
+logging nor the whole app is claimed IO-free/drained. Earlier phase2 combined-order
+callback/bootstrap and Task13 Media schema-fixture debts remain; focused phase7
+runs did not reproduce them. No runtime coverage, responder, Complete or replacement
+capability is activated.
+
+### Phase8 implementation plan — settings, definitions and templates
+
+1. Bind only the actual RuntimeSourceStateStore, default EvalConfigLoader, notes template module/CLI/import job, SettingsThemeEditor and default ConfigFileStorage source routes. Keep custom exports/storage ordinary and unqualified; revalidate previously installed selectors.
+2. Extend existing pending/raw native accounting for complete serialization, read/modify/write, selected directories/sidecars, verified descriptors, publication and positive cleanup identity. Preserve private runtime path security/posture behavior and raw portability.
+3. Collect CLI input before admitted template reread/merge; keep the actual template worker reserved through queued/running cancellation and outcome bookkeeping. Preserve unrelated templates and failure results.
+4. Preserve evaluation mutable configuration with truthful dirty/error safe point; retain theme is_modified/ThemeModifiedStatus and existing confirmation flows. Account for Tamagotchi backup pruning and repair wrappers without capture-time constructors.
+5. Establish behavioral RED/GREEN for real source routes, native/process and cancellation boundaries; run focused domain/shared/census guards and scoped static/diff checks. Self-review, update owner census and exact remaining app/job handoffs, scoped commit and report. No Task10 completion or runtime/startup/Complete activation.
+
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of existing ADR-126 installed owner lifetime contract and phase4/7 raw/pending APIs; no new storage or recovery authority.
+
+### Phase8 implementation notes — partial Task10 continuation
+
+Implemented source lifetimes for runtime private state, installed Eval YAML, shared user note templates (actual reader/CLI/import worker), canonical theme editor and default pet JSON/recovery/backup routes. Serialization/RMW and selected sidecars remain admitted until positive native retirement; dynamic member preflight retains ordinary parent admission and pins before bounded exact-member selection. Runtime private helpers retain original posture checks and public signatures with narrow source discovery, descriptor/stream tracking and explicit positive close. Eval mutable dirty/error state and theme `is_modified` block participant drain; failed reload/write/native retirement preserve draft state. CLI input precedes fresh locked template merge and async import success follows final publication. Pet backups preserve exact bytes and existing same-second overwrite policy; stale sidecars and replaced prune entries remain intact.
+
+Existing ADR-126 applies. Runtime/startup/responder/Complete composition stays unavailable; Task10 is not complete and all three ACs remain unchecked. Controller owns independent review after the remaining cohorts. Changed source census and detailed API/evidence report are in `backlog/docs/backup-recovery-owner-inventory.md` and `.superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase8-report.md` (external backup `/private/tmp/chatbook-backup-execution-hgp11i7t/task-10-phase8-report.md`).
+
+Verification: initial actual-route RED4; later runtime/temp/async cancellation, dirty-drain, same-second backup and native-close regressions verified RED/GREEN. Affected domain rerun51 passed after selector-before-constructor and exact matching-entry bound corrections; earlier75 other domain cases passed. Covering source/shared/native/domain/census run286 passed2 failed81.75s: both failures are profile path census debt reproduced unchanged on immutable phase BASE (2 failed21.78s), not passing guard coverage. Exact failures are `test_production_profile_owned_path_inventory_is_exact` and `test_cli_prints_the_real_source_census_and_enforces_it` in Tests/Architecture/test_profile_owned_path_inventory.py, from untouched TTS/recovery.py111/115 literals `~/.config/tldw_cli/chatterbox_voices` and `~/.config/tldw_cli/higgs_voices`. Carry these two entries into the pending Task10 TTS cohort; no phase8 TTS edits. Logs retained externally. Narrow late runtime/import/preflight and source census/shared checks recorded in full report; no unchanged broad repeat or full suite.
+
+Existing ordinary cross-process template concurrent-writer limitation remains: concrete post-read ready-handshake schedule fails on current source and immutable838b949ac7aa9c92988d79fe725025e8ffc21a79 with old CLI entry adapted. Per ruling62 no new write mutex or Admission contract; no xfail or passing snapshot-safety claim. Preserve scratch harness/logs for later source-specific concurrency policy work. Maintenance exclusion remains covered independently. Remaining work includes config helpers/portalocker source lifetime, non-template import DB/Notes/Git compound jobs, TTS and other remaining cohorts, app/headless pause/dirty/error handoffs and full independent Task10 review.
+
+### Phase9 implementation plan (before code)
+
+1. Bind the actual configuration source, current/lock/backup/snapshot members and fixed random temps before effects.
+2. Preserve the process RLock and cross-process portalocker, with pause-aware waits and explicit native stream/FD retirement.
+3. Cover bootstrap, read/merge/write, cache/generation, revisions, encryption and shutdown; retain truthful state on failure.
+4. Keep concrete independently admitted canonical derived-directory effects and existing startup order; no post-pause scope widening.
+5. Run behavioral RED/GREEN and targeted config/private/native/census checks; self-review, scoped commit and full report.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation; ADR004 restart boundary, ADR012 secret precedence and ADR033 commit models remain unchanged. Task10 stays In Progress with unchecked ACs.
+
+### Phase9 implementation notes
+
+Configuration persistence now binds the exact loaded config module and fixed current, lock, backup, snapshot and random temporary members. Existing process RLock and cross-process portalocker serialization remain; lock waits observe pause, and native streams/FDs require positive retirement. Direct private helper routes and cached reads are covered. Failed writes, reloads and native retirement preserve prior usable cache/settings/generation/password state and persistent error evidence. A pause after bytes commit reports `file_replaced=True`, `caches_reloaded=False` and refuses fresh derived directory effects. Separate concrete data/chat/model directory operations retain existing mkdir behavior and fix/recheck generation/path under the process lock. No DB/model service relocation or runtime/startup/responder qualification.
+
+Behavioral config/native/interprocess and affected shared checks cover normal, paused and uncertain outcomes. The covering run had 228 passed and one stale config-module fixture failure; the corrected actual theme/app fixture plus private-path/runtime-store subset passed83. The isolated source fixture imports a fresh actual config module before selecting app consumers; it never clears registries. The original serialization association RED is supplemental introspection; actual pause-during-serialization and two-process write-lock tests provide behavioral evidence. Final affected config/native/persistence rerun passed37; retained actual startup+pending composition passed1 after the same narrow fixture correction. Scoped Ruff/new-module format/diff checks passed. Exact commands are in the phase9 report.
+
+ADR126 applies with ADR004 restart, ADR012 credentials and ADR033 commit models unchanged. Task10 remains In Progress and all three ACs unchecked. Remaining cohorts and actual Settings/app/headless gates, dirty/error drain, startup release/reacquire, plus independent whole-task review remain required. Inherited phase2 combined-order app/RAG and phase8 TTS profile-census debt are unchanged.
+
+### Phase10 implementation notes — concrete chat source continuation
+
+Implemented exact configured Persona/dictionary/citation core-sidecar pairs and
+actual Chat_Dictionary_Lib parser/import/export/listing lifetimes. Existing scopes
+are preadmitted and rechecked before simultaneous same-PID/Thread/Task discovery;
+no generic callback/owner token or post-pause widening. Seven Persona cache groups,
+dictionary history and compatibility citation cache preserve prior usable state on
+failure; possible mixed effects and known native uncertainty retain sticky drain
+blockers without claiming durable rollback or restart repair. Citation companion
+binding preserves actual canonical generation fencing and ordinary concurrency.
+Library IO fixes external input/output/temp identities without widening inventory,
+materializes default exports before writes, preserves copy metadata using retained
+FDs (including Darwin libc.fchflags), and keeps unsupported operations unqualified.
+The real dictionary scope executor waits for actual completion under cancellation
+and closes only a newly opened worker-native connection on its source thread.
+
+ADR126 is amended for approved concrete compound semantics; ADR024/037 and schema
+formats remain unchanged. Behavioral RED/GREEN includes real committed-row versus
+history pause, cached-state refusal, optimistic no-change conflicts, actual citation
+read, running/queued/repeated/executor cancellation, native close before/after,
+external metadata/preflight/identity, missing-input/listing behavior and late worker
+outcome/sidecar replacement defects found during self-review. Targeted covering
+cohort231 and shared raw/native/startup/census84 passed; later changed-boundary
+checks and exact logs are in the phase10 report (counts overlap, not additive).
+Fixture corrections use only fresh actual config modules, actual descriptor fault
+selection and isolated child observer import paths; no registry clearing or user IO.
+
+Task10 remains In Progress with all three ACs unchecked. Actual app/headless safe
+points, remaining UI Textual jobs/cohorts, startup release/reacquire, responder and
+Complete qualification remain required. Sticky mixed-source recovery needs explicit
+validated reconciliation; none is invented. Existing phase2 app callbacks, phase8
+TTS literals, Task13 Media historical fixture and Task26 diagnostics remain pending.
+Controller performs independent whole-Task10 review. Exact APIs, source-only native
+versus startup evidence, commands and limitations are in task-10-phase10-report.md.
+
+### Phase11 implementation plan — actual MCP stores (Task10 continuation)
+
+1. Read binding brief, actual five source families and caller jobs; establish behavioral RED before production.
+2. Obtain controller approval for exact source/private-helper expansion, then bind full constructor/read/RMW lifetimes and preselect every concrete sidecar/parent.
+3. Verify permission corruption backup, history migration/rotation, native retirement, exact identity and caller-state failure behavior with targeted real files/processes.
+4. Record pending service/job/credential boundaries, update source census/docs, run affected targeted domain/shared guards, self-review and scoped commit.
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md; existing ADR-053 standalone runtime, ADR-032 permission boundary and ADR-080 advisory summaries apply.
+Reason: direct implementation of approved installed-source lifetimes; no new authority or data model. Task remains In Progress, all three ACs unchecked, runtime/startup/responder/Complete unavailable. CLI plan command succeeded; prior plan/notes/design references restored before appending this phase.
+
+### Phase11 implementation notes — partial Task10 continuation
+
+Implemented actual five MCP local-source constructor/read/RMW lifetimes and exact
+history private-helper native resource ownership under controller ruling69 and
+existing ADR-126 (phase11 addendum), ADR-053/032/080. Canonical config/profile/path
+binding refuses retarget/demotion; ordinary custom/subclass/private-platform behavior
+remains. Permission corruption backup, caller timestamp native completion, history
+migration/rotation and owned inode/temp expectations now share complete admitted
+source lifetimes. Partial generation/native uncertainty remains sticky; no imported
+approval or runtime activation, cross-process mutex or automatic repair is added.
+
+Actual source matrix plus seven affected domain modules: **164 passed**; additional
+local/target/context pause and exact-file/None-native boundaries: **5 passed**
+(across two targeted runs after correcting a legacy-target fixture). Shared raw,
+private helper/runtime, startup pending bookkeeping and source census: **153 passed**.
+Late identity RED demonstrated adoption of a foreign published inode; carrying the
+actual owned publication identity made the nine affected edge tests green. Native
+before/after cases and independent rotation observer ran only in private test
+children, with quiescent child startup retired solely for source-only native proof.
+
+Source census and precise remaining MCP service/job/credential routes are documented
+in backlog/docs/backup-recovery-owner-inventory.md. Diagnostic guard ran and remains
+failed on inherited clean-BASE drift; own diagnostics/sinks are AST-equivalent and
+already match checked manifest after old wrapper indentation removal. No unrelated
+manifest refresh. Exact commands/results/fixture corrections and immutable external
+exports are recorded in task-10-phase11-report.md. Full runtime/startup/responder and
+Complete coverage remain unavailable; Task31993 stays In Progress, ACs unchecked,
+and whole Task10 independent review remains controller-owned.
+
+Final self-review added actual REDs for constructor reentry retarget/error clearing
+and history private-posture demotion; bound reinitialization now refuses before
+mutation and private posture is rechecked. Final affected selector/constructor/
+migration/local-target-context matrix: **22 passed**. New/changed Python fatal
+Ruff, new-module format checks and diff whitespace checks passed. A testing lesson
+records the real native-callable fault-injection provenance trap. No additional
+broad sweep or runtime qualification was performed.
+
+### Task10 phase12 implementation notes — Persona Visual source/native and UI lifetime
+
+Implemented the actual canonical Persona Visual repository, immutable publication,
+workspace/import candidate and runtime-asset lifetimes using existing storage/core
+admission. Rulings70–73 retain exact source/issued-object identity, fixed native
+paths, positive FD retirement and dirty/error/cleanup ownership. The real UI
+publish worker composes only its bound local Persona source for the late guard.
+An actual public-guard/UI deadlock RED required omitting the new visual mutex only
+from authenticated publication; existing optimistic activation and native scopes
+remain. The shared thread-drain helper now observes actual callback completion;
+concrete Persona jobs close only newly created source-thread DB borrowers.
+
+Actual custom/optional-clear/replace/import UI saves activate the next version;
+required-state clear preserves the dirty draft and refuses invalid publication.
+Native partial/before/after uncertainty excludes an independent maintainer; normal
+worker retirement lets it observe matching real core locators and asset bytes.
+Concurrent publications retain one optimistic winner and owned loser cleanup;
+concurrent source cleanup cannot activate stale bytes. Exact positive cleanup
+reconciles only its own source/UI blocker.
+
+Targeted covering evidence: publication/lifetime69passed; cleanup/workspace/import
+55passed; raw/core/private186passed; Persona/shared widgets42passed; affected Shared
+Visual cancellation7passed; clear contract3passed; final cleanup-reference1passed.
+Counts overlap. Remaining final static/caller evidence and exact commands/log paths
+are in `.superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase12-report.md`.
+The source census and retired-owner guard passed; two inherited unchanged TTS path
+literals and inherited diagnostic owner/config-sink drift remain explicit. Only
+the changed Persona UI diagnostic digest was reconciled after AST-equivalence
+review. Reused ADR-126; no new schema/visual feature/archive capability or broad
+manifest refresh. No full suite, external generation, network, real user data,
+startup release, responder or Complete qualification. Task31993 remains In Progress
+with all three ACs unchecked; Shared Visual Identity and whole Task10 review remain.
+
+### Task10 phase13 implementation notes — Shared Visual Identity source/native and UI lifetimes
+
+Implemented actual Shared Visual Identity candidate issuance, selected manual/builtin readers, immutable publication/core activation, exact cleanup, public repository operations, config Samira seed and concrete Personas reaction jobs through the separate visual_identity_participants bridge. Strong native descriptors/streams and existing pending/core lifetimes survive pause and cancellation; close uncertainty and original cleanup/result associations remain retained. Existing candidate/seed locks, ordinary injectable APIs, shared/builtin forks, binding guards and partial card-then-pack seed outcomes remain intact. Canonical UI row restoration is issued only to the original candidate and remains dirty before replacements; maintenance never discards it.
+
+ADR required: yes. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Rulings74–78 record exact source/native authority, path-free canonical restoration, suppression of admission discovery during public atomic replacement/repository guard evaluation and only three authenticated internal repository result-read edges. No generic callback authority, global source mutex, schema change or installed package mutation.
+
+Actual REDs covered file-rename/core pause, runtime read/UI selector admission, canonical restoration, actual duplicate publication, copied candidate/same-path other DB cleanup, public callback/guard borrowing and source-error plus borrower-close error association. Final source/repository iteration: 65 passed and two internal result-read failures, both corrected; exact amended source/guard/native/UI covering selection14passed and callback selection7passed. Earlier ordinary domain141passed with a Windows-only skip and one subsequently corrected error-category failure; cleanup/fork10passed, seed/canonical8passed, shared helper6passed and selected UI27passed. Counts overlap. Exact commands, intermediate fixture corrections and full logs are in .superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase13-report.md and its identical external copy.
+
+Changed-source census is exact. The combined census guard has24passed and3inherited failures: two unchanged TTS/recovery.py profile literals and existing13diagnostic-owner/config-sink drift. Only the changed visual source diagnostic digest was refreshed after identical diagnostic-call AST proof; unrelated debt remains visible. Fatal Ruff, new-file formatting and scoped diff checks pass. Self-review retained ordinary callback behavior and sole cleanup/native references.
+
+INCOMPLETE — phase complete, Task10 continuation required. Task31993 stays In Progress with all three ACs unchecked. Mandatory remaining routes include external image-generation runtime, the analogous earlier PersonaVisual public callback seam, TTS/runtime/credential cohorts, actual app/headless aggregation/startup/responder retirement and whole Task10 independent review. No full suite, live generation, network, user data, startup release or Complete promotion.
+
+### Task10 phase14 implementation notes — TTS lifecycle foundation only
+
+Implemented ruling79 through the existing TTSProfileRepository owner loop,
+state/lifecycle locks and serialized executor. Pure construction is preserved;
+ordinary first-open/CRUD/restore entry is reserved, admitted generation/results
+settle before source-worker native cleanup, and successful maintenance can reopen
+only the same previously open source. Public close stays definitive. Strong local
+source blockers preserve before/after-close and resume uncertainty; timeout and
+cancelled waiters cannot clear ownership. Resume checks original native identity on
+the worker, and cancelled successful resume settles admission before redelivery.
+No new callback/IO authority, installed TTS config binding, schema or migration
+policy was introduced. Existing ADR126 (phase14 ruling79 note), ADR028/040/051/023
+apply; no new ADR. Changed production is only TTS/profile_repository.py, with a
+focused20-case test module, ADR126 and source/remaining-owner inventory updates.
+
+Actual REDs cover paused first-open executor allocation, paused real CRUD success,
+post-native-close false local drain, queued first-open typed refusal, late worker
+source substitution, ongoing/cancelled resume and failed-resume native uncertainty.
+Fixture corrections compare preexisting temporary entries and TTSProfilePage.profiles;
+intentional sticky failures run only in private children. Final focused lifecycle/
+shared run57passed, ordinary affected domain116passed with3 host SemLock allocation
+failures before repository code, and reference/backup integration96passed. A small
+stdlib-only spawn Event probe independently reproduces OSError28; no host cleanup.
+Final source census1passed. Earlier architecture23passed/3failed: intermediate
+resume open-call census drift now removed/rechecked, plus the two unchanged TTS
+voice-path literals carried to the immediate voice/backend Task10 cohort. Do not
+report the profile guard Green. Static/self-review evidence and exact overlapping
+commands/results are in the dual task-10-phase14-report.md.
+
+INCOMPLETE — phase14 foundation complete, Task10 continuation required. Exact
+finite migration/backup/reference/BLOB/materialization/bundle native scopes, ordinary
+backup failed-close retention, app-owned source/config registration, dirty editors,
+service/runtime jobs and full startup/responder aggregation remain immediate
+Task10 work (phase14b), not passive exclusions or Task26 deferral. Independent
+native lock observations distinguish known diagnostic-child startup from actual
+production startup. No Complete/source qualification, full suite, live generation,
+network, user data, shared environment mutation, merge or publication. Status stays
+In Progress and all three ACs remain unchecked for controller whole-task review.
+
+### Task10 phase14b implementation notes — outer TTS backup native retention
+
+Ruling80 bounds this phase to the actual outer backup native resources; immediate
+phase14c retains the source-bound validation-copy/migration/restore/reference graph
+before phase15 voices. Reused ADR126, preserving ADR028/040/051/023 and all existing
+schema/ordinary lifecycle contracts. `_BackupNativeState` and the actual repository
+retain source/generation, destination/temp/inode, native connection/FDs/parent/lease
+and committed receipt separately from uncertain close. No uncertain-close retry,
+foreign-file cleanup, arbitrary sidecar unlink or loss through terminal close,
+cancellation/unrelated success. Actual file/parent fsync resources are represented.
+No source bridge, across-pause authority, extra executor/mutex or startup promotion.
+
+Five actual BASE REDs preceded production: SQLite close-before/after retries,
+foreign temporary deletion, and temporary-FD close-before/after namespace loss.
+Initial implementation conservatively refused the normal SQLite journal before
+close (2 native and 3 ordinary failures); preserving existing native close while
+rejecting outer deletion of remaining unproven sidecars corrected that regression.
+Covering native/ordinary/reference selection45passed, including19 new native tests;
+counts overlap earlier16/17/12 runs. Final exact commands, owner/static verification,
+limitations and commit addendum are in the byte-identical phase14b dual report.
+
+The pause test explicitly observes source FD and snapshot-directory/file effects
+before eventual subordinate SQLite refusal, not admission before file IO. Native
+maintainer tests distinguish known minimal child startup from actual app runtime.
+The source inventory adds exactly two unsupported open rows; no owner is promoted.
+Inherited voice census/diagnostic drift and SemLock failures remain unverified here.
+Task31993 remains In Progress with all three ACs unchecked for wholeTask10 review.
+
+Final changed-source verification:21passed (19 new native cases plus ordinary
+journal publication and reference-BLOB round trip); precise paused-file-effects/
+private SQLite owner2passed; source/private inventories27passed and1 inherited
+Tamagotchi AST failure. The exact BASE failed clause and byte-identical unchanged
+source/test are reproduced in task10-phase14b-base-inventory.log. Controller owns
+its mandatory Task10 correction after native continuation, separately from Task26
+diagnostic debt. Fatal Ruff, new-test format and diff checks passed. All counts
+are overlapping; see phase14b report for exact commands/limits.
+
+### Phase14c implementation notes — ordinary standalone candidate job (ruling81)
+
+The standalone TTS candidate validator now takes ordinary admission before its
+first callback/source access and before each native allocation. A concrete retained
+job owns source/copy FD, exact directory/main/parent evidence, returned upgrade/read
+SQLite handles, original body/cleanup errors and all acquired leases. Independent
+close attempts preserve first control-flow priority; uncertainty and foreign namespace
+cannot be erased by unlink, another success or caller cancellation. Pinned directory
+rechecks and fchmod prevent an observed replacement from receiving mode or child
+creation effects. Explicit missing POSIX pin primitives preserve ordinary validation
+without any error-triggered downgrade or installed-source qualification.
+
+Only production TTS/profile_schema.py changed. Targeted legacy cleanup expectations
+now preserve unsafe uncertain/foreign namespaces in isolated children while retaining
+original post-unlink absence and exception precedence. The preceding backup pause
+regression now requires zero validation file effects. Exact owner census rows and
+ADR126 document the still-unsupported TTS source posture.
+
+Final changed-source targeted run: 72 passed / 128 deselected, 33.95s, including35
+new native cases,34 affected standalone schema cases, the actual backup pause check
+and real backup/reference round trips. Earlier61/25/20/29 and10/8 edge runs overlap.
+Six initial BASE REDs, the later genuine directory-mode RED, initial control-flow
+regression and intermediate fixture mistakes are preserved distinctly in the dual
+phase14c report. Two affected private-SQLite census checks passed; final exact source
+census and fatal Ruff/new-module format/diff checks recorded there. Only targeted
+checks ran; inherited SemLock, two shared-voice census failures, pet AST guard,
+combined-order/bootstrap and diagnostic debts remain explicit and unmodified.
+
+ADR required: yes. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct ordinary native-lifetime implementation under ruling81; ADR028/040/051/023
+remain intact. Next immediate TTS source/preselection/delegated pin+journal/BLOB/outer
+reader and remaining migration/restore/materializer/runtime/app work stays Task10.
+No installed capability, startup/responder/Complete/replacement or AC promotion.
+
+### Phase14d implementation notes — configured TTS source and delegated pins
+
+The actual app-created TTS repository now verifies its original config module,
+selector callable identities, effective/cache source, profile and database before
+entry, worker effects and result publication. Harmless same-source config/cache
+changes and ordinary custom constructors remain usable; changed/copied/reloaded
+sources are refused, while public close can retire original resources.
+
+The shared SQLite source helper retains concrete ordinary or existing exact capture
+jobs through preflight, final pin and independent once-only cleanup. Explicit private
+open/close observers preserve native helper attribution and distinguish positively
+retired known descriptors from failed unreturned allocations. Capture uncertainty
+retains the existing maintenance quarantine. Truthful unpublished backup refusal
+at pause is tested through actual worker/publication/temp/native completion.
+
+Final ruling87 affected helper/native/alias/capture checks:102 passed/13 deselected
+35.28s, including actual raw alias and visual publication attribution contracts.
+Source/static/census results and exact logs are in the dual report; counts overlap.
+The no-fault alias regression was demonstrated against actual default lexical TTS
+adapter paths and compared with immutable BASE, then expected-success assertions
+failed before repair. A private per-call native outcome now preserves confirmed
+original-primitive rejection versus unknown provider error, recording known FDs
+before wrapper/registration failures. Alias copy/capture positively retire; unknown
+substituted providers still block local/native drain and retain capture quarantine.
+Actual original preflight RED, separate immutable-BASE final-pin RED, configured-source
+REDs, later root allocation RED, alias RED and fixture/source-provenance mistakes
+remain distinctly recorded. Fatal Ruff, new-module format and diff checks pass.
+
+ADR required: yes. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct bounded rulings82–87; no scope/policy/registry or across-pause privilege
+expansion. Mandatory outer-reader/journal/current/migration/lease/BLOB/restore/service/
+UI/runtime and shared-voice/native/app work remain Task10. No Complete/replacement/
+startup/responder promotion; status stays In Progress and all AC unchecked.
+
+### Phase14d final verification addendum — ruling88
+
+The same explicit outcome record now covers original SQLite artifact native opens
+for both preflight and final pins, preserving their existing non-raw attribution.
+Actual BASE/current evidence exposed the disappearing optional-sidecar retirement
+regression; all3 suffixes now preserve ordinary/capture copy and positive retirement.
+Known wrapper-return FDs retire, while truly unknown substituted native allocation
+survives a subsequent successful optional generation retry and retains quarantine.
+
+Final affected results supersede the preceding ruling87 checkpoint:112 passed/
+13 deselected33.45s native/helper/alias/actual TTS capture;57 passed/260 deselected
+8.80s shared backup/copy/restore contracts;3 exact census checks passed39.80s.
+Fatal Ruff/new-module format/diffcheck clean. Full identical dual phase14d report
+preserves every RED/BASE/fixture distinction, exact commands/logs and native limits.
+ADR126 rulings82–88; no source/capture/namespace permission expansion. All mandatory
+remaining Task10 native/routes and inherited debts stay open, with In Progress and
+all3 AC unchecked. WholeTask10 independent review remains controller-owned.
+
+### Phase14e — outer snapshot, delegated journal and candidate native continuation
+
+Ordinary backup and recovery backup now retain their exact outer resource record
+through additional snapshot/candidate readers, uncertain allocations and native close.
+The recovery caller owns its registered destination explicitly using the existing
+checked helper. Exact observed native journals are protected at ordinary progress,
+completion and close boundaries. Candidate source uncertainty associates with its
+actual outer record before effects; standalone lease cleanup stops at first uncertain
+retirement. Known pre-resource SQLite admission refusal can retire that current
+attempt, while same-code provider errors after native allocation remain unknown.
+
+Actual REDs cover reader/source close, unreturned allocations, foreign journal
+retirement, hidden recovery destination close, nested refusal availability regression,
+callback precedence and independent native exclusion after lease-close errors.
+Immutable BASE comparison separates the introduced refusal regression from fixture
+seam corrections. Final targeted runs: 62 native/predecessor cases passed; after final
+candidate correction, 45 outer/candidate cases passed, then 4 precise standalone
+close-before/after and positive observer cases passed. Eight public roundtrip/source
+checks and seven exact census checks passed. Shared run: 13 passed with one standalone
+kwargs compatibility failure, corrected in production and explicitly passing in the
+8-case final run. Counts overlap; no full suite. Fatal Ruff, scoped format and
+whitespace checks pass. Existing requests and AST warnings remain.
+
+ADR required: yes (reuse existing). ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct bounded rulings89–94; no new registry, capture/source/descendant or
+callback permission. Source-close/exclusive ProfileStoreLease handoff is preserved;
+full current-wrapper/lease retry remains phase14f. Mandatory current/migration/BLOB/
+restore/rebind/quarantine/materializer/bundle/dirty UI/service/voice/model/audio/process/
+app/headless/startup ownership and inherited debts remain Task10. No Complete,
+replacement, responder or startup promotion; In Progress and all3 AC unchecked.
+Self-review only; controller owns wholeTask10 production review. Full identical dual
+phase14e report records exact commands/logs, RED versus fixture corrections, native
+limits and final commit/clean-status addendum.
+
+### Phase14f implementation notes
+
+The exact current TTS wrapper now owns source admission before native pins and retains dual SQLite/descriptors, unique unknown allocation outcomes and close-once uncertainty through the existing cleanup exception. Standalone close checks the original WAL/SHM namespace. ProfileStoreLease records actual native acquisition/cleanup independently of primary/residual compatibility slots; positive close after unlock error retires, while unknown native outcomes preserve independent exclusion. Parent-owned real reference BLOB retirement is proven without another registry or changed public error mapping.
+
+Direct implementation of ADR126 under controller rulings95–99, preserving ADR028/040/051/023. Exact native and independent private-process evidence, ordinary refusal, control-flow, cancellation/queued work, standalone reference validation, real capture/reference round trips and scoped census/static checks are recorded with exact commands and limitations in the dual phase14f report. Source changes are limited to profile_schema.py and profile_store_lock.py; tests and exact owner inventory follow their actual native seams. No full suite, SemLock host cleanup, user resources, audio/models/network, startup/Complete promotion, merge or push. Task10 remains In Progress with all three AC unchecked; migration/publication/rebind, materializer/bundle/voice/runtime/dirty UI and actual app/headless aggregation remain mandatory.
+
+### Phase14g implementation notes — live TTS migration and restore native outcomes
+
+Actual initialization, publication/recovery, restore and rebind retain native ownership through explicit source operations, descriptor connector outcomes and existing exact-current/opaque destination owners. Failed source close remains unresolved through the original public cleanup retry; positive parent close retires genuine historical reference BLOBs. Scalar standalone helpers own only actual sources, supplied helpers reject foreign source/parent associations, and original exact namespace and publication journal policy remain decisive.
+
+Direct implementation of ADR126 under controller rulings100–108, preserving ADR028/040/051/023. Genuine v3 restore uses the existing version-aware reference validator; proven query-only DELETE-mode partial open can retire under exact absent-sidecar checks. Current revalidation observes original parent IO on its held owner without fresh maintenance admission. Public-open mapping stays context-free while reservation cleanup timing remains. Preflight and PONR pause cases preserve exact source/reference bytes and verify real repeated recovery after ordinary resume; no callback/capture borrowing or new PONR continuation is granted.
+
+Scoped native tests, source/control/cancellation/deadline and publication/recovery compatibility, original opaque destination behavior, literal SQLite owner and exact source census, static checks and self-review are recorded in the identical dual phase14g report with precise RED versus fixture provenance. Modified source is confined to private_sqlite.py and TTS migration namespace/publication/recovery/native, repository and schema helpers; exact inventory and an incident-backed testing lesson accompany it. Task31993 remains In Progress with all three acceptance criteria unchecked. Materializer14h, bundles14i, service/dirty UI/runtime14j, shared voices15, actual app/headless/startup aggregation and inherited native/census/order debts remain mandatory. No full sweep, host cleanup, network/models/audio/user resources, merge or push.
+
+### Phase14h implementation notes — clone materializer and response assets
+
+Actual clone creation, orphan sweep, validation, cleanup and queued/result ownership now retain native descriptor/allocation outcomes on their exact operation and original opaque handle. Fresh allocations keep ordinary admission; unknown parents/foreign roots refuse. Ambiguous closes are never retried, first uncertain lease release retains remaining holds, and selected native identities protect foreign replacement/renamed-original bytes during failed-create cleanup. Reversible owner-loop maintenance preserves live response WAVs and refuses until actual native retirement; terminal close remains separate.
+
+The original build_default_tts_service edge binds its exact configured materializer source, checks drift before new work/publication/resume and keeps original-handle cleanup possible. Prebinding custom selectors and explicit custom constructors remain ordinary and unqualified. Optional private secure_private_directory observers preserve original helper primitives and default callers. Actual response.add_cleanup ownership is tested through consumer cleanup, exact materializer lease sets, known private startup retirement and independent native exclusion; full service/runtime shutdown is separate.
+
+ADR required: yes (reuse existing). ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: direct approved rulings109–112, with the explicitly withdrawn first-global-close attribution and corrected selected-inode counterfactual recorded. Exact owner census, scoped static and self-review accompany targeted native/source/response/domain/shared-helper tests. The original11-node app/factory order has six raw_source_selection_changed failures on both immutable BASE and current code; isolated coherent original cases pass, without clearing combined-order/source-rebinding Task10 debt. Full dual phase14h report preserves precise commands/logs, corrections and commit/clean addendum.
+
+Task31993 stays In Progress with all3 acceptance criteria unchecked. Bundles14i, profile-service/dirty UI, voices15, actual response consumers/adapter/model/process/audio retirement, runtime-root sensitive inventory, app/headless/startup composition and inherited debts remain mandatory. No full suite, network/model/audio/user resources, host cleanup, Complete/startup/replacement promotion, merge or push. Controller owns wholeTask10 review.
+
+### Phase14i implementation notes — retained bundle native operations
+
+Implemented original bundle worker ownership on ordinary exact-path admission, retained descriptor/stream/namespace outcomes, first-failure close retention, and reversible service maintenance preserving opaque reviews. Source and caller destination paths never inherit runtime-root enrollment. Original publisher post-convergence identity preserves acknowledged durable bytes independently of native readiness; fingerprint/body/control outcomes retain their own precedence. Exact original lazy app/config/repository/profile/dependency/coordinator/fence checks preserve custom routes without accessor replay or eager imports. Profile service adds only original class/fence anchors, not lifecycle behavior.
+
+ADR required: yes (reuse existing). ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: direct rulings113–114 and their native/external/failed-create/custom-source refinements. Changed voice_bundle_service, profile_source, pure profile_service anchors and the actual app factory; new private bundle maintenance fixtures and narrowly corrected existing publication test seams; exact owner census/docs/lesson updated. Final targeted evidence: native73 passed before last bounded source/guard/control refinements; original domain92 passed; affected8, final control12, source/custom10 and app/request4 passed at documented later revisions; exact census1 passed, scoped Ruff/format and diff-check passed. Counts overlap; no combined total or full-suite claim. Exact commands, behavioral RED versus fixture/counterfactual provenance and native limits are in the dual phase14i report.
+
+Task31993 remains In Progress/all3AC unchecked. WholeTask10 review, whole app/startup source/order and existing guard debts, profile service/dirty UI/consumers/artifact/native runtime, shared voices and actual runtime-root inventory classification remain required. No Complete backup/replacement, native backend or other-platform qualification is inferred. Ordinary exported files remain user-selected outputs, not baseline roots.
+
+### Phase14j implementation notes — profile evidence, Library work and selected export
+
+Implemented rulings115–119 under ADR126: original profile-service complete async/synchronous evidence caller accounting, selected sample FD/codec native outcomes and pure original app-source binding; reversible Library admission/readiness preserving live/conflict/maintenance-refused drafts, review sessions, deferred page/error publication and exact action/cleanup lifetimes. Sanitized export retains queued/native jobs through repeated cancellation, verifies pinned parent/target before truncation, preserves existing/new output bytes and refuses substituted nonregular targets without blocking. First uncertain stream/FD/lease outcomes remain counted independently of public results; original body controls retain precedence. Supported concurrent first use now coordinates only same-process fixed-root initialization on existing pending records, preserving fail-closed incomplete/foreign evidence.
+
+Evidence is targeted and overlapping: original service39passed9.49s, shared/default15passed3.36s, source9passed34.04s, original bundle/source/custom plus Library review12passed39.83s, native controls12passed19.97s, post-result/cleanup4passed10.07s, final affected export27passed58.80s, FIFO/draft/paused bool contract3passed7.25s and source census1passed14.21s. Scoped Ruff fatal checks pass, seven new/small changed files format-check clean; selected large-file changed functions formatted. The full dual report records earlier failures, intended reached REDs, exact commands, private-source BASE reproduction and non-additive counts. Tests use private synthetic WAV/FLAC, actual file/codec/SQLite/native admission, original Textual pilot/factory paths and controlled provider collaborators; no model/live audio/network or full suite ran.
+
+Task10 remains INCOMPLETE, Task31993 In Progress and all three AC unchecked. Later runtime/app/startup/Speech caller/artifact/model/backend cohorts, runtime-root/shared-voices classification and prior six-factory combined-order debts remain mandatory. Source census is not qualification. This phase adds no generic capture authority, ownership relabeling, automatic draft disposal, startup release, cross-process bootstrap repair, merge or publication. See identical task-10-phase14j-report.md in the private scratch evidence directory and its external parent copy for commit/clean addendum.
+
+Phase14j ruling120 preserves original ordinary pathname export when original required pinned primitives are unavailable upfront; this route retains operation/stream lifetimes and stays explicitly unqualified for maintenance. No fallback follows failed or unknown pinned allocation and no global capability metadata is changed. Capability simulation is not a native cross-platform test.
+
+Final bounded119/120 verification: FIFO3passed7.25s; mounted ordinary capability fallback, corrected Library late callback and affected export/control selection30passed16deselected56.09s. The first late-callback3.64s failure was invalid fixture availability construction before callback, explicitly corrected; valid callback RED1failed3.16s precedes gate fix. These overlap earlier export checks and are not an additive aggregate. Full dual report preserves exact first-use diagnostic script/runner/archive source and final commit/clean provenance.
+2026-09-10 resume investigation: user explicitly directs completion of original backup plan only and rejects handoff instructions as authority. Original revision-4 spec and roadmap inspected directly. Existing WIP preserved. Fresh focused baseline: source .venv from original Chatbook checkout; python -m pytest Tests/Backup_Recovery/test_participants.py Tests/ProductionApp/test_service_composition_lifecycle.py -q (private basetemp/cache): 18 passed, 2 failed in 4.52s. Both app failures report raw_source_selection_changed for config at raw_participants.py:125; per-test isolate_test_environment changes the config selector after collection-time module binding, so these failures do not yet establish failure of fresh-process startup. Log: /private/tmp/chatbook-backup-resume-lifecycle.log. Actual source: _LocalPause.require_runtime_coverage remains unconditional refusal, and app has no capture pause composition. Task12 archive inspection is independently executable per original dependencies and is now being implemented; no complete-capture capability has been claimed.
+Fresh-process follow-up: /private/tmp/chatbook-live-smoke.py with a fixed private selector successfully constructed TldwCli, mounted run_test with splash disabled, and tore down (child exit 0); no raw_source_selection_changed. Network guard blocked localhost discovery attempts, so this is limited lifecycle smoke evidence, not a network-clean pass. Source-backed integration outline: /private/tmp/chatbook-backup-capture-gap.md. Reuse actual scheduler stop-after-tick, ingestion settlement, existing operation accounting, and owner-thread close; ordinary shutdown cancels/discards in several owners and is not a substitute for reversible maintenance. Further idle-lease measurement is bounded to three attempts, with no production changes or capture/readiness bypass.
+Further bounded live diagnostic found an actual intermittent mount deadlock (separate from selector-changing test fixtures). Faulthandler at 35s in /private/tmp/chatbook-live-idle.log: UI/main holds config lock in config_participants.operation and waits storage._changed at storage_admission.py:247; prompt-history worker holds storage._changed at raw_participants.py:730 and calls _participant_state -> _async_source_selection -> default_prompt_history_path -> guarded get_user_data_dir, waiting config lock at config_participants.py:137. Three diagnostic attempts stopped; all child processes reaped/private roots removed. No idle-lease census obtained. Next Task10 implementation work should fix this concrete lock-order inversion with a deterministic regression, preserve source selection/admission checks, and then qualify live maintenance composition. Existing low-level WIP remains preserved; no capture readiness bypass.
+Continuing original Step 4/5 runtime composition: the app-owned ImageEditOperationRegistry currently offers cancellation-based shutdown only. Add a reversible admission fence and bounded non-cancelling settlement method for live capture, reusing its actual child tasks and preserving completion/failure/draft records. Track tasks that remain running after a session is dropped so capture cannot mistake UI detachment for settlement. Focused regressions will cover admission/resume, natural settlement, timeout/cancel, dropped-session work, and outcome preservation. This is one Task 10 prerequisite, not complete cohort coverage.
+Committed bounded original-plan slices: 39077e5c4 completes TASK-31995 archive inspection (85 affected tests); 752d9456d completes child TASK-31993.1 image-edit reversible pause/drain (5 focused +2 existing registry tests, unrelated H3 fixture error baseline reproduced); config/storage inversion correction is tracked in child TASK-31993.3 (42 selected tests,12 config-process cases still unqualified). Post-fix private app mounted and produced actual idle census:18 non-startup leases, including notes/prompts/media handles on three dead startup executor threads. UI teardown marker reached but child failed to exit within90s; killed/reaped and private root removed. Child TASK-31993.2 now implements exact startup owner-thread closes; ongoing source mapping covers remaining asyncio caches and the unattributed lease. Task10 remains In Progress with full app composition still to implement. No new feature scope, no handoff rulings accepted as authority.
+Remaining original Task10 integration from network-sync activation source inspection: ServerSyncService/LocalFirstSyncService/SyncScopeService currently await async clients and make separate synchronous state repository transactions. Per-call activation retains native admission and async finally cleanup, but does not establish upstream producer pre-drain ordering before state repository intake closes. Qualify actual accepted full sync chains in RuntimeMaintenance before claiming complete live-app capture; do not hold thread-local repository operations across await or assume outer native lease alone permits new local repository transactions after pause. No new producer edits made by current activation unit.
+Original-contract TTS assessment /private/tmp/chatbook-inherited-tts-scope-assessment.md independently reproduced Chatterbox exact-root list_voices storage_scope_not_enrolled (HEAD overlay succeeds), and bounded Kokoro constructor10.389s WIP vs0.084s original. Existing TTS service/registry/profile/repository ordering already supplies reversible producer drain. Decision: replace uncommitted13k-line Python frame/code/closure/cache authority layer with compact finite actual owner-operation admission around installed loose backend/manager constructors and effects; preserve native holds, actual worker retirement, filesystem containment/identity, related-file publication consistency, configuredsource/alias inventory, and all committed lifecycle code. Scope stays originalTask10/livein-process capture; no app-closed substitution or silent exclusion. Preserve full inherited WIP snapshot outside repo before edits. Rework only task-specific uncommittedTTS/supportinghunks, replace proposal implementation-coupled tests with original-contract behavioral evidence; retain all committedtests and substantive regressions. No blanketrevert/staging. New unit needs focused real-process capture/drain/resume, catalog/default/reference/JSON/read behavior and baselineperformance, static/census review beforecommit.
+Dispatched fresh TTS implementation from /private/tmp/chatbook-tts-minimal-participants-brief.md after preserving 31-file WIP archive SHA256 2c2d1f1217549da8066b39a24ea6ff28714c281c8c9d1d3a42582e8564eb1f0b. Replace only uncommitted recursive authority machinery with finite installed owner-operation participation per original rev4 section6; committed lifetime/admission remains. Root owns task and census documentation.
+Finite TTS operation unit frozen for independent review: /private/tmp/chatbook-tts-minimal-participants-report.md;343-line helper replaces12,966 uncommitted recursive lines.17 focused behavioral tests pass;10 committed Kokoro fixture failures exactly reproduce onHEAD; no new Ruff/Bandit.14obsolete untracked proposal modules byte-verified against preserved archive before removal,389names mapped. Root now replacing only preserved uncommitted TTS census/phase172–173 ADR additions with exact final HEAD census delta(+7/-24) and original section6 finite-operation decision. Full runtime/capture and standalone-root final inventory coverage remain unqualified; no Task10 completion.
+Independent finite TTS review reproduced partial temp write followed by failed unlink cleanup: save returns False,8bytes remain in .voice_blends.json.*.tmp, local drain incorrectly returns True/zero operations. /private/tmp/tts-minimal-review-probe.py and log. Original Task10 step5 explicitly blocks unresolved bytes/ownership. Author authorized narrow active-TTS native cleanup-failure signal/retention and exact behavioral regression, preserving clean failed-write cleanup/cache rollback. No general attestation or arbitrary temp-file policy; only observed operation-owned unresolved temp publication.
+Same finite TTS first review adds native deletion traversal gap: remove_tree/unlink invokes _open_verified_parent outside active native accounting, so injected real traversal close failure leaves verified open descriptor while operationFalse and drainTrue. /private/tmp/tts-minimal-delete-review-probe.py/log. Include narrow deletion traversal/native scope correction and regression in same first fix batch; no broader attestation.
+Finite TTS unit and first two-finding correction approved in /private/tmp/chatbook-tts-minimal-correction-review.md; reviewer independently21passed and all11sourcehashes matched. Root retained existing meaningful test_voice_recovery_sources.py supplement:7passed2.88s,Ruff/formatpass,SHA67921303973f662c51062bb633311cc59e740639dc38fa13c27e1547ee26e456; reviewer supplementapproved. No committed tests modified/deleted;14obsolete untracked proposal modules preserved+mapped before removal. Final census+7/-24HEAD unchanged after corrections; no new Ruff/Bandit. Scoped finite unit ready for commit, whole runtime/capture qualification and standalone selected-root inventory remain In Progress.
+Finite loose TTS unit committed after exact staged census11passed7.86s; independent21operationtests plus7rootdiscoverytests qualified. Next original Task10 concrete producer-settlement unit authorized /private/tmp/chatbook-runtime-producer-settlement-brief.md: close/drain accepted network-sync upstream operations before repository intake; stop/positively settle actual idle established local MCP processes before capture. Existing per-call activation/native request settlement is not idle producer qualification. Own runtime_maintenance, exact Sync services and MCP client/local_control maintenance only; concurrent remote MCP agent owns server_unified/unified_control/activation, coordinate no overlap. Full standalone TTS root discovery/app capture proof remains later; no Complete capability exposure.
+Remote MCP activation committed b422908c1 after independent approval and 11 exact-index census checks. Runtime producer author now owns MCP/server_unified_service.py and MCP/unified_control_plane_service.py for the previously identified finite UnifiedMCP -> LocalMCP + ServerUnified upstream close/drain/reverse-resume hooks, composing existing producer lifetime counters with committed activation wrappers. MCP/activation.py remains unchanged unless root coordinates concrete need. Actual live-app Sync cursor/MCP child/startup handoff test passes; concrete monitor failed-resume red requires retaining failed hook and bounded same-task drain/retry before safe resume. No automatic reconnect/replay; ordinary explicit connect after resume remains required.
+Runtime producer unit frozen against b422908c1, report /private/tmp/chatbook-runtime-producer-settlement-report.md, hashes /private/tmp/runtime-producer-frozen-hashes.json, patch /private/tmp/runtime-producer-frozen.patch. Author reports 26 focused tests plus ordinary explicit upper reconnect1 and7 guard/ownership/census checks; Bandit0, Ruff145 inherited/no new, exact producer and diagnostic delta0. Independent review next before commit. Bound scope includes actual live-app native maintenance handoff and sync/MCP tails, not whole Task10 final archive byte/owner matrix. Ordinary MCP sessions visibly disconnect until explicit connect after resume.
+Concrete original Task10 worker retirement subset authorized before edits in Agents/activation.py owned by agents_activation: ONLY fresh AgentService fleet/tool native worker finalization observes current-thread exact installed AgentRunsDB and default workspace registry WorkspaceDB connections before execution, then closes only newly acquired non-memory connections through their existing per-thread close APIs after child terminal fallback/on_child_settled or tool work, before execution lease release. AgentRuns_DB.close and WorkspaceDB.close target thread-local conn. Do not close caller-existing/shared handles or main run_turn/run_reply connections; no generic graph. Failure/uncertain close must retain underlying native ownership/refuse maintenance rather than treat worker task return as proof. Console controller/thread retirement remains separate concrete runtime obligation. Tests use actual private DB/current worker and prove terminal stored bytes and cleanup.
+Independent runtime review reproduced one pending-connect recovery blocker using actual private stdio child: malformed initialize metadata plus existing cleanup refusal leaves live child in _pending_connections with no established sessions/calls. _maintenance_drain correctly returns False, but _maintenance_resume checks only established/maintenance sessions and reopens intake, dropping monitor-held fence. Repro /private/tmp/runtime-producer-pending-repro.py. No false successful capture demonstrated; correction must retain/refuse resume for pending/unknown native connections until positively settled and preserve later safe recovery. Author authorized before edits to same runtime unit MCP/client.py and focused test, no new process framework. Await final reviewer report then one correction batch.
+Pending-connect resume correction frozen: /private/tmp/chatbook-runtime-producer-correction-report.md; correction client/test patch, corrected full11-file unit and hashes referenced there. Actual pending-child premature-fence-loss red reproduced; author reports11 focused cases +3 unknown ownership cases passing, no new Ruff/Bandit/census. Pending process remains fenced until actual exit then existing bookkeeping settles; explicit later connect succeeds. Fresh runtime_producer_correction_review dispatched. No commit before approval; no false-capture or whole Task10 completion claim.
+Runtime pending-child correction independently APPROVED /private/tmp/chatbook-runtime-producer-correction-independent-review.md; reviewer replayed actual pending-child recovery and three unknown-ownership cases,4passed, all11hashes match. P2closed: capture refused as before, resume now retains fence until native exit/bookkeeping settlement and explicit later connect. Proceeding root exact-index inventory check and scoped runtime commit. Full Task10 live archive/owner matrix remains separate, as do ongoing Agent worker native-lifetime checks.
+Root verified all11 corrected runtime file hashes, staged only them plus Task31993, and exact-index owner inventory passed11tests in14.95s (three inherited SyntaxWarnings). Scoped diffcheck passed. Independent correction approval and actual4case reviewer replay recorded above; runtime unit ready for scoped commit.
+Runtime Sync/MCP producer unit committed8bf5fbcbf after fresh correction approval and root11 exact-index checks. Next original Task10 final live-runtime capture coverage unit authorized before dispatch per /private/tmp/chatbook-runtime-final-capture-brief.md: actual TldwCli+capture_service preview/capture bytes and reverse resume, plus concrete supported standalone TTS selected-root inventory coverage/refusal question from dc132b473 report. Initial ownership runtime_maintenance.py, narrowly coordinated TTS recovery/loose lifetime observation and new test_runtime_complete_capture.py; capture_service.py only after actual missing preview/final binding evidence and coordination. No generic attestation/owner graph or app-closed substitution; no silent expanded maintenance scope. AgentService execution worker helpers are concurrently owned by agents_activation; coordinate its separate console retirement gap.
+Live-capture investigation found concrete TTS _Voices.discover blanket participant_pending unsupported marker whenever voice content exists, even after committed finite owner lifetimes. Author authorized TTS/recovery.py +loose_voice_lifetime.py immutable exact selected-root observations and targeted preview/capture tests: remove that pending marker only for actual qualified finite installed owner coverage proven by capture bytes; refuse known selected roots outside declared preview scope, never silently add them. Weak process-local observations alone cannot claim two-process/relaunch discovery; report/qualify actual protocol-aware app scope and preserve unknown-owner refusal. Also authorize investigation (read-only first) of real Console controller to_thread worker DB retirement and actual app-created .generated_videos.capacity.lock inventory classification; report exact edit before touching outside current ownership. Do not manufacture Complete by creating otherwise unused stores or allowing blanket exclusions.
+Concrete Console pool-worker retirement locus confirmed: Chat/console_chat_controller.py::_run_maintenance_agent_call currently retains/shields actual asyncio.to_thread bridge call but lacks same-worker DB finalization. Runtime-final-capture author now authorized narrow controller wrapper using Agents.activation.worker_guard(actual_bridge) around dispatched body before to_thread, reusing existing newly-owned/non-memory exact DB cleanup and leaving caller handles intact. Agents author separately owns helper: extend its exact _worker_databases AgentRunsDB lookup to existing service._db fallback already used by _sources so real ConsoleBridge works; no duplicate cleanup implementation or generic connection graph. Coordinate helper/controller files; focused actual controller cancellation/terminal-persistence/native-drain proof required before claiming coverage.
+Actual live-capture diagnosis: capture_service._capture_names registers first-use disjoint scopes under registry EX; Admission.pause_requested currently treats registry-only contention as pause hint, causing app to retire/reacquire startup during transient registry publication and fail recovery_scope_uncertain, or reverse-resume into true capture gate. Root inspected Admission._admit: it releases registry lock before waiting for native owner leases, so deferring a registry-only probe does not prevent a real gate pause from being observed. Author now authorized exact admission.py probe/doc change to return False on registry-only contention while retaining normal holds, not granting capture authority; validated actual gate contention still requests pause. Missing/unsafe/replaced/pending evidence checks remain failures once readable. Update intentional prior test_registry_contention_is_a_nonblocking_conservative_hint contract with real registry-EX vs actual gate tests and actual TldwCli bytecapture/resume; no new confirmation API, fake release or timeout increase. admission.py and focused test_participants.py ownership released for this narrow fix.
+Runtime final capture bounded unit frozen before independent review: /private/tmp/runtime-final-capture-frozen.patch SHA e1fd1cd216a41772d32b3cc1c906fece53639a1a97eeeb883b6c5d9973b695af and /private/tmp/runtime-final-capture-frozen-hashes.json (7 files) independently match; index empty. Actual TldwCli TTS configured/shared voice audio/catalog and profile reference capture with normal writer/repository access before packaging; finite selected-root omission refuses after receiver GC. Native registry-only contention no longer falsely requests pause; true gate still governs. Actual Console worker_guard cleans only worker-created connections after cancelled waiter settles. Focused56pass43.38s and final12pass19.34s, existing Requests/stale pytest cleanup warnings. Integrated lazy Console live gateway exploration did not qualify; fresh-profile dependencies and other participant_pending cohorts remain explicit original Task10/15 followups, not waived. No full Task10/15 completion.
+Independent bounded runtime review /private/tmp/chatbook-runtime-final-capture-independent-review.md APPROVED, no actionable P1/P2. Reviewer verified exact7filehashes, _admit/remap drop registry before waiting owner retirement, actual Agent worker cleanup ownership, finite TTS declaration/refusal and real partial bytecapture+resume evidence. Source tuple remains frozen; root preparing exact-index check/commit. Full-app Console45s exploration unresolved before final Task10 release.
+Root exact-index runtime owner inventory census11pass6.82s, existing SyntaxWarnings. Independent review approved, seven frozen source/test files verified; scoped runtime commit follows with related task records. Other inventory/RAG work excluded from index; no fullTask10/15/backup completion.
+Original remaining live capture qualification released to runtime_final_capture after committed optional-owner unit3578727a3. Brief /private/tmp/chatbook-runtime-remaining-coverage-brief.md. Own actual remaining Skills/ModelArtifacts/generated media/chatbooks participant_pending declarations and new focused runtime_owner_capture tests; config_adapter now free. Qualify real producers/captured bytes/resume before removing markers, retain actual native lifetimes. Original lazyConsole integrated45s repro must diagnose exact checkpoints before retry; no fake drain/constructor empty-store workaround. Existing operational workspaces/subscriptions failures+FileNotes setup raw_source_selection_changed on cleanfeatureHEAD remain release follow-up; inspect relevant fixture selection before narrowly correcting tests if cause is lost private selectors. No production admission guard weakening or new attestation system. Root owns docs/census/staging/commit.
+Concrete remaining producer coverage gap reproduced by runtime author in real TldwCli: /private/tmp/runtime-uncovered-source-probe.py + .log line511; after actual RuntimeMaintenance settles, cache retirement and same-task pause.drain()==True, actual app.local_skills_service.create_skill and local_chatbook_service.create_chatbook both persist while paused. Central installed hooks lack these families. Sinks LocalSkillsService.create_skill→mkdir/_write_text_atomic/_save_index and LocalChatbookService.create_chatbook→_save_registry currently only internal locks. Separate bounded originalTask10 source-lifetime unit needed for actual Skills/trust and Chatbooks Creator/Importer/service; unsupported markers stay until qualified. Do not extend current Model+Console capture package with these changes before freeze/review. Not a missing-import inference or weakened capture issue.
+Model/initialized Console five-file unit independently approved by rag_enhanced_qualification: /private/tmp/chatbook-runtime-owner-capture-independent-review.md, exact5hashes/patch71ac9a78ca7578bd0f5109ccf1553a2923c25902f005065f3ab215252ace5271 checked. Actual Model/dependency capture15.31s and initializedConsole capture41.87s verify coherentbytes/nativehandle or acceptedturn drain/ordinaryresume beforepackaging. Strictdefaultlogcontainernegatives4pass, compatibility23pass+intentionaloldassert targetedpass. ProductionBandit0→0, allfiles172→172; Ruff26→26 nonew. Root stages boundedunit for exactindexcensus; originalTasks10/15 remain InProgress (Skills/Chatbooks/generatedmedia and trackedoperationalrelease failures).
+Root exact staged owner census11passed21.82s, no new rows needed; exact five source/testfiles remain frozen. Committing bounded Model/initializedConsole capture after independent approval. Original Tasks10/15 remain InProgress.
+2026-09-10 root release after RAG correction independently approved: implement original Task10 concrete Skills/Chatbooks paused-write defects from /private/tmp/chatbook-skills-chatbooks-lifetime-preflight.md. Exact source scope: Skills_Interop/local_skills_service.py, skill_trust_service.py, skill_trust_store.py; Chatbooks/local_chatbook_service.py, chatbook_creator.py, chatbook_importer.py; new Backup_Recovery/local_content_lifetime.py composing existing ProducerLifetime/StorageLease; runtime_maintenance.py finite pre-core-pause binding; UI/Screens/library_screen.py only actual _run_library_export_worker/_run_library_export_via_service lifetime and owned-thread handles; new Tests/Backup_Recovery/test_skills_chatbooks_lifetimes.py. Actual direct/native calls, whole multi-file operations and accepted cancellation completion; no arbitrary Python attestation or generic discovery. Markers remain pending until populated public capture plus resumed ordinary mutation qualifies; recovery marker/config_adapter edits need later root release. Generated media and activation UI excluded. Root owns census/tracking/staging/commit.
+Root actual generated source lifetime probe: /private/tmp/runtime-generated-source-probe.py and .log, private HOME/XDG/config, network guard before imports, null keyring, real TldwCli RuntimeMaintenance settle+cache retirement+same-task pause.drain true. Both actual ImageGenerationService.save_generation moves temp to saved and VideoStore.save publishes a new MP4 while paused; process exits0. Concrete unsupported producer gap, not missing-import inference. Existing generated participant/temporary_reference_pending markers retained. Root read-only mapping of finite generated source capture/reference unit continues; no generated source edits authorized yet.
+Root begins bounded originalTask10 generated-source lifetime unit after actual pausedwrite proof. Exact files new Backup_Recovery/generated_media_lifetime.py composing existing ProducerLifetime/StorageLease/join_retained_task, Media_Creation/image_generation_service.py only actual constructor directory/generate-save-cleanup source spans, Video_Generation/video_store.py only whole native save/adopt/read/retention/clear source spans, new Tests/Backup_Recovery/test_generated_media_lifetimes.py. RuntimeMaintenance one finite binding coordinated after Skills/Chatbooks author's file release; no concurrent runtime edits. No generated marker removal or temporary reference/capture-staging conversion in this unit; those require separately qualified originalTasks11/15 composition. No provider feature/model/download/format/UI changes. Source leases cover actual output/temp/input/recovered root and exact capacity lock, not broad parent tree ownership. Accepted async/native work held through completion, new intake denied during pause.
+Skills/Chatbooks independent review REQUEST CHANGES oneP1 /private/tmp/chatbook-skills-chatbooks-lifetime-independent-review.md: configured _script_scratch_root mkdir and default _tool_sandbox_root mkdir precede output-root source admission. Release correction round1 only local_skills_service.py plus owned test_skills_chatbooks_lifetimes.py: resolve exact scratch/sandbox path side-effect-free using existing resolver, acquire actual root lease before first mkdir, preserve ordinary safe fallback but propagate maintenance/recovery denial (never turn denial into alternate-root creation). No Tools source edits/newgenericresolver unless exact existing API insufficient. Test both configured/default initial-root creation with actual foreign held/root denial and ordinary successful script path; targeted affected cases only then frozen correction/fullhash. Runtime snapshot remains untouched.
+Skills/Chatbooks finite lifetime unit round1 independently APPROVED by cross-author review (/private/tmp/chatbook-skills-chatbooks-lifetime-correction-independent-review.md), superseding root-before-mkdir P1. All ten frozen hashes verified. Root final exact module: 22 passed in 27.71s (/private/tmp/local-content-root-final.log); preexisting pytest garbage cleanup warning only. Report preserves compatibility cleanHEAD failure evidence; no old assertions disabled. Ruff359→359/Bandit18→18 zero added. Scope remains complete public bundle/trust/registry/archive/script/Library lifetimes, no capture marker removal. Staging only these ten files and this task; exact-index owner census follows.
+Exact-index census exposed only expected round1 mkdir move: _script_scratch_root no longer has mkdir; _script_output_root count rises1→2. Root correcting these existing owner census rows without changing classification or coverage, cross-author review before census rerun. Initial exact-index result10pass1fail /private/tmp/local-content-index-census.log.
+Root census row move independently approved by C; exact-index census final11passed6.60s /private/tmp/local-content-index-census-corrected.log. One command ran git from nongit snapshot and did not stage; corrected explicit repo workdir, no source adjustment. Final bounded Skills/Chatbooks commit includes ten frozen files, only two census row edits, task31993. Generated-media source fourfile review preliminarily clean; runtimehook/native2 still pending and excluded from this commit.
+Skills/Chatbooks unit committed a16c53e4d. Root now integrates exactly the already-loaded GeneratedMediaLifetime participant into RuntimeMaintenance after upstream/local-content settlement before lower owners/core pause, closing demonstrated generated producer gap. Existing fourfile source review preliminarily clean; final review/tests include this runtime-only addition.
+Generated-media fivefile lifetime unit frozen atop a16c53e4d. Report /private/tmp/chatbook-generated-media-lifetime-report.md; patch SHA81296780fb8e5d80a6baef957e1bffae94d248c999c086084f33663e200ed488. Final actual app module4passed13.04s, including both accepted native-worker drain cases now green. Affected compatibility9passed8.75s; old hotfixture rawselector2 failures reproduced cleanHEAD, no guard/test weakening. Ruff48→48/Bandit0→0 noadded; five parse/diffcheck. Cross-author C final hook review pending; staging only fivefiles+task for exact-index census, no commit until approval.
+Generated fivefile final independently APPROVED /private/tmp/chatbook-generated-media-lifetime-independent-review.md. All hashes/finalpatch verified; exact-index census11passed6.62s /private/tmp/generated-lifetime-index-census.log, no censusdelta. Final focused module4pass13.04s and affected compatibility9pass8.75s; noaddedstaticfindings. Commit bounded finite lifetime now; generated capture/temporary reference markers intentionally remain until original Task11/15 composition proof.
+Root investigating exact existing RecoveredMedia public constructor source ordering: secure_private_directory runs before _core_access/native DB connection, potentially creates/hardens retained root while core paused. Bounded new focused test_recovered_media_lifetimes.py before any product change; actual private TldwCli RuntimeMaintenance constructor refusal/no-directory and postresume retain/read. No constructor attestation/new participant framework or relocation changes.
+RecoveredMedia constructor investigation found NO gap: actual paused-constructor/no-created-root + resumed retain/resolve probe passes currentproduction1pass4.14s (/private/tmp/recovered-media-constructor-red.log despite initial filename). Existing secure_private_directory path supplies admission. No production change. Exploratory test moved to /private/tmp/recovered-media-constructor-probe.py; own untracked repo test removed to avoid unnecessary implementation/test expansion.
+Confirmed originalTask10/temporarymedia accepted-operation gap via realapp-owned Consolecontroller + actualConsoleVideoController child/nativeVideoStore: RuntimeMaintenance reaches corepause drain=True while actualworker held before tuple return/transcript; cancelledwaiter notdone. Afterresume/release actualmessage metadata/bytes persist, networkguardempty. Evidence console-video-component-{checkpoints.log,direct-probe.py,probe.log}. Finite corrective scope released UI/Console_Modules/video.py accepted generation/pendingadoption lifetimes and runtime_maintenance._console_hooks actualscreen._video beforelowergenerated/core, focusednewlifetime tests. Reuse existing ownedoperation conventions, no duplicatetaskwalker/genericframework/forcedrelease. Earlierfullmountedrenderstallprobes didnotprovebug; retainedseparately.
+Root independent review approved frozen Console video settlement four-file unit (patch e808636a96d6a6f1ba9547e6d53a87a6606be0d671205700f840924a5165e897): exact live screen owner holds existing ProducerLifetime through native worker, transcript finalization, and cancellation settlement. Five named generation/adoption/cancellation cases passed in 8.13s; component-level hook + actual remaining RuntimeMaintenance proof, not a fully mounted UI/archive claim. Ruff 20→15 no additions; production Bandit 0→0. Exact-index census pending before scoped commit.
+Exact-index owner census passed all 11 tests in 7.13s (/private/tmp/console-video-lifetime-index-census.log), no new producer rows required. Root independent review /private/tmp/console-video-lifetime-independent-review.md approved exact frozen four-file Console lifetime unit. Scoped commit follows; broader maintenance task remains in progress.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Design references
 
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-09-07-backup-recovery-02-inventory-admission.md#task-10)
 - [ADR-126](../decisions/126-complete-local-backup-and-recovery.md)
 
-ADR required: yes
+## Final Summary
 
-ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
-
-Reason: direct implementation of the approved recovery ownership, archive, and lifecycle contract; reuse ADR-126.
-
-Before implementation, move this task to In Progress and copy its linked task steps into an Implementation Plan section. Keep implementation notes and completion evidence for after the work is finished. Do not mark criteria complete from this planning document.
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed installed maintenance participants with owner-native retirement, dirty/scope refusal, cross-store settlement and resumed writes; subsequent public capture and packaged F9 receipts close earlier integration notes. Evidence: 77fb2cce5, c992c1781, 5f529fba7, 763183fd5 and prior recorded participant cohorts. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

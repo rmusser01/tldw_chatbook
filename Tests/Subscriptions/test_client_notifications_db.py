@@ -1,8 +1,9 @@
 from tldw_chatbook.Notifications import ClientNotificationsDB
 
 
-def test_client_notifications_store_round_trips_read_and_dismiss(tmp_path):
+def test_client_notifications_store_round_trips_read_and_dismiss(request, tmp_path):
     db = ClientNotificationsDB(tmp_path / "notifications.db")
+    request.addfinalizer(db.close)
 
     row = db.insert_notification(
         category="watchlists",
@@ -29,8 +30,9 @@ def test_client_notifications_store_round_trips_read_and_dismiss(tmp_path):
     assert stored["dismissed_at"] is not None
 
 
-def test_client_notifications_store_filters_dismissed_by_default(tmp_path):
+def test_client_notifications_store_filters_dismissed_by_default(request, tmp_path):
     db = ClientNotificationsDB(tmp_path / "notifications.db")
+    request.addfinalizer(db.close)
     kept = db.insert_notification(category="watchlists", title="A", message="A")
     dismissed = db.insert_notification(category="watchlists", title="B", message="B")
 
@@ -40,8 +42,9 @@ def test_client_notifications_store_filters_dismissed_by_default(tmp_path):
     assert [row["id"] for row in rows] == [kept["id"]]
 
 
-def test_client_notifications_store_can_restore_dismissed_rows(tmp_path):
+def test_client_notifications_store_can_restore_dismissed_rows(request, tmp_path):
     db = ClientNotificationsDB(tmp_path / "notifications.db")
+    request.addfinalizer(db.close)
     row = db.insert_notification(category="watchlists", title="A", message="A")
 
     db.dismiss_notification(row["id"], is_dismissed=True)
@@ -52,8 +55,9 @@ def test_client_notifications_store_can_restore_dismissed_rows(tmp_path):
     assert stored["dismissed_at"] is None
 
 
-def test_client_notifications_memory_store_keeps_state_across_operations():
+def test_client_notifications_memory_store_keeps_state_across_operations(request, ):
     db = ClientNotificationsDB(":memory:")
+    request.addfinalizer(db.close)
 
     row = db.insert_notification(category="watchlists", title="A", message="A")
 
@@ -61,8 +65,9 @@ def test_client_notifications_memory_store_keeps_state_across_operations():
     db.close()
 
 
-def test_client_notifications_store_round_trips_category_preferences(tmp_path):
+def test_client_notifications_store_round_trips_category_preferences(request, tmp_path):
     db = ClientNotificationsDB(tmp_path / "notifications.db")
+    request.addfinalizer(db.close)
 
     defaults = db.get_settings()
     updated = db.update_settings(
@@ -80,8 +85,9 @@ def test_client_notifications_store_round_trips_category_preferences(tmp_path):
     assert db.get_settings()["category_preferences"]["watchlists"]["enabled"] is False
 
 
-def test_client_notifications_store_returns_defensive_settings_copy(tmp_path):
+def test_client_notifications_store_returns_defensive_settings_copy(request, tmp_path):
     db = ClientNotificationsDB(tmp_path / "notifications.db")
+    request.addfinalizer(db.close)
 
     settings = db.get_settings()
     settings["category_preferences"]["watchlists"] = {"enabled": False}

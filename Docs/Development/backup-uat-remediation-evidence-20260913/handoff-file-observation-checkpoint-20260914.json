@@ -1,0 +1,73 @@
+{
+  "base_revision": "86ad9993dcffef710e9cd250665c1bb8314a67dc",
+  "reviewed_test_sha256": {
+    "Tests/Backup_Recovery/test_home_citation_retirement.py": "f2957c65ab51ff487abc6488ad01ffae01901c4dfbeee2e6194991571ca9cb20",
+    "Tests/Backup_Recovery/test_recovery_restart.py": "affe34036fb70a851f8c26b668d88aef895b44a17dba41b7f083f9b1ed999c27",
+    "Tests/Backup_Recovery/test_restart_observation.py": "91eeb490f46f2072ebc1091cf3df0437c72c7630100d53cc6f203e94701105c8",
+    "Tests/Backup_Recovery/run_platform_product.py": "5fc678fe482ba16b2caf26f697cd312598f9d3653f222247f6b3686101c8a8f6"
+  },
+  "scope": "Test-only opt-in fresh-process output/identity observation and cleanup; production launcher unchanged.",
+  "deadline_seconds": 70,
+  "original_native_red": {
+    "timeout_seconds": 2,
+    "elapsed_seconds": 2.006,
+    "fresh_child_still_running": true,
+    "probe_cleaned_child": true
+  },
+  "review_native_red": {
+    "passed": 0,
+    "failed": 1,
+    "seconds": 2.15,
+    "cause": "parent timeout after child identity publication leaves descendant alive"
+  },
+  "verification": {
+    "root_observer": {
+      "passed": 11,
+      "seconds": 5.25
+    },
+    "independent_observer": {
+      "passed": 11,
+      "seconds": 5.25
+    },
+    "independent_boundary_probes_plus_observer": {
+      "passed": 14,
+      "seconds": 6.17
+    },
+    "actual_installed_handoff_and_related": {
+      "passed": 7,
+      "seconds": 45.25,
+      "handoff_call_seconds": 14.89,
+      "later_call_seconds": 14.5,
+      "fixture_setup_seconds": 14.79,
+      "python_sources_compared": 2474,
+      "mismatches": 0,
+      "installed_files_preserved": 2866,
+      "wheel_sha256": "466db6db221ee98c8bde3fbcc4b8b58e8b3cba0dffc99e5d151fb83914678b10"
+    }
+  },
+  "lint": {
+    "ruff_findings": 0,
+    "bandit_before": {
+      "B404": 2,
+      "B603": 2,
+      "B101": 14,
+      "B108": 2
+    },
+    "bandit_after": {
+      "B404": 2,
+      "B603": 2,
+      "B101": 24,
+      "B108": 2
+    },
+    "new_nonassert_findings": 0
+  },
+  "preserved_errors": [
+    "Initial promotion missed the private probe function local _run import; three NameErrors were corrected before final root/independent11 passes.",
+    "Earlier cleanup omission failed an actual native child probe; corrected and independently verified."
+  ],
+  "limits": [
+    "Actual installed success-path check preceded final exception-only cleanup correction; final native failure-path regressions verify that correction.",
+    "Windows native validation of the changed handoff harness remains pending.",
+    "No attribution of original Windows handoff or later-workflow failures to captured pipes is established."
+  ]
+}

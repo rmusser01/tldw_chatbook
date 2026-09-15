@@ -158,7 +158,10 @@ ELIMINATED_MODULES = ("torch", "transformers")
 # `Tests/Packaging/test_rag_boot_import_closure.py`.
 MAX_IMPORT_SECONDS = 8.0
 MAX_MODULE_COUNT = 2200
-MAX_TLDW_MODULE_COUNT = 660
+# Owner-approved ADR-097 exception (2026-09-14, PR #2642, TASK-32562):
+# backup startup admission/activation adds 26 modules versus dev (643 -> 669).
+# Preserve dev's existing headroom; timing and heavy-import guards are unchanged.
+MAX_TLDW_MODULE_COUNT = 686
 
 
 def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:

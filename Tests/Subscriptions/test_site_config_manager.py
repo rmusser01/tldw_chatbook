@@ -14,9 +14,10 @@ from contextlib import closing
 from tldw_chatbook.Subscriptions.site_config_manager import SiteConfig, SiteConfigManager
 
 
-def test_fresh_db_manager_can_save_and_load_config(tmp_path):
+def test_fresh_db_manager_can_save_and_load_config(request, tmp_path):
     db_path = str(tmp_path / "subs.db")
     manager = SiteConfigManager(db_path)
+    request.addfinalizer(manager.db.close)
 
     config = manager.get_config("https://example.com/page")
     assert config.domain == "example.com"
@@ -28,7 +29,7 @@ def test_fresh_db_manager_can_save_and_load_config(tmp_path):
     assert reloaded.rate_limit_requests == 30
 
 
-def test_idempotent_across_multiple_manager_constructions(tmp_path):
+def test_idempotent_across_multiple_manager_constructions(request, tmp_path):
     # "Already migrated" case at the manager level: a second SiteConfigManager
     # (fresh Python object, fresh CharactersRAGDB/SubscriptionsDB instances)
     # opening the same file must see the first manager's data and must not
@@ -36,11 +37,13 @@ def test_idempotent_across_multiple_manager_constructions(tmp_path):
     db_path = str(tmp_path / "subs.db")
 
     first = SiteConfigManager(db_path)
+    request.addfinalizer(first.db.close)
     config = SiteConfig("example.com")
     config.rate_limit_requests = 42
     assert first.save_config(config) is True
 
     second = SiteConfigManager(db_path)
+    request.addfinalizer(second.db.close)
     domains = {row["domain"] for row in second.list_configs()}
     assert "example.com" in domains
 
@@ -53,11 +56,12 @@ def test_idempotent_across_multiple_manager_constructions(tmp_path):
     config2 = SiteConfig("other.example.com")
     assert second.save_config(config2) is True
     third = SiteConfigManager(db_path)
+    request.addfinalizer(third.db.close)
     domains = {row["domain"] for row in third.list_configs()}
     assert domains == {"example.com", "other.example.com"}
 
 
-def test_manager_survives_legacy_db_with_existing_site_configs_rows(tmp_path):
+def test_manager_survives_legacy_db_with_existing_site_configs_rows(request, tmp_path):
     # A database created before this relocation: site_configs already exists
     # (created on demand by the old SiteConfigManager._create_tables path)
     # and already has a row in it. Existing site configs must survive.
@@ -85,6 +89,7 @@ def test_manager_survives_legacy_db_with_existing_site_configs_rows(tmp_path):
         legacy_conn.commit()
 
     manager = SiteConfigManager(str(path))
+    request.addfinalizer(manager.db.close)
 
     domains = {row["domain"] for row in manager.list_configs()}
     assert "legacy.example.com" in domains
@@ -99,10 +104,11 @@ def test_manager_survives_legacy_db_with_existing_site_configs_rows(tmp_path):
     assert domains == {"legacy.example.com", "new.example.com"}
 
 
-def test_apply_preset_and_delete_still_work(tmp_path):
+def test_apply_preset_and_delete_still_work(request, tmp_path):
     # Smoke-covers the public surface SiteConfigSettings/web_scraping_pipelines
     # exercise, so a regression in either would show up here too.
     manager = SiteConfigManager(str(tmp_path / "subs.db"))
+    request.addfinalizer(manager.db.close)
 
     assert manager.apply_preset("github.com", "github.com") is True
     config = manager.get_config("https://github.com/")

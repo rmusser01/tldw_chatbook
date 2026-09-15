@@ -12,6 +12,7 @@ if sys.version_info < (3, 11):
 else:
     import tomllib
 import toml
+from ..Backup_Recovery.storage_admission import acquire_storage
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable, Tuple
 from dataclasses import dataclass, field
@@ -157,18 +158,19 @@ class PipelineLoader:
                 )
 
                 # Copy default file to user directory if it doesn't exist
-                try:
-                    user_config_dir.mkdir(parents=True, exist_ok=True)
-                    import shutil
+                with acquire_storage(user_config_file):
+                    try:
+                        user_config_dir.mkdir(parents=True, exist_ok=True)
+                        import shutil
 
-                    shutil.copy2(default_config_file, user_config_file)
-                    logger.info(
-                        f"Copied default pipeline config to user directory: {user_config_file}"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Could not copy default pipeline config to user directory: {e}"
-                    )
+                        shutil.copy2(default_config_file, user_config_file)
+                        logger.info(
+                            f"Copied default pipeline config to user directory: {user_config_file}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not copy default pipeline config to user directory: {e}"
+                        )
             else:
                 logger.warning(
                     "Pipeline config file not found in user or default locations"
@@ -739,14 +741,15 @@ class PipelineLoader:
         if pipeline.components:
             config_data["pipelines"][pipeline_id]["components"] = pipeline.components
 
-        try:
-            with open(output_file, "w") as f:
-                toml.dump(config_data, f)
-            logger.info(f"Exported pipeline '{pipeline_id}' to {output_file}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to export pipeline: {e}")
-            return False
+        with acquire_storage(output_file):
+            try:
+                with open(output_file, "w") as f:
+                    toml.dump(config_data, f)
+                logger.info(f"Exported pipeline '{pipeline_id}' to {output_file}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to export pipeline: {e}")
+                return False
 
 
 # Global pipeline loader instance

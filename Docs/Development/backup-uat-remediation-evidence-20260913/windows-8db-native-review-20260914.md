@@ -1,0 +1,15 @@
+# Independent Windows 8db native-close evidence review
+
+Verified run **34923109876**, exact revision **8db7465e6110726307f2d5ef745646e00f939a9f**, existing `native-close-diagnostic` selection. Read-only artifact/Git examination; no tests, app runs, remote operations or repository edits.
+
+- Rehashed all **18** artifact-manifest entries: zero mismatches. Source receipt records the exact revision and a clean checkout. Both JUnit reports are present and agree with summary: **42/42 native passed** (1.821s), **42/42 product passed** (584.992s), no failures, errors, skips or unfinished cases; effective return code 0.
+- Product coverage is exactly **4 TTS + 8 DB-status + 12 Canvas policy maintenance + 6 Canvas policy worker + 11 view binding + 1 installed Library**. All six new worker cases passed: responsive policy polling during a config writer; accepted-read retention across maintenance, watcher cancellation, drain cancellation and dispose cancellation; canceled-watcher restart reuses the pending read.
+- Installed receipt contains **2,867 file hashes**, with **2,475 installed Python hashes** matching the source receipt and exact Git blobs under Windows checkout conversion: 2,443 CRLF and 32 byte-exact, zero mismatches. Wheel SHA256 `83469e4e8f015cdb6d55a1d1103895c3725a869b3581af88272af4f54eed950f`. This verifies the retained installation receipt, not a new inspection of the remote filesystem. The test driver, native-package helper, subprocess helper, worker tests and runner source-receipt hashes were also independently compared to the exact Git revision.
+
+The installed Library case passed in **259.962s** including its pytest fixture work. Its exact driver requires a Complete preview, successful Complete capture, coherent acquired archive with the original note present and the post-capture note absent, actual resumed note write/readback, and Canvas enabled both before backup and after resume. The child checks its installed package origin and enforces the existing network guard. The passing case therefore covers these actual assertions, rather than merely reaching a phase marker.
+
+Supporting retained observations: five inventory observations have no scope delta or unavailable dependencies; five producer stages proceed to cache retirement, live leases 8→1→0, with pending/operations/raw operations all zero at runtime resume. Service close begins and completes at instrumented child elapsed 209.813s. These timings include diagnostics and are not startup-performance acceptance measurements.
+
+**Verdict:** exact 8db native-close selection is verified successful. This does not establish a cause or fix for earlier cfb/d640 support timeouts, qualify the complete support suite, or make the PR green. The separate Windows startup run still has four 60-second failures, as reported by the parent; that separate run was not re-reviewed here.
+
+Machine-readable evidence and hashes: `/private/tmp/uat-8db-native-independent-summary.json`. Raw verification receipts: `/private/tmp/uat-windows-8db746-native-close/verification.json`, `git-blob-verification.json`, and `case-accounting.json`.

@@ -1,0 +1,86 @@
+{
+  "revision": "7899608e0674957e39bb99587477f5d534fade0b",
+  "verified_artifact_files": 118,
+  "product_selection": "support-diagnostic",
+  "summary_effective_returncode": 1,
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "50f498f243427c41fdbf2abe22cd413f07aaee9152c79b350b13d540d227475a",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    },
+    {
+      "fixture": "product-pytest/f9-native-package1/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "891262cf7b959e93f1df394ad029b2472365c6e31faa99d86fea89ed1bffdf4e",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    }
+  ],
+  "run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/34867573446",
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.277
+    },
+    "product": {
+      "collected": 187,
+      "counts": {
+        "passed": 186,
+        "failed": 1
+      },
+      "seconds": 1788.551
+    }
+  },
+  "failed": [
+    {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+      "status": "failed",
+      "seconds": 162.482
+    }
+  ],
+  "python_git_blobs": {
+    "revision": "7899608e0674957e39bb99587477f5d534fade0b",
+    "source_clean": true,
+    "python_git_blobs": 2474,
+    "installed_receipts": 2,
+    "matching_modes": {
+      "windows_crlf": 2442,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "local_verification_sha256": {
+    "verification.json": "248fa1d0f55f7ba59ad67663b94159ba630bf2a054bee2e2a7109483c9d696db",
+    "git-blob-verification.json": "911d1164e262d1c42a3f00a64248a831a73b79b699caf56209e9e1e8da25bd3a",
+    "case-accounting.json": "6b95611f36fe7b02bef2c0d3aada7234e0a86b658c637084724d02f7d21572d7"
+  },
+  "remaining_failure": "Library capture rediscovery refuses preview_sqlite_changed at initial opened main/WAL metadata comparison, before copying. The member, changed field and writer remain unknown. No maintenance timeout occurred in this case.",
+  "prior_failed_routes_now_pass": [
+    {
+      "id": "Tests.Backup_Recovery.test_recovery_restart::test_actual_handoff_execs_fresh_recovery_ui[handoff]",
+      "status": "passed",
+      "seconds": 109.428
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_recovery_restart::test_actual_handoff_execs_fresh_recovery_ui[later]",
+      "status": "passed",
+      "seconds": 47.831
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]",
+      "status": "passed",
+      "seconds": 227.478
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+      "status": "passed",
+      "seconds": 190.48
+    }
+  ]
+}

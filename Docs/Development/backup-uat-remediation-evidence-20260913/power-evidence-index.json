@@ -1,0 +1,80 @@
+[
+  {
+    "file": "power-uat-report.md",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-uat-report.md",
+    "sha256": "76b162bbad5ac141995c6d8b09c02800a9768d748518b8860b2dc55df0ec995c",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-restored-research-verification.json",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-restored-research-verification.json",
+    "sha256": "e060473e95dcd434c086b6c7187840b495fb8f8fb7e1cfb4b357ecb317cef1d4",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-extraction-verification.json",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-extraction-verification.json",
+    "sha256": "db4dd495f0d5f32bd0e38713bcd342dd3da2f8b59c5915be4309ff61002652f5",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-credential-verification.json",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-credential-verification.json",
+    "sha256": "026dab78abb1e33cc3d16af7c5ee793844a583fc7ba87172bf401c8db8377ab0",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-cancel-verification.json",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-cancel-verification.json",
+    "sha256": "11383a4f9fe045c99abda34a58ce96bc4c13a89982b4179fa2a7aee90f4d4666",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-073-credential-capture-result-after.txt",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-073-credential-capture-result-after.txt",
+    "sha256": "0b03a01fb78535269a7b13c969b6285270aab8b0cb4f1a5d71e6614007a0650e",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-079-wrong-inspect-after.txt",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-079-wrong-inspect-after.txt",
+    "sha256": "885b2eaa8d87ba7772333c8433bc6d36f9aaaca411dc1d7de09d2d414e9e304b",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-082-correct-inspect-after.txt",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-082-correct-inspect-after.txt",
+    "sha256": "fab845c67d1ed8a588dc2074ac20282bf4f0af285e5ac30d57bd463c00493c7e",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-103-restore-validation-after.txt",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-103-restore-validation-after.txt",
+    "sha256": "c21ed1079976c86755880891e70599d331642ac8f887e8fdc787f6880bc3488e",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-110-review-extraction-after.txt",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-110-review-extraction-after.txt",
+    "sha256": "6783675e83345f7cc2b4d93ab6490d6787ce22b9236714072503047062290070",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-111-confirm-extraction-after.txt",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-111-confirm-extraction-after.txt",
+    "sha256": "e95f5410cd8a626e0219098e21c698403d2e930fa0efe2afbfaa3e56cef70c81",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-118-close-restored-after.txt",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-118-close-restored-after.txt",
+    "sha256": "ed000760cb6fba2bed16e21947850f5b561f8fd0b20abf1246bbe40c07d2495f",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  },
+  {
+    "file": "power-131-cancel-result-after.txt",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/evidence/power-131-cancel-result-after.txt",
+    "sha256": "0131409ec3d08c6fd5f5db79d058d2cab6bfca589cb3f23116f978f92bbbf9f2",
+    "revision": "c5c05181d834d4b7596107a154216a330af8261d"
+  }
+]

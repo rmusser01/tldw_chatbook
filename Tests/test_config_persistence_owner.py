@@ -9,6 +9,8 @@ import pytest
 import toml
 
 from tldw_chatbook import config
+import sys
+from Tests.Backup_Recovery.config_test_support import install_config_source
 from tldw_chatbook.Utils.config_encryption import config_encryption
 
 
@@ -46,6 +48,7 @@ def test_serialized_raw_replace_backup_and_downgrade_guard_use_effective_path(
     config_path.write_text(toml.dumps(encrypted), encoding="utf-8")
     config_path.chmod(0o644)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
     monkeypatch.setattr(config, "DEFAULT_CONFIG_PATH", ignored_default)
     config.set_encryption_password(password)
 
@@ -94,6 +97,7 @@ def test_shutdown_persistence_uses_only_effective_path(tmp_path, monkeypatch):
     )
     target.write_text(toml.dumps(encrypted), encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
     monkeypatch.setattr(config, "DEFAULT_CONFIG_PATH", ignored_default)
     config.set_encryption_password(password)
     config.load_cli_config_and_ensure_existence(force_reload=True)
@@ -115,6 +119,7 @@ def test_shutdown_persistence_preserves_unreadable_config(
     target = tmp_path / "override" / "config.toml"
     target.parent.mkdir(mode=0o700)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
     if failure == "malformed_toml":
         target.write_text("[broken\nvalue = 1", encoding="utf-8")
     else:

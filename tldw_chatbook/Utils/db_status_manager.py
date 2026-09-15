@@ -12,6 +12,7 @@ are gone; only the DB-size telemetry remains.
 """
 
 import asyncio
+import time
 from typing import Dict, Optional, TYPE_CHECKING
 from loguru import logger
 
@@ -40,6 +41,39 @@ class DBStatusManager:
         # task-22220: last sizes the periodic INFO line reported, so an
         # unchanged 120 s fire stays out of the log.
         self._last_logged_sizes: Optional[Dict[str, str]] = None
+        self._maintenance_closed = False
+        self._maintenance_calls = 0
+        self._maintenance_workers: set[asyncio.Task] = set()
+        self._maintenance_changed = asyncio.Event()
+
+    def _maintenance_close_admission(self) -> None:
+        """Ignore queued telemetry updates until backup releases maintenance."""
+        self._maintenance_closed = True
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        """Keep accepted callers and their native threads visible until settled."""
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        if not self._maintenance_closed:
+            raise RecoveryRequired("runtime_producer_not_closed")
+        while self._maintenance_calls or self._maintenance_workers:
+            self._maintenance_changed.clear()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                await asyncio.wait_for(self._maintenance_changed.wait(), remaining)
+            except TimeoutError:
+                return False
+        return True
+
+    def _maintenance_resume(self) -> None:
+        """Reopen telemetry only after every accepted collection completes."""
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        if self._maintenance_calls or self._maintenance_workers:
+            raise RecoveryRequired("runtime_work_not_settled")
+        self._maintenance_closed = False
 
     async def update_db_sizes(self) -> None:
         """
@@ -58,10 +92,25 @@ class DBStatusManager:
         happens back on the loop. The INFO triple is change-gated -- an
         unchanged fire updates the cache silently.
         """
-        logger.debug("Computing DB sizes for the db_sizes_status cache.")
+        if self._maintenance_closed:
+            return
+        self._maintenance_calls += 1
 
         try:
-            db_sizes = await asyncio.to_thread(self._collect_db_sizes)
+            logger.debug("Computing DB sizes for the db_sizes_status cache.")
+            worker = asyncio.create_task(asyncio.to_thread(self._collect_db_sizes))
+            self._maintenance_workers.add(worker)
+
+            def finished(completed):
+                self._maintenance_workers.discard(completed)
+                self._maintenance_changed.set()
+                if not completed.cancelled():
+                    # A cancelled caller cannot abandon a native worker error.
+                    # Ordinary awaiting callers still receive the same exception.
+                    completed.exception()
+
+            worker.add_done_callback(finished)
+            db_sizes = await asyncio.shield(worker)
 
             self.app.db_sizes_status = db_sizes
             if db_sizes != self._last_logged_sizes:
@@ -78,6 +127,9 @@ class DBStatusManager:
 
         except Exception as e:
             logger.opt(exception=True).error(f"Error computing DB sizes: {e}")
+        finally:
+            self._maintenance_calls -= 1
+            self._maintenance_changed.set()
 
     def _collect_db_sizes(self) -> Dict[str, str]:
         """Stat the DB files (+ WAL/SHM sidecars) -- runs OFF the event loop.

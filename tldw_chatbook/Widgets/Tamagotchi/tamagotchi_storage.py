@@ -7,13 +7,14 @@ Provides multiple storage backends for saving tamagotchi state with recovery sup
 from abc import ABC, abstractmethod
 import json
 import sqlite3
-import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.Backup_Recovery import raw_participants as raw
+from tldw_chatbook.Backup_Recovery.settings_file_participants import pet_operation
 
 # Import validators for state recovery
 try:
@@ -91,6 +92,7 @@ class StorageAdapter(ABC):
         """
         return []
 
+    @pet_operation
     def load_with_recovery(
         self, pet_id: str, default_name: str = "Pet"
     ) -> Optional[Dict[str, Any]]:
@@ -206,78 +208,79 @@ class JSONStorage(StorageAdapter):
         """
         super().__init__(enable_recovery)
         self.filepath = Path(filepath).expanduser()
-        self.filepath.parent.mkdir(parents=True, exist_ok=True)
-        self.max_backups = max_backups
+        with raw._scope(self, "pet", writing=True) as operation:
+            raw._mkdirs(operation)
+            self.max_backups = max_backups
 
-        # Initialize file if it doesn't exist
-        if not self.filepath.exists():
-            self._write_data({})
+            # Initialize file if it doesn't exist
+            if not self.filepath.exists():
+                self._write_data({})
 
+    @pet_operation
     def _read_data(self) -> Dict[str, Dict[str, Any]]:
         """Read all data from JSON file."""
         try:
             if self.filepath.exists():
-                with open(self.filepath, "r", encoding="utf-8") as f:
+                with raw._file(raw._local.operation, self.filepath, "r") as f:
                     return json.load(f)
         except (json.JSONDecodeError, IOError) as e:
             print(f"Error reading JSON storage: {e}")
         return {}
 
+    @pet_operation
     def _write_data(self, data: Dict[str, Dict[str, Any]]) -> bool:
         """Write all data to JSON file."""
+        operation = raw._local.operation
+        temporary = raw._check(operation).temporary
         try:
-            # Write to temporary file first for safety
-            temp_file = self.filepath.with_suffix(".tmp")
-            with open(temp_file, "w", encoding="utf-8") as f:
+            with raw._file(operation, temporary, "w") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-
-            # Atomic replace
-            temp_file.replace(self.filepath)
+            raw._replace(operation, temporary, self.filepath)
             return True
         except IOError as e:
             print(f"Error writing JSON storage: {e}")
             return False
+        finally:
+            raw._remove_temporary(operation, temporary)
 
+    @pet_operation
     def load(self, pet_id: str) -> Optional[Dict[str, Any]]:
         """Load pet state from JSON file."""
         data = self._read_data()
         return data.get(pet_id)
 
+    @pet_operation
     def _create_backup(self) -> None:
         """Create a backup of the current JSON file."""
+        operation = raw._local.operation
+        state = raw._check(operation)
         if not self.filepath.exists():
             return
-
         try:
-            # Create backup filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = self.filepath.with_suffix(f".backup_{timestamp}.json")
-
-            # Copy current file to backup
-            shutil.copy2(self.filepath, backup_path)
-
-            # Clean up old backups
+            with raw._file(operation, self.filepath, "r") as source:
+                with raw._file(operation, state.backup_temporary, "w") as destination:
+                    while chunk := source.buffer.read(1024 * 1024):
+                        destination.buffer.write(chunk)
+            identity = state.created_files[state.backup_temporary]
+            raw._replace(operation, state.backup_temporary, state.backup)
+            state.observed_files[state.backup] = identity
             self._cleanup_old_backups()
-
         except Exception as e:
             logger.warning(f"Failed to create backup: {e}")
+        finally:
+            raw._remove_temporary(operation, state.backup_temporary)
 
+    @pet_operation
     def _cleanup_old_backups(self) -> None:
-        """Remove old backup files exceeding max_backups limit."""
-        try:
-            # Find all backup files
-            backup_pattern = f"{self.filepath.stem}.backup_*.json"
-            backups = sorted(self.filepath.parent.glob(backup_pattern))
+        """Prune only exact timestamp entries observed before mutation."""
+        operation = raw._local.operation
+        state = raw._check(operation)
+        backups = sorted(state.observed_files)
+        for oldest in backups[:max(0, len(backups) - max(0, self.max_backups))]:
+            raw._unlink(operation, oldest)
+            logger.debug(f"Removed old backup: {oldest}")
 
-            # Remove oldest backups if exceeding limit
-            while len(backups) > self.max_backups:
-                oldest = backups.pop(0)
-                oldest.unlink()
-                logger.debug(f"Removed old backup: {oldest}")
-
-        except Exception as e:
-            logger.warning(f"Failed to cleanup backups: {e}")
-
+    @pet_operation
     def save(self, pet_id: str, state: Dict[str, Any]) -> bool:
         """Save pet state to JSON file with backup."""
         # Create backup before saving
@@ -301,6 +304,7 @@ class JSONStorage(StorageAdapter):
         data[pet_id] = state_with_timestamp
         return self._write_data(data)
 
+    @pet_operation
     def delete(self, pet_id: str) -> bool:
         """Delete pet from JSON file."""
         data = self._read_data()
@@ -309,6 +313,7 @@ class JSONStorage(StorageAdapter):
             return self._write_data(data)
         return False
 
+    @pet_operation
     def list_pets(self) -> list[str]:
         """List all pet IDs in JSON file."""
         data = self._read_data()

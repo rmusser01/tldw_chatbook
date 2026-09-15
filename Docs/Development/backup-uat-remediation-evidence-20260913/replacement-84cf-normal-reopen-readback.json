@@ -1,0 +1,22 @@
+{
+  "config_sha256": "6c48dc4639c4c3e0a786043ebd2e20e1df56127fa36127b8f0ad153b9e7ff207",
+  "binding_fingerprint": "6c48dc4639c4c3e0a786043ebd2e20e1df56127fa36127b8f0ad153b9e7ff207",
+  "binding_matches": true,
+  "copied_files": {
+    "tldw_chatbook_ChaChaNotes.db": "32f3c7785d1fd94c7fcbac59fb82c07ba6136adb3efd19b961277ce099082100",
+    "tldw_chatbook_ChaChaNotes.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tldw_chatbook_ChaChaNotes.db-shm": "8d5febf326dea51e1e45e8cf6cba2427255f443294e5e10d5daa856f03084f28"
+  },
+  "notes": [
+    {
+      "id": "f0e4d877-6a1c-4f01-b483-046b4585ca09",
+      "title": "Novice backup acceptance note",
+      "content": "My first saved note must survive backup and restore. Reference NOVICE-REPEAT-20260913."
+    },
+    {
+      "id": "af1de23d-911e-4d59-b033-0db6abc8ca00",
+      "title": "After atime replacement",
+      "content": "A normal new write after replacement must persist until later rollback. ATIME-NEW-20260914."
+    }
+  ]
+}

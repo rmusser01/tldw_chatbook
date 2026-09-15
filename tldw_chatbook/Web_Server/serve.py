@@ -8,6 +8,12 @@ allowing users to access the TUI through their web browser.
 
 from __future__ import annotations
 
+# ADR-126: fence recovery and enroll before any runtime/config imports.
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+admit_startup()
+
+
 import asyncio
 import html
 import signal

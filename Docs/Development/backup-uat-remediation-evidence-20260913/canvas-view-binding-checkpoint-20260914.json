@@ -1,0 +1,153 @@
+{
+  "base": "d6406d4dc86720f9916e5416bf3e8de8cc7e647a",
+  "review": {
+    "base": "d6406d4dc86720f9916e5416bf3e8de8cc7e647a",
+    "verdict": "approved",
+    "independent_tests": "11 passed, 1 warning in 15.48s",
+    "sha256": {
+      "/private/tmp/chatbook-backup-pr-20260912/tldw_chatbook/Chat/console_runtime.py": "ab3dbe6b41dd2fd3ecff9d11470a2c171d94066943f5c800b0395c0852eab81d",
+      "/private/tmp/chatbook-backup-pr-20260912/tldw_chatbook/UI/Screens/chat_screen.py": "701f3ac336d2c103c344cb9f0c5e171b10e4cc64edf2821b7e5d14b6592bb654",
+      "/private/tmp/chatbook-backup-pr-20260912/Tests/Backup_Recovery/test_canvas_view_binding_lifetime.py": "db83fce01470c580acd541c2151c64f41d6e6826cef320232e45d6e5792abf74",
+      "/private/tmp/chatbook-backup-pr-20260912/Tests/Backup_Recovery/run_platform_product.py": "402bf44253c052e6247e83b9d355de550b7aabefb58f36009d154cdb8bfe5993",
+      "/private/tmp/uat-canvas-binding-independent-final11.log": "0a66a8378715db9f97562546b49173236799cae443656835957d54fd4c04c57c"
+    }
+  },
+  "focused_root": {
+    "passed": 44,
+    "seconds": 40.84
+  },
+  "actual_import": {
+    "passed": 2
+  },
+  "original_compatibility_bodies_in_fresh_native_profiles": {
+    "passed": 3
+  },
+  "ordinary_pytest_compatibility": "Three failures reproduce on exact baseline due native raw_source_selection_changed; recorded independently, no guard relaxation.",
+  "installed_mounted": {
+    "fixture": "/private/tmp/uat-canvas-binding-mounted-macos",
+    "passed": 3,
+    "seconds": 142.06,
+    "installed_files_preserved": 2867,
+    "package_files_match_wheel": 2800,
+    "python_exact_source_matches": 2474,
+    "source_differences": {
+      "tldw_chatbook/UI/Screens/chat_screen.py": "Only dict(keyword=value) to equal dictionary literal lint cleanup; complete module AST equal after this one specific normalization."
+    },
+    "wheel_sha256": "d113a161d6a363c0c4ada0befda36b85c002b2b6e709839b28daf5ddc6537315",
+    "final_source_installed_native_checks": "separate fresh final installation verifies all11 binding/import cases and exact current Python source"
+  },
+  "final_installed_native": {
+    "fixture": "/private/tmp/uat-canvas-binding-final-installed-cryuy39s",
+    "passed": 11,
+    "checks": [
+      "binding-same",
+      "binding-direct",
+      "binding-successor",
+      "binding-callbacks",
+      "binding-controller",
+      "binding-reclaim",
+      "binding-cleared",
+      "binding-initial_pause",
+      "binding-pause",
+      "import-same",
+      "import-successor"
+    ],
+    "python_sources_match": 2475,
+    "installed_files_preserved": 2867,
+    "wheel_sha256": "fe94678c95fac0d4685afd22c4ccff348e2c470e36c4de3518526ac3c53b4066",
+    "network_attempts": 0
+  },
+  "module_guards": {
+    "passed": 2,
+    "import": 669,
+    "import_limit": 686,
+    "ui_ready": 1022,
+    "ui_ready_limit": 1022
+  },
+  "static": {
+    "root": "/private/tmp/uat-canvas-static-m1lytdjr",
+    "summary": {
+      "tldw_chatbook/Chat/console_runtime.py": {
+        "ruff_before": 31,
+        "ruff_after": 31,
+        "new_ruff": [],
+        "bandit_before": {
+          "B110": 3
+        },
+        "bandit_after": {
+          "B110": 3
+        },
+        "new_bandit": {}
+      },
+      "tldw_chatbook/UI/Screens/chat_screen.py": {
+        "ruff_before": 208,
+        "ruff_after": 208,
+        "new_ruff": [
+          {
+            "code": "F811",
+            "message": "Redefinition of unused `on_button_pressed` from line 24354: `on_button_pressed` redefined here",
+            "count": 1
+          }
+        ],
+        "bandit_before": {
+          "B110": 5,
+          "B101": 1,
+          "B404": 1,
+          "B607": 2
+        },
+        "bandit_after": {
+          "B110": 5,
+          "B101": 1,
+          "B404": 1,
+          "B607": 2
+        },
+        "new_bandit": {}
+      },
+      "Tests/Backup_Recovery/test_canvas_view_binding_lifetime.py": {
+        "ruff_before": 0,
+        "ruff_after": 0,
+        "new_ruff": [],
+        "bandit_before": {},
+        "bandit_after": {},
+        "new_bandit": {}
+      },
+      "Tests/Backup_Recovery/run_platform_product.py": {
+        "ruff_before": 0,
+        "ruff_after": 0,
+        "new_ruff": [],
+        "bandit_before": {},
+        "bandit_after": {},
+        "new_bandit": {}
+      }
+    }
+  },
+  "static_interpretation": "No new Ruff after normalizing only referenced baseline F811 line number; no new Bandit.",
+  "selection_collections": {
+    "native-close-diagnostic": 36,
+    "support-diagnostic": 348
+  },
+  "evidence_hashes": {
+    "/private/tmp/uat-canvas-view-binding-red.log": "370113acb918b87fc8ea540fe61e8eec12722c7ac3cd9c1a9b5d445fe95d1140",
+    "/private/tmp/uat-canvas-view-binding-green.log": "f203d4095121ace90b2e229135ede22138f1f763a628e0e87afbf4ccbb3c6c70",
+    "/private/tmp/uat-canvas-view-binding-import-compat.log": "4be841fffea60fdb27d7b0be4c35298d26cfeab42b9816cfe0ea21e0aa5c2fab",
+    "/private/tmp/uat-canvas-binding-native-compat.log": "63c0a4efa4d6b9a74feec41af9c5aef49f43c274511ee7f752908090a3a5858b",
+    "/private/tmp/uat-canvas-binding-module-census.log": "8f0a795ee636a5a0a4fce14f67ea777fe8d569e671bb7475ab695a797711318f",
+    "/private/tmp/uat-canvas-binding-static-final.log": "ce536c3c3b1b07b6de4d0c5aaee8a39c6c0a4639ace76279ef66a40bb31bb43f",
+    "/private/tmp/uat-canvas-binding-independent-final11.log": "0a66a8378715db9f97562546b49173236799cae443656835957d54fd4c04c57c"
+  },
+  "linux_d6406": {
+    "installed_files": 2867,
+    "mismatches": 0,
+    "python_sources": 2475,
+    "revision": "d6406d4dc86720f9916e5416bf3e8de8cc7e647a",
+    "tracked_source_unchanged": true,
+    "wheel_sha256": "10c55846e15398b65b42e42b424d835e096507aa7065b02756564a6fb9430076"
+  },
+  "linux_d6406_outcomes": {
+    "passed": 25,
+    "failed": 0,
+    "skipped": 0,
+    "unfinished": 0
+  },
+  "limits": "No config memo, widened guard, new authority or deadline/cap change. Linux/Windows verification of this next commit pending; Windows acceptance still unresolved."
+}

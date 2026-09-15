@@ -211,7 +211,9 @@ class LocalCollectionsCaptureService:
     ) -> Any:
         if self.repository.db.is_memory_db:
             return function(*args, **kwargs)
-        return await asyncio.to_thread(function, *args, **kwargs)
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        return await asyncio.to_thread(run_finite_local_worker, function, *args, **kwargs)
 
     async def capabilities(self) -> CaptureCapabilities:
         supported = {

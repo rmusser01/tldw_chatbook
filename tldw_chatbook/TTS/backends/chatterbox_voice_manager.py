@@ -1,9 +1,9 @@
+from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
 # chatterbox_voice_manager.py
 # Description: Voice profile management for Chatterbox TTS backend
 #
 # Imports
 import json
-import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
@@ -26,6 +26,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
     This manager provides a consistent interface for managing these voice references.
     """
 
+    @voice_files.call
     def __init__(self, voice_samples_dir: Path):
         """
         Initialize the Chatterbox voice manager.
@@ -37,6 +38,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
         self.profiles_file = self.voice_samples_dir / "chatterbox_profiles.json"
         self._profiles_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
+    @voice_files.call
     def load_profiles(self) -> Dict[str, Dict[str, Any]]:
         """Load voice profiles from disk"""
         if self._profiles_cache is not None:
@@ -44,7 +46,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
 
         if self.profiles_file.exists():
             try:
-                with open(self.profiles_file, "r") as f:
+                with voice_files.open_text(self, self.profiles_file, "r") as f:
                     self._profiles_cache = json.load(f)
                     return self._profiles_cache
             except Exception as e:
@@ -55,10 +57,11 @@ class ChatterboxVoiceManager(VoiceManagerBase):
 
         return self._profiles_cache
 
+    @voice_files.call
     def save_profiles(self, profiles: Dict[str, Dict[str, Any]]) -> bool:
         """Save voice profiles to disk"""
         try:
-            with open(self.profiles_file, "w") as f:
+            with voice_files.open_text(self, self.profiles_file, "w") as f:
                 json.dump(profiles, f, indent=2)
 
             self._profiles_cache = profiles
@@ -67,6 +70,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             logger.error(f"Failed to save Chatterbox voice profiles: {e}")
             return False
 
+    @voice_files.call
     def create_profile(
         self,
         profile_name: str,
@@ -110,11 +114,11 @@ class ChatterboxVoiceManager(VoiceManagerBase):
 
             # Create profile directory
             profile_dir = self.voice_samples_dir / profile_name
-            profile_dir.mkdir(exist_ok=True)
+            voice_files.mkdir(self, profile_dir, exist_ok=True)
 
             # Copy reference audio
             dest_path = profile_dir / f"reference{ref_path.suffix}"
-            shutil.copy2(ref_path, dest_path)
+            voice_files.copy(self, ref_path, dest_path)
 
             # Create profile with Chatterbox-specific metadata
             profile = {
@@ -147,6 +151,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             logger.error(f"Error creating Chatterbox profile: {e}")
             return False, f"Error: {str(e)}"
 
+    @voice_files.call
     def list_profiles(self, tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """List all Chatterbox voice profiles"""
         profiles = self.load_profiles()
@@ -177,6 +182,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
         result.sort(key=lambda x: x["display_name"].lower())
         return result
 
+    @voice_files.call
     def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
         """Get a specific Chatterbox voice profile"""
         profiles = self.load_profiles()
@@ -186,6 +192,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             profile["backend"] = "chatterbox"
         return profile
 
+    @voice_files.call
     def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
         """Delete a Chatterbox voice profile"""
         try:
@@ -196,7 +203,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             # Remove profile directory
             profile_dir = self.voice_samples_dir / profile_name
             if profile_dir.exists():
-                shutil.rmtree(profile_dir)
+                voice_files.remove_tree(self, profile_dir)
 
             # Remove from profiles
             del profiles[profile_name]
@@ -212,6 +219,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             logger.error(f"Error deleting Chatterbox profile: {e}")
             return False, f"Error: {str(e)}"
 
+    @voice_files.call
     def update_profile(
         self,
         profile_name: str,
@@ -253,6 +261,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             logger.error(f"Error updating Chatterbox profile: {e}")
             return False, f"Error: {str(e)}"
 
+    @voice_files.call
     def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:
         """Export a Chatterbox voice profile"""
         try:
@@ -262,18 +271,18 @@ class ChatterboxVoiceManager(VoiceManagerBase):
 
             profile = profiles[profile_name]
             export_dir = Path(export_path)
-            export_dir.mkdir(parents=True, exist_ok=True)
+            voice_files.mkdir(self, export_dir, parents=True, exist_ok=True)
 
             # Create export package directory
             package_dir = export_dir / f"chatterbox_voice_{profile_name}"
-            package_dir.mkdir(exist_ok=True)
+            voice_files.mkdir(self, package_dir, exist_ok=True)
 
             # Copy reference audio
             if "reference_audio" in profile:
                 ref_path = Path(profile["reference_audio"])
                 if ref_path.exists():
                     dest_audio = package_dir / ref_path.name
-                    shutil.copy2(ref_path, dest_audio)
+                    voice_files.copy(self, ref_path, dest_audio)
 
                     # Update path in exported profile
                     export_profile = profile.copy()
@@ -286,12 +295,12 @@ class ChatterboxVoiceManager(VoiceManagerBase):
 
             # Save profile metadata
             profile_file = package_dir / "profile.json"
-            with open(profile_file, "w") as f:
+            with voice_files.open_text(self, profile_file, "w") as f:
                 json.dump(export_profile, f, indent=2)
 
             # Create README
             readme_path = package_dir / "README.txt"
-            with open(readme_path, "w") as f:
+            with voice_files.open_text(self, readme_path, "w") as f:
                 f.write(f"Chatterbox Voice Profile: {profile_name}\n")
                 f.write(f"Display Name: {profile.get('display_name', profile_name)}\n")
                 f.write(f"Language: {profile.get('language', 'unknown')}\n")
@@ -313,6 +322,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             logger.error(f"Error exporting Chatterbox profile: {e}")
             return False, f"Error: {str(e)}"
 
+    @voice_files.call
     def import_profile(
         self,
         import_path: str,
@@ -340,7 +350,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
                 return False, "profile.json not found in import package"
 
             # Load profile data
-            with open(profile_file, "r") as f:
+            with voice_files.open_text(self, profile_file, "r") as f:
                 import_profile = json.load(f)
 
             # Verify this is a Chatterbox profile
@@ -372,15 +382,15 @@ class ChatterboxVoiceManager(VoiceManagerBase):
 
             # Create profile directory
             profile_dir = self.voice_samples_dir / profile_name
-            profile_dir.mkdir(exist_ok=True)
+            voice_files.mkdir(self, profile_dir, exist_ok=True)
 
             # Copy reference audio if exists
             if "reference_audio" in import_profile:
-                ref_filename = import_profile["reference_audio"]
+                ref_filename = voice_files.reference_filename(import_profile["reference_audio"])
                 source_audio = package_dir / ref_filename
                 if source_audio.exists():
                     dest_audio = profile_dir / ref_filename
-                    shutil.copy2(source_audio, dest_audio)
+                    voice_files.copy(self, source_audio, dest_audio)
                     import_profile["reference_audio"] = str(dest_audio)
                 else:
                     logger.warning(f"Reference audio not found: {ref_filename}")
@@ -417,6 +427,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             "7_20_second_samples",
         ]
 
+    @voice_files.call
     def get_reference_audio_path(self, profile_name: str) -> Optional[str]:
         """
         Get the reference audio path for a profile.

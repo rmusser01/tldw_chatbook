@@ -1,0 +1,13 @@
+{
+  "ruff": {
+    "baseline": 208,
+    "current": 208,
+    "new": [],
+    "comparison": "Code/message multiset; normalize F811 referenced source line numbers after insertion. Existing duplicate on_button_pressed definitions unchanged."
+  },
+  "bandit": {
+    "baseline": 9,
+    "current": 9,
+    "new": []
+  }
+}

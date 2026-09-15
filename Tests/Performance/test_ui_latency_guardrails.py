@@ -38,6 +38,8 @@ from pathlib import Path
 import pytest
 from textual.widgets import Static
 
+from Tests.private_profile import private_profile_test
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Textual 8.2.8 ``Stylesheet`` parse cache size (``textual/css/stylesheet.py``).
@@ -72,26 +74,25 @@ _SETTLE_PASSES = 6
 _SETTLE_INTERVAL = 0.05
 
 
-def _scratch_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Point every config/data seam at a scratch tree with setup completed."""
-    home = tmp_path / "home"
-    data = tmp_path / "data"
-    config = tmp_path / "config"
+def _scratch_env(monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Populate the scratch profile selected before this interpreter's imports."""
+    home = Path(os.environ["HOME"])
+    data = Path(os.environ["XDG_DATA_HOME"])
+    config = Path(os.environ["XDG_CONFIG_HOME"])
     for sub in (home, data, config):
         sub.mkdir(parents=True, exist_ok=True)
-    config_file = config / "tldw_cli" / "config.toml"
+    config_file = Path(os.environ["TLDW_CONFIG_PATH"])
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(
         "[first_run]\nsetup_completed = true\n\n[splash_screen]\nenabled = false\n"
     )
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_DATA_HOME", str(data))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
     monkeypatch.setenv("TLDW_TEST_MODE", "1")
     # Same signal the app's own screen-preimport gate reads: keep the probe
     # environment free of the background import thread.
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "latency_guardrails")
+    from tldw_chatbook.config import load_settings
+
+    load_settings(force_reload=True)
     return home
 
 
@@ -111,11 +112,12 @@ async def _wait_for_screen(pilot, expected: str, budget: float) -> tuple[bool, f
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_destination_tour_stays_under_switch_budgets(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """Every hot destination arrives and settles inside its budget."""
-    _scratch_env(monkeypatch, tmp_path)
+    _scratch_env(monkeypatch)
     from tldw_chatbook.app import TldwCli
 
     app = TldwCli()
@@ -148,11 +150,12 @@ async def test_destination_tour_stays_under_switch_budgets(
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_destination_tour_css_sources_stay_below_parse_cache(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """A full destination tour must not cross Textual's LRU-64 parse cliff."""
-    _scratch_env(monkeypatch, tmp_path)
+    _scratch_env(monkeypatch)
     from tldw_chatbook.app import TldwCli
 
     app = TldwCli()
@@ -246,15 +249,19 @@ def _point_config_at_seeded_databases(home: Path) -> None:
         + f'chachanotes_db_path = "{data / "chachanotes.db"}"\n'
         + f'media_db_path = "{data / "media.db"}"\n'
     )
+    from tldw_chatbook.config import load_settings
+
+    load_settings(force_reload=True)
 
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_library_opens_within_budget_on_a_seeded_profile(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """Library arrives and settles inside its budget with 27 items in it."""
-    home = _scratch_env(monkeypatch, tmp_path)
+    home = _scratch_env(monkeypatch)
     _point_config_at_seeded_databases(home)
     _seed_library_profile(home)
 

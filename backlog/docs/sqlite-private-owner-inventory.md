@@ -65,6 +65,7 @@ Classifications have these meanings:
 | C45 | tldw_chatbook/TTS/profile_migration_publication | connect_private_sqlite_descriptor | tts.profile_migration_publication_descriptor | read_only_uri | immutable descriptor-bound publication validation | Migrated via `connect_private_sqlite_descriptor`. Publisher validation uses an immutable `/dev/fd` URI derived from an already verified descriptor, then rechecks the original descriptor's exact identity and content. Path substitution cannot redirect validation. |
 | C46 | tldw_chatbook/TTS/profile_migration_recovery | connect_private_sqlite_descriptor | tts.profile_migration_recovery_descriptor | read_only_uri | immutable descriptor-bound recovery validation | Migrated via `connect_private_sqlite_descriptor`. Recovery validation uses an immutable `/dev/fd` URI derived from an already verified descriptor, then rechecks the original descriptor's exact identity and content. Path substitution cannot redirect validation. |
 | C47 | tldw_chatbook/TTS/profile_repository | restore version/qualification/publication source | tts.profile_restore_stage | read_only_uri | exact admitted restore source | Migrated via `connect_private_sqlite`. Every restore-stage connection is repository-owned under the exclusive lease. A close failure retains the live handle and exclusive lease, leaves the repository unavailable, and is retried only by later cleanup. |
+| C48 | tldw_chatbook/TTS/profile_schema | _open_native_exact_current_profile_store | tts.profile_store_descriptor | read_only_uri | immutable descriptor-bound shared-startup proof | Migrated via `connect_private_sqlite_descriptor`. Shared startup retains the canonical parent/file descriptors, validates an immutable exact-v4 logical image, and requires the query-only path connection to serialize to the same image before writes are enabled; the returned live handle owns the proof descriptors for its lifetime. POSIX current-store proof uses the retained helper process; this descriptor owner is retained for native Windows. |
 | C49 | tldw_chatbook/DB/Subscriptions_DB | SubscriptionsDB._get_connection | db.subscriptions.agent_read | read_only_uri | external agent Watchlists read | Migrated via `connect_private_sqlite`. Opens only an existing Watchlists database through a read-only URI, preserves the source file mode owned by the mutable application database, and cannot create or migrate the database or write the main database file, schema, or rows. A WAL reader may create or update SQLite-managed `-wal`/`-shm` sidecars; suppressing that with `immutable=1` could ignore committed, uncheckpointed WAL frames. |
 | C50 | tldw_chatbook/Notes/notes_device_state_store | NotesDeviceStateStore._connect | notes.sync_state | private_file, read_only_uri | device-private import receipts and lasting-sync state | Migrated via `connect_private_sqlite`. The profile-local owner stores private import receipts plus bounded roots, bindings, cursors, journals, recovery, migration, and settings; public projections omit paths, content, hashes, recovery bytes, cursors, and exception text, read-only planning cannot create or migrate the owner, and it is excluded from portable export and centralized backup. |
 | C51 | tldw_chatbook/Utils/db_upgrade_notice | print_db_upgrade_notice_if_pending | utils.db_upgrade_notice | read_only_uri | pre-boot schema-version probe | Migrated via `connect_private_sqlite`. The pre-boot "upgrading database..." notice (task-21100) reads exactly one `db_schema_version` row through a validated read-only URI before the app constructs; it cannot create, migrate, or write the database, and every failure is swallowed so the courtesy line can never become a boot failure of its own. A WAL reader may create or update SQLite-managed `-wal`/`-shm` sidecars. |
@@ -74,14 +75,24 @@ Classifications have these meanings:
 | C55 | tldw_chatbook/Chat/console_trace_maintenance | PhysicalTraceCompactor._open_maintenance_connection | chat.trace_maintenance | private_file | same-file maintenance write | Migrated via `connect_private_sqlite`. Registered under its actual module owner. Reopens the existing conversation database with `must_exist=True` for leased physical maintenance, preserving path hardening, connection options and PRAGMAs. Memory compaction remains deferred; no centralized backup permission. |
 | C56 | tldw_chatbook/Library/collections_legacy_recovery | LegacyCollectionsRecovery._read_transaction | library.legacy_recovery | read_only_uri | schema-independent legacy recovery read | Migrated via `connect_private_sqlite`. Existing-file, read-only access without schema initialization or mode changes; namespace checks fail closed. No centralized backup authority. SQLite may maintain WAL/SHM sidecars while reading committed WAL frames. |
 | C57 | tldw_chatbook/Chat/console_launch_wake | pending_conversations_at_launch | chat.launch_wake | read_only_uri | native fleet launch discovery | Migrated via `connect_private_sqlite`. TASK-32037 / ADR-135 reads identities from an existing private sibling runs database without creating, migrating, or reconciling it. Claimed results remain discoverable without attention badges; the native runtime separately owns recovery. The read-only WAL view includes committed frames and retains the normal private file and sidecar policy. |
+| C58 | tldw_chatbook/DB/recovery_core | _CoreAdapter.validate / _CoreAdapter.validate_dependencies | recovery.core.chachanotes | private_file, read_only_uri | exact current staged core schema/reference validation | Migrated via `connect_private_sqlite`. Frozen installed owner dispatch; source reads and private staging opens require directional fixed-authority capture scope during maintenance. |
+| C59 | tldw_chatbook/DB/recovery_core | _CoreAdapter.validate / _CoreAdapter.validate_dependencies | recovery.core.media | private_file, read_only_uri | exact current staged core schema/reference validation | Migrated via `connect_private_sqlite`. Frozen installed owner dispatch; source reads and private staging opens require directional fixed-authority capture scope during maintenance. |
+| C60 | tldw_chatbook/DB/recovery_core | _CoreAdapter.validate / _CoreAdapter.validate_dependencies | recovery.core.prompts | private_file, read_only_uri | exact current staged core schema/reference validation | Migrated via `connect_private_sqlite`. Frozen installed owner dispatch; source reads and private staging opens require directional fixed-authority capture scope during maintenance. |
+| C61 | tldw_chatbook/DB/recovery_core | _CoreAdapter.validate / _CoreAdapter.validate_dependencies | recovery.core.library_collections | private_file, read_only_uri | exact current staged core schema/reference validation | Migrated via `connect_private_sqlite`. Frozen installed owner dispatch; source reads and private staging opens require directional fixed-authority capture scope during maintenance. |
+| C62 | tldw_chatbook/DB/recovery_core | _CoreAdapter.validate / _CoreAdapter.validate_dependencies | recovery.core.library_ingest_jobs | private_file, read_only_uri | exact current staged core schema/reference validation | Migrated via `connect_private_sqlite`. Frozen installed owner dispatch; source reads and private staging opens require directional fixed-authority capture scope during maintenance. |
+
+| C63 | tldw_chatbook/Research_Interop/recovery | _Adapter.validate | recovery.domain.research | private_file, read_only_uri | exact schema/domain validation | Migrated via `connect_private_sqlite`. Installed literal authority; no runtime constructor or migration. |
+| C64 | tldw_chatbook/Writing_Interop/recovery | _Adapter.validate | recovery.domain.writing | private_file, read_only_uri | exact schema/domain validation | Migrated via `connect_private_sqlite`. Installed literal authority; no runtime constructor or migration. |
+| C65 | tldw_chatbook/Evals/recovery | _Adapter.validate / _Adapter.validate_dependencies | recovery.domain.evals | private_file, read_only_uri | exact schema/domain validation | Migrated via `connect_private_sqlite`. Installed literal authority; no runtime constructor or migration. |
+| C66 | tldw_chatbook/Study_Interop/recovery | _SharedAdapter.validate | recovery.domain.study | read_only_uri | exact schema/domain validation | Migrated via `connect_private_sqlite`. Installed literal authority; no runtime constructor or migration. |
 
 ## SQLite backup and restore inventory
 
 ### TASK-32160 exclusive descriptor disposition (ADR-125)
 
-C48 is retired permanently; its ID is not reused. The former
+C48 is retained only for native Windows. On POSIX, the former
 `tts.profile_store_descriptor` parent SHARED-startup registration is removed.
-`open_exact_current_profile_store` now retains the Task4/5 helper proof and a
+`open_exact_current_profile_store` retains the Task4/5 helper proof and a
 directory-only local FD. No parent database/sidecar proof FD or full-image
 serialization remains in that live entry point. The separate child-only raw
 `TTSProof.initialize` seam in `TTS/profile_sqlite_proof.py` uses exactly its
@@ -174,8 +185,13 @@ SemLock-blocked spawned cases remain separate qualification limits.
 | B09 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Subscriptions target | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. The shared six-owner loop opens the verified source read-only and transactionally backs it up to a private target. |
 | B13 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_online_backup | tts.profile_backup | private_file | backup_open_connections_to_private | Migrated via `backup_open_connections_to_private`. Preserve the repository's caller-owned connection and deadline callback contract while centralizing source pinning and page backup. |
 | B14 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_publish_migrated_store | tts.profile_restore_stage | private_file, read_only_uri | migrate_profile_store_to_candidate | Migrated via `migrate_profile_store_to_candidate`. Copy the exact active or admitted restore source into fixed descriptor-owned canonical candidate leaves, retain per-page deadline checks, step only the private active candidate, validate it immutably, and hand the same authority to the journaled publisher. |
-| B15 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_create_recovery_backup | tts.profile_recovery | private_file | backup_connection_to_private | Migrated via `backup_connection_to_private`. Back up the leased live connection to a private recovery target while retaining per-page deadline checks. |
+| B15 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_create_recovery_backup | tts.profile_recovery | private_file | backup_open_connections_to_private | Migrated via `backup_open_connections_to_private`. The actual recovery caller owns its destination connection and close result; existing source pin, alias and per-page deadline checks remain, with exact observed journal identity protection. |
 | B17 | tldw_chatbook/TTS/profile_migration_candidate | ProfileMigrationBoundarySnapshot.backup_to | tts.profile_migration_boundary | private_file, memory | backup_profile_migration_boundary | Migrated via `backup_profile_migration_boundary`. Copy an isolated exact v2/v3 snapshot into one exclusive `0600` destination, recheck identity and validation, normalize journaling, fsync, close, and refuse any raw destination connection. The repository's canonical active-candidate path uses the companion `migrate_profile_store_to_candidate` operation, which pins the fixed leaf descriptors across online copy, version stepping, immutable validation, fsync, publication handoff, and exact bounded-tombstone cleanup; nonzero cleanup artifacts are never reused. |
+| B18 | tldw_chatbook/DB/recovery_core | _CoreAdapter.capture | recovery.core.chachanotes | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Complete recovery authority only; committed WAL snapshot under native maintenance, with exact read-only sources and private staging, cancellation and resource retirement. Selective exports unchanged. |
+| B19 | tldw_chatbook/DB/recovery_core | _CoreAdapter.capture | recovery.core.media | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Complete recovery authority only; committed WAL snapshot under native maintenance, with exact read-only sources and private staging, cancellation and resource retirement. Selective exports unchanged. |
+| B20 | tldw_chatbook/DB/recovery_core | _CoreAdapter.capture | recovery.core.prompts | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Complete recovery authority only; committed WAL snapshot under native maintenance, with exact read-only sources and private staging, cancellation and resource retirement. Selective exports unchanged. |
+| B21 | tldw_chatbook/DB/recovery_core | _CoreAdapter.capture | recovery.core.library_collections | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Complete recovery authority only; committed WAL snapshot under native maintenance, with exact read-only sources and private staging, cancellation and resource retirement. Selective exports unchanged. |
+| B22 | tldw_chatbook/DB/recovery_core | _CoreAdapter.capture | recovery.core.library_ingest_jobs | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Complete recovery authority only; committed WAL snapshot under native maintenance, with exact read-only sources and private staging, cancellation and resource retirement. Selective exports unchanged. |
 
 `restore_private_sqlite` remains a regression-tested generic seam with no
 current production caller. It retains one exclusive destination connection
@@ -186,6 +202,10 @@ private snapshot; rollback failure raises an indeterminate-state error that
 identifies the snapshot and warns against automatic retry. Active readers,
 writers, and previously queried idle WAL connections fail closed when SQLite
 cannot prove exclusivity rather than replacing the database file.
+
+| B23 | tldw_chatbook/Research_Interop/recovery | _Adapter.capture | recovery.domain.research | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Native maintenance scope; default SQLite factory and full committed database only. |
+| B24 | tldw_chatbook/Writing_Interop/recovery | _Adapter.capture | recovery.domain.writing | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Native maintenance scope; default SQLite factory and full committed database only. |
+| B25 | tldw_chatbook/Evals/recovery | _Adapter.capture | recovery.domain.evals | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Native maintenance scope; default SQLite factory and full committed database only. |
 
 ## Database parent creator inventory
 
@@ -238,7 +258,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains 55 classified connection sites and fourteen
+The migrated boundary retains 89 classified connection sites and thirty-three
 classified backup/restore operations. The centralized filesystem seam owns
 three raw `sqlite3.connect` calls inside `DB/private_sqlite.py`. One separate
 raw call in `TTS/profile_sqlite_policy.require_native_close_policy_support` is
@@ -259,3 +279,83 @@ does not open a destination or grant another owner backup authority. Negative
 scanner controls reject extra, duplicate, moved, receiver-changed and
 other-module calls; real SQLite tests cover reservation release after success
 and callback failure. Settings has no SQLite database `shutil.copy2()` site.
+## Core complete recovery authority (TASK-31989)
+
+`recovery.core.*` is a separate installed backup policy for the five core stores.
+The ordinary selective export and operational-store exclusions remain unchanged.
+Only the reviewed frozen factory may dispatch these IDs dynamically; the AST guard
+checks exact symbols, expressions and factory membership, including negative cases.
+Capture requires the fixed bootstrap authority, verified selected bindings, all
+source namespaces and `bootstrap.unbound`. Every returned native SQLite handle is
+retired before capture scope exit. See [core owner qualification](backup-recovery-core-owners.md).
+
+## Installed operational recovery qualification (TASK-31991)
+
+| C67 | tldw_chatbook/DB/recovery_operations | _WorkspacesAdapter.validate | recovery.operations.workspaces | private_file, read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C68 | tldw_chatbook/DB/recovery_operations | _AgentRunsAdapter.validate | recovery.operations.agent_runs | private_file, read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C69 | tldw_chatbook/DB/recovery_operations | _SubscriptionsAdapter.discover / _SubscriptionsAdapter.validate_dependencies / _SubscriptionsAdapter.validate | recovery.operations.subscriptions | private_file, read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C70 | tldw_chatbook/Scheduling/recovery | _ScheduledTasksAdapter.validate | recovery.operations.scheduled_tasks | private_file, read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C71 | tldw_chatbook/Notifications/recovery | _NotificationsAdapter.validate | recovery.operations.notifications | private_file, read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C72 | tldw_chatbook/Notifications/recovery | _EventsAdapter.validate | recovery.operations.events | private_file, read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C73 | tldw_chatbook/Sync_Interop/recovery | _SyncAdapter.validate | recovery.operations.sync | private_file, read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C74 | tldw_chatbook/Notes/recovery | _FileNotesAdapter.validate | recovery.operations.file_notes | private_file, read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C76 | tldw_chatbook/Agents/recovery | _RunLogs.discover | recovery.operations.agent_logs | read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C77 | tldw_chatbook/Kanban_Interop/recovery | _KanbanAdapter.validate | recovery.operations.kanban | private_file, read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+| C78 | tldw_chatbook/Notes/recovery | _SyncBindings.validate | recovery.operations.note_bindings | read_only_uri | exact installed schema/history validation | Migrated via `connect_private_sqlite`. Literal owner authority; no constructor or replay. |
+
+| B26 | tldw_chatbook/DB/recovery_operations | _WorkspacesAdapter.capture | recovery.operations.workspaces | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+| B27 | tldw_chatbook/DB/recovery_operations | _AgentRunsAdapter.capture | recovery.operations.agent_runs | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+| B28 | tldw_chatbook/DB/recovery_operations | _SubscriptionsAdapter.capture | recovery.operations.subscriptions | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+| B29 | tldw_chatbook/Scheduling/recovery | _ScheduledTasksAdapter.capture | recovery.operations.scheduled_tasks | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+| B30 | tldw_chatbook/Notifications/recovery | _NotificationsAdapter.capture | recovery.operations.notifications | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+| B31 | tldw_chatbook/Notifications/recovery | _EventsAdapter.capture | recovery.operations.events | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+| B32 | tldw_chatbook/Sync_Interop/recovery | _SyncAdapter.capture | recovery.operations.sync | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+| B33 | tldw_chatbook/Notes/recovery | _FileNotesAdapter.capture | recovery.operations.file_notes | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+| B35 | tldw_chatbook/Kanban_Interop/recovery | _KanbanAdapter.capture | recovery.operations.kanban | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+
+## Installed durable-file reference authority (TASK-31992)
+
+| C79 | tldw_chatbook/TTS/recovery | _Profiles.validate | recovery.files.tts | private_file, read_only_uri | exact installed TTS schema 4 validation | Migrated via `connect_private_sqlite`. Literal owner authority; no runtime constructor or migration replay. |
+| C80 | tldw_chatbook/Persona_Visual/recovery | _Assets._references | recovery.files.persona | read_only_uri | core schema 42 qualified current and retained locators | Migrated via `connect_private_sqlite`. Read-only reference proof; no publication authority. |
+| C81 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_create_recovery_backup | tts.profile_recovery | private_file | exact caller-owned recovery destination | Migrated via `connect_private_sqlite`. Existing literal policy; actual outer record retains destination close uncertainty independently of public restore result. |
+| B36 | tldw_chatbook/TTS/recovery | _Profiles.capture | recovery.files.tts | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Checked maintenance snapshot includes clone-reference BLOBs. |
+
+`_CoreAdapter.discover` additionally reads qualified core schema 42 using literal
+`recovery.core.chachanotes` to derive present reference groups; it does not change
+the existing C/B owner policy or admit an arbitrary dynamic call site.
+
+## Recovered media catalog (TASK-31994, ADR-126)
+
+| C82 | tldw_chatbook/Backup_Recovery/recovered_media | RecoveredMedia._connection | recovered.media | private_file | finite catalog/file lifecycle | Migrated via `connect_private_sqlite`. Native connection holds admission through publication or retirement; no cached worker connection. |
+| C83 | tldw_chatbook/Backup_Recovery/recovered_media | _RecoveredAdapter.validate | recovery.recovered_media | private_file, read_only_uri | installed v1 catalog validation | Migrated via `connect_private_sqlite`. Exact schema and tombstone/reference validation, no media decoding. |
+| C84 | tldw_chatbook/Backup_Recovery/recovered_media | _RecoveredAdapter.discover | recovery.recovered_media | private_file, read_only_uri | catalog-owned payload discovery | Migrated via `connect_private_sqlite`. Baseline payloads independent of temporary-media selection. |
+| C85 | tldw_chatbook/Backup_Recovery/recovered_media | _RecoveredAdapter.validate_dependencies | recovery.recovered_media | private_file, read_only_uri | validated catalog to payload dependency group | Migrated via `connect_private_sqlite`. Registered SHA256/size checked against staged candidates; deleted rows need valid tombstones. |
+| B37 | tldw_chatbook/Backup_Recovery/recovered_media | _RecoveredAdapter.capture | recovery.recovered_media | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Existing native maintenance scope and page-progress checks remain mandatory. |
+
+## Restricted imported SQLite validation (TASK-31996, ADR-126)
+
+| C86 | tldw_chatbook/DB/private_sqlite | open_recovery_validation | recovery.validation | private_file, read_only_uri | disposable staged import inspection and installed migration | Migrated via `open_recovery_validation`. Explicit installed logical owner lookup, mandatory security primitives, one restricted candidate connection. No live resource enrollment, ordinary repository, or unrestricted retry. |
+| C87 | tldw_chatbook/Backup_Recovery/sqlite_validation | _reference | recovery.validation_schema | memory | exact installed schema metadata reference | Migrated via `connect_private_sqlite`. Only frozen installed SQL enters this memory database; candidate SQL is compared before metadata/version/domain inspection. |
+| C88 | tldw_chatbook/Backup_Recovery/credentials | _rewrite_database | recovery.credentials | private_file | fresh staged credential-free logical reconstruction | Migrated via `connect_private_sqlite`. Exact installed catalog from restricted validated source, explicit hidden rowids and parameterized rows, installed triggers created after data copy, then restricted output validation. Never opens a live destination or copies freed pages/sidecars. |
+| C89 | tldw_chatbook/Backup_Recovery/recovered_media | _RecoveredAdapter.validate_restore_dependencies | recovery.recovered_media | read_only_uri | staged catalog to archive-relative payload dependency group | Migrated via `connect_private_sqlite`. Literal installed owner, checked schema and parameter-free ready-asset read; explicit logical edges and relative topology select staged payloads for size/digest validation. No original absolute path or live destination authority. |
+| C90 | tldw_chatbook/Backup_Recovery/rag_projection_validation | _preflight | recovery.rag_projection_validation | read_only_uri | disposable installed Chroma metadata before native candidate open | Migrated via `connect_private_sqlite`. Exact literal read-only policy, immutable disabled so copied WAL remains visible, checked private path and restricted exact schema/locator inspection. Only disposable copies enter; no ordinary runtime enrollment, live root, centralized backup or recovery capture authority. |
+| C91 | tldw_chatbook/Backup_Recovery/rag_indexing | _Indexing.validate | recovery.rag_indexing | read_only_uri | exact current staged indexing-state validation | Migrated via `connect_private_sqlite`. Fixed installed owner, exact SQLite schema and private candidate path; no vector engine or runtime constructor. |
+| B38 | tldw_chatbook/Backup_Recovery/rag_indexing | _Indexing.capture | recovery.rag_indexing | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Checked maintenance scope and cancellation guard retain native source and destination authority. |
+
+The candidate entry compares complete ordered catalogs plus columns, autoindexes,
+indexes, views and FTS/shadow metadata. It checks versions, integrity, foreign keys
+and existing owned BLOB/domain rules. Research v0→v1 is the installed supported
+migration; it runs transactionally on the same restricted candidate connection
+and repeats validation before commit. Cancellation and statement/deadline budgets
+interrupt work without suppressing rollback. Extension loading, ATTACH, ordinary
+writes, unsafe functions and schema-trust changes are refused. Limits include
+64 MiB values/rows, 1 MiB SQL, 250,000 compiled operations, a 2 MiB page cache,
+5 million progress steps and a 30 second validation deadline.
+
+The caller supplies a disposable private staged path, never a live destination.
+Cross-owner asset bytes require the executor's staged dependency map and are
+checked by existing dependency validation; this single-candidate interface cannot
+resolve those paths and never opens them. Source/profile binding remains Task20.
+
+C75 and B34 are retired: current Notes device-local state is explicitly excluded
+from centralized backup. Its ordinary `notes.sync_state` owner remains in C50.

@@ -17,6 +17,8 @@ from tldw_chatbook.Utils.private_paths import (
 )
 
 from .types import RuntimeSourceState
+from ..Backup_Recovery import raw_participants as raw
+from ..Backup_Recovery import config_participants as config_files
 
 POLICY_FRESHNESS_WINDOW = timedelta(minutes=5)
 
@@ -194,32 +196,40 @@ class RuntimeSourceStateStore:
         )
 
     def load(self) -> RuntimeSourceState:
-        try:
-            with open_private_binary(self.path) as opened:
-                _report_runtime_policy_posture(
-                    opened.result,
-                    operation="read",
-                )
-                data = json.load(opened.stream)
-        except FileNotFoundError:
-            return RuntimeSourceState()
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return RuntimeSourceState()
+        with raw._scope(self, "runtime_read", writing=True):
+            try:
+                with open_private_binary(self.path) as opened:
+                    _report_runtime_policy_posture(
+                        opened.result,
+                        operation="read",
+                    )
+                    data = json.load(opened.stream)
+            except FileNotFoundError:
+                return RuntimeSourceState()
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return RuntimeSourceState()
 
-        if not isinstance(data, dict):
-            return RuntimeSourceState()
+            if not isinstance(data, dict):
+                return RuntimeSourceState()
 
-        return RuntimeSourceState.from_dict(data)
+            return RuntimeSourceState.from_dict(data)
 
     def save(self, state: RuntimeSourceState) -> None:
-        payload = json.dumps(
-            runtime_source_state_to_dict(state),
-            indent=2,
-            sort_keys=True,
-        )
-        result = atomic_private_write_text(
-            self.path,
-            payload,
-            application_owned_directory=self.application_owned_directory,
-        )
-        _report_runtime_policy_posture(result, operation="write")
+        with raw._scope(self, "runtime_state", writing=True) as operation:
+            if self.application_owned_directory is not None:
+                raw._mkdirs(operation)
+            payload = json.dumps(
+                runtime_source_state_to_dict(state),
+                indent=2,
+                sort_keys=True,
+            )
+            result = atomic_private_write_text(
+                self.path,
+                payload,
+                application_owned_directory=(
+                    None if self.application_owned_directory == self.path.parent
+                    and config_files.verified_companion_parent(self, self.path)
+                    else self.application_owned_directory
+                ),
+            )
+            _report_runtime_policy_posture(result, operation="write")

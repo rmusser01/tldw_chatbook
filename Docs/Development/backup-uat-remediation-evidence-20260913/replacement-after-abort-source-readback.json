@@ -1,0 +1,8 @@
+{
+  "database_unchanged": true,
+  "config_unchanged": true,
+  "normal_startup_error": "storage_scope_not_enrolled",
+  "recovery_abort_was_successful": true,
+  "artifact_revision": "fe62a5aa319969ae2f21403ab3ca61059a8e3707",
+  "note_count": 2
+}

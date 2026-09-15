@@ -282,7 +282,7 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
         # streaming through it) -- the lie was the queue tooltip falling
         # into the provider-setup fallback. Instance-level stub, the
         # workbench-contract suite's existing idiom.
-        console._console_provider_blocker_copy = lambda: ""
+        console._console_provider_blocker_copy = lambda *, settings_readiness=None: ""
         session = store.ensure_session()
         _parent, run_id = _terminal_subagent_run(bridge.runs_db, session.persisted_conversation_id)
         gate = asyncio.Event()

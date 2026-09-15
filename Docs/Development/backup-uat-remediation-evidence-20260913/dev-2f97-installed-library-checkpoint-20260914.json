@@ -1,0 +1,21 @@
+{
+  "revision": "043d2cb639eb6ca4a06d569425850dfff76de2d8",
+  "wheel_sha256": "27bf2535153df5717bad6d56fae75c9dc732eb93d08538d6d9f5907961d89360",
+  "source_matches": 2475,
+  "installed_preserved_by_fixture": 2867,
+  "junit": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "1",
+      "time": "108.368",
+      "timestamp": "2026-09-14T11:56:21.679638-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    }
+  ],
+  "verification_path": "/private/tmp/uat-dev-2f97-installed-library/verified-package.json",
+  "verification_sha256": "3267e2021d3044283a7fb1eff6bdda3724d8e3c4d123887cefe3562a0435b36f",
+  "scope": "Installed Library navigation, coherent backup archive verification and resumed native writes; synthetic preconfigured profile, not manual first-time UAT."
+}

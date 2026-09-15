@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 975 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1022 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -16,11 +16,13 @@ tldw_chatbook.Actor_Packs.persona_coordinator
 tldw_chatbook.Actor_Packs.publication
 tldw_chatbook.Actor_Packs.repository
 tldw_chatbook.Agents
+tldw_chatbook.Agents.activation
 tldw_chatbook.Agents.agent_models
 tldw_chatbook.Agents.agent_routing
 tldw_chatbook.Agents.agent_runtime
 tldw_chatbook.Agents.agent_service
 tldw_chatbook.Agents.agent_stream
+tldw_chatbook.Agents.approval_provenance
 tldw_chatbook.Agents.builtin_tool_gate
 tldw_chatbook.Agents.fleet_coordinator
 tldw_chatbook.Agents.human_input_wait
@@ -47,6 +49,45 @@ tldw_chatbook.Audio_Services_Interop.server_audio_services_service
 tldw_chatbook.Auth_Account_Interop
 tldw_chatbook.Auth_Account_Interop.auth_account_scope_service
 tldw_chatbook.Auth_Account_Interop.server_auth_account_service
+tldw_chatbook.Backup_Recovery
+tldw_chatbook.Backup_Recovery.activation
+tldw_chatbook.Backup_Recovery.admission
+tldw_chatbook.Backup_Recovery.archive_models
+tldw_chatbook.Backup_Recovery.async_file_participants
+tldw_chatbook.Backup_Recovery.bootstrap
+tldw_chatbook.Backup_Recovery.chat_source_participants
+tldw_chatbook.Backup_Recovery.config_adapter
+tldw_chatbook.Backup_Recovery.config_participants
+tldw_chatbook.Backup_Recovery.control_records
+tldw_chatbook.Backup_Recovery.dictionary_file_participants
+tldw_chatbook.Backup_Recovery.file_inventory
+tldw_chatbook.Backup_Recovery.generated_media_lifetime
+tldw_chatbook.Backup_Recovery.generation_witnesses
+tldw_chatbook.Backup_Recovery.isolated_restore
+tldw_chatbook.Backup_Recovery.journal
+tldw_chatbook.Backup_Recovery.limits
+tldw_chatbook.Backup_Recovery.local_content_lifetime
+tldw_chatbook.Backup_Recovery.mcp_source_participants
+tldw_chatbook.Backup_Recovery.models
+tldw_chatbook.Backup_Recovery.native_files
+tldw_chatbook.Backup_Recovery.native_platform
+tldw_chatbook.Backup_Recovery.participants
+tldw_chatbook.Backup_Recovery.persona_visual_participants
+tldw_chatbook.Backup_Recovery.profile_paths
+tldw_chatbook.Backup_Recovery.qualification
+tldw_chatbook.Backup_Recovery.rag_definition_participant
+tldw_chatbook.Backup_Recovery.rag_projection_lifetime
+tldw_chatbook.Backup_Recovery.raw_participants
+tldw_chatbook.Backup_Recovery.recovered_media
+tldw_chatbook.Backup_Recovery.recovered_media_messages
+tldw_chatbook.Backup_Recovery.recovered_media_schema
+tldw_chatbook.Backup_Recovery.recovery_files
+tldw_chatbook.Backup_Recovery.runtime_maintenance
+tldw_chatbook.Backup_Recovery.runtime_producer_lifetime
+tldw_chatbook.Backup_Recovery.service_storage
+tldw_chatbook.Backup_Recovery.settings_file_participants
+tldw_chatbook.Backup_Recovery.storage_admission
+tldw_chatbook.Backup_Recovery.visual_identity_participants
 tldw_chatbook.Canvas
 tldw_chatbook.Canvas.archive
 tldw_chatbook.Canvas.compilation
@@ -240,11 +281,13 @@ tldw_chatbook.DB.Subscriptions_DB
 tldw_chatbook.DB.VisualIdentity_DB
 tldw_chatbook.DB.Workspace_DB
 tldw_chatbook.DB.base_db
+tldw_chatbook.DB.canvas_payload_validation
 tldw_chatbook.DB.fts_backfill_pacing
 tldw_chatbook.DB.private_sqlite
 tldw_chatbook.DB.private_sqlite_files
 tldw_chatbook.DB.private_sqlite_process
 tldw_chatbook.DB.private_sqlite_protocol
+tldw_chatbook.DB.recovery_sqlite
 tldw_chatbook.DB.sql_identifier_core
 tldw_chatbook.DB.sql_logging
 tldw_chatbook.DB.sql_validation
@@ -313,6 +356,7 @@ tldw_chatbook.LLM_Calls.qwencloud
 tldw_chatbook.LLM_Calls.qwencloud_url
 tldw_chatbook.LLM_Calls.realtime
 tldw_chatbook.LLM_Calls.realtime.protocol
+tldw_chatbook.LLM_Calls.recovery_review
 tldw_chatbook.LLM_Calls.zai
 tldw_chatbook.LLM_Provider_Catalog
 tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service
@@ -360,6 +404,7 @@ tldw_chatbook.Local_Ingestion.parakeet_v2_installer
 tldw_chatbook.Local_Ingestion.stt_batch_routing
 tldw_chatbook.Logging_Config
 tldw_chatbook.MCP
+tldw_chatbook.MCP.activation
 tldw_chatbook.MCP.client
 tldw_chatbook.MCP.execution_log
 tldw_chatbook.MCP.hub_tool_catalog
@@ -369,6 +414,7 @@ tldw_chatbook.MCP.local_store
 tldw_chatbook.MCP.permission_prompt_reducer
 tldw_chatbook.MCP.permission_store
 tldw_chatbook.MCP.readiness
+tldw_chatbook.MCP.recovery_activation
 tldw_chatbook.MCP.redaction
 tldw_chatbook.MCP.server
 tldw_chatbook.MCP.server_target_store
@@ -403,6 +449,7 @@ tldw_chatbook.Metrics.metrics_logger
 tldw_chatbook.Model_Artifacts
 tldw_chatbook.Model_Artifacts.gguf_admission
 tldw_chatbook.Model_Artifacts.leases
+tldw_chatbook.Model_Artifacts.maintenance
 tldw_chatbook.Model_Artifacts.service
 tldw_chatbook.Model_Artifacts.store
 tldw_chatbook.Notes
@@ -411,6 +458,7 @@ tldw_chatbook.Notes.file_notes_git_commit
 tldw_chatbook.Notes.file_notes_git_network
 tldw_chatbook.Notes.file_notes_git_push
 tldw_chatbook.Notes.file_notes_git_service
+tldw_chatbook.Notes.file_notes_replica
 tldw_chatbook.Notes.file_notes_session_owner
 tldw_chatbook.Notes.git_process_containment
 tldw_chatbook.Notes.note_folder_models
@@ -488,6 +536,7 @@ tldw_chatbook.RAG_Admin.rag_admin_scope_service
 tldw_chatbook.RAG_Admin.server_rag_admin_service
 tldw_chatbook.RAG_Admin.template_validation
 tldw_chatbook.RAG_Search
+tldw_chatbook.RAG_Search.activation
 tldw_chatbook.RAG_Search.fusion
 tldw_chatbook.RAG_Search.ingestion_indexing
 tldw_chatbook.RAG_Search.local_citation_capture
@@ -560,6 +609,7 @@ tldw_chatbook.Skills_Interop.atomic_write
 tldw_chatbook.Skills_Interop.local_skills_service
 tldw_chatbook.Skills_Interop.project_skills_discovery
 tldw_chatbook.Skills_Interop.project_skills_prompt
+tldw_chatbook.Skills_Interop.recovery
 tldw_chatbook.Skills_Interop.server_skills_service
 tldw_chatbook.Skills_Interop.skill_trust_crypto
 tldw_chatbook.Skills_Interop.skill_trust_models
@@ -603,7 +653,6 @@ tldw_chatbook.Subscriptions.watchlist_rule_matching
 tldw_chatbook.Subscriptions.watchlist_scope_service
 tldw_chatbook.Subscriptions.watchlists_operation_coordinator
 tldw_chatbook.Sync_Interop
-tldw_chatbook.Sync_Interop.chat_outbox_producer
 tldw_chatbook.Sync_Interop.conflict_review
 tldw_chatbook.Sync_Interop.crypto
 tldw_chatbook.Sync_Interop.domain_adapters
@@ -615,9 +664,7 @@ tldw_chatbook.Sync_Interop.domain_adapters.notes_m1
 tldw_chatbook.Sync_Interop.domain_adapters.source_cache
 tldw_chatbook.Sync_Interop.domain_adapters.workspaces
 tldw_chatbook.Sync_Interop.envelope_applier
-tldw_chatbook.Sync_Interop.envelope_builder
 tldw_chatbook.Sync_Interop.hashing
-tldw_chatbook.Sync_Interop.key_recovery_service
 tldw_chatbook.Sync_Interop.local_first_sync_service
 tldw_chatbook.Sync_Interop.manual_sync_control
 tldw_chatbook.Sync_Interop.restore_service
@@ -658,16 +705,15 @@ tldw_chatbook.TTS.playground_types
 tldw_chatbook.TTS.preferences
 tldw_chatbook.TTS.profile_errors
 tldw_chatbook.TTS.profile_portability
-tldw_chatbook.TTS.profile_reference_audio
 tldw_chatbook.TTS.profile_reference_materialization
 tldw_chatbook.TTS.profile_reference_types
 tldw_chatbook.TTS.profile_service
+tldw_chatbook.TTS.profile_source
 tldw_chatbook.TTS.profile_types
 tldw_chatbook.TTS.provider_ids
 tldw_chatbook.TTS.request_admission
 tldw_chatbook.TTS.sample_audio_validation
 tldw_chatbook.TTS.studio_preferences
-tldw_chatbook.TTS.voice_bundle_codec
 tldw_chatbook.Text2SQL_Interop
 tldw_chatbook.Text2SQL_Interop.server_text2sql_service
 tldw_chatbook.Text2SQL_Interop.text2sql_scope_service
@@ -794,6 +840,7 @@ tldw_chatbook.Utils.optional_deps
 tldw_chatbook.Utils.path_validation
 tldw_chatbook.Utils.paths
 tldw_chatbook.Utils.persistent_diagnostics
+tldw_chatbook.Utils.platform_files
 tldw_chatbook.Utils.private_paths
 tldw_chatbook.Utils.reasoning_config
 tldw_chatbook.Utils.secure_temp_files
@@ -875,7 +922,6 @@ tldw_chatbook.Widgets.Console.console_rename_session_modal
 tldw_chatbook.Widgets.Console.console_retrieval_scope_row
 tldw_chatbook.Widgets.Console.console_rewind_modal
 tldw_chatbook.Widgets.Console.console_run_inspector
-tldw_chatbook.Widgets.Console.console_run_log_modal
 tldw_chatbook.Widgets.Console.console_save_as_modal
 tldw_chatbook.Widgets.Console.console_scope_picker_modal
 tldw_chatbook.Widgets.Console.console_selection
@@ -917,6 +963,7 @@ tldw_chatbook.Widgets.compact_model_bar
 tldw_chatbook.Widgets.confirmation_dialog
 tldw_chatbook.Widgets.destination_rail
 tldw_chatbook.Widgets.diff_widgets
+tldw_chatbook.Widgets.emoji_picker
 tldw_chatbook.Widgets.glyph_fallback
 tldw_chatbook.Widgets.modal_dismissal
 tldw_chatbook.Widgets.model_search_picker

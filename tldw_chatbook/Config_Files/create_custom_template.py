@@ -5,8 +5,6 @@ Helper script to create custom note templates for tldw_chatbook.
 This will create/update the user's personal note_templates.json file.
 """
 
-import json
-
 from tldw_chatbook.config import _get_effective_config_path
 
 
@@ -15,23 +13,6 @@ def create_custom_template():
     # file the running app's profile actually reads (TASK-865).
     user_config_dir = _get_effective_config_path().parent
     user_templates_path = user_config_dir / "note_templates.json"
-
-    # Create directory if needed
-    user_config_dir.mkdir(parents=True, exist_ok=True)
-
-    # Load existing templates if any
-    templates = {}
-    if user_templates_path.exists():
-        try:
-            with open(user_templates_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                templates = data.get("templates", data)
-            print(
-                f"Loaded {len(templates)} existing templates from {user_templates_path}"
-            )
-        except Exception as e:
-            print(f"Error loading existing templates: {e}")
-            templates = {}
 
     print("\n=== Create Custom Note Template ===")
 
@@ -68,21 +49,19 @@ def create_custom_template():
     content = "\n".join(content_lines)
 
     # Create template
-    templates[key] = {
+    template = {
         "title": title,
         "content": content,
         "keywords": keywords,
         "description": description,
     }
 
-    # Save templates
-    output = {"templates": templates}
+    from tldw_chatbook.Notes.template_store import merge_templates
 
-    with open(user_templates_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
+    _, count = merge_templates([(key, template)], selected=user_templates_path)
 
     print(f"\n✓ Template '{key}' saved to {user_templates_path}")
-    print(f"Total templates: {len(templates)}")
+    print(f"Total templates: {count}")
     print("\nRestart tldw_chatbook to use your new template!")
 
 
