@@ -27,6 +27,7 @@ from tldw_chatbook.Notes.notes_sync_models import (
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationPlan
 from tldw_chatbook.Notes.notes_sync_reconciler import (
+    DeletionGroup,
     ReconciliationAttention,
     ReconciliationAttentionKind,
 )
@@ -40,6 +41,7 @@ from tldw_chatbook.Notes.notes_sync_runtime import (
     RuntimeConflictReceipt,
 )
 from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+    _ROOT_PAGE_SIZE,
     InertLastingSyncRuntime,
     LastingSyncRuntimePort,
     LibraryNotesSyncController,
@@ -3430,3 +3432,123 @@ async def test_one_unreadable_root_does_not_blank_every_root_s_receipts() -> Non
     await controller.refresh_receipts()
 
     assert [r.relative_path for r in controller.snapshot.write_receipts] == ["b.md"]
+
+
+# --- task-32604 fix round 1: the three edges of sync_now's new status line ---
+
+
+def _paged_runtime(target_status: str, target_action: str) -> _Runtime:
+    """A runtime whose target root sits on page 2 of the bounded root list."""
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        tuple(
+            NotesSyncRootRuntimeSnapshot(f"root-{index}", "up_to_date", "sync_now")
+            for index in range(_ROOT_PAGE_SIZE)
+        )
+        + (NotesSyncRootRuntimeSnapshot("root-tail", target_status, target_action),),
+    )
+    return runtime
+
+
+async def test_check_reads_its_row_from_every_root_not_just_the_visible_page() -> None:
+    """Minor 3: a root on page 2 must not fall back to "review_changes"."""
+
+    runtime = _paged_runtime("up_to_date", "sync_now")
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-tail")
+
+    assert controller.snapshot.status_line == "Nothing to review."
+    assert controller.snapshot.phase == "roots"
+
+
+async def test_an_unlabelled_review_keeps_the_user_on_the_roots_list() -> None:
+    """Minor 4: nothing should land on a review that cannot be applied."""
+
+    runtime = _Runtime()
+
+    async def refuse_labels(root_id: str, token: str) -> tuple[RuntimeConflictLabel, ...]:
+        raise RuntimeError("labels unavailable")
+
+    runtime.conflict_labels = refuse_labels
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root-1", "needs_attention", "review_changes"
+            ),
+        ),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    runtime.check_plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(
+            ReconciliationAttention(
+                kind=ReconciliationAttentionKind.CONFLICT,
+                reason_code="both_sides_changed",
+                binding_id="bind-1",
+            ),
+        ),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    await controller.sync_now("root-1")
+
+    assert controller.snapshot.status_line == (
+        "Conflict details are unavailable. Check again."
+    )
+    assert controller.snapshot.phase == "roots"
+
+
+async def test_a_deletion_only_review_is_counted_not_reported_as_zero() -> None:
+    """Minor 5: review_changes with no apply-kind action still has a count."""
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root-1", "needs_attention", "review_changes"
+            ),
+        ),
+    )
+    deletion = ReconciliationAttention(
+        kind=ReconciliationAttentionKind.DELETION_REVIEW,
+        reason_code="file_deleted",
+        binding_id="bind-1",
+    )
+    runtime.check_plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(DeletionGroup(items=(deletion,)),),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-1")
+
+    assert controller.snapshot.status_line == (
+        "Manual check finished. 1 change to review."
+    )
+    assert controller.snapshot.phase == "review"

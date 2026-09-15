@@ -1418,22 +1418,40 @@ class LibraryNotesSyncController:
         # gates Review on ``next_action == "review_changes"``. The runtime
         # stays the single publisher of row state; this only re-reads it.
         self.refresh_roots(publish=False)
-        row = next((r for r in self._state.roots if r.root_id == root_id), None)
+        # Fix round 1 (review Minor 3): ``_state.roots`` is ONE PAGE, so a root
+        # on any other page missed here and fell back to "review_changes" --
+        # navigating into a review and printing "0 changes to review".
+        # ``_all_roots`` is every root and ``refresh_roots`` just rebuilt it.
+        row = next((r for r in self._all_roots if r.root_id == root_id), None)
         next_action = row.next_action if row is not None else "review_changes"
         if not installed:
+            # Fix round 1 (review Minor 4): an un-labelled review is not one
+            # the new handler should land anyone on -- it cannot be applied
+            # and its own line says to check again. Stay on the roots list,
+            # as this branch did before the review gained a door.
             self._state = replace(
                 self._state,
-                phase="review",
+                phase="roots",
                 status_line="Conflict details are unavailable. Check again.",
             )
         elif next_action == "review_changes":
-            pending = len(
-                [
-                    action
-                    for action in plan.safe_actions
-                    if action.kind in NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
-                ]
-            ) + len(plan.attention)
+            # Fix round 1 (review Minor 5): count every group the runtime
+            # treats as reviewable. ``_blocked_plan_status`` publishes
+            # review_changes for deletion groups or managed placements alone,
+            # so counting only apply-kind actions printed "0 changes to
+            # review." beside "⚠ Needs attention".
+            pending = (
+                len(
+                    [
+                        action
+                        for action in plan.safe_actions
+                        if action.kind in NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
+                    ]
+                )
+                + len(plan.attention)
+                + len(plan.deletion_groups)
+                + len(plan.managed_placement_effects)
+            )
             noun = "change" if pending == 1 else "changes"
             self._state = replace(
                 self._state,
