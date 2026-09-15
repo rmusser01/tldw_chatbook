@@ -1,0 +1,19 @@
+{
+  "before": 205,
+  "after": 205,
+  "new_diagnostics": [],
+  "format_fragments": [
+    [
+      "_sync_workspaces_rail_body",
+      0
+    ],
+    [
+      "_workspace_action_widgets",
+      0
+    ],
+    [
+      "_set_library_rail_section",
+      0
+    ]
+  ]
+}

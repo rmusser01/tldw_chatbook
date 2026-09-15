@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐┌─────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  ││ Search everything, pick a section, or add something new.                            │ │
+│ │                           ││                                                                                     │ │
+│ │ ────────────────────────  ││ Notes (2) · Media (1) · Conversations (1)                                           │ │
+│ │ Browse               ▸  ▇ ││ From your Library                                                                   │ │
+│ │ ────────────────────────  ││  Notes · Workspace B research note                                                  │ │
+│ │ Create               ▸    ││  Media · Workspace A transcript                                                     │ │
+│ │ ────────────────────────  ││  Conversations · Workspace B planning chat                                          │ │
+│ │ Study                ▸    ││ Quick actions                                                                       │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Import / Export      ▸    ││      Import…         New note         Search                                        │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Details              ▾    ││                                                                                     │ │
+│ │  Status                   ││                                                                                     │ │
+│ │  Source · Local           ││                                                                                     │ │
+│ │  Notes 2 · Media 1 ·      ││                                                                                     │ │
+│ │    Conversations 1        ││                                                                                     │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Diagnostics          ▸    ││                                                                                     │ │
+│ │                           ││                                                                                     │ │
+│ │  Workspace                ││                                                                                     │ │
+│ │  Active · Workspace A     ││                                                                                     │ │
+│ │  Handoff · 2 items        ││                                                                                     │ │
+│ │    can't be used in       ││                                                                                     │ │
+│ │    Console yet · in       ││                                                                                     │ │
+│ │    another workspace ·    ││                                                                                     │ │
+│ │    Copy or link them      ││                                                                                     │ │
+│ │    into this workspace    ││                                                                                     │ │
+│ │                           ││                                                                                     │ │
+│ │  Actions                  ││                                                                                     │ │
+│ │   Create local workspace  ││                                                                                     │ │
+│ │  Everything here is       ││                                                                                     │ │
+│ │  stored on this machine   ││                                                                                     │ │
+│ │  · syncing to a server    ││                                                                                     │ │
+│ │  isn't available yet.     ││                                                                                     │ │
+│ │   Use in Console          ││                                                                                     │ │
+│ │  ▾ scroll for more        ││                                                                                     │ │
+│ └───────────────────────────┘└─────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | i import content | ctrl+n new note | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -9,6 +9,22 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Retained controls need both fresh state and settled-layout evidence
+
+**TASK-32462.1, 2026-09-14.** Library's source projection correctly reported
+eligible/blocked records while the retained Workspace rows still showed the
+initial no-sources message. Adding explicit row/action synchronization exposed
+two stale rail caches: a disclosure preference and a Diagnostics shape that
+predated rows mounted when Details opened. Correcting those retained the controls,
+but ready-to-blocked copy then pushed the focused action onto the rail border.
+Identity and `has_focus` assertions passed; compositor paint failed. A screen
+refresh callback measured the old position, while the rail's virtual-size update
+measured the changed layout and could reveal the focused action.
+
+Check the retained child state, cached composition inputs and actual paint across
+one mounted transition. A successful object-retention check does not establish
+that the user can see the focused control after surrounding copy changes height.
+
 ## A fully contained focus target can be covered by a docked sibling
 
 **TASK-32598, Library rail, 2026-09-14.** At 80×24,

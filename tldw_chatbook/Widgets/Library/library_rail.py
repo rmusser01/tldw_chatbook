@@ -779,9 +779,12 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             )
             for section in self.shell.sections
         )
+        # Opening Details can mount Diagnostics after this cached shell was
+        # built. Let the patch below use those rows; its NoMatches fallback
+        # still rebuilds when they are absent. Removing sizes needs a rebuild.
         details_shape_matches = bool(
-            len(self.shell.details_lines) > 2 and self.shell.details_lines[2]
-        ) == bool(len(shell.details_lines) > 2 and shell.details_lines[2])
+            len(shell.details_lines) > 2 and shell.details_lines[2]
+        ) or not bool(len(self.shell.details_lines) > 2 and self.shell.details_lines[2])
         can_patch_in_place = (
             self.is_mounted
             and self.lifecycle is LibraryLifecycle.EXPANDED
@@ -1294,6 +1297,11 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         self._fold_cue_visible = wanted
         if cue.display != wanted:
             cue.display = wanted
+        # A retained control can move below the fold when status copy wraps.
+        # This runs after virtual-size layout, even without a new focus event.
+        focused = self.screen.focused
+        if wanted and focused is not None and self in focused.ancestors:
+            self.scroll_to_widget(focused, animate=False, immediate=True)
 
     def _row(self, row_id: str) -> LibraryRailRow:
         """Return one canonical row from the full shell state."""

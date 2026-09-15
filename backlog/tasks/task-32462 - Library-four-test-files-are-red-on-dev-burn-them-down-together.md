@@ -4,7 +4,7 @@ title: 'Library: four test files are red on dev — burn them down together'
 status: To Do
 assignee: []
 created_date: '2026-09-12 00:12'
-updated_date: '2026-09-15 02:48'
+updated_date: '2026-09-15 03:53'
 labels:
   - library
   - tests
@@ -63,6 +63,8 @@ Measured while verifying the task-32302/32393/32306/32303 branch: four Library t
   - test_library_shell_create_prompt_save_creates_and_increments_count
 
 2026-09-14 Library audit at 2939afda63: the two Handoff failures persist with production CSS. A settled-screen differential probe shows four registered source rows and both cached and refreshed workspace projections reporting 2 eligible, 2 blocked, while the mounted Handoff row still says unavailable until sources exist. Thus the source projection is correct in this reproduction; the mounted receipt/action state is stale. Separately, test_library_workspaces_create_local_workspace_mouse_clicks and test_create_workspace_preserves_rail_scroll pass when only DestinationHarness.CSS_PATH is changed to TldwCli.CSS_PATH: those two additional failures are unstyled-harness geometry. Preserve this product-versus-test distinction during repair. Evidence: Docs/superpowers/reports/2026-09-14-library-workflow-audit.md
+
+2026-09-14 Workspace repair completed locally on feat/component-pattern-library: the complete production-styled Workspace file now passes (15 tests), including mounted state/focus/paint transitions in both themes; 41 neighboring checks pass. The repair updates the retained Workspace body from its correct projection and keeps rail caches/layout in sync. Missing harness CSS and obsolete blocked-copy assertions were separate test defects. Evidence: Docs/superpowers/qa/2026-09-14-workspace-handoff/README.md. The footer, other entry-compose failures and Prompts files remain outstanding. AC#2 stays unchecked here because this branch has not yet been integrated into dev.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

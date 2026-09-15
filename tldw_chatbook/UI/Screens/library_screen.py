@@ -11850,6 +11850,7 @@ class LibraryScreen(BaseAppScreen):
                     lifecycle=self._library_lifecycle,
                     onboarding_all_empty=self._library_onboarding_all_empty,
                 )
+                self._sync_workspaces_rail_body(rail)
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
             expected_header = self._library_header_line(shell.header_line)
@@ -12221,6 +12222,7 @@ class LibraryScreen(BaseAppScreen):
                 lifecycle=self._library_lifecycle,
                 onboarding_all_empty=self._library_onboarding_all_empty,
             )
+            self._sync_workspaces_rail_body(rail)
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
             expected_header = self._library_header_line(shell.header_line)
@@ -14439,15 +14441,14 @@ class LibraryScreen(BaseAppScreen):
                 classes="library-rail-empty-copy",
             ),
         ]
-        if not workspace_depth_state.source_rows:
-            widgets.append(
-                Button(
-                    "Import sources",
-                    id="library-workspace-import-sources",
-                    classes="library-source-action",
-                    tooltip="Open Library Import/Export to add workspace-eligible sources.",
-                )
-            )
+        import_sources = Button(
+            "Import sources",
+            id="library-workspace-import-sources",
+            classes="library-source-action",
+            tooltip="Open Library Import/Export to add workspace-eligible sources.",
+        )
+        import_sources.display = not workspace_depth_state.source_rows
+        widgets.append(import_sources)
         # TASK-716: a disabled Button never emits Pressed, which made the
         # press handler's explanatory warning (the whole reason the action
         # is blocked) unreachable - the control read as dead. Keep the
@@ -14509,6 +14510,33 @@ class LibraryScreen(BaseAppScreen):
                 tooltip="Add files, links, and transcripts to your Library.",
             )
         ]
+
+    def _sync_workspaces_rail_body(self, rail: LibraryRail) -> None:
+        """Refresh retained Workspace receipts and actions from one projection.
+
+        Args:
+            rail: The rail receiving the current source snapshot.
+        """
+        try:
+            active = rail.query_one("#library-workspaces-active-workspace", Static)
+            receipt = rail.query_one("#library-workspaces-handoff", Static)
+            handoff = rail.query_one("#library-use-in-console", Button)
+            import_sources = rail.query_one("#library-workspace-import-sources", Button)
+        except NoMatches:
+            # Starter rails omit Details; a pending recompose will build
+            # its Workspace body from the current projection when needed.
+            return
+        state = self._library_workspace_depth_state()
+        blocked, tooltip = self._workspace_handoff_action_state(state)
+        active.update(library_dim_label_text("Active", state.workspace_name))
+        receipt.update(
+            library_dim_label_text("Handoff", self._workspace_handoff_summary_label(state))
+        )
+        handoff.set_class(blocked, "library-source-action-blocked")
+        handoff.tooltip = tooltip
+        if state.source_rows and import_sources.has_focus:
+            handoff.focus()
+        import_sources.display = not state.source_rows
 
     def _compose_workspaces_rail_body(self) -> list[Any]:
         """Build the Workspaces body for the rail Details section.
@@ -21195,6 +21223,7 @@ class LibraryScreen(BaseAppScreen):
         rail = self._active_library_rail()
         if rail is None:
             return
+        rail.preferences = preferences
         try:
             body = rail.query_one(f"#library-rail-section-body-{section_id}")
             header = rail.query_one(
