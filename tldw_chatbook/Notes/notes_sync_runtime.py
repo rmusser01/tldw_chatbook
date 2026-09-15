@@ -26,6 +26,7 @@ from tldw_chatbook.Notes.note_import_parsers import (
     _split_frontmatter,
 )
 from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
+from tldw_chatbook.Notes.note_import_receipts import NoteImportReceiptRepository
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
     NotesSyncBindingRecord,
@@ -676,11 +677,17 @@ class _ProductionRuntimeAdapter:
         *,
         local_user_id: str,
         recovery_capacity_bytes: int,
+        prior_imports: Callable[[tuple[object, ...]], Mapping[str, object]]
+        | None = None,
     ) -> None:
         self._store = store
         self._service = notes_scope_service
         self._user_id = local_user_id
         self._capacity = recovery_capacity_bytes
+        # task-32605: reads Import once's own receipt ledger, which lives in
+        # this very database file. None disables the recognition entirely,
+        # which is what a harness without a ledger gets.
+        self._prior_imports = prior_imports
         self._filesystems: dict[str, PosixNotesSyncFilesystem] = {}
         self._bundles: dict[str, Mapping[str, _ObservedBinding]] = {}
         self._root_signatures: dict[str, tuple[object, ...]] = {}
@@ -762,6 +769,65 @@ class _ProductionRuntimeAdapter:
 
         self._obsidian_modes[root_id] = enabled
 
+    async def _prior_import_paths(
+        self,
+        notes: NotesScopeSyncAuthority,
+        sources: Mapping[str, object],
+    ) -> frozenset[str]:
+        """Return never-bound paths whose Import once note is still present.
+
+        task-32605: Import once and lasting sync mint different note
+        identities for the same file, so a vault imported once and then kept
+        synced planned a fresh create for every file -- 108 notes for a
+        54-note vault. The join is the importer's own receipt ledger, which
+        lives in this database file and is keyed on the same source locators
+        this pass already discovered.
+
+        A note the user has since deleted is absent from ``observe_versions``
+        and so is NOT reported: sync creates it again, which is right.
+
+        Args:
+            notes: Authority for the root's note scope.
+            sources: Never-bound relative paths mapped to their sources.
+
+        Returns:
+            The subset of ``sources`` whose imported note still exists.
+        """
+
+        if not sources or self._prior_imports is None:
+            return frozenset()
+        lookup = self._prior_imports
+        try:
+            observations = await asyncio.to_thread(lookup, tuple(sources.values()))
+        except Exception:  # noqa: BLE001
+            # The ledger is an optimisation, never an authority: a missing,
+            # older or unreadable one only means nothing is recognised, and a
+            # trace here would be the first diagnostic in this module.
+            return frozenset()
+        if not observations:
+            return frozenset()
+        imported: list[tuple[str, str]] = []
+        for relative_path, source in sources.items():
+            observation = observations.get(getattr(source, "display_path", ""))
+            note_id = getattr(observation, "note_id", None)
+            if type(note_id) is str and note_id:
+                imported.append((note_id, relative_path))
+        if not imported:
+            return frozenset()
+
+        def observe_live() -> Mapping[str, int]:
+            return run_worker_coroutine(
+                notes.observe_versions(tuple(note_id for note_id, _ in imported))
+            )
+
+        try:
+            versions = await asyncio.to_thread(observe_live)
+        except Exception:  # noqa: BLE001 - an unreadable note is not a match
+            return frozenset()
+        return frozenset(
+            relative_path for note_id, relative_path in imported if note_id in versions
+        )
+
     async def observe_root(self, root: NotesSyncRootRecord) -> ReconciliationInput:
         notes = self._notes(root)
         filesystem = self._filesystem(root)
@@ -788,6 +854,10 @@ class _ProductionRuntimeAdapter:
         # or a cold cache) takes exactly the pre-existing read path.
         reuse = self._observation_reuse.get(root.root_id)
         discovered: dict[str, NotesSyncFileSnapshot] = {}
+        # task-32605: the importer's own source locators, kept so a file it
+        # already imported can be recognised without re-deriving its
+        # display-path convention here.
+        discovered_sources: dict[str, object] = {}
         reused_files = 0
         # TASK-32244: refusals are counted across the whole walk instead of
         # raising on the first one, so "discovery did not finish" can say how
@@ -801,6 +871,7 @@ class _ProductionRuntimeAdapter:
             if Path(relative_path).suffix.casefold() not in _SYNC_FILE_EXTENSIONS:
                 continue
             syncable_files += 1
+            discovered_sources[relative_path] = candidate.source
             cached_file = reuse.files.get(relative_path) if reuse else None
             if cached_file is not None and _file_snapshot_current(
                 cached_file, candidate.identity
@@ -942,6 +1013,14 @@ class _ProductionRuntimeAdapter:
             )
             bundle[binding.binding_id] = _ObservedBinding(binding, note, file)
 
+        prior_import_paths = await self._prior_import_paths(
+            notes,
+            {
+                relative_path: source
+                for relative_path, source in discovered_sources.items()
+                if relative_path in discovered and relative_path not in claimed_paths
+            },
+        )
         for relative_path, file in discovered.items():
             if relative_path in claimed_paths:
                 continue
@@ -982,6 +1061,7 @@ class _ProductionRuntimeAdapter:
                     baseline_serialization=file.observation.serialization,
                     serialization=file.observation.serialization,
                     file_blank=not file.text.strip(),
+                    prior_import_note=relative_path in prior_import_paths,
                 )
             )
             bundle[binding_id] = _ObservedBinding(candidate, None, file)
@@ -3557,6 +3637,12 @@ def build_notes_sync_runtime_owner(
             notes_scope_service,
             local_user_id=local_user_id,
             recovery_capacity_bytes=recovery_capacity_bytes,
+            # task-32605: Import once's receipt ledger is in this same file.
+            prior_imports=lambda sources, ledger_path=path: (
+                NoteImportReceiptRepository(
+                    ledger_path
+                ).prior_imported_notes_read_only(sources)
+            ),
         )
     selected_coordinator = coordinator or (
         lambda: NotesSyncRootCoordinator(path.parent / "notes_sync_locks")

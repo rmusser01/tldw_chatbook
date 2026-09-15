@@ -3,9 +3,11 @@ id: TASK-32605
 title: >-
   Library Notes: lasting sync plans a fresh create for every note Import once
   already made from the same vault
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-15 06:37'
+updated_date: '2026-09-15 14:58'
 labels:
   - library
   - notes
@@ -33,3 +35,13 @@ Cause, PROVEN at the planner. The two paths do not share a note identity. The sy
 - [ ] #3 Following both documented Obsidian paths on one vault cannot produce two notes per file
 - [ ] #4 An end-to-end test covers import-then-sync on one folder and pins the recognition, on the production planner rather than a fake
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Trace both halves: Import once's receipt ledger (source_locator_digest -> note id) and the sync planner's synthetic note id; confirm they share a database file and that observe_root already calls the importer's own discover_import_sources on the root path.
+2. Decide adopt vs skip vs report with evidence (executor CREATE_NOTE asserts the note is MISSING; a managed root's attention rows are never conflict-eligible, so an attention row would block activation forever).
+3. RED pins: reconciler item skip for a recognised file; runtime end-to-end (real adapter + real receipt ledger written by the real import plan over the same folder) showing creates -> skips.
+4. Fix: narrow read-only receipts query keyed on the discovered ImportSource; runtime marks never-bound candidates whose imported note still exists; reconciler skips them with reason already_imported; review copy names the effect.
+5. GREEN, live walk (Import once the vault, then Keep a folder synced on the same vault, Check changes), note counts before/after, guide + stamps, preflight.
+<!-- SECTION:PLAN:END -->

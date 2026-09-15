@@ -125,7 +125,19 @@ def _private_payload_fingerprint(payloads: tuple[ParsedNotePayload, ...]) -> str
 
 def _private_source_locator_digest(item: ImportPreviewItem) -> str:
     """Return a private digest for one preview item's complete source locator."""
-    source = item.source
+    return _private_source_locator_digest_for_source(item.source)
+
+
+def _private_source_locator_digest_for_source(source: object) -> str:
+    """Return the same private digest for one discovered source on its own.
+
+    task-32605: lasting sync walks a folder with the importer's own
+    ``discover_import_sources``, so its sources carry the identical locator
+    fields. Keying the ledger read on the source alone lets the sync planner
+    recognise a file Import once already turned into a note without building a
+    whole import plan for it.
+    """
+
     return _canonical_json_digest(
         {
             "display_path": source.display_path,
