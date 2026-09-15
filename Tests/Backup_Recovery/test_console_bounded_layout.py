@@ -97,6 +97,9 @@ async def main():
         assert section._hint.display
         assert viewport.can_focus
         assert owner.allocation_requests > 0, 'real changed demand never reached the allocator'
+        async with asyncio.timeout(2):
+            while section._reconcile_scheduled:
+                await pilot.pause()
         assert not section._reconcile_scheduled
         before = len(reconciles)
         await asyncio.sleep(.04)

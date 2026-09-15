@@ -1,0 +1,666 @@
+{
+  "revision": "2031d0c5261c2b4781aba40752f228da9d19b4eb",
+  "run": 34940059565,
+  "verified_artifact_hashes": 33,
+  "native": {
+    "collected": 59,
+    "counts": {
+      "passed": 59
+    },
+    "seconds": 1.888,
+    "failures": [],
+    "skips": []
+  },
+  "product": {
+    "collected": 58,
+    "passed": 55,
+    "failed": 3,
+    "skipped": 0,
+    "unfinished": 0,
+    "seconds": 800.451,
+    "cases": [
+      {
+        "name": "test_native_guidance_is_coherent_and_refreshes_after_real_settings_save",
+        "seconds": 50.295,
+        "status": "failed"
+      },
+      {
+        "name": "test_native_display_pairs_preserve_outputs_and_later_fresh_send_guard",
+        "seconds": 45.046,
+        "status": "failed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[covered]",
+        "seconds": 7.891,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[transparent]",
+        "seconds": 7.675,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[hidden]",
+        "seconds": 7.801,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[visible]",
+        "seconds": 7.595,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[unmount]",
+        "seconds": 7.676,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[covered-wrapped]",
+        "seconds": 7.763,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[covered-native]",
+        "seconds": 7.778,
+        "status": "failed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[transparent-wrapped]",
+        "seconds": 7.73,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[transparent-native]",
+        "seconds": 7.724,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[hidden-wrapped]",
+        "seconds": 7.692,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[hidden-native]",
+        "seconds": 7.565,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[unmount-wrapped]",
+        "seconds": 7.768,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[unmount-native]",
+        "seconds": 7.792,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_repository_close_preserves_proven_state_and_exclusion[success]",
+        "seconds": 4.747,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_repository_close_preserves_proven_state_and_exclusion[live_before]",
+        "seconds": 4.241,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_repository_close_preserves_proven_state_and_exclusion[live_after]",
+        "seconds": 4.264,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_repository_close_preserves_proven_state_and_exclusion[evidence]",
+        "seconds": 4.345,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[late]",
+        "seconds": 5.88,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[complete]",
+        "seconds": 6.432,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[cancel]",
+        "seconds": 6.47,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[error]",
+        "seconds": 6.444,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[cancel_error]",
+        "seconds": 6.417,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[cancel_drain]",
+        "seconds": 6.367,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[original_hook]",
+        "seconds": 5.961,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[open_drain]",
+        "seconds": 5.913,
+        "status": "passed"
+      },
+      {
+        "name": "test_canvas_policy_preserves_enabled_state_across_native_backup_pause[resume]",
+        "seconds": 6.266,
+        "status": "passed"
+      },
+      {
+        "name": "test_canvas_policy_preserves_enabled_state_across_native_backup_pause[explicit]",
+        "seconds": 6.612,
+        "status": "passed"
+      },
+      {
+        "name": "test_canvas_policy_preserves_enabled_state_across_native_backup_pause[external]",
+        "seconds": 7.187,
+        "status": "passed"
+      },
+      {
+        "name": "test_canvas_policy_preserves_enabled_state_across_native_backup_pause[dispose]",
+        "seconds": 6.021,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_retains_canvas_policy_cleanup_until_it_finishes[accepted]",
+        "seconds": 6.398,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_retains_canvas_policy_cleanup_until_it_finishes[watcher]",
+        "seconds": 6.387,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_retains_canvas_policy_cleanup_until_it_finishes[cancel]",
+        "seconds": 6.411,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_retains_canvas_policy_cleanup_until_it_finishes[cancel_drain]",
+        "seconds": 6.365,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_policy_read_crossing_backup_pause_cannot_latch_disable[closed]",
+        "seconds": 5.877,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_policy_read_crossing_backup_pause_cannot_latch_disable[resumed]",
+        "seconds": 5.933,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_backup_preserves_existing_canvas_consumers[coordinated]",
+        "seconds": 8.438,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_backup_preserves_existing_canvas_consumers[before_hook]",
+        "seconds": 8.419,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_policy_poll_does_not_block_ui_while_config_writer_is_active",
+        "seconds": 6.068,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_and_disposal_retain_accepted_native_policy_read[maintenance]",
+        "seconds": 6.328,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_and_disposal_retain_accepted_native_policy_read[watcher_cancel]",
+        "seconds": 6.091,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_and_disposal_retain_accepted_native_policy_read[drain_cancel]",
+        "seconds": 6.303,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_and_disposal_retain_accepted_native_policy_read[dispose_cancel]",
+        "seconds": 6.026,
+        "status": "passed"
+      },
+      {
+        "name": "test_cancelled_watcher_reuses_pending_native_read_when_restarted",
+        "seconds": 6.315,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[same]",
+        "seconds": 9.893,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[direct]",
+        "seconds": 9.427,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[successor]",
+        "seconds": 9.322,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[callbacks]",
+        "seconds": 10.066,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[controller]",
+        "seconds": 10.197,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[reclaim]",
+        "seconds": 10.155,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[cleared]",
+        "seconds": 10.03,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[initial_pause]",
+        "seconds": 9.915,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[pause]",
+        "seconds": 9.933,
+        "status": "passed"
+      },
+      {
+        "name": "test_pending_canvas_import_survives_only_same_view_store_observation[same]",
+        "seconds": 9.621,
+        "status": "passed"
+      },
+      {
+        "name": "test_pending_canvas_import_survives_only_same_view_store_observation[successor]",
+        "seconds": 10.023,
+        "status": "passed"
+      },
+      {
+        "name": "test_mounted_console_complete_capture_and_resumed_writes[settings]",
+        "seconds": 173.297,
+        "status": "passed"
+      },
+      {
+        "name": "test_mounted_console_complete_capture_and_resumed_writes[library]",
+        "seconds": 136.302,
+        "status": "passed"
+      }
+    ]
+  },
+  "source_files": 16696,
+  "selected_source_matches": {
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_console_bounded_layout.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_home_citation_retirement.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_bound_config_companions.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_mounted_console_backup.py": "windows_crlf",
+    "Tests/Backup_Recovery/thread_diagnostics.py": "windows_crlf",
+    "Tests/Backup_Recovery/run_platform_product.py": "windows_crlf",
+    "Tests/network_guard.py": "windows_crlf"
+  },
+  "installed": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "d6d10449452cf1a7ab0581e3025cdbdfa5659a259655fa87aef3ce4bc6eb4e75",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "git_python": {
+    "revision": "2031d0c5261c2b4781aba40752f228da9d19b4eb",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "actual_guidance_phase_files": {
+    "test_native_guidance_is_cohere0": [
+      "import_begin",
+      "import_complete",
+      "construct_begin",
+      "construct_complete",
+      "mounted"
+    ],
+    "test_native_display_pairs_pres0": [
+      "import_begin",
+      "import_complete",
+      "construct_begin",
+      "construct_complete",
+      "mounted"
+    ]
+  },
+  "bounded_failure": {
+    "route": "covered-native",
+    "child_line": 94,
+    "assertion": "assert not section._reconcile_scheduled",
+    "preceding_geometry_focus_and_allocation_assertions_passed": true
+  },
+  "flows": {
+    "settings": {
+      "phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.015
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 25.687
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 25.687
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 49.453
+        },
+        {
+          "phase": "service_close_begin",
+          "elapsed": 124.015
+        },
+        {
+          "phase": "service_close_complete",
+          "elapsed": 124.015
+        }
+      ],
+      "inventory_events": [
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        },
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        },
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        },
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        },
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        }
+      ],
+      "runtime": [
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_before",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_after",
+          "storage": {
+            "live_leases": 1,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "runtime_resume",
+          "storage": {
+            "live_leases": 0,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 0
+          }
+        }
+      ],
+      "loop_profile": {
+        "thread_id": 8128,
+        "elapsed_s": 5.95666140000003,
+        "thread_cpu_s": 1.875,
+        "dropped_calls": 202369
+      }
+    },
+    "library": {
+      "phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.031
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 24.906
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 24.906
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 47.313
+        },
+        {
+          "phase": "service_close_begin",
+          "elapsed": 131.625
+        },
+        {
+          "phase": "service_close_complete",
+          "elapsed": 131.625
+        }
+      ],
+      "inventory_events": [
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        },
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        },
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        },
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        },
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta": [],
+          "unavailable_dependencies": []
+        }
+      ],
+      "runtime": [
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_before",
+          "storage": {
+            "live_leases": 8,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_after",
+          "storage": {
+            "live_leases": 1,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 1
+          }
+        },
+        {
+          "event": "runtime_resume",
+          "storage": {
+            "live_leases": 0,
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "startups": 0
+          }
+        }
+      ],
+      "loop_profile": {
+        "thread_id": 1568,
+        "elapsed_s": 5.044650100000126,
+        "thread_cpu_s": 0.609375,
+        "dropped_calls": 21422
+      }
+    }
+  },
+  "artifact_index_sha256": "78001e77d6b8abcb6e1e563c0f6ed5208b7441257e024c07b35a5336afed464d"
+}
