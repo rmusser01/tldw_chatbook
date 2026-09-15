@@ -132,3 +132,9 @@ Stage 5 bounded startup phase observer verified:15 root/15 independent checks, t
 
 
 Stage5 guidance refinement: ADR required: no; the same acquisition API and existing session/config/authority boundaries remain. One synchronous guidance update passes its immutable result through the three existing pure projections, without a screen cache or widened operation/memo. Retain independent helper freshness and every UI consumer/predicate order. Validate native cold defaults, actual Settings persistence/readback, convergence and explicit choices; unchanged full-app startup and backup workflows decide acceptance. Design review is indexed with the evidence.
+
+
+Stage5 b7f51 startup follow-up: exactLinux5PASS/sourceunchanged; Windows31nonUIpass butall4primary60s timeouts.22matched/errorfree profiles nowreachpost-pushPilotpauses, nofocus. A40s native sample identifies adjacent inspectorblocker/action re-derivation. The reviewed minimal follow-up sharesonlythatpair anddeletesworkbenchactioncopythatitsrendererdoesnotuse, preservingearlierinspectorreadiness/conditionalactionandlaterfreshsendguard. NativeRED reachesrealcopy/save/error/latercredentialremovalassertions beforeexposingredundantcounts; candidate6nativePASS57.01s, independentreviewpending. ProductRuff208/Bandit9unchanged,newtestscript57B101only. No newADR, filesystemchangeordealinechange. Originalb7f51Windowsbackupqualificationstillrunning.
+
+
+Stage5 display-pair correction fully reviewed:3exactfilesapproved;root6nativePASS57.01s,independentnewcasePASS10.52s,and10existingUIcasespassincludingunchangedMacGGUFkeyboard. No newlint/securityfindings. Restorediagnosticnowretainsoriginalinstalledplaintexttestplus2nativeguidancecases,3collected; allotherselection/deadlinebehaviorunchanged. Queue currentWindows59native+3product andstartup, thenexactLinux6. Priorb7f51Windowsnativecloseremainsrunningandwillnotbecancelled.

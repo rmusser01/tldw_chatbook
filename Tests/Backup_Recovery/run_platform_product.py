@@ -183,7 +183,10 @@ _PRODUCT_SELECTIONS = {
         "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
         "Tests/Backup_Recovery/test_eval_rollback_retention.py",
     ),
-    "restore-diagnostic": _RESTORE_DIAGNOSTIC_TESTS,
+    "restore-diagnostic": (
+        *_RESTORE_DIAGNOSTIC_TESTS,
+        "Tests/Backup_Recovery/test_console_guidance_readiness.py",
+    ),
     "plain": _RESTORE_DIAGNOSTIC_TESTS,
     "encrypted": (_PRODUCT_TESTS[1] + "[encrypted]",),
     "encrypted-credentials": (_PRODUCT_TESTS[1] + "[encrypted_credentials]",),

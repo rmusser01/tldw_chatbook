@@ -14271,10 +14271,15 @@ class ChatScreen(BaseAppScreen):
             ephemeral=self._console_active_session_is_ephemeral(),
             staged_source_count=console_staged_source_count(pending_launch),
         )
-        setup_blocker_copy = self._console_provider_blocker_copy()
+        setup_settings_readiness = self._active_console_settings_readiness()
+        setup_blocker_copy = self._console_provider_blocker_copy(
+            settings_readiness=setup_settings_readiness
+        )
         if setup_blocker_copy:
             action_label, _action_target, _action_tooltip = (
-                self._console_provider_recovery_action()
+                self._console_provider_recovery_action(
+                    settings_readiness=setup_settings_readiness
+                )
             )
             setup_rows = (
                 ConsoleDisplayRow(
@@ -14911,9 +14916,6 @@ class ChatScreen(BaseAppScreen):
 
     def _build_console_workbench_state(self, control_state: ConsoleControlState):
         blocker_copy = self._console_provider_blocker_copy()
-        action_label, _action_target, _action_tooltip = (
-            self._console_provider_recovery_action()
-        )
         composer = self._console_composer_or_none()
         has_draft = bool(composer and composer.draft_text().strip())
         controller = self._console_chat_controller
@@ -14941,7 +14943,6 @@ class ChatScreen(BaseAppScreen):
         return build_console_workbench_state(
             control_state=control_state,
             provider_blocker_copy=blocker_copy,
-            provider_action_label=action_label,
             can_send=can_send,
             can_stop=can_stop,
             density=self._console_workbench_density(),

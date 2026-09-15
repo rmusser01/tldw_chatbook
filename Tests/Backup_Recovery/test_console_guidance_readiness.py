@@ -28,12 +28,105 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Screens import chat_screen
 
+def check_display_pairs(screen):
+    derives, actions, observed = [], [], []
+    original = screen._active_console_settings_readiness_uncached
+    original_action = screen._console_provider_recovery_action
+    def derive():
+        pair = original()
+        derives.append(pair)
+        return pair
+    def action(**kwargs):
+        actions.append(True)
+        return original_action(**kwargs)
+    screen._active_console_settings_readiness_uncached = derive
+    screen._console_provider_recovery_action = action
+    def inspect_pair(status, setup):
+        control = screen._build_console_control_state(None)
+        derives.clear()
+        actions.clear()
+        workbench = screen._build_console_workbench_state(control)
+        observed.append((len(derives), len(actions)))
+        assert next(m for m in workbench.modes if m.id == 'provider').status == status
+        assert next(a for a in workbench.actions if a.id == 'send').disabled
+        assert workbench.recovery is None
+        derives.clear()
+        actions.clear()
+        inspector = screen._build_console_inspector_state(None)
+        observed.append((len(derives), len(actions)))
+        rows = {row.label: row.value for row in inspector.rows}
+        assert ('Setup' in rows) == setup
+        assert ('Next action' in rows) == setup
+        if setup:
+            assert rows['Next action'] == 'Set up provider'
+            assert rows['Blocked impact'] == 'Send is blocked until setup is finished.'
+        assert screen._console_derivation_memo is None
+
+    inspect_pair('blocked', True)
+    assert config.save_settings_to_cli_config({
+        'api_settings.openai': {'api_key': 'synthetic-guidance-test-value'}})
+    inspect_pair('ready', False)
+    run_active = screen._console_run_active
+    screen._console_run_active = lambda: True
+    try:
+        inspect_pair('ready', False)
+    finally:
+        screen._console_run_active = run_active
+
+    # A real save after display copy is derived must still affect the later
+    # send guard. The display result cannot become sending authority.
+    composer = screen._console_composer_or_none
+    def draft():
+        assert config.save_settings_to_cli_config({
+            'api_settings.openai': {'api_key': ''}})
+        return 'draft after credential removal'
+    control = screen._build_console_control_state(None)
+    screen._console_composer_or_none = lambda: SimpleNamespace(draft_text=draft)
+    derives.clear()
+    actions.clear()
+    try:
+        workbench = screen._build_console_workbench_state(control)
+        observed.append((len(derives), len(actions)))
+        assert derives[0][1].native_send_supported
+        assert derives[-1][1].recovery_action == 'configure_credential'
+        assert next(a for a in workbench.actions if a.id == 'send').disabled
+    finally:
+        screen._console_composer_or_none = composer
+
+    # Keep acquisition/projection errors and recover through a fresh build.
+    for attribute in ('_active_console_settings_readiness',
+                      '_console_provider_blocker_copy',
+                      '_console_provider_recovery_action'):
+        method = getattr(screen, attribute)
+        failure = RuntimeError('display pair observation failure')
+        def fail(**kwargs):
+            method(**kwargs)
+            raise failure
+        setattr(screen, attribute, fail)
+        try:
+            screen._build_console_inspector_state(None)
+        except RuntimeError as error:
+            assert error is failure
+        else:
+            raise AssertionError('inspector failure was swallowed')
+        finally:
+            setattr(screen, attribute, method)
+        assert screen._console_derivation_memo is None
+        derives.clear()
+        assert any(r.label == 'Setup' for r in screen._build_console_inspector_state(None).rows)
+        assert derives
+    assert observed == [(1, 0), (2, 1), (1, 0), (2, 0),
+                        (1, 0), (2, 0), (2, 0)], observed
+
 async def main():
     app = TldwCli()
     async with app.run_test(size=(100, 36)):
         screen = chat_screen.ChatScreen(app)
         store = screen._ensure_console_chat_store()
         assert store.active_session_id is None
+        if sys.argv[2] == 'display_pairs':
+            check_display_pairs(screen)
+            return
         derives, events, projections, loads = [], [], [], []
         original = screen._active_console_settings_readiness_uncached
         original_load = chat_screen.load_settings
@@ -160,3 +253,8 @@ print('retired and reopened')
 def test_native_guidance_is_coherent_and_refreshes_after_real_settings_save(tmp_path):
     """Repeated derives cannot triple the native work or retain stale guidance."""
     _run(tmp_path, "guidance", "freshness", script=_GUIDANCE)
+
+
+def test_native_display_pairs_preserve_outputs_and_later_fresh_send_guard(tmp_path):
+    """Unused/repeated display reads must not replace a later send check."""
+    _run(tmp_path, "guidance", "display_pairs", script=_GUIDANCE)
