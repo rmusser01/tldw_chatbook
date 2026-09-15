@@ -11782,6 +11782,15 @@ attribute failures; here, a partially-run suite was used to deny them.
   in the loop that is independent of the implementer's own scoping mistake.
 - If the gate is expensive, that is an argument for naming it precisely in the plan,
   not for approximating it with a glob.
+- **A grep census needs its MATCH SEMANTICS stated, not only its scope**
+  (task-32558, 2026-09-14). The wave-4 guide sweep published a four-probe
+  matrix labelled by scope and by literal-vs-raw — and a reviewer
+  re-deriving the same cells got **21 / 4** where the matrix said **373 /
+  13**, because the script matched containment (`grep -F`) and the reviewer
+  matched exact equality. Neither run was wrong and neither was fabricated;
+  the label was simply incomplete, so the figure was not reproducible. Say
+  substring or whole-value, case sensitivity, and what a "file" or a "hit"
+  is, in the same breath as the number.
 
 ---
 

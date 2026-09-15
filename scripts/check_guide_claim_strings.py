@@ -99,6 +99,17 @@ def emitted_somewhere(fragment: str, source_root: Path = SOURCE_ROOT) -> bool:
         scoped    + raw             1         31   <- scoping only: MISSES
         scoped    + AST             0         13   <- CATCHES
 
+    Every figure above is a CONTAINMENT count -- this function greps with
+    ``-F``, so a literal counts when it *contains* the fragment. State that
+    with the probe, because the same cell under EXACT EQUALITY reads a
+    different number: an independent re-derivation of the ``"Export"`` column
+    matching whole literals got **21** repo-wide + AST and **4** scoped + AST,
+    against the 373 and 13 above. Neither is wrong -- they answer different
+    questions -- and a figure quoted without its match semantics cannot be
+    reproduced, which is how two readers of this table got two answers.
+    (Both semantics agree on what decides the incident: 0 for the false
+    spelling, non-zero for the true one.)
+
     Read the two middle rows before "improving" this function. Literals
     alone still find 9, because ``Export…`` is a live ``Button`` label on
     Media, Conversations, Prompts, Meetings, Artifacts and the Console
