@@ -256,6 +256,10 @@ _STATUS_LABELS = {
     "offline": "⚠ Offline",
     "passive": "Ⅱ Open in another process",
     "needs_attention": "⚠ Needs attention",
+    #: task-32604 fix round 2: not a runtime status -- the label a root wears
+    #: when the runtime stopped watching. "✓ Up to date" is the last thing
+    #: PUBLISHED, not the truth, once nothing is carrying changes either way.
+    "not_watching": "⚠ Sync stopped",
     "partial": "⚠ Partial",
     "failed": "✕ Failed",
     "unsupported": "✕ Blocked",
@@ -744,8 +748,18 @@ class LibraryNotesSyncController:
 
         runtime = self._runtime.snapshot()
         available = runtime.status in _SETUP_READY_STATUSES
+        # task-32604 fix round 2 (re-review, promoted Minor 8): when the
+        # runtime itself is not active nothing is watching ANY of its roots,
+        # so an editor save lands in Notes only and no hint carries it to
+        # disk (``note_changed`` returns () at notes_sync_runtime.py:3024,
+        # and ``_watcher_finished`` sets status "failed" at :1925-1931).
+        # Per-root statuses are the last ones PUBLISHED, so a root that was
+        # clean when watching stopped goes on rendering "✓ Up to date" over a
+        # file that is now stale -- this P0's own lie, one level up. The fact
+        # is already in the snapshot this method reads; read it.
+        watching = runtime.status == "active"
         self._all_roots = tuple(
-            self._project_root(root) for root in runtime.roots
+            self._project_root(root, watching=watching) for root in runtime.roots
         )
         page_count = max(
             1, (len(self._all_roots) + _ROOT_PAGE_SIZE - 1) // _ROOT_PAGE_SIZE
@@ -762,8 +776,19 @@ class LibraryNotesSyncController:
         if publish:
             self._publish()
 
-    def _project_root(self, root: NotesSyncRootRuntimeSnapshot) -> LastingSyncRootRow:
-        """Project one runtime root, with its last refusal laid over the top."""
+    def _project_root(
+        self,
+        root: NotesSyncRootRuntimeSnapshot,
+        *,
+        watching: bool = True,
+    ) -> LastingSyncRootRow:
+        """Project one runtime root, with its last refusal laid over the top.
+
+        ``watching`` is False when the runtime is not active. Only the one
+        reassuring label is rewritten then: every other status already says
+        something is wrong, and rewriting ``status`` itself would change
+        which controls the canvas offers (see the comment below).
+        """
 
         failure, failed_action = self._root_failures.get(root.root_id, ("", ""))
         # Fix round 1: the overlay owns the LABELS only. Rewriting ``status``
@@ -772,14 +797,20 @@ class LibraryNotesSyncController:
         # defect this overlay fixes for Resume, on a sibling status.
         status, next_action = root.status, root.next_action
         action_label = failed_action or next_action
+        if failure:
+            status_label = _STATUS_LABELS["needs_attention"]
+        elif not watching and status == "up_to_date":
+            status_label = _STATUS_LABELS["not_watching"]
+        else:
+            status_label = _STATUS_LABELS.get(
+                status, status.replace("_", " ").title()
+            )
         return LastingSyncRootRow(
             root.root_id,
             "Sync folder (name unavailable before cutover)",
             status,
             next_action,
-            _STATUS_LABELS["needs_attention"]
-            if failure
-            else _STATUS_LABELS.get(status, status.replace("_", " ").title()),
+            status_label,
             _ACTION_LABELS.get(action_label, action_label.replace("_", " ").title()),
             root.action_id,
             failure=failure,
@@ -819,7 +850,12 @@ class LibraryNotesSyncController:
         contradiction, inverted. No new copy: the line restates the row.
         """
 
-        row = next((r for r in self._state.roots if r.root_id == root_id), None)
+        # Fix round 2 (re-review): ``_state.roots`` is ONE PAGE, so a root on
+        # any other page missed here and this returned silently -- leaving
+        # whatever line was showing, which for the new sync_now else-branch
+        # is a permanent "Checking changes…". Both callers are fixed by
+        # reading ``_all_roots``; pause/resume (task-32534) had the same miss.
+        row = next((r for r in self._all_roots if r.root_id == root_id), None)
         if row is None:
             return
         self._state = replace(

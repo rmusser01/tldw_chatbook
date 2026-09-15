@@ -3552,3 +3552,65 @@ async def test_a_deletion_only_review_is_counted_not_reported_as_zero() -> None:
         "Manual check finished. 1 change to review."
     )
     assert controller.snapshot.phase == "review"
+
+
+async def test_restating_a_row_reads_every_root_not_just_the_visible_page() -> None:
+    """Round 2 re-review: the one-page lookup survived in ``_restate_root``.
+
+    Its offline/unsupported/paused caller is new in task-32604, so a finished
+    check on a root past page 1 left "Checking changes…" standing forever.
+    """
+
+    runtime = _paged_runtime("offline", "reconnect_folder")
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-tail")
+
+    assert controller.snapshot.phase == "roots"
+    assert controller.snapshot.status_line == (
+        "⚠ Offline · Next: Reconnect folder."
+    )
+
+
+async def test_a_root_is_not_up_to_date_when_nothing_is_watching_it() -> None:
+    """Round 2 (promoted Minor 8): the P0's lie, one level up.
+
+    A dead watcher leaves ``note_changed`` refusing silently, so an editor
+    save never reaches disk -- while the row goes on rendering the last
+    status it PUBLISHED. Only the reassuring label is rewritten; ``status``
+    and ``next_action`` still drive which controls the canvas offers.
+    """
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "failed",
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot("root-1", "up_to_date", "sync_now"),),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    row = controller.snapshot.roots[0]
+
+    assert row.status_label == "⚠ Sync stopped"
+    assert row.status_label != "✓ Up to date"
+    # The row still offers Check changes -- the way out of exactly this state.
+    assert row.status == "up_to_date"
+    assert row.next_action == "sync_now"
+    assert row.next_action_label == "Check changes"
+
+
+async def test_a_watching_runtime_still_says_up_to_date() -> None:
+    """The negative control for the row above: no blanket relabelling."""
+
+    controller = LibraryNotesSyncController(
+        runtime=_Runtime(),
+        import_controller=_ImportController(),
+    )
+
+    assert controller.snapshot.roots[0].status_label == "✓ Up to date"
