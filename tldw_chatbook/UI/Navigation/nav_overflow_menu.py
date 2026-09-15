@@ -14,7 +14,7 @@ from typing import Any
 
 from textual import events, on
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
@@ -75,7 +75,8 @@ class NavOverflowMenu(ModalScreen[None]):
         console_needs_attention = bool(
             getattr(self.app, "console_needs_attention", False)
         )
-        with Vertical(id="nav-overflow-menu"):
+        # Keep focused destinations visible when the existing height cap binds.
+        with VerticalScroll(id="nav-overflow-menu", can_focus=False):
             yield Static("All destinations", id="nav-overflow-menu-title")
             for destination in SHELL_DESTINATION_ORDER:
                 # Same dimmed key-prefix label the strip shows (task-32458),
@@ -115,15 +116,15 @@ class NavOverflowMenu(ModalScreen[None]):
 
     def sync_console_attention(self, needs_attention: bool) -> None:
         """Project the same fixed Console glyph used by the main strip."""
-        needs_attention = bool(needs_attention or getattr(self.app, CONSOLE_ATTENTION_ATTR, 0))
+        needs_attention = bool(
+            needs_attention or getattr(self.app, CONSOLE_ATTENTION_ATTR, 0)
+        )
         try:
             button = self.query_one("#nav-overflow-console", Button)
         except Exception:
             return
         destination = next(
-            item
-            for item in SHELL_DESTINATION_ORDER
-            if item.destination_id == "console"
+            item for item in SHELL_DESTINATION_ORDER if item.destination_id == "console"
         )
         label = navigation_destination_label(
             "console",
@@ -147,6 +148,11 @@ class NavOverflowMenu(ModalScreen[None]):
             return
         self.post_message(NavigateToScreen(route))
         self.dismiss()
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Reveal the current destination after the viewport changes."""
+        if self.focused is not None:
+            self.focused.scroll_visible(animate=False)
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
