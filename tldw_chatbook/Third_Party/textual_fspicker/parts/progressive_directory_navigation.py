@@ -37,6 +37,11 @@ from .directory_navigation import (
 )
 
 SORT_OPTIONS = [
+    # task-32611 AC#4 / task-32643 AC#1: folders first, name-ascending. It is
+    # the DEFAULT only on a dialog that can return a folder (see
+    # `FileSystemPickerScreen._default_listing_sort`); a file picker still
+    # opens on "Discovery order", which stays on the menu for both.
+    ("Folders first", "folders"),
     ("Discovery order", "discovery"),
     ("Name", "name"),
     ("Last modified", "modified"),
@@ -44,6 +49,96 @@ SORT_OPTIONS = [
     ("Created", "created"),
     ("Size", "size"),
 ]
+
+NOTE_SUFFIXES = frozenset({".md", ".markdown", ".txt"})
+"""What the folder badge counts as a note (task-32643 AC#2).
+
+Deliberately a local set rather than a reused one, because the three doors
+this badge serves do not agree on the question: Folder files reads
+``file_notes_service.SUPPORTED_EXTENSIONS`` (adds ``.text``), Keep a folder
+synced reads ``notes_sync_runtime._SYNC_FILE_EXTENSIONS`` (exactly this set),
+and Import once reads ``note_import_parsers``' wider set (adds ``.rst``,
+``.json``, ``.yaml``, ``.yml``, ``.csv``). These three are the INTERSECTION,
+so the badge never over-promises on any door. It is an advisory count for
+choosing between folders, not a prediction of what an import will take.
+"""
+
+NOTE_COUNT_CEILING = 500
+"""Hard bound on the ENTRIES READ for one folder's badge (task-32643 AC#2).
+
+Reached only by `count_folder_notes`, which reads ONE directory with a single
+`os.scandir` and never descends. The bound is on entries read, not on notes
+matched, because that is the work: a flat folder of 200k `.log` files holds no
+notes at all and must still cost 500 `DirEntry` reads, not 200k. A folder that
+runs out the bound reports its notes-so-far as a floor -- "12+ notes" -- since
+a partial read can only under-count.
+
+Review round 1 found the first version of this capping on notes MATCHED while
+six places said "entries read": 20 000 `.log` files plus one `.md` with
+`ceiling=3` read all 20 001. The pin could not see it either, because its
+fixture was all-`.md`, so matches and reads were the same number.
+"""
+
+VAULT_MARKER = " · vault"
+"""Suffix appended to an Obsidian vault's name in the listing (task-32643 AC#4)."""
+
+
+def count_folder_notes(
+    folder: Path, ceiling: int = NOTE_COUNT_CEILING
+) -> tuple[int, bool] | None:
+    """Count note files sitting DIRECTLY inside one folder. Blocking.
+
+    Deliberately depth-1 and capped: a picker that walks a subtree to draw a
+    badge is worse than a picker with no badge, and this programme already has
+    a P0 in its history from an abandoned recursive folder scan. One
+    `os.scandir`, at most `ceiling` entries READ, no recursion, no stat
+    (`DirEntry.is_file` uses the type the directory read already returned on
+    every platform this app ships on).
+
+    The bound counts entries read rather than notes matched. Capping on
+    matches bounds the number but not the work -- a folder of 200k non-notes
+    matches nothing and would be walked to its end.
+
+    Args:
+        folder: The directory to read.
+        ceiling: Stop reading after this many entries.
+
+    Returns:
+        `(notes found, stopped early)`, or None when the folder cannot be read
+        (permissions, a race, a dead symlink). When `stopped early` is True the
+        count is a FLOOR, not a total, and the caller renders it with a "+".
+
+        A folder holding EXACTLY `ceiling` entries reports `stopped early` too:
+        distinguishing "ran out" from "fits exactly" costs one more read, and
+        "at least N" stays true either way. The round number in the bound is
+        worth more than a tight flag on one folder size.
+    """
+    total = 0
+    seen = 0
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                seen += 1
+                # The ceiling check is the LAST thing in the body so that every
+                # path reaches it. It used to live in a `finally` under the
+                # note-matching `try`, which a dot-entry `continue` jumped
+                # straight past -- a folder of 2000 dot-entries read all 2000
+                # at ceiling=3 and reported `(0, False)`, an unbounded read
+                # sold as an exact count.
+                if not entry.name.startswith("."):
+                    try:
+                        if entry.is_file() and (
+                            os.path.splitext(entry.name)[1].casefold()
+                            in NOTE_SUFFIXES
+                        ):
+                            total += 1
+                    except OSError:
+                        pass
+                if seen >= ceiling:
+                    return total, True
+    except OSError:
+        return None
+    return total, False
 
 
 @dataclass(frozen=True)
@@ -55,18 +150,33 @@ class FileRecord:
     is_symlink: bool = False
     metadata: os.stat_result | None = None
     metadata_loaded: bool = False
+    note_count: int | None = None
+    note_count_partial: bool = False
+    is_vault: bool = False
+    folder_summary_loaded: bool = False
 
     @property
     def display_name(self) -> str:
         """Keep unusual filesystem names on one terminal row."""
-        return (
+        name = (
             self.location.name.replace("\n", "⏎").replace("\r", "␍").replace("\t", "⇥")
         )
+        return f"{name}{VAULT_MARKER}" if self.is_vault else name
 
     @property
     def size_text(self) -> str:
         if self.is_directory:
-            return ""
+            # task-32643 AC#2: the note badge reuses the size column, which a
+            # directory has always left blank -- no new column, so both the
+            # vendored row and `EnhancedFileDialog`'s responsive one pick it
+            # up unchanged. Blank until the bounded count lands, and blank
+            # forever on a picker that did not ask for one.
+            if self.note_count is None:
+                return ""
+            if self.note_count_partial:
+                # The read bound ran out, so this is a floor, not a total.
+                return f"{self.note_count}+ notes"
+            return f"{self.note_count} note" + ("" if self.note_count == 1 else "s")
         return _human_readable_size(self.metadata.st_size) if self.metadata else "—"
 
     @property
@@ -101,6 +211,44 @@ def read_metadata(record: FileRecord) -> FileRecord:
     return replace(record, metadata=metadata, metadata_loaded=True)
 
 
+def read_folder_summary(record: FileRecord) -> FileRecord:
+    """Hydrate one VISIBLE folder's note badge and vault marker. Blocking.
+
+    Both halves read only the folder itself: `count_folder_notes` is one
+    bounded `os.scandir`, and the vault question goes to the ONE predicate the
+    rest of the app already uses (`Notes.note_import_discovery.
+    folder_is_obsidian_vault`, the same `.obsidian/` marker Import once and
+    "Keep a folder synced" look for) rather than a second one written here.
+
+    Imported lazily: this vendored package is deliberately absent from the
+    app's boot import closure (`Tests/Packaging/test_app_import_diet_closure`),
+    and so is `note_import_discovery` -- a module-level import here would put
+    the Notes discovery module on every picker's import path for a predicate
+    only three of them ask for.
+
+    Args:
+        record: Snapshot to hydrate; a non-folder or already-summarised
+            snapshot is returned unchanged except for the "done" flag.
+
+    Returns:
+        A snapshot marked `folder_summary_loaded`, so an unreadable folder is
+        asked once and not re-queued on every scroll.
+    """
+    if record.folder_summary_loaded or not record.is_directory:
+        return replace(record, folder_summary_loaded=True)
+    from ....Notes.note_import_discovery import folder_is_obsidian_vault
+
+    counted = count_folder_notes(record.location)
+    note_count, partial = counted if counted is not None else (None, False)
+    return replace(
+        record,
+        note_count=note_count,
+        note_count_partial=partial,
+        is_vault=folder_is_obsidian_vault(record.location),
+        folder_summary_loaded=True,
+    )
+
+
 def project_records(
     records: Sequence[FileRecord],
     *,
@@ -118,7 +266,8 @@ def project_records(
         show_hidden: Whether dot-prefixed entries are visible.
         query: Stripped, casefolded filename substring to match.
         file_filter: Optional caller predicate, applied to non-directories.
-        sort_key: Discovery, name, modified, accessed, created, or size ordering.
+        sort_key: Folders-first, discovery, name, modified, accessed, created,
+            or size ordering.
         descending: Whether known sort values are ordered descending.
         cancelled: Cooperative cancellation signal checked between entries.
 
@@ -145,14 +294,21 @@ def project_records(
             continue
         if dot_hidden or (query and query not in record.location.name.casefold()):
             continue
-        if sort_key not in ("discovery", "name"):
+        if sort_key not in ("discovery", "name", "folders"):
             record = read_metadata(record)
         visible.append(record)
-    if sort_key == "name":
+    if sort_key in ("name", "folders"):
         visible.sort(
             key=lambda r: (r.location.name.casefold(), r.location.name),
             reverse=descending,
         )
+        if sort_key == "folders":
+            # A SECOND, stable sort on the one bit that separates the groups
+            # (task-32611 AC#4). Folding `not is_directory` into the key above
+            # instead would make "Descending" put files first; here descending
+            # reverses the NAMES and leaves folders on top, which is what
+            # "Folders first" has to keep meaning in both directions.
+            visible.sort(key=lambda r: not r.is_directory)
     elif sort_key != "discovery":
         attribute = {
             "modified": "st_mtime",
@@ -231,6 +387,17 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
     sort_descending = reactive(False)
     BATCH_SIZE = 64
     PUBLISH_INTERVAL = 0.03
+
+    show_folder_notes = False
+    """Draw a note count and a vault marker on folder rows (task-32643 AC#2/#4).
+
+    Off for every picker in the app except the three Notes folder doors, which
+    turn it on through `FileSystemPickerScreen`'s `notes_context`: "12 notes"
+    is a useful badge when choosing where notes live and noise in a model-file
+    or character-card picker. The work it adds is the same shape as the
+    metadata hydration it rides along with -- VISIBLE rows only, one bounded
+    `os.scandir` per folder, never re-asked once answered.
+    """
 
     class ListingChanged(Message):
         def __init__(self, navigation: ProgressiveDirectoryNavigation) -> None:
@@ -318,12 +485,30 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
             self._interaction_serial += 1
 
     def _settle_highlight(self) -> None:
+        """Put the highlight on the first real row, or on ".." if there is none.
+
+        The ``elif`` is the empty-directory case, and it may only be believed
+        once NO further projection is owed. A projection reads
+        ``self._records`` when it starts and publishes when its off-loop sort
+        returns, so one that began before the scan's first batch landed
+        publishes an empty listing while ``_scan_finished`` has since become
+        True -- and this method then concluded "empty directory" and pinned
+        the highlight to ".." for good, because the guard above returns early
+        once ``highlighted`` is set.
+
+        Latent before task-32643 and timing-dependent; the folder-note badge
+        made it deterministic at 100x30 (4 runs of 4, against 0 of 4 without a
+        ``notes_context``: the picker opened with ".." highlighted, so the
+        first Enter in the listing went UP a directory). ``_projection_dirty``
+        is the same "more is owed" fact ``_settle_projection_highlight``
+        already consults one line above its call to this method.
+        """
         if self.highlighted is not None:
             return
         first_entry = 0 if self.is_root else 1
         if self.option_count > first_entry:
             self.highlighted = first_entry
-        elif self._scan_finished and self.option_count:
+        elif self._scan_finished and self.option_count and not self._projection_dirty:
             self.highlighted = 0
 
     @property
@@ -461,16 +646,37 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
         if not self._metadata_running:
             start = max(0, int(self.scroll_y) - 8)
             stop = min(self.option_count, int(self.scroll_y) + self.size.height + 8)
-            records = [
-                self._metadata.get(self.options[i].location, self.options[i].record)
-                for i in range(start, stop)
-                if getattr(self.options[i], "record", None) is not None
-                and not self.options[i].record.metadata_loaded
-                and self.options[i].location.name != ".."
-            ]
+            records = []
+            for i in range(start, stop):
+                option = self.options[i]
+                if getattr(option, "record", None) is None:
+                    continue
+                if option.location.name == "..":
+                    continue
+                record = self._metadata.get(option.location, option.record)
+                if self._wants_hydration(record):
+                    records.append(record)
             if records:
                 self._metadata_running = True
                 self._hydrate_visible(self._generation, records)
+
+    def _wants_hydration(self, record) -> bool:
+        """Is there still bounded per-row work owed on this visible record?
+
+        The folder badge is a SECOND reason a row can be unhydrated, and it has
+        to be asked independently of `metadata_loaded`: a metadata sort
+        (`project_records`) stats every record off-loop without ever counting
+        notes, so keying the queue on `metadata_loaded` alone left every folder
+        that first became visible under "Size" or "Last modified" permanently
+        badge-less.
+        """
+        if not record.metadata_loaded:
+            return True
+        return (
+            self.show_folder_notes
+            and record.is_directory
+            and not record.folder_summary_loaded
+        )
 
     def _repopulate_display(self):
         self._stop_projection()
@@ -625,13 +831,17 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
     async def _hydrate_visible(self, generation, records):
         try:
             cancelled = self._scan_cancel
+            summarise_folders = self.show_folder_notes
 
             def hydrate():
                 hydrated = []
                 for record in records:
                     if cancelled.is_set():
                         break
-                    hydrated.append(read_metadata(record))
+                    record = read_metadata(record)
+                    if summarise_folders and record.is_directory:
+                        record = read_folder_summary(record)
+                    hydrated.append(record)
                 return hydrated
 
             hydrated = await asyncio.to_thread(hydrate)

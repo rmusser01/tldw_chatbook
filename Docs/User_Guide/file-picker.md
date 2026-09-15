@@ -13,11 +13,37 @@ Enter does nothing while only the parent row is available during scanning. The
 first discovered entry receives the initial highlight; you can still explicitly
 navigate to the parent folder.
 
-Use **Sort** during loading or afterward to choose discovery order, name,
-last modified, last accessed, created, or size. The adjacent control selects
-ascending or descending order. Discovery order keeps incoming entries at the
-end and has no direction. Finishing a scan does not automatically reorder it.
-The parent-folder entry stays first, and sorting preserves your selected file.
+Use **Sort** during loading or afterward to choose folders first, discovery
+order, name, last modified, last accessed, created, or size. The adjacent
+control selects ascending or descending order. Discovery order keeps incoming
+entries at the end and has no direction. Finishing a scan does not
+automatically reorder it. The parent-folder entry stays first, and sorting
+preserves your selected file.
+
+**Folders first** lists every folder before every file, each group in name
+order; **Descending** reverses the names and keeps the folders on top. It is
+the order every picker that can hand back a *folder* opens on, because there
+the folders are the choice. That is the three Notes doors — "Import once"
+(which can return either a file or one folder), "Keep a folder synced" and
+Folder files' "Choose File Notes Folder" — and also every other
+folder-choosing dialog in the app: importing a skill folder, binding a
+workspace, choosing a TTS model or voice directory, an external model
+directory, a podcast export folder. Pickers that can only return a *file*
+still open on discovery order, and both orders are on the menu either way
+(task-32611).
+
+In those three Notes folder pickers each folder row also says how many notes
+sit directly inside it ("12 notes"), and a folder holding an Obsidian vault is
+marked "· vault". The count never descends into sub-folders and never reads
+more than 500 entries of one folder, so it cannot delay the listing; a folder
+that has not been reached yet, or cannot be read, simply shows nothing. A
+folder with more than 500 entries is counted as far as that budget goes and
+says so with a "+" — "48+ notes" means at least 48, counted from the first 500
+things in the folder. Only the Notes doors show this; a model-file or
+character-card picker has no use for it and asks for nothing.
+**Ctrl+R** in those pickers offers the folders you last chose through that
+same door, with the list focused, so **Enter** on one uses it without browsing
+to it (task-32643).
 
 Size and modification details load as rows approach the visible area. Sorting
 by size or a timestamp needs metadata for all matching entries, so this work

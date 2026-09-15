@@ -35,7 +35,20 @@ class SelectDirectory(FileSystemPickerScreen):
 
     So the base class opens it on the "Folder path" field below rather
     than on the listing -- the behaviour Import once already had, which
-    this door (Library ▸ Notes ▸ Folder files) had been missing.
+    this door (Library ▸ Notes ▸ Folder files) had been missing. The same
+    fact now also gives it the shared folder hint, the folders-first
+    default listing order and the "Select folder" confirm label
+    (task-32611).
+    """
+
+    SELECT_BUTTON_DEFAULT = "Select folder"
+    """Name the button for what it returns (task-32611 AC#3).
+
+    A bare "Select" beside a folder-only listing said nothing about what
+    was being selected, and the sibling door for the same decision --
+    ``FileOpen(offer_select_folder=True)`` -- has always called the
+    folder-committing button "Select folder". A caller passing an explicit
+    ``select_button`` still wins.
     """
 
     DEFAULT_CSS = (
@@ -57,6 +70,7 @@ class SelectDirectory(FileSystemPickerScreen):
         *,
         select_button: ButtonLabel = "",
         cancel_button: ButtonLabel = "",
+        notes_context: str = "",
     ) -> None:
         """Initialise the dialog.
 
@@ -65,6 +79,8 @@ class SelectDirectory(FileSystemPickerScreen):
             title: Optional title.
             select_button: The label for the select button.
             cancel_button: The label for the cancel button.
+            notes_context: Which Library Notes folder door this is, if any;
+                see `FileSystemPickerScreen.__init__` (task-32643).
 
         Notes:
             `select_button` and `cancel_button` can either be strings that
@@ -76,6 +92,7 @@ class SelectDirectory(FileSystemPickerScreen):
             title,
             select_button=select_button,
             cancel_button=cancel_button,
+            notes_context=notes_context,
         )
 
     def on_mount(self) -> None:
@@ -99,11 +116,6 @@ class SelectDirectory(FileSystemPickerScreen):
         # must select that value rather than drop a cursor in the middle of
         # it (task-32251).
         yield PathInput(id="path_input", placeholder="Type path or select below")
-
-    def _hint_text(self) -> str:
-        """Directory-mode hint: Enter descends, Select confirms (task-32122)."""
-        select_label = self._label(self._select_button, "Select")
-        return f"Enter Open  ·  {select_label} to use this folder"
 
     @on(DirectoryNavigation.Changed)
     def _update_path_input_on_nav_change(

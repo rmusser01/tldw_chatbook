@@ -521,6 +521,7 @@ from ...config import get_cli_setting
 from ...Library.library_browse_location import (
     browse_start_directory,
     claim_browse_directory,
+    picker_recent_context,
     remember_browse_directory,
 )
 from ...Library.library_export_scope import ExportScope
@@ -561,7 +562,7 @@ from ...Library.library_shell_state import (
 )
 from ...Notes.note_folder_models import NoteFolder
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
-from ...Third_Party.textual_fspicker import FileOpen, FileSave
+from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
 from ...Utils.adaptive_reader_state import (
     AdaptiveReaderLayoutPreferences,
     PaneName,
@@ -4984,6 +4985,19 @@ class LibraryNotesController:
     def handle_library_notes_lasting_folder_requested(
         self, event: LibraryNotesAddFromFilesCanvas.FolderRequested
     ) -> None:
+        """Open the folder-only picker for "Keep a folder synced".
+
+        ``SelectDirectory``, not ``FileOpen(offer_select_folder=True)``
+        (task-32611 AC#1/#2). This door can only answer with a folder -- the
+        callback below has always dropped anything else on the floor -- yet it
+        pushed the files-AND-folder dialog, whose field is labelled "File
+        name", whose placeholder reads "File name or path" and whose listing
+        shows every file in the folder as if one were pickable. Critique #4
+        met all three under the title "Choose a folder to keep synced". The
+        folder-only mode of the same picker family says "Folder path:",
+        pre-fills it, lists folders only and offers just the two buttons that
+        can act on one.
+        """
         event.stop()
 
         async def selected(path: Path | None) -> None:
@@ -4996,10 +5010,10 @@ class LibraryNotesController:
                 controller.set_setup("display_name", path.name)
 
         self.app.push_screen(
-            FileOpen(
+            SelectDirectory(
                 title="Choose a folder to keep synced",
-                offer_select_folder=True,
                 location=self._library_notes_sync_browse_location(),
+                notes_context=picker_recent_context("library.notes_sync"),
             ),
             selected,
         )
@@ -5025,7 +5039,11 @@ class LibraryNotesController:
         generation = claim_browse_directory("library.notes_sync", "last_directory")
         self.run_worker(
             lambda: remember_browse_directory(
-                "library.notes_sync", "last_directory", selected_path, generation
+                "library.notes_sync",
+                "last_directory",
+                selected_path,
+                generation,
+                recent_context=picker_recent_context("library.notes_sync"),
             ),
             thread=True,
         )

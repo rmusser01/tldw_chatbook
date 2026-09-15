@@ -276,6 +276,81 @@ common base precisely so a second directory dialog cannot miss it.)
   `EnhancedFileDialog`'s own ceiling), each crumb keeping its absolute path
   as its tooltip.
 
+### 9. Folder-Returning Dialogs Are One Picker, Not Three (task-32611, task-32643)
+
+Critique #4 opened the three Library ▸ Notes folder doors in one sitting and
+found three dialogs for one decision. The fix keeps reading the SAME
+declarative fact section 8 introduced, `RETURNS_A_FOLDER`, rather than adding
+flags beside it.
+
+- **The third door was using the wrong one of the two.** "Keep a folder
+  synced" pushed `FileOpen(offer_select_folder=True)` -- the files-AND-folder
+  dialog -- while its callback dropped anything that was not a directory. So
+  its field was labelled "File name", its placeholder read "File name or
+  path", and every file in the folder was listed as though pickable, under
+  the title "Choose a folder to keep synced". It now pushes `SelectDirectory`,
+  the folder-only mode of the same family. Nothing in the picker changed for
+  it; the caller was asking the wrong question.
+- **One hint, one button name.** `FileOpen._hint_text` and
+  `SelectDirectory._hint_text` are both gone: `FileSystemPickerScreen.
+  _hint_text` returns the one sentence whenever `RETURNS_A_FOLDER`, and
+  `FOLDER_CONFIRM_LABEL` is the single literal behind both that sentence and
+  the "Select folder" button `compose` adds on a files-and-folder dialog.
+  `SELECT_BUTTON_DEFAULT` (a class attribute, `"Select folder"` on
+  `SelectDirectory`) is the folder-only half, so the button that commits a
+  folder is called the same thing on all three doors. A caller passing an
+  explicit `select_button` still wins.
+- **`_default_listing_sort`.** A new `"folders"` sort key (folders first,
+  name-ascending; `Descending` reverses the NAMES and keeps folders on top,
+  via a second stable sort on `not is_directory` rather than folding the flag
+  into the key) is the DEFAULT for a folder-returning dialog and only for one.
+  A file picker keeps "Discovery order", where rows arriving in disk order is
+  the point, and "Discovery order" stays on the menu for both. The Select's
+  initial `value=` and the navigation's `sort_key` are set from the one
+  method, the latter in `on_mount`, which Textual dispatches to every class in
+  the MRO -- so `EnhancedFileDialog`, which builds its own navigation in its
+  own `compose`, is covered without a second copy of the two lines.
+- **The folder badge is bounded, and off by default.** `FileRecord` gained
+  `note_count` / `note_count_partial` / `is_vault` / `folder_summary_loaded`,
+  rendered through `size_text` (the column a directory has always left blank)
+  and `display_name` -- so both the vendored row and `EnhancedFileDialog`'s
+  responsive one show them with no renderer change. The count is one
+  `os.scandir` of that folder, no recursion, capped at `NOTE_COUNT_CEILING`
+  (500) entries READ; it rides the existing visible-rows-only metadata
+  hydration worker. The bound is on reads rather than on matches because that
+  is where the work is -- review round 1 caught the first version capping on
+  matches, which walked a 20 000-entry folder of `.log` files to its end
+  looking for notes it had no reason to expect. A folder that runs out of
+  budget returns its notes-so-far as a floor and the badge says "48+ notes". `show_folder_notes` is off
+  unless the caller passed a `notes_context`, because "12 notes" is a useful
+  badge when choosing where notes live and noise in a model-file or
+  character-card picker. `_wants_hydration` asks the badge question
+  independently of `metadata_loaded`: a metadata sort stats every record
+  without counting notes, so keying the queue on `metadata_loaded` alone left
+  folders that first became visible under "Size" permanently badge-less.
+- **The vault predicate is CALLED, not copied.** `read_folder_summary` imports
+  `Notes.note_import_discovery.folder_is_obsidian_vault` -- the body lifted
+  out of `library_notes_sync_controller._carries_obsidian_marker`, which now
+  delegates to it -- so the listing and the sync setup cannot drift on what a
+  vault is. The import is lazy: this package is deliberately absent from the
+  app's boot import closure (`Tests/Packaging/test_app_import_diet_closure`)
+  and so is that module.
+- **Recent roots reuse the store that already exists.** `_get_recent_paths`
+  was a stub returning `[]`, which is why ctrl+r opened a permanently empty
+  box on every picker. With a `notes_context` it now reads
+  `RecentLocations(context=...)` -- the enhanced family's own
+  `[filepicker] recent_<context>` store -- written by
+  `Library.library_browse_location.remember_browse_directory`, which all three
+  doors already call on a worker, folded into the config write it was already
+  making. `watch_show_recent` focuses the list when it has entries, and
+  `_on_recent_selected` DISMISSES with the root on a folder-returning dialog
+  (navigating there and then requiring Select would leave it two keystrokes
+  away, not one). Two deliberate non-changes: ctrl+r still opens an empty
+  panel, because `test_fspicker_keyboard_save` pins the Escape-peel order by
+  opening all three transients on an empty picker; and `_add_to_recent` stays
+  a no-op here, because it fires on every `DirectoryNavigation.Changed`, i.e.
+  on merely passing through a folder.
+
 ## Contributing Upstream
 
 These enhancements are designed to be contributed back to the original textual-fspicker project. They:

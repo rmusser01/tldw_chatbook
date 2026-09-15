@@ -14498,3 +14498,39 @@ marks that Loguru had interleaved; a FAILED list truncated by `head -8`, whose
 missing entries were inferred to have passed; and this. The common shape is that
 every one of them is a number you did not compute, from output you did not fully
 read, in the direction you were hoping for.
+## A pin for a RACE has to be a pin for the GUARD, not for the race (task-32643, 2026-09-15)
+
+**The incident.** The folder-note badge added work to the picker's
+message loop, and a probe caught the price: at 100x30 the listing opened with
+`..` highlighted in **4 runs out of 4** with a `notes_context`, against **0 of
+4** without one — so the first Enter inside the listing went UP a directory.
+Cause traced to `ProgressiveDirectoryNavigation._settle_highlight`: a
+projection that started before the scan's first batch landed publishes an
+empty listing while `_scan_finished` has since become True, the
+empty-directory fallback reads that as "this folder is empty", and the method's
+own first line (`if self.highlighted is not None: return`) then makes the
+wrong answer permanent. Latent long before this task; the badge only made the
+window wide enough to hit every time.
+
+**What nearly shipped as evidence.** The obvious pin — mount the real picker,
+wait for the rows, assert the highlight is not `..` — **passed with the fix
+reverted** when run alone. conftest's imports warm the process enough to close
+the window, so the test that reproduced the bug by hand could not reproduce it
+under pytest. Running it in a bigger file might have caught it; might not.
+Either way that is a coin, not a pin.
+
+**The rule.** When the defect is a timing window, do not pin the window. Pin
+the GUARD, deterministically, against the production function — here a
+five-attribute stand-in passed to the unbound
+`ProgressiveDirectoryNavigation._settle_highlight`, asserting all three
+branches: owed projection → no highlight claimed, genuinely empty → `..`
+claimed, ordinary listing → first real row, dirty or not. That pin fails the
+moment the guard is deleted (`AssertionError: '..' must not be claimed as the
+answer while the listing may still grow`) and costs 2 seconds. Keep the
+integration-shaped test too, because it is the shape the user meets — but
+label it a smoke check in its own docstring, so the next reader does not
+mistake its green for coverage of the guard.
+
+**Corollary already paid for elsewhere in this file:** "revert the fix and
+record the RED text" is the whole rule, not half of it. A revert that leaves
+the suite green is a finding about the pin, not a formality to tick.

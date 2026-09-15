@@ -65,6 +65,7 @@ def validate_file_picker_sort_key(value: object) -> str:
         ValueError: The value is not a supported string sort key.
     """
     if not isinstance(value, str) or value not in (
+        "folders",
         "discovery",
         "name",
         "modified",

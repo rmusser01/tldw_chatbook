@@ -1261,8 +1261,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "91fb35fe6b39f78cb81a",
+      "call_count": 5,
+      "diagnostic_digest": "719c7918529f0a84fec4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Library/library_browse_location.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11568,6 +11568,6 @@
     "persistent_sink_files": 12,
     "task_31551_calls": 55,
     "task_492_calls": 1403,
-    "task_494_calls": 7773
+    "task_494_calls": 7774
   }
 }
