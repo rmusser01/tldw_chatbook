@@ -37,7 +37,6 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_ENTRIES,
     ImportAction,
     ImportMatchKind,
-    ImportPreviewItem,
     NoteImportPlan,
     planned_change_count,
 )
