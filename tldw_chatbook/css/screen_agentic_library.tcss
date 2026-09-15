@@ -2875,8 +2875,20 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-x: hidden;
 }
 
+/* These are sections of the editor's single scroll owner, not flex panes.
+   Default 1fr heights clip fields under the following metadata and leave the
+   embedded Advanced editor with no room for its block content. */
+#library-prompt-mode-controls,
+#library-prompt-basic-region,
+#library-prompt-advanced-region,
+#library-prompt-info-region,
 #library-prompt-advanced-extras {
+    width: $ds-width-full;
     height: auto;
+    min-height: $ds-size-0;
+}
+
+#library-prompt-advanced-extras {
     margin-bottom: $ds-space-1;
 }
 

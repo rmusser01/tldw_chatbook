@@ -175,3 +175,36 @@ TASK-32462 remains In Progress because its first four criteria explicitly requir
 passing on `dev`; these local commits have not been integrated. The broader
 feature audit still includes remaining Prompt interactions, Skills, Collections,
 ingestion details and other application destinations.
+
+
+## Prompt save and browse continuity — TASK-32603
+
+The [Prompt continuity record](../qa/2026-09-14-prompt-continuity/README.md)
+closes the previously unqualified Items-loading observation. New prompt did not
+dispatch its resident list request; first save refreshed only source counts.
+Both now use the exact browse controller. The same journey exposed default
+fractional section heights clipping Basic and Advanced text, Back leaving a
+cleared editor mounted after the previous retention fix, and retained block
+markers/provenance remaining draft-like after save. These are repaired without
+rebuilding live text fields.
+
+Verification: **8 passed** in the real SQLite / production CSS continuity matrix,
+**88 passed** in the affected Prompts selection, **63 passed** across complete
+reader/browse-controller/resize-budget files, and **31 passed** in governance.
+A final reader/continuity rerun after all production edits passes **28 cases**.
+Three conflict readiness cases also pass after replacing unsafe recompose-time
+queries with displayed/enabled-action waits. Counts overlap across reruns; no
+full repository sweep was run. Changed methods are formatted with no new Ruff
+diagnostics, and the user guide describes the repaired flow.
+
+Private native journeys at measured 170×48 and 80×24 preserved text, settled the
+Items count, showed clean saved markers and reopened the same version. Wide
+shutdown returned 0; the final compact run completed its UI assertions but still
+appeared active when its owned terminal was closed. The evidence explicitly
+excludes its stale prior exit file. Existing startup warnings remain, and neither
+run qualifies a provider interaction or complete app startup/shutdown.
+
+**Next:** TASK-32602 tracks the observed cross-size Prompt focus loss. Stable-size
+Basic/Advanced coverage is complete for this journey; responsive focus and the
+remaining Prompt actions, Skills, Collections, ingestion and other destinations
+remain in the feature review. Integration into dev is still pending.

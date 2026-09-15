@@ -1353,7 +1353,9 @@ class LibraryPromptsController:
             "prompts",
             then=restore_focus,
             allow_screen_fallback=False,
-            sync_prompt_work=False,
+            # Browsing must retain a live editor, but Back/Discard owns the
+            # transition to the list's empty work pane after clearing it.
+            sync_prompt_work=self._library_prompts_view == "list",
         ):
             return LibraryEntryReconcileResult.APPLIED
         return LibraryEntryReconcileResult.FAILED
@@ -2988,9 +2990,7 @@ class LibraryPromptsController:
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
-        raw_name, raw_author, raw_details, raw_system, raw_user, raw_keywords_text = (
-            fields
-        )
+        raw_name, raw_author, raw_details, raw_system, raw_user, raw_keywords_text = fields
 
         name = self._sanitize_media_field(raw_name, max_length=300)
         author = self._sanitize_media_field(raw_author, max_length=200)
@@ -3275,8 +3275,12 @@ class LibraryPromptsController:
             # broader snapshot refresh to when the editor is actually left
             # -- see the comment below), a brand-new prompt changes the
             # list's membership/count, so the Prompts rail badge and list
-            # must pick up the new row now. Fire-and-forget, mirrors
-            # ``_create_library_note``'s equivalent post-create refresh.
+            # must pick up the new row now. The broad snapshot owns counts;
+            # only the browse controller can refresh the retained Items page.
+            self._request_library_prompts_browse(
+                self._library_prompt_browse_controller.mutation_refresh_scope,
+                focus_identity=self._library_prompts_focus_identity(),
+            )
             self._refresh_local_source_snapshot()
         else:
             self._library_prompt_detail = patched_detail
@@ -3300,6 +3304,18 @@ class LibraryPromptsController:
         # "Saved." status, same combined helper the failure branches above
         # use.
         await self._apply_library_prompt_save_outcome("ok")
+        # Retained block cards and provenance must adopt the persisted state,
+        # just as the outer Saved line does. Their draft markers are independent.
+        saved_editor = build_prompt_editor_state(
+            patched_detail, capabilities=self._library_prompt_capabilities
+        )
+        self._library_prompt_block_state = saved_editor.block_editor_state
+        try:
+            canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            await canvas.sync_saved_editor_state(saved_editor)
         if not is_create:
             self._initialize_library_prompt_history(
                 patched_detail, open_history=history_was_open

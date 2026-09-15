@@ -1,5 +1,15 @@
 # Lessons: verifying against the real thing
 
+## Clear exit receipts before reusing a native probe session
+
+**TASK-32603, 2026-09-14.** A compact Prompt journey wrote successful UI
+results while its process remained active. Its exit file still contained zero
+from an earlier run. Checking the terminal's current process caught the stale
+receipt before closeout; the final compact shutdown was left unqualified.
+Remove prior completion files before launch or use a unique run directory, and
+tie the exit receipt to the current process/run. UI assertions and shutdown are
+separate evidence. The owned session was closed and process absence checked.
+
 ## Screen worker waits can include unrelated app jobs
 
 **TASK-32462, 2026-09-14.** A native Library probe copied

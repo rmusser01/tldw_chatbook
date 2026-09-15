@@ -464,6 +464,30 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         )
         self.screen.set_focus(target, scroll_visible=False)
 
+    async def sync_saved_editor_state(self, editor_state: PromptEditorState) -> None:
+        """Adopt saved status and block markers without replacing text fields.
+
+        Args:
+            editor_state: Projection of the successfully persisted Prompt.
+        """
+        self.editor_state = editor_state
+        state = editor_state.block_editor_state
+        editors = self.query(PromptBlockEditor)
+        if state is not None and editors:
+            editor = editors.first()
+            for lane in state.definition.lanes:
+                for block in lane.blocks:
+                    await editor.replace_block_state(block.id, state)
+        source = editor_state.source.title()
+        kind = editor_state.artifact_type.title()
+        format_label = definition_state_display_label(editor_state.definition_state)
+        self.query_one("#library-prompt-artifact-status", Static).update(
+            f"{kind} · {source} · {format_label}"
+        )
+        self.query_one("#library-prompt-info-provenance", Static).update(
+            f"Persisted source: {source} · {kind} · {format_label}"
+        )
+
     def sync_lifecycle_actions(
         self,
         *,

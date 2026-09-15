@@ -1,0 +1,27 @@
+{
+  "wide": [
+    "2026-09-14 23:24:43.866 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:24 - tokenizers library not available. Install with: pip install tokenizers",
+    "2026-09-14 23:24:44.031 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available."
+  ],
+  "compact": [],
+  "private_app_log_170_final_run": [
+    "2026-09-14 23:33:59 [ERROR   ] tldw_chatbook.UI.Screens.chat_screen:463 - Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'",
+    "2026-09-14 23:34:00 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.",
+    "2026-09-14 23:34:01 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-14 23:34:01 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-14 23:34:01 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-14 23:34:07 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)",
+    "2026-09-14 23:34:07 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)",
+    "2026-09-14 23:34:07 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)"
+  ],
+  "private_app_log_80_final_run": [
+    "2026-09-14 23:33:59 [ERROR   ] tldw_chatbook.UI.Screens.chat_screen:463 - Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'",
+    "2026-09-14 23:34:00 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.",
+    "2026-09-14 23:34:01 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-14 23:34:01 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-14 23:34:01 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-14 23:34:07 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)",
+    "2026-09-14 23:34:07 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)",
+    "2026-09-14 23:34:07 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)"
+  ]
+}

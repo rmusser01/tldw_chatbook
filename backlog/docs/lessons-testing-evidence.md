@@ -4,6 +4,16 @@ Working knowledge about testing in this repo. Not decisions (see `backlog/decisi
 and not point-in-time audits — these are traps that have actually cost time here, kept
 so the next person does not rediscover them.
 
+## Retained fields do not certify the surrounding saved state
+
+**TASK-32603, 2026-09-14.** Retaining the first-saved Prompt TextArea passed
+the earlier identity test while Items stayed permanently Loading, the focused
+Basic field painted metadata from a following sibling, and Advanced cards kept
+their unsaved markers. Back also cleared state without removing the editor.
+The next journey waited separately for the Items request, inspected compositor
+paint and child status, then used Back and reopened the saved row. Verify the
+observable transition around a retained widget, not just that widget's survival.
+
 ## Wait for the replacement control before editing it
 
 **TASK-32462, 2026-09-14.** The full Prompts file intermittently restored a

@@ -9494,6 +9494,16 @@ async def test_library_prompt_conflict_save_as_new_replaces_source_history_ident
         screen.query_one("#library-prompt-save", Button).press()
         await _wait_for_selector(screen, pilot, "#library-prompt-conflict-save-new")
 
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen.query_one("#library-prompt-conflict-save-new", Button).display
+                and not screen.query_one(
+                    "#library-prompt-conflict-save-new", Button
+                ).disabled
+            ),
+            message="Conflict Save as new did not become enabled",
+        )
         screen.query_one("#library-prompt-conflict-save-new", Button).press()
         for _ in range(200):
             state = screen._library_prompt_history_state
@@ -9690,13 +9700,16 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
         content.text = "Hello {name}"
         await pilot.pause()
         screen.query_one("#library-prompt-save", Button).press()
-        await pilot.pause()
-        for _ in range(150):
-            if screen.query_one(
-                "#library-prompt-conflict-save-new", Button
-            ).display:
-                break
-            await pilot.pause(0.02)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen.query_one("#library-prompt-conflict-save-new", Button).display
+                and not screen.query_one(
+                    "#library-prompt-conflict-save-new", Button
+                ).disabled
+            ),
+            message="Create conflict Save as new did not become ready",
+        )
 
         assert calls["count"] == 1
         assert screen._prompts_state.selected_prompt_id is None
@@ -9719,9 +9732,7 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
         # Reload must land on a usable, blank create state -- not a
         # permanently stuck banner -- and must clear the dirty flag so
         # navigation is no longer vetoed.
-        assert not screen.query_one(
-            "#library-prompt-conflict-save-new", Button
-        ).display
+        assert not screen.query_one("#library-prompt-conflict-save-new", Button).display
         assert screen._prompts_state.conflict_snapshot is None
         assert screen._prompts_state.dirty is False
         assert screen.query_one("#library-prompt-name", Input).value == ""
@@ -9774,13 +9785,16 @@ async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retri
         content.text = "Hello {name}"
         await pilot.pause()
         screen.query_one("#library-prompt-save", Button).press()
-        await pilot.pause()
-        for _ in range(150):
-            if screen.query_one(
-                "#library-prompt-conflict-save-new", Button
-            ).display:
-                break
-            await pilot.pause(0.02)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen.query_one("#library-prompt-conflict-save-new", Button).display
+                and not screen.query_one(
+                    "#library-prompt-conflict-save-new", Button
+                ).disabled
+            ),
+            message="Create conflict Save as new did not become ready",
+        )
 
         assert calls["count"] == 1
         assert screen._prompts_state.selected_prompt_id is None
@@ -9789,22 +9803,22 @@ async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retri
         await pilot.pause()
         # The banner disappears before the post-refresh save worker starts,
         # so wait for the retry to reach its persisted success state.
-        for _ in range(150):
-            if (
+        await _wait_for_condition(
+            pilot,
+            lambda: (
                 calls["count"] == 2
-                and not screen.query_one(
-                    "#library-prompt-conflict-save-new", Button
-                ).display
+                and not any(
+                    button.display
+                    for button in screen.query("#library-prompt-conflict-save-new")
+                )
                 and screen._prompts_state.dirty is False
                 and screen._prompts_state.selected_prompt_id is not None
-            ):
-                break
-            await pilot.pause(0.02)
+            ),
+            message="Conflict retry did not reach persisted success",
+        )
 
         assert calls["count"] == 2
-        assert not screen.query_one(
-            "#library-prompt-conflict-save-new", Button
-        ).display
+        assert not screen.query_one("#library-prompt-conflict-save-new", Button).display
         assert screen._prompts_state.dirty is False
         assert screen._prompts_state.selected_prompt_id is not None
         persisted = db.fetch_prompt_details(screen._prompts_state.selected_prompt_id)

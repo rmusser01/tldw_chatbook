@@ -323,6 +323,11 @@ The fixed action area shows only actions valid for the current lifecycle:
 | Version conflict | **Save as new**, **Reload** |
 | Mutation in progress | The relevant actions remain in place but are disabled with a readable reason |
 
+Opening **New prompt** also loads the Items pane. After the first save, Items
+and the rail count refresh while your text fields stay open. Basic, Advanced
+and Info reflect the saved record; **Back to list** clears the editor and
+returns to the current list.
+
 **Use in Console** sits in the editor **header**, on its own row directly
 under **Basic | Advanced | Info** — the same shape the Media Reader uses for
 its own Use in Console, and not at the bottom of the editor below every

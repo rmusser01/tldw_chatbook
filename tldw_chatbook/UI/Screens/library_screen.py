@@ -21924,7 +21924,10 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_collections_capture_entry",
             )
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+        if self._library_selected_row_id in (
+            LIBRARY_ROW_BROWSE_PROMPTS,
+            LIBRARY_ROW_CREATE_PROMPT,
+        ):
             # The controller synchronizes its current/loading result
             # immediately. Dispatch only after the destination canvas is
             # mounted; dispatching before the awaited route recompose could
