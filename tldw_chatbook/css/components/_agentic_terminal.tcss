@@ -3006,6 +3006,19 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-x: hidden;
 }
 
+/* task-32620 AC#1/AC#2: the same Textual ``MarkdownH1`` default the Library
+   Reader already overrides (``content-align: center middle``, task-31635).
+   Preview prints the note's own title left-aligned in
+   #library-note-preview-body-title directly above this body, so a centred H1
+   underneath it read as a SECOND title -- and the task-32551 de-duplication
+   only fires on an exact title match, which a note titled from Obsidian
+   frontmatter never produces (A cap 25: "Q3 planning — library review" over a
+   centred "Library review"). Left-aligned, the body's first heading reads as
+   the first heading of the body. */
+#library-note-preview-body MarkdownH1 {
+    content-align: left middle;
+}
+
 /* Muted meta line: same tier as the media viewer's metadata block
    (#library-media-viewer-meta) so both editors read consistently.
 

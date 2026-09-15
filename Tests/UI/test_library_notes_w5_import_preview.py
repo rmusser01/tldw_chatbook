@@ -470,3 +470,56 @@ def test_the_receipt_repeats_the_embed_count():
     assert "embedded file" not in _receipt_outcome(_receipt(imported=1))
 
 
+# --- task-32620: Preview shows one title, and a headed callout ------------
+
+
+def test_a_callout_header_is_broken_from_its_body():
+    """AC#3. The lines under a callout header are a lazy paragraph
+    continuation, so "**Warning**" and the first body line rendered as one
+    run of text (A cap 25, B cap 27) where the guide promises a quoted block
+    headed by its type. Two trailing spaces are CommonMark's hard break."""
+    rendered = render_obsidian_callouts("> [!warning]\n> Body follows.\n")
+    assert rendered == "> **Warning**  \n> Body follows.\n", repr(rendered)
+
+
+@pytest.mark.asyncio
+async def test_preview_renders_a_callout_type_on_its_own_line():
+    """The same fix through the widget that actually paints it."""
+    app = _PreviewHost(
+        "Intro.\n\n> [!warning]\n> The preview and the editor disagree.\n",
+        "Markdown showcase",
+    )
+    async with app.run_test(size=(80, 16)) as pilot:
+        await pilot.pause()
+        lines = [line.strip("│ ") for line in _frame(app).splitlines()]
+
+    assert any(line.endswith("Warning") for line in lines), lines
+    assert not any("Warning The preview" in line for line in lines), lines
+
+
+@pytest.mark.asyncio
+async def test_a_frontmatter_titled_note_does_not_paint_a_second_title():
+    """AC#1/AC#2. A cap 25: the note title left-aligned directly above a
+    CENTRED body H1 -- two title-shaped lines, the second one a page banner.
+    task-32551's de-duplication only fires on an exact match, which a note
+    titled from Obsidian frontmatter never produces."""
+    app = _PreviewHost(
+        "# Library review\n\nBody paragraph.\n", "Q3 planning — library review"
+    )
+    async with app.run_test(size=(80, 16)) as pilot:
+        await pilot.pause()
+        lines = _frame(app).splitlines()
+
+    heading = next(
+        line for line in lines if "Library review" in line and "Q3 planning" not in line
+    )
+    paragraph = next(line for line in lines if "Body paragraph." in line)
+    # The heading begins where the rest of the body does, rather than
+    # floating to the middle of the reading measure like a page banner.
+    # (Not compared against the title Static above it: the Markdown widget
+    # carries its own one-cell padding, which is not what this pins.)
+    assert heading.index("Library review") == paragraph.index("Body paragraph."), (
+        f"heading {heading!r} is not aligned with the body {paragraph!r}"
+    )
+
+
