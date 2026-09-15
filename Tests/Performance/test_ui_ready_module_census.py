@@ -139,6 +139,9 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Parsing imported notes and assigning settings controls are first-use work.
+    "tldw_chatbook.Notes.note_import_parsers",
+    "tldw_chatbook.Widgets.select_values",
     # TASK-32507: run-hook commands and summaries are lifecycle-event work.
     "tldw_chatbook.Agents.run_hooks",
     # Speculative voice resources are first-voice work, never first paint.
