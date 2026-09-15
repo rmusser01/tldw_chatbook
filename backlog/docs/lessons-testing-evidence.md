@@ -4,6 +4,24 @@ Working knowledge about testing in this repo. Not decisions (see `backlog/decisi
 and not point-in-time audits — these are traps that have actually cost time here, kept
 so the next person does not rediscover them.
 
+## Wait for the replacement control before editing it
+
+**TASK-32462, 2026-09-14.** The full Prompts file intermittently restored a
+filter caret to 10 instead of the asserted 4; the same case passed alone. Its
+held service signaled entry before the loading canvas finished rebuilding, so
+the test could edit the outgoing filter. The failure occurred before releasing
+the stale response. A second case queried a conflict action while its subtree
+was temporarily absent and raised `NoMatches` instead of waiting for recovery.
+
+Require the replacement filter to receive focus before the next edit, and wait
+for the visible conflict action through the bounded DOM-readiness helper. Keep
+the final caret, persistence, and identity assertions. A service-entry barrier
+proves request admission; it does not prove the replacement controls are ready.
+The next run exposed the inverse mistake: a delete helper accepted an idle
+mutation flag before the queued confirmation ran, then teardown interrupted the
+write worker. Wait for the new settled receipt to prove admission and completion.
+
+
 **Every entry states the incident that produced it.** A lesson without its evidence
 decays into folklore, and folklore is ignored. If you add one, bring the incident.
 

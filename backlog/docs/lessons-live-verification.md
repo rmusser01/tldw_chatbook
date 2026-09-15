@@ -1,5 +1,22 @@
 # Lessons: verifying against the real thing
 
+## Screen worker waits can include unrelated app jobs
+
+**TASK-32462, 2026-09-14.** A native Library probe copied
+`screen.workers.wait_for_complete()` from a small mounted harness and stalled
+with Notes already rendered. That manager included long-lived app workers,
+not just the Library projection. A retry warned that the first audit process
+still held the profile; checking its exact command confirmed the stale probe.
+The first process was terminated, and a final run asserted exclusive profile
+ownership, waited for Library's rendered snapshot generation, retained Notes
+focus through three refreshes, and saved a Prompt before exiting 0.
+
+Wait for the specific domain's completion state in the real app. A worker wait
+that terminates in a minimal test harness need not terminate with the app's
+background services present. Confirm the old probe exited before reusing its
+profile; a successful second window does not prove sole ownership.
+
+
 ## A process's No route to host can be an app privacy denial
 
 **TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized

@@ -1,0 +1,29 @@
+{
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "size": [
+    170,
+    48
+  ],
+  "steps": [
+    {
+      "same_route_refresh": 1,
+      "focused": "library-notes-tree-note-2"
+    },
+    {
+      "same_route_refresh": 2,
+      "focused": "library-notes-tree-note-2"
+    },
+    {
+      "same_route_refresh": 3,
+      "focused": "library-notes-tree-note-2"
+    },
+    {
+      "saved_prompt_id": 3,
+      "text_widget_retained": true,
+      "clean_saved_actions": true
+    }
+  ],
+  "passed": true,
+  "persisted_prompt_verified": true
+}

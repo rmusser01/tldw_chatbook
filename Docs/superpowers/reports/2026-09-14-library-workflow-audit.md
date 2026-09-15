@@ -73,7 +73,7 @@ Native shutdown returned to the shell with exit status **0**; its exit status an
 
 ## Next work
 
-The initial product findings are repaired locally: [rail focus](../qa/2026-09-14-library-rail-focus/README.md), [Workspace refresh](../qa/2026-09-14-workspace-handoff/README.md), and [focus/resize query budgets](../qa/2026-09-14-library-query-budget/README.md). The compact Notes and modal inventory gaps are closed below. The broader feature review still includes Library Prompts/Skills/Collections/ingestion details and the other application destinations; this report does not mark those reviewed. TASK-32462 still tracks remaining footer, entry-compose and Prompts failures, plus integration into dev.
+The initial product findings are repaired locally: [rail focus](../qa/2026-09-14-library-rail-focus/README.md), [Workspace refresh](../qa/2026-09-14-workspace-handoff/README.md), and [focus/resize query budgets](../qa/2026-09-14-library-query-budget/README.md). The compact Notes and modal inventory gaps are closed below. The broader feature review still includes Library Prompts/Skills/Collections/ingestion details and the other application destinations; this report does not mark those reviewed. The footer, entry-compose and Prompts failures are repaired locally in the follow-up below. TASK-32462 remains open for integration into dev.
 
 The [evidence directory](../qa/2026-09-14-library-workflow-audit/README.md) contains selected SVG/ANSI captures, measured state, test summaries and the disposable probes. Full raw logs, the complete capture matrix and private databases remain in ignored audit scratch. This change commits audit documentation and task records only.
 
@@ -144,3 +144,34 @@ seen in the Notes run. The decomposition recipe's standing-failure entries are
 removed and the repair commit is named. This covers the inventory's explicitly
 supported owners and mounted dialog contracts, not every Library feature journey
 or live external service. ADR-161 applies; no new ADR is required.
+
+## Remaining test-file repairs — TASK-32462
+
+The footer, entry and Prompts repair is documented in the
+[verification record](../qa/2026-09-14-library-remaining/README.md). It separates
+three product repairs from obsolete fixtures and assertions: Notes restores
+same-route focus after its canvas rebuild; a confirmed Prompt deletion owns its
+single page/count refresh; and first-save count reconciliation preserves the
+Prompt editor while its actions adopt the saved identity.
+
+The test repairs preserve disabled-row, stale-result, dirty-navigation,
+persistence, exactly-once and widget-identity checks. The failing teardown now
+uses an actual mounted screen, stylesheet parity follows the production source
+and app stylesheet union, and import worker-owner fixtures retain their Library
+services. Readiness checks wait for replacement controls and a settled delete
+receipt, instead of treating service entry or an initially idle flag as completion.
+
+Verification: **342 passed** in the complete Prompts file,
+**159 passed** across seven complete neighboring files (including footer, entry
+and the earlier Workspace repair), plus the reusable-screen leave/return
+journey. Native terminal verification with exclusive ownership of private local
+databases retained Notes row focus through three refreshes and retained the
+first-saved Prompt's text widget. Persisted content/version were checked, the
+terminal size was measured at 170×48, and the app exited 0. Existing Console
+startup and optional-service warnings remain documented; this is not a
+clean-startup qualification or a full repository sweep.
+
+TASK-32462 remains In Progress because its first four criteria explicitly require
+passing on `dev`; these local commits have not been integrated. The broader
+feature audit still includes remaining Prompt interactions, Skills, Collections,
+ingestion details and other application destinations.

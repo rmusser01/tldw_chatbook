@@ -1,0 +1,6 @@
+2026-09-14 22:45:52 [ERROR   ] tldw_chatbook.UI.Screens.chat_screen:463 - Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'
+2026-09-14 22:45:53 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-09-14 22:45:53 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-14 22:45:53 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-14 22:45:53 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-14 22:45:57 [WARNING ] textual_image._terminal:115 - Failed to probe terminal capabilities

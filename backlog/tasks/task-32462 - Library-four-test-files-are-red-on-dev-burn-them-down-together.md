@@ -1,10 +1,11 @@
 ---
 id: TASK-32462
 title: 'Library: four test files are red on dev — burn them down together'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-12 00:12'
-updated_date: '2026-09-15 03:53'
+updated_date: '2026-09-15 05:52'
 labels:
   - library
   - tests
@@ -73,5 +74,33 @@ Measured while verifying the task-32302/32393/32306/32303 branch: four Library t
 - [ ] #2 `Tests/UI/test_post_release_workspaces_library_depth.py` passes on dev, with the seeded cross-workspace sources actually reaching the screen
 - [ ] #3 `Tests/UI/test_library_entry_compose_once.py` passes on dev
 - [ ] #4 `Tests/UI/test_library_prompts_canvas.py` passes on dev, and each stale pin's replacement asserts the behaviour that shipped rather than the one it was written against
-- [ ] #5 Every fix says in one line whether the pin or the product was wrong, so a reader can tell a repair from a weakening
+- [x] #5 Every fix says in one line whether the pin or the product was wrong, so a reader can tell a repair from a weakening
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce the remaining footer, entry-compose and Prompts failures at the current integrated component-pattern branch; keep the already-verified Workspace repair intact.
+2. Trace each failure to obsolete fixture/copy/ownership expectations or a production defect. Restore meaningful assertions of the current behavior; do not weaken stale-result, mutation, focus or geometry contracts.
+3. Repair bounded groups in dependency order: footer context, entry ownership/lifecycle, then Prompts canvas and mutation flows. Use production stylesheets for mounted UI evidence and real disposable SQLite where persistence matters.
+4. Run targeted tests for each group, then the complete affected files; check formatting, compare existing lint diagnostics, self-review and record the cause and evidence per fix.
+5. Record local completion separately from the original acceptance requirement to pass on dev; keep integration-dependent criteria open until the verified commits are integrated.
+
+ADR required: no for test/fixture corrections or direct bug fixes under existing contracts; reassess before any architectural change.
+ADR path: backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md; backlog/decisions/086-library-adaptive-reader-shell.md; backlog/decisions/161-component-pattern-library.md (existing)
+Reason: restore verification and behavior required by the existing footer, adaptive Library ownership and component contracts without changing architecture.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Repaired locally on feat/component-pattern-library; the original dev-dependent criteria remain open until integration.
+
+Product fixes: same-route Notes focus now restores after the resident canvas rebuild and respects a newer focus move; closing a Prompt delete confirmation no longer races the mutation-owned page/count refresh; first-save snapshot reconciliation preserves the Prompt editor, whose actions adopt its saved identity in place.
+
+Test fixes: updated the footer fake, exercised a valid second conversation navigation instead of focusing disabled loading rows, asserted shipped dirty-navigation copy, used real mounted teardown, followed the moved tokenized stylesheets, retained all Library services when moving import worker ownership, and waited for rendered controls and completed delete receipts. Existing stale-result, persistence, exactly-once, focus and widget-identity assertions remain. The one-line product-versus-test classifications are in Docs/superpowers/qa/2026-09-14-library-remaining/README.md.
+
+Verification: the complete Prompts file passes 342 tests. Seven complete neighboring files pass 159 tests, including footer, entry and the already-repaired Workspace file; a separate reusable-screen journey verifies ordinary leave/return refresh. Native terminal verification with exclusive private-profile ownership at a measured 170x48 retains Notes row focus through three refreshes and the first-saved Prompt text widget; real SQLite content/version checks pass and native exit is 0. All changed functions pass Ruff formatting, with no new complete-file lint diagnostics; existing lint debt and native Console startup warnings are documented. No full-suite run or integration was performed.
+
+Updated the workflow audit, archived selected verification evidence, and recorded the async-readiness and app-wide-worker-wait lessons. Self-review completed. Existing ADR-031, ADR-086 and ADR-161 apply; no new ADR is required because these repairs retain established footer, ownership and component contracts.
+<!-- SECTION:NOTES:END -->

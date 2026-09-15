@@ -2854,9 +2854,7 @@ class LibraryPromptsController:
         """Patch save/update action truth after identity or version changes."""
         can_update = self._library_prompt_can_update_original()
         try:
-            block_editor = self.query_one(
-                "#library-prompt-block-editor", PromptBlockEditor
-            )
+            block_editor = self.query_one("#library-prompt-block-editor", PromptBlockEditor)
         except (NoMatches, QueryError):
             block_editor = None
         if block_editor is not None:
@@ -2879,6 +2877,9 @@ class LibraryPromptsController:
             outer_save.disabled = not can_update
         try:
             canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
+            # First save adopts an identity without rebuilding the fields.
+            # Lifecycle actions must read that saved identity, too.
+            canvas.editor_state = self._current_library_prompt_editor_state()
             canvas.can_update_original = can_update
             canvas.sync_lifecycle_actions(
                 dirty=self._library_prompt_dirty,

@@ -8998,6 +8998,15 @@ class LibraryScreen(BaseAppScreen):
         re-fetches.
         """
         if (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
+            and self._prompts_state.mutation_in_flight
+        ):
+            # Closing a mutation dialog resumes this screen before its worker
+            # settles. That worker owns the page, counts, and survivor focus
+            # refresh; a resume read here would race it with pre-write data.
+            return
+        if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
             and self._pending_library_source_open is None
             and self._pending_library_character_navigation is None
@@ -9117,9 +9126,7 @@ class LibraryScreen(BaseAppScreen):
             shortcuts = self._library_ingest_shortcuts_for_current_state()
             registration = ("library", tuple(shortcuts))
             if self._footer_shortcut_registration != registration:
-                self.register_footer_shortcuts(
-                    source="library", shortcuts=shortcuts
-                )
+                self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
         self._library_ingest_suspended_activity = False
         self._library_visit_entered = True
 
@@ -12330,6 +12337,9 @@ class LibraryScreen(BaseAppScreen):
                 sync_kind,
                 then=finish,
                 allow_screen_fallback=False,
+                # A broad source snapshot owns Items and rail counts. Prompt
+                # detail/save handlers own the live editor and patch it in place.
+                sync_prompt_work=False,
                 notes_focus_identity=(
                     capture.notes_identity
                     if capture is not None and capture.identity is identity
@@ -12361,20 +12371,14 @@ class LibraryScreen(BaseAppScreen):
                     await canvas_host.remove_children(outgoing)
                 if generation != self._library_snapshot_state_generation:
                     await self._repair_library_entry_canvas_owner()
-                    return self._supersede_library_entry_reconcile(
-                        generation, route_key
-                    )
+                    return self._supersede_library_entry_reconcile(generation, route_key)
                 if route_key != self._library_entry_route_key():
                     await self._repair_library_entry_canvas_owner()
-                    return self._supersede_library_entry_reconcile(
-                        generation, route_key
-                    )
+                    return self._supersede_library_entry_reconcile(generation, route_key)
                 await canvas_host.mount(replacement)
             except Exception:
                 logger.debug("Library snapshot canvas replacement failed.")
-                return self._retry_or_fail_library_entry_reconcile(
-                    generation, route_key
-                )
+                return self._retry_or_fail_library_entry_reconcile(generation, route_key)
             if generation != self._library_snapshot_state_generation:
                 await self._repair_library_entry_canvas_owner()
                 return self._supersede_library_entry_reconcile(generation, route_key)
@@ -12394,6 +12398,7 @@ class LibraryScreen(BaseAppScreen):
                     sync_kind,
                     then=finish,
                     allow_screen_fallback=False,
+                    sync_prompt_work=False,
                     notes_focus_identity=(
                         capture.notes_identity
                         if capture is not None and capture.identity is identity
@@ -12432,9 +12437,7 @@ class LibraryScreen(BaseAppScreen):
             if viewer is None or not self._sync_library_media_viewer_state(viewer):
                 if restore_focus is not None:
                     restore_focus()
-                return self._retry_or_fail_library_entry_reconcile(
-                    generation, route_key
-                )
+                return self._retry_or_fail_library_entry_reconcile(generation, route_key)
 
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
             try:
@@ -12443,9 +12446,7 @@ class LibraryScreen(BaseAppScreen):
                 logger.debug("Library Search/RAG snapshot sync failed.")
                 if restore_focus is not None:
                     restore_focus()
-                return self._retry_or_fail_library_entry_reconcile(
-                    generation, route_key
-                )
+                return self._retry_or_fail_library_entry_reconcile(generation, route_key)
 
         if restore_focus is not None:
             restore_focus()
