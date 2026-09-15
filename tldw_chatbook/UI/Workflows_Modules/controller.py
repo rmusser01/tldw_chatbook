@@ -3,7 +3,7 @@
 import asyncio
 
 from tldw_chatbook.Workflows.catalog import FIELDS, discover
-from tldw_chatbook.Workflows.document_service import DocumentService
+from tldw_chatbook.Workflows.document_service import PAGE_SIZE, DocumentService
 from tldw_chatbook.Workflows.draft_session import DraftSession
 from tldw_chatbook.Workflows.models import (
     Draft,
@@ -31,7 +31,11 @@ class WorkflowsController:
         self.documents = documents
         self.drafts = drafts
         self.workflows: tuple[Revision, ...] = ()
-        self.versions: tuple[Revision, ...] = ()
+        self.library_offset = 0
+        self.library_query = ""
+        self.library_has_next = False
+        self._library_request = (0, "", object())
+        self._head: Revision | None = None
         self.inspection: Revision | None = None
         self.section = "overview"
         self.issues: tuple[Issue, ...] = ()
@@ -58,7 +62,7 @@ class WorkflowsController:
             await self.drafts.flush()
             if prior and selection == (prior.workflow_id, prior.base_revision_id):
                 selection = None
-        self.workflows = await asyncio.to_thread(self.documents.list_workflows)
+        await self.load_library()
         if selection is None and self.drafts.current:
             selection = (
                 self.drafts.current.workflow_id,
@@ -73,22 +77,43 @@ class WorkflowsController:
     def head(self) -> Revision | None:
         """Last explicitly read head for the exact selected workflow."""
         draft = self.drafts.current
-        return next(
-            (
-                item
-                for item in self.workflows
-                if draft and item.workflow_id == draft.workflow_id
-            ),
-            None,
+        return (
+            self._head
+            if draft and self._head and self._head.workflow_id == draft.workflow_id
+            else None
         )
+
+    async def load_library(self, offset: int = 0, query: str = "") -> None:
+        request = self._library_request = (offset, query, object())
+        rows = await asyncio.to_thread(
+            self.documents.list_workflows,
+            page_size=PAGE_SIZE + 1,
+            offset=offset,
+            query=query,
+        )
+        if request is not self._library_request:
+            return
+        self.workflows = rows[:PAGE_SIZE]
+        self.library_has_next = len(rows) > PAGE_SIZE
+        self.library_offset, self.library_query = offset, query
+
+    async def refresh_head(self) -> None:
+        draft = self.drafts.current
+        self._head = (
+            await asyncio.to_thread(self.documents.get_head, draft.workflow_id)
+            if draft
+            else None
+        )
+
+    async def refresh_library(self) -> None:
+        await self.load_library(*self._library_request[:2])
+        await self.refresh_head()
 
     async def select_workflow(self, workflow_id: str, base_revision_id: str) -> None:
         await self.drafts.select(workflow_id, base_revision_id)
         self.inspection = None
         self.section = "overview"
-        self.versions = await asyncio.to_thread(
-            self.documents.list_revisions, workflow_id
-        )
+        await self.refresh_head()
         self.validate()
 
     async def select_section(self, section: str) -> None:
@@ -109,8 +134,10 @@ class WorkflowsController:
         if source is None:
             return
         await self.drafts.flush()
-        heads = await asyncio.to_thread(self.documents.list_workflows)
-        head = next(item for item in heads if item.workflow_id == source.workflow_id)
+        await self.refresh_head()
+        head = self.head
+        if head is None:
+            raise InvalidDraft("The workflow's saved head is unavailable")
         await self.drafts.copy_revision_to_head(source, head)
         self.inspection = None
 
@@ -150,7 +177,7 @@ class WorkflowsController:
             '{"steps":[],"inputs":{}}', "/name", name.strip()
         )
         revision = await asyncio.to_thread(self.documents.create, raw)
-        self.workflows = await asyncio.to_thread(self.documents.list_workflows)
+        await self.refresh_library()
         await self.select_workflow(revision.workflow_id, revision.revision_id)
 
     def validate(self) -> tuple[Issue, ...]:
@@ -161,8 +188,13 @@ class WorkflowsController:
         if draft.error:
             self.issues = (Issue("", "invalid_json", draft.error),)
             return self.issues
-        issues = list(self.documents.dependency_issues(draft.last_valid_json))
-        document = self.documents.project(draft.last_valid_json)
+        try:
+            issues = list(self.documents.dependency_issues(draft.last_valid_json))
+            document = self.documents.project(draft.last_valid_json)
+        except InvalidDraft as error:
+            # Older saved definitions remain readable/exportable as raw text.
+            self.issues = (Issue("", "invalid_json", str(error)),)
+            return self.issues
         if not document["steps"]:
             issues.append(Issue("/steps", "empty", "Add the first step before running"))
         for index, step in enumerate(document["steps"]):
@@ -176,8 +208,8 @@ class WorkflowsController:
                 )
             for field in FIELDS.get(step["type"], ()):
                 pointer = f"/steps/{index}/" + field.path
-                if field.required and self.documents.field_text(
-                    draft.last_valid_json, pointer
+                if field.required and self.documents.projected_field_text(
+                    document, pointer
                 ) in ("", '""', "null"):
                     issues.append(
                         Issue(pointer, "required", field.label + " is required")

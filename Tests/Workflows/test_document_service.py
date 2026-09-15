@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from decimal import Decimal
 from threading import Barrier
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -45,6 +45,79 @@ def documents(tmp_path):
         yield DocumentService(db)
     finally:
         db.close()
+
+
+def test_workflow_pages_and_unicode_search_reach_off_page_heads(documents):
+    expected = []
+    for index in range(23):
+        raw = prompt_definition()
+        raw["metadata"]["tldw_workflow"]["workflow_id"] = str(uuid4())
+        raw["metadata"]["tldw_workflow"]["revision_id"] = str(uuid4())
+        raw["name"] = f"Straße {index}"
+        expected.append(documents.create(json.dumps(raw)))
+    expected.sort(key=lambda revision: revision.workflow_id)
+    assert documents.list_workflows() == tuple(expected[:20])
+    assert documents.list_workflows(offset=20) == tuple(expected[20:])
+    assert documents.list_workflows(page_size=3, offset=3, query="STRASSE") == tuple(
+        expected[3:6]
+    )
+    assert documents.list_workflows(query="' OR 1=1 --") == ()
+    assert documents.get_head(expected[-1].workflow_id) == expected[-1]
+    assert documents.get_head("absent") is None
+
+
+def test_history_and_local_draft_pages_preserve_all_exact_identities(documents):
+    base = documents.create(json.dumps(prompt_definition()))
+    history = [base]
+    drafts = []
+    for index in range(5):
+        drafts.append(
+            documents.put_draft(
+                base.workflow_id,
+                base.revision_id,
+                documents.edit_field(base.raw_json, "/name", f"Revision {index}"),
+                1,
+            )
+        )
+        base = documents.save_revision(base.workflow_id, base.revision_id, 1)
+        history.append(base)
+    assert documents.list_revisions(base.workflow_id, page_size=2, offset=2) == tuple(
+        history[2:4]
+    )
+    ordered = sorted(drafts, key=lambda draft: draft.base_revision_id)
+    assert documents.list_drafts(base.workflow_id, page_size=2, offset=2) == tuple(
+        ordered[2:4]
+    )
+    assert documents.list_revisions(base.workflow_id, offset=6) == ()
+    assert documents.list_drafts(base.workflow_id, offset=5) == ()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"page_size": 0},
+        {"page_size": 101},
+        {"page_size": True},
+        {"page_size": 1.5},
+        {"offset": -1},
+        {"offset": False},
+        {"offset": "1"},
+    ],
+)
+def test_collection_pages_reject_invalid_bounds_before_sql(
+    documents, monkeypatch, kwargs
+):
+    def no_transaction(*args, **options):
+        pytest.fail("Invalid pagination must not reach SQLite")
+
+    monkeypatch.setattr(documents._db, "transaction", no_transaction)
+    for method, args in (
+        (documents.list_workflows, ()),
+        (documents.list_revisions, ("id",)),
+        (documents.list_drafts, ("id",)),
+    ):
+        with pytest.raises(ValueError):
+            method(*args, **kwargs)
 
 
 def test_legacy_fragment_edit_cannot_adopt_sibling_injection(documents):

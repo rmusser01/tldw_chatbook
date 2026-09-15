@@ -1,9 +1,12 @@
 """Library region and safe compact selection/confirmation overlays."""
 
+import asyncio
+import sqlite3
+from collections.abc import Callable
 from typing import ClassVar
 
 from rich.text import Text
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
@@ -12,6 +15,7 @@ from textual.widgets import Button, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Workflows.catalog import discover
+from tldw_chatbook.Workflows.document_service import PAGE_SIZE
 
 
 class WorkflowButton(Button):
@@ -87,6 +91,93 @@ class ChoiceModal(ModalScreen[str | None]):
         if self.text_input and event.value.strip():
             event.stop()
             self.dismiss(event.value)
+
+
+class PagedChoiceModal(ChoiceModal):
+    """Bounded selection with stable controls and cancellable read-only workers."""
+
+    def __init__(
+        self,
+        title: str,
+        loader: Callable[[int, str], tuple[tuple[str, str], ...]],
+        *,
+        detail="",
+        searchable=False,
+        new_workflow=False,
+    ):
+        super().__init__(title, (), detail=detail)
+        self.loader = loader
+        self.searchable = searchable
+        self.new_workflow = new_workflow
+        self.page_offset = 0
+        self.search_query = ""
+
+    def compose(self):
+        with Vertical():
+            yield Label(self.title_text)
+            if self.searchable:
+                yield Input(
+                    placeholder="Search all workflows", id="workflow-page-search"
+                )
+            yield Static(
+                self.detail,
+                markup=False,
+                classes="choice-copy",
+                id="workflow-page-status",
+            )
+            yield OptionList(id="workflow-dialog-choices")
+            if self.new_workflow:
+                yield compact_button("New workflow", "workflow-dialog-new")
+            yield compact_button("Cancel · Esc", "workflow-dialog-cancel")
+
+    def on_mount(self):
+        self.query_one(Input if self.searchable else OptionList).focus()
+        self.load_page(0, "")
+
+    @work(exclusive=True, group="workflow-choice-page")
+    async def load_page(self, offset: int, query: str):
+        listing = self.query_one(OptionList)
+        listing.disabled = True
+        status = self.query_one("#workflow-page-status", Static)
+        status.update("Loading…")
+        try:
+            rows = await asyncio.to_thread(self.loader, offset, query)
+        except (OSError, RuntimeError, ValueError, sqlite3.Error):
+            status.update("Unable to load this page. Reopen the selector to retry.")
+            return
+        self.page_offset, self.search_query = offset, query
+        options = [Option(Text(label), id=key) for label, key in rows[:PAGE_SIZE]]
+        if offset:
+            options.append(Option("Previous page", id="__previous_page__"))
+        if len(rows) > PAGE_SIZE:
+            options.append(Option("Next page", id="__next_page__"))
+        listing.clear_options()
+        listing.add_options(options)
+        listing.highlighted = 0 if options else None
+        listing.disabled = False
+        status.update(
+            f"Page {offset // PAGE_SIZE + 1} · {self.detail}"
+            if rows
+            else "No matching items"
+        )
+
+    @on(Input.Changed, "#workflow-page-search")
+    def search_page(self, event):
+        event.stop()
+        self.load_page(0, event.value)
+
+    def select_option(self, option):
+        if option.id == "__next_page__":
+            self.load_page(self.page_offset + PAGE_SIZE, self.search_query)
+        elif option.id == "__previous_page__":
+            self.load_page(max(0, self.page_offset - PAGE_SIZE), self.search_query)
+        else:
+            self.dismiss(option.id)
+
+    @on(Button.Pressed, "#workflow-dialog-new")
+    def create_workflow(self, event):
+        event.stop()
+        self.dismiss("__new_workflow__")
 
 
 class StepChooser(ChoiceModal):
@@ -170,7 +261,12 @@ class StepChooser(ChoiceModal):
 
 
 class WorkflowLibrary(Vertical):
-    """Exact document identities, filtered in memory after the owner loads them."""
+    """One bounded library page; filtering belongs to the document owner."""
+
+    class PageRequested(Message):
+        def __init__(self, offset: int, query: str):
+            super().__init__()
+            self.offset, self.query = offset, query
 
     class Selected(Message):
         def __init__(self, workflow_id: str, revision_id: str):
@@ -180,31 +276,44 @@ class WorkflowLibrary(Vertical):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.rows: tuple[tuple[str, str, str], ...] = ()
+        self.page_offset = 0
 
     def compose(self):
         yield Label("Workflow library", id="workflow-library-heading")
         yield Input(placeholder="Search workflows", id="workflow-library-search")
         yield OptionList(id="workflow-library-list")
+        with Horizontal(id="workflow-library-pages"):
+            yield compact_button("Previous", "workflow-library-previous", disabled=True)
+            yield compact_button("Next", "workflow-library-next", disabled=True)
         yield compact_button("New workflow", "workflow-new")
 
-    def show_rows(self, rows):
+    def show_rows(self, rows, *, offset=0, has_next=False):
         self.rows = tuple(rows)
-        self.filter(self.query_one(Input).value)
-
-    def filter(self, query):
+        self.page_offset = offset
         listing = self.query_one(OptionList)
         listing.clear_options()
         listing.add_options(
             Option(Text(label + "\nLocal · saved revision"), id=wid)
             for label, wid, rid in self.rows
-            if query.casefold() in label.casefold()
         )
         listing.highlighted = 0 if listing.option_count else None
+        self.query_one("#workflow-library-previous", Button).disabled = offset == 0
+        self.query_one("#workflow-library-next", Button).disabled = not has_next
 
     @on(Input.Changed)
     def search(self, event):
         event.stop()
-        self.filter(event.value)
+        self.post_message(self.PageRequested(0, event.value))
+
+    @on(Button.Pressed, "#workflow-library-previous, #workflow-library-next")
+    def page(self, event):
+        event.stop()
+        delta = PAGE_SIZE if event.button.id == "workflow-library-next" else -PAGE_SIZE
+        self.post_message(
+            self.PageRequested(
+                max(0, self.page_offset + delta), self.query_one(Input).value
+            )
+        )
 
     @on(OptionList.OptionSelected)
     def select(self, event):

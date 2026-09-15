@@ -17,6 +17,47 @@ from tldw_chatbook.Workflows.authoring import WorkflowAuthoring
 from tldw_chatbook.Workflows.document_service import DocumentService
 
 
+def test_history_page_uses_workflow_revisions_history_without_statistics(tmp_path):
+    db = WorkflowsDB(tmp_path / "history-plan.sqlite3")
+    try:
+        with db.transaction() as cursor:
+            cursor.executemany(
+                "INSERT INTO workflow_revisions "
+                "(workflow_id, revision_id, parents_json, definition_json, created_at) "
+                "VALUES (?, ?, '[]', '{}', ?)",
+                [
+                    (f"workflow-{index % 10}", f"revision-{index}", f"{index:05}")
+                    for index in range(1000)
+                ],
+            )
+            assert (
+                cursor.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+                ).fetchone()
+                is None
+            )
+            statements = []
+            cursor.connection.set_trace_callback(statements.append)
+        page = DocumentService(db).list_revisions("workflow-3", page_size=20, offset=20)
+        assert len(page) == 20
+        assert page[0].revision_id == "revision-203"
+        with db.transaction(write=False) as cursor:
+            cursor.connection.set_trace_callback(None)
+            query = next(
+                statement
+                for statement in statements
+                if statement.startswith("SELECT * FROM workflow_revisions WHERE")
+            )
+            plan = "\n".join(
+                row[3] for row in cursor.execute("EXPLAIN QUERY PLAN " + query)
+            )
+            index = "workflow_revisions_history"
+            assert f"USING INDEX {index}" in plan
+            assert "TEMP B-TREE" not in plan
+    finally:
+        db.close()
+
+
 def foreign_begin_immediate(path: Path) -> str:
     """Observe writer exclusion from an isolated, bounded stdlib-only child."""
     result = subprocess.run(

@@ -1,5 +1,9 @@
 """Secondary current-dev Console handoff; never recomposes the editor."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
@@ -9,6 +13,9 @@ from textual.widgets import Button, Static
 from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
 from tldw_chatbook.UI.Workflows_Modules.library import compact_button
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem
+
 
 class WorkflowConsoleContext(Vertical):
     """Inspect existing Home active work; this region creates no workflow runs."""
@@ -16,7 +23,7 @@ class WorkflowConsoleContext(Vertical):
     def __init__(self, app_instance, **kwargs):
         super().__init__(id="workflows-console-context", **kwargs)
         self.app_instance = app_instance
-        self.item = None
+        self.item: HomeActiveWorkItem | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="workflow-console-actions"):
@@ -35,7 +42,7 @@ class WorkflowConsoleContext(Vertical):
     def on_mount(self) -> None:
         self.refresh_context()
 
-    def latest_item(self, has_recent_work: bool):
+    def latest_item(self, has_recent_work: bool) -> HomeActiveWorkItem | None:
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         build = getattr(adapter, "build_dashboard_input", None)
         if not callable(build):
@@ -75,7 +82,7 @@ class WorkflowConsoleContext(Vertical):
         item = self.latest_item(has_recent_work)
         self.app.call_from_thread(self.apply_context, item)
 
-    def apply_context(self, item) -> None:
+    def apply_context(self, item: HomeActiveWorkItem | None) -> None:
         """Update only stable labels/buttons; draft and focus remain attached."""
         self.item = item
         if not self.is_mounted:

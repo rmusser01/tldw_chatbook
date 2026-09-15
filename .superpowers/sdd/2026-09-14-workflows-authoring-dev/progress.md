@@ -1,5 +1,71 @@
 # SDD ledger — plan: Docs/superpowers/plans/2026-09-14-workflows-authoring-dev.md
 
+## Reopened PR integration — 2026-09-15
+
+User explicitly requests rebase PR2690 on current dev, address Qodo, then merge.
+Task32601 reopened with AC7 and integration plan. Prior completed tasks below are
+historical and must not be replayed. Backup branch codex/workflows-authoring-pre-rebase-20260915
+retains bc736c2796. Rebased13featurecommits only from77eb2601a6 onto48d40df8ce;
+HEAD1a912f0cd2, original remote15b31e4210a919e65060b9b3224c3390b44c3814.
+Range-diff preserves all feature patches; sole lessons conflict retained both appends.
+
+| Review task/pair | Shared boundary checked | Disposition |
+| --- | --- | --- |
+| Shutdown / performance | DraftSession close versus pure analysis | Main owns close; no new async draft owner authorized. |
+| Paging / performance | DocumentService and controller | Main owns list methods and controller load/head; Herschel owns parsing and controller.validate only. |
+| Paging / UI | Exact revision selection and original compact form | Head lookup independent of page; all selectors expose continuation. |
+| Performance | Opaque preservation versus admission caps | Iterative admission checks, original text recovery/export preserved; ADR138 amended before implementation. |
+
+Ruling: Qodo cancellation-shield recommendation is already implemented at the
+reviewed original head — prove cancellation of close after physical commit with
+a regression, no duplicate shield layer — cost if wrong: save/base divergence.
+Shutdown tests: six RED revision rejection/final-flush cases, existing shield
+case passes; minimal expected-rejection catch implemented.31passes plus three
+test-message mismatch failures corrected to check DraftWriteFailed and cause.
+Paging RED:9domain and3mounted-selector cases before implementation.
+
+Herschel01a0a679-bcd1-7e81-8cc0-7ff6a313a905 completed read-only profile then resumed
+under qodo-performance-brief.md for bounded implementation. Report expected at
+qodo-performance-report.md. No commits/subagents; shared-file regions assigned.
+Ruling: remove1333 repeated full parses before adding async infrastructure —
+single projection24ms versus28seconds in measured500step/near16MiBcase — cost if
+remaining work still exceeds100ms: follow with an existing worker and freshness test.
+No Qodo replies, push, merge or integration-complete claim yet. Local UAT evidence
+.uat-workflows-9NUT5t untouched. New full targeted/preflight/review remain required.
+
+Integration checkpoint12:48local: latestremote recheckstilldev48d40df8ce andPRhead15b31e42;
+PRopen/Qodo7originalcomments, no intervening reviews. AllQodofixesstilluncommitted.
+Main completed paging withglobalUnicodecasefoldsearch andrealUIpages at160/110/60,
+exactheadlookup, stale-search requestguard, docstrings/types, shutdownfinalflush,
+legacyraw-onlyscreen integration and read-onlyactiongates. Targeted68editor+page
+tests passed beforelatestperfchanges;50paging/storage/shutdowntests passed later.
+Legacydepth1000 fullscreen nowopensraw/read-only/exportenabled; itsnewactions-test
+was corrected toawaitactualmodalcontrols, notjustscreenidentity.
+
+Preflightinitiallyfailed2portregistrations. Reviewedstatementdiff: removed
+logger.opt(exception=True).warning fromoldscreen; newConsolewarningisconstant,
+nointerpolation/traceback/new sink. Regeneratedproduction-diagnostic-inventory.json.
+Addedreal1000row/no-sqlite_stat1 EXPLAIN ofactualtracedlist_revisions query;
+existingworkflow_revisions_history isselectedwithouttemp-sort. Pinnedexistingindex
+incensus; noschema/indexchanges. FreshcompletepreflightPASSEDallsevenchecks.
+
+Disktemporarily106MiBfreecaused1failedapply(nochangedfile). Laterexternallyrecovered
+to9.2GiB. Agentremovedonlyitsowncompletedpytest-11214(35MiB)tofinishreport;
+userinformedreproducibletestoutputremoved, noUAT/userdataremoved. Mainstandalone
+UIprobe failedatimportattemptingpersonaldata-rootlock(sandboxdenied); noappstarted
+orprofilewrite. Deletedthatownscratchscriptandreplacedwithpytest-isolatedprobe.
+
+Performanceagentreportnowcontains47passes/1deselectedandexact-baselegacyflushfix.
+Purecontroller500mixed+near16MiB:28.030s ->30.325ms; noindividualpurecall>100ms.
+Howevermainmounted500-stepraweditprobeuncovered3.505sreconcile(maxloopgap178ms),
+thenbatchmount0.691s(maxgap434ms). AgentnowfixesunnecessaryDOMrebuildonrawedits
+withsameidentity/section/types/order/editability; updatesoverview/neighborlabels.
+Noasyncdraftowner/timers/dependencies. MainaddedREDoverviewButtonidentityassert
+to test_large_raw_edit_preserves_text_and_yields_during_reconciliation (session43982).
+Agentstillowns editor performancefix,mainwaiting;donotcommituntilsettled.
+Finalfulltargetedrerun+independentreview+explicitleasepush+inlineQodoreplies/
+freshreview+requiredCI+mergeverificationremain. Noautomationcreatedyet.
+
 Base: 77eb2601a63ba473318b8ec1e4edb53f8ac5899e
 Task: TASK-32601. Current scope approved by user: authoring-only editor on clean dev.
 Source: b34eda3d64 editor checkpoint; source and parked integration branches unchanged.

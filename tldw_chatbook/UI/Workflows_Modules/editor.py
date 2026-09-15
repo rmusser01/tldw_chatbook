@@ -75,6 +75,7 @@ class WorkflowEditor(Vertical):
         self.views: dict[str, dict] = {}
         self._building = False
         self._expanded: TextArea | None = None
+        self._raw_only_reason: str | None = None
 
     def compose(self):
         heading = Static(
@@ -204,12 +205,47 @@ class WorkflowEditor(Vertical):
         focus=False,
         field_edit: FieldEdit | None = None,
         raw_repair_required: bool = False,
+        raw_only_reason: str | None = None,
     ):
+        previous_document = self.document
+        if raw_only_reason is not None:
+            self.document = {"steps": []}
+            read_only = True
+        elif (
+            self.draft is None
+            or self._raw_only_reason is not None
+            or self.draft.last_valid_json != draft.last_valid_json
+        ):
+            self.document = self.documents.project(draft.last_valid_json)
+        if (
+            rebuild
+            and self.draft is not None
+            and not self._building
+            and not focus
+            and raw_only_reason is None
+            and self._raw_only_reason is None
+            and (draft.workflow_id, draft.base_revision_id)
+            == (self.draft.workflow_id, self.draft.base_revision_id)
+            and section in (None, self.section)
+            and read_only == self.read_only
+            and [(step["id"], step["type"]) for step in previous_document["steps"]]
+            == [(step["id"], step["type"]) for step in self.document["steps"]]
+            and all(
+                self.documents.projected_field_editable(
+                    previous_document, pointer, spec.value_type
+                )
+                == self.documents.projected_field_editable(
+                    self.document, pointer, spec.value_type
+                )
+                for pointer, spec in self.field_bindings.values()
+            )
+        ):
+            rebuild = False
         if self.draft and rebuild:
             self.capture_view()
+        self._raw_only_reason = raw_only_reason
         self.draft, self.read_only = draft, read_only
         self.field_edit = field_edit
-        self.document = self.documents.project(draft.last_valid_json)
         if section is not None:
             self.section = section
         raw = self.query_one("#workflow-raw-json", TextArea)
@@ -229,14 +265,35 @@ class WorkflowEditor(Vertical):
             with raw.prevent(TextArea.Changed):
                 raw.load_text(draft.raw_text)
             raw.selection = selection
+        if raw_only_reason is not None:
+            self._building = True
+            try:
+                general = self.query_one("#workflow-general", Vertical)
+                await general.remove_children()
+                await self.query_one("#workflow-step-form", Vertical).remove_children()
+                self.field_bindings = {}
+                self.query_one("#workflow-editor-heading", Static).update(
+                    "Advanced JSON · raw inspection only"
+                )
+                await general.mount(
+                    Static(raw_only_reason, markup=False, classes="workflow-help")
+                )
+                self.query_one(
+                    "#workflow-section-advanced", Collapsible
+                ).collapsed = False
+                if focus:
+                    raw.focus()
+            finally:
+                self._building = False
+            return
         if not rebuild:
             for identifier, (pointer, spec) in self.field_bindings.items():
                 field = self.query_one("#" + identifier)
                 field.disabled = (
                     read_only
                     or (draft.error is not None and not self._active_fragment(pointer))
-                    or not self.documents.field_editable(
-                        draft.last_valid_json, pointer, spec.value_type
+                    or not self.documents.projected_field_editable(
+                        self.document, pointer, spec.value_type
                     )
                 )
                 value = self._field_value(pointer, spec)
@@ -268,12 +325,32 @@ class WorkflowEditor(Vertical):
                     self.section = "overview"
                     return
                 self._update_step_heading(index)
+                for direction, neighbor_index in (
+                    ("Previous", index - 1),
+                    ("Next", index + 1),
+                ):
+                    if 0 <= neighbor_index < len(self.document["steps"]):
+                        button = self.query_one(
+                            "#workflow-" + direction.lower(), Button
+                        )
+                        label = f"{direction}: {step_label(self.document['steps'][neighbor_index])}"
+                        if button.label.plain != label:
+                            button.label = Text(label)
                 for section_name in ("inputs", "action", "outputs", "execution"):
                     self.query_one(
                         "#workflow-section-" + section_name, Collapsible
                     ).title = section_name.capitalize() + self._step_summary(
                         index, section_name
                     )
+            elif self.section == "overview":
+                for index, (button, step) in enumerate(
+                    zip(self.query(".workflow-linear-step"), self.document["steps"])
+                ):
+                    label = Text(
+                        f"{index + 1:02}  {step_label(step)} ({step['type']})\n{step['id']} · select to edit"
+                    )
+                    if button.label != label:
+                        button.label = label
             return
         self._building = True
         self.app.capture_mouse(None)
@@ -315,8 +392,8 @@ class WorkflowEditor(Vertical):
         identifier = f"workflow-field-{len(self.field_bindings)}"
         self.field_bindings[identifier] = (pointer, spec)
         value = self._field_value(pointer, spec)
-        editable = self.documents.field_editable(
-            self.draft.last_valid_json, pointer, spec.value_type
+        editable = self.documents.projected_field_editable(
+            self.document, pointer, spec.value_type
         )
         disabled = (
             self.read_only
@@ -363,8 +440,8 @@ class WorkflowEditor(Vertical):
     def _field_value(self, pointer, spec):
         if self._active_fragment(pointer):
             return self.field_edit.text
-        return self.documents.field_text(
-            self.draft.last_valid_json, pointer, as_json=spec.value_type != "string"
+        return self.documents.projected_field_text(
+            self.document, pointer, as_json=spec.value_type != "string"
         )
 
     def _update_step_heading(self, index):
@@ -374,16 +451,24 @@ class WorkflowEditor(Vertical):
         )
 
     def _step_summary(self, index, section):
-        raw = self.draft.last_valid_json
         if section == "execution":
-            retry = self.documents.field_text(raw, f"/steps/{index}/retry") or "unset"
+            retry = (
+                self.documents.projected_field_text(
+                    self.document, f"/steps/{index}/retry"
+                )
+                or "unset"
+            )
             timeout = (
-                self.documents.field_text(raw, f"/steps/{index}/timeout_seconds")
+                self.documents.projected_field_text(
+                    self.document, f"/steps/{index}/timeout_seconds"
+                )
                 or "unset"
             )
             return f" · retry {retry} / timeout {timeout}s"
         missing = any(
-            self.documents.field_text(raw, f"/steps/{index}/" + field.path)
+            self.documents.projected_field_text(
+                self.document, f"/steps/{index}/" + field.path
+            )
             in ('""', "", "null")
             for field in FIELDS.get(self.document["steps"][index]["type"], ())
             if field.section == section and field.required
@@ -517,6 +602,7 @@ class WorkflowEditor(Vertical):
                     Static("No steps yet. Add the first step to begin.", markup=False),
                     compact_button("Add first step", "workflow-add-first"),
                 )
+            buttons = []
             for index, step in enumerate(self.document["steps"]):
                 button = Button(
                     Text(
@@ -527,7 +613,9 @@ class WorkflowEditor(Vertical):
                     tooltip="Select this step to edit",
                 )
                 button.add_class("workflow-compact")
-                await target.mount(button)
+                buttons.append(button)
+            if buttons:
+                await target.mount(*buttons)
         elif self.section == "inputs":
             await target.mount(
                 Static(
@@ -670,8 +758,8 @@ class WorkflowEditor(Vertical):
         pointer, spec = self.field_bindings[identifier]
         if self.draft.error and not self._active_fragment(pointer):
             return
-        if not self.documents.field_editable(
-            self.draft.last_valid_json, pointer, spec.value_type
+        if not self.documents.projected_field_editable(
+            self.document, pointer, spec.value_type
         ):
             return
         as_json = spec.value_type != "string"

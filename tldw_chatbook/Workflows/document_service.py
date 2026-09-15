@@ -28,7 +28,12 @@ from tldw_chatbook.Workflows.models import (
 )
 
 MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+MAX_DOCUMENT_STEPS = 500
+MAX_DOCUMENT_DEPTH = 64
+MAX_DOCUMENT_NODES = 100000
 MAX_GENERATION = 2**63 - 1
+PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
 # A validation state, never serialized provenance or user-controlled error text.
 FRAGMENT_ERROR = "Incomplete field edit; repair the field or explicitly accept repaired Advanced JSON"
 _EDITABLE_STEP_KEYS = {
@@ -108,6 +113,33 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _check_complexity(value: Any) -> None:
+    """Bound all JSON values, including opaque children, without recursion.
+
+    The root container has depth one; object keys are not value nodes. Keeping
+    iterators on the stack bounds traversal storage by depth rather than width.
+    """
+    pending = [iter((value,))]
+    nodes = 0
+    while pending:
+        try:
+            value = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
+        nodes += 1
+        if nodes > MAX_DOCUMENT_NODES:
+            raise InvalidDraft(
+                f"Workflow JSON exceeds {MAX_DOCUMENT_NODES} values/containers"
+            )
+        if isinstance(value, (dict, list)):
+            if len(pending) > MAX_DOCUMENT_DEPTH:
+                raise InvalidDraft(
+                    f"Workflow JSON exceeds {MAX_DOCUMENT_DEPTH} container levels"
+                )
+            pending.append(iter(value.values() if isinstance(value, dict) else value))
+
+
 def _non_json_number(_value: str) -> None:
     raise InvalidDraft("Non-JSON numeric values are not allowed")
 
@@ -137,20 +169,23 @@ def _integer(value: str) -> int | _JSONNumber:
         return _JSONNumber(value)
 
 
-def _encode(value: Any) -> str:
+def _encode(value: Any, *, display: bool = False) -> str:
     """Encode parsed JSON without rounding opaque decimal values to floats."""
     if isinstance(value, _JSONNumber):
         return value.token
+    if display and isinstance(value, OpaqueNumber):
+        return value.text
     if isinstance(value, dict):
         return (
             "{"
             + ",".join(
-                json.dumps(key) + ":" + _encode(item) for key, item in value.items()
+                json.dumps(key) + ":" + _encode(item, display=display)
+                for key, item in value.items()
             )
             + "}"
         )
     if isinstance(value, list):
-        return "[" + ",".join(_encode(item) for item in value) + "]"
+        return "[" + ",".join(_encode(item, display=display) for item in value) + "]"
     return json.dumps(value, ensure_ascii=True, allow_nan=False)
 
 
@@ -176,7 +211,9 @@ def _decode(raw: str) -> Any:
     """One lossless decoder for both documents and explicitly edited fragments."""
     _check_text(raw)
     try:
-        return _decoder().decode(raw)
+        value = _decoder().decode(raw)
+        _check_complexity(value)
+        return value
     except json.JSONDecodeError as error:
         raise InvalidDraft(
             f"Invalid JSON at line {error.lineno}, column {error.colno}"
@@ -190,6 +227,12 @@ def _decode(raw: str) -> Any:
 def _document(raw: str, base: Revision | None = None) -> tuple[dict, str]:
     try:
         document = _decode(raw)
+        if (
+            isinstance(document, dict)
+            and isinstance(document.get("steps"), list)
+            and len(document["steps"]) > MAX_DOCUMENT_STEPS
+        ):
+            raise InvalidDraft(f"Workflow exceeds {MAX_DOCUMENT_STEPS} steps")
         checked = _Document.model_validate(document)
         ids = [step.id for step in checked.steps]
         if len(set(ids)) != len(ids) or {"inputs", "last"}.intersection(ids):
@@ -202,6 +245,7 @@ def _document(raw: str, base: Revision | None = None) -> tuple[dict, str]:
                 "revision_id": base.revision_id if base else str(uuid4()),
                 "parent_revision_ids": list(base.parent_revision_ids) if base else [],
             }
+            _check_complexity(document)
             raw = _serialize(document)
         identity = _Identity.model_validate(metadata["tldw_workflow"])
         if identity.revision_id in identity.parent_revision_ids:
@@ -419,12 +463,28 @@ class DocumentService:
     def field_text(raw_json: str, pointer: str, *, as_json: bool = True) -> str:
         """Read a JSON pointer without numeric conversion, suitable for an editor."""
         value, _ = _document(raw_json)
+        return DocumentService.projected_field_text(value, pointer, as_json=as_json)
+
+    @staticmethod
+    def projected_field_text(
+        document: dict, pointer: str, *, as_json: bool = True
+    ) -> str:
+        """Read display text from a prepared projection without reparsing.
+
+        Opaque number tokens remain exact, including inside composite fields.
+        The returned field text is display data, never a serialized revision.
+        """
+        value = document
         try:
             for key in _pointer_keys(pointer):
                 value = value[int(key)] if isinstance(value, list) else value[key]
         except (KeyError, IndexError, ValueError, TypeError):
             return ""
-        return value if not as_json and isinstance(value, str) else _encode(value)
+        return (
+            value
+            if not as_json and isinstance(value, str)
+            else _encode(value, display=True)
+        )
 
     @staticmethod
     def json_location(
@@ -481,9 +541,15 @@ class DocumentService:
     @staticmethod
     def field_editable(raw_json: str, pointer: str, value_type: str) -> bool:
         """Whether a native field can represent this shape without coercion."""
+        document, _ = _document(raw_json)
+        return DocumentService.projected_field_editable(document, pointer, value_type)
+
+    @staticmethod
+    def projected_field_editable(document: dict, pointer: str, value_type: str) -> bool:
+        """Check native field shape against an already prepared projection."""
         from tldw_chatbook.Workflows.catalog import STEP_CONTRACTS
 
-        value, _ = _document(raw_json)
+        value = document
         try:
             keys = _pointer_keys(pointer)
             if len(keys) > 2 and keys[0] == "steps":
@@ -770,24 +836,83 @@ class DocumentService:
         with self._db.transaction(write=False) as cursor:
             return _get_revision(cursor, workflow_id, revision_id)
 
-    def list_revisions(self, workflow_id: str) -> tuple[Revision, ...]:
-        """Return immutable workflow history in creation order."""
+    @staticmethod
+    def _check_page(page_size: int, offset: int) -> None:
+        if type(page_size) is not int or not 1 <= page_size <= MAX_PAGE_SIZE:
+            raise ValueError("Page size must be an integer from 1 to 100")
+        if type(offset) is not int or not 0 <= offset <= MAX_GENERATION:
+            raise ValueError("Offset must be a nonnegative SQLite integer")
+
+    def get_head(self, workflow_id: str) -> Revision | None:
+        """Read one exact saved head independently of list pages or filters."""
+        with self._db.transaction(write=False) as cursor:
+            row = cursor.execute(
+                "SELECT r.* FROM workflow_heads h JOIN workflow_revisions r "
+                "ON r.revision_id = h.revision_id WHERE h.workflow_id = ?",
+                (workflow_id,),
+            ).fetchone()
+            return _revision(row) if row else None
+
+    def list_revisions(
+        self, workflow_id: str, *, page_size: int = PAGE_SIZE, offset: int = 0
+    ) -> tuple[Revision, ...]:
+        """Return a bounded page of immutable history in creation order."""
+        self._check_page(page_size, offset)
         with self._db.transaction(write=False) as cursor:
             return tuple(
                 _revision(row)
                 for row in cursor.execute(
-                    "SELECT * FROM workflow_revisions WHERE workflow_id = ? ORDER BY created_at, rowid",
-                    (workflow_id,),
+                    "SELECT * FROM workflow_revisions WHERE workflow_id = ? "
+                    "ORDER BY created_at, rowid LIMIT ? OFFSET ?",
+                    (workflow_id, page_size, offset),
                 ).fetchall()
             )
 
-    def list_workflows(self) -> tuple[Revision, ...]:
-        """Return each workflow's current saved head in workflow identity order."""
+    def list_workflows(
+        self, *, page_size: int = PAGE_SIZE, offset: int = 0, query: str = ""
+    ) -> tuple[Revision, ...]:
+        """Read a bounded head page, optionally searching names across the library.
+
+        Search scans bounded name/identity batches without retaining unmatched
+        full definitions. Unicode casefold matching agrees with the editor.
+        """
+        self._check_page(page_size, offset)
+        if not isinstance(query, str):
+            raise TypeError("Workflow search must be text")
         with self._db.transaction(write=False) as cursor:
+            if query:
+                identities = []
+                scanned = matched = 0
+                folded = query.casefold()
+                while len(identities) < page_size:
+                    rows = cursor.execute(
+                        "SELECT h.workflow_id, h.revision_id, "
+                        "CASE WHEN json_type(r.definition_json, '$.name') IS NULL "
+                        "THEN 'Untitled workflow' ELSE json_extract(r.definition_json, '$.name') END AS name "
+                        "FROM workflow_heads h JOIN workflow_revisions r "
+                        "ON r.revision_id = h.revision_id ORDER BY h.workflow_id LIMIT ? OFFSET ?",
+                        (MAX_PAGE_SIZE, scanned),
+                    ).fetchall()
+                    if not rows:
+                        break
+                    scanned += len(rows)
+                    for row in rows:
+                        if folded not in str(row["name"]).casefold():
+                            continue
+                        if matched >= offset:
+                            identities.append((row["workflow_id"], row["revision_id"]))
+                        matched += 1
+                        if len(identities) == page_size:
+                            break
+                return tuple(
+                    _get_revision(cursor, *identity) for identity in identities
+                )
             return tuple(
                 _revision(row)
                 for row in cursor.execute(
-                    "SELECT r.* FROM workflow_heads h JOIN workflow_revisions r ON r.revision_id = h.revision_id ORDER BY h.workflow_id"
+                    "SELECT r.* FROM workflow_heads h JOIN workflow_revisions r "
+                    "ON r.revision_id = h.revision_id ORDER BY h.workflow_id LIMIT ? OFFSET ?",
+                    (page_size, offset),
                 ).fetchall()
             )
 
@@ -850,7 +975,12 @@ class DocumentService:
                 and proven is None
                 and draft.error != FRAGMENT_ERROR
             ):
-                _, projection = _document(last_valid_json, base)
+                if last_valid_json == base.raw_json:
+                    # Retain the exact durable base even if newer admission
+                    # bounds refuse its structure. The draft stays invalid.
+                    projection = base.raw_json
+                else:
+                    _, projection = _document(last_valid_json, base)
                 draft = replace(draft, last_valid_json=projection)
             cursor.execute(
                 """INSERT INTO workflow_drafts
@@ -875,14 +1005,18 @@ class DocumentService:
         with self._db.transaction(write=False) as cursor:
             return _get_draft(cursor, workflow_id, base_revision_id)
 
-    def list_drafts(self, workflow_id: str) -> tuple[Draft, ...]:
-        """Discover local buffers by exact base, including invalid/stale drafts."""
+    def list_drafts(
+        self, workflow_id: str, *, page_size: int = PAGE_SIZE, offset: int = 0
+    ) -> tuple[Draft, ...]:
+        """Read a bounded page of buffers, including invalid/stale drafts."""
+        self._check_page(page_size, offset)
         with self._db.transaction(write=False) as cursor:
             return tuple(
                 Draft(**dict(row))
                 for row in cursor.execute(
-                    "SELECT * FROM workflow_drafts WHERE workflow_id = ? ORDER BY base_revision_id",
-                    (workflow_id,),
+                    "SELECT * FROM workflow_drafts WHERE workflow_id = ? "
+                    "ORDER BY base_revision_id LIMIT ? OFFSET ?",
+                    (workflow_id, page_size, offset),
                 ).fetchall()
             )
 

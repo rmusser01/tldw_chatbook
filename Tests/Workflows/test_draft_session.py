@@ -10,7 +10,12 @@ from Tests.Workflows.helpers import prompt_definition
 from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
 from tldw_chatbook.Workflows.document_service import DocumentService
 from tldw_chatbook.Workflows.draft_session import DraftSession
-from tldw_chatbook.Workflows.models import DraftConflict, DraftWriteFailed, InvalidDraft
+from tldw_chatbook.Workflows.models import (
+    DraftConflict,
+    DraftWriteFailed,
+    InvalidDraft,
+    RevisionConflict,
+)
 
 
 @pytest.fixture
@@ -631,3 +636,87 @@ async def test_close_drains_a_cancelled_selection_read_before_store_teardown(
         release.set()
     await closing
     assert session.current.workflow_id == revision.workflow_id
+
+
+async def test_cancelled_close_retains_committed_save_and_reconciles_base(
+    owner, monkeypatch
+):
+    documents, revision = owner
+    session = DraftSession(documents)
+    await session.select(revision.workflow_id, revision.revision_id)
+    session.update(documents.edit_field(revision.raw_json, "/name", "Committed"))
+    await session.flush()
+    committed, release = Event(), Event()
+    save = documents.save_revision
+
+    def blocked(*args):
+        result = save(*args)
+        committed.set()
+        assert release.wait(5)
+        return result
+
+    monkeypatch.setattr(documents, "save_revision", blocked)
+    saving = asyncio.create_task(session.save_revision())
+    try:
+        assert await asyncio.to_thread(committed.wait, 3)
+        closing = asyncio.create_task(session.close())
+        await asyncio.sleep(0)
+        assert not closing.done()
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert not saving.done()
+    finally:
+        release.set()
+    saved = await saving
+    await session.close()
+    assert session.base == saved
+    assert session.current.base_revision_id == saved.revision_id
+    assert documents.list_workflows()[0] == saved
+
+
+@pytest.mark.parametrize("rejection", [InvalidDraft, RevisionConflict, DraftConflict])
+@pytest.mark.parametrize("fail_final_flush", [False, True])
+async def test_close_flushes_pending_text_after_rejected_revision_save(
+    owner, monkeypatch, rejection, fail_final_flush
+):
+    documents, revision = owner
+    session = DraftSession(documents)
+    await session.select(revision.workflow_id, revision.revision_id)
+    session.update(documents.edit_field(revision.raw_json, "/name", "Save attempt"))
+    await session.flush()
+    started, release = Event(), Event()
+    write = documents.put_draft
+
+    def rejected(*args):
+        started.set()
+        assert release.wait(5)
+        raise rejection("Revision save rejected")
+
+    def failed_write(*args, **kwargs):
+        raise OSError("Final write unavailable")
+
+    monkeypatch.setattr(documents, "save_revision", rejected)
+    saving = asyncio.create_task(session.save_revision())
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        pending = session.update('{"newer pending text":')
+        if fail_final_flush:
+            monkeypatch.setattr(documents, "put_draft", failed_write)
+        closing = asyncio.create_task(session.close())
+        await asyncio.sleep(0)
+        assert not closing.done()
+    finally:
+        release.set()
+    with pytest.raises(rejection):
+        await saving
+    if fail_final_flush:
+        with pytest.raises(DraftWriteFailed, match="pending changes remain") as failure:
+            await closing
+        assert str(failure.value.__cause__) == "Final write unavailable"
+        assert session.current == pending
+        monkeypatch.setattr(documents, "put_draft", write)
+        await session.close()
+    else:
+        await closing
+    assert documents.get_draft(revision.workflow_id, revision.revision_id) == pending

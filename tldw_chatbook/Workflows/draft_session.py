@@ -11,6 +11,7 @@ from tldw_chatbook.Workflows.models import (
     FieldEdit,
     InvalidDraft,
     Revision,
+    RevisionConflict,
 )
 
 
@@ -526,7 +527,12 @@ class DraftSession:
                     asyncio.gather(*self._selections, return_exceptions=True)
                 )
             if self._save_task and not self._save_task.done():
-                await asyncio.shield(self._save_task)
+                try:
+                    await asyncio.shield(self._save_task)
+                except (InvalidDraft, RevisionConflict, DraftConflict):
+                    # A rejected revision is not lost draft text. The final
+                    # flush must still run and its write failures must escape.
+                    pass
             if self.current:
                 await self.flush()
             self._closed = True

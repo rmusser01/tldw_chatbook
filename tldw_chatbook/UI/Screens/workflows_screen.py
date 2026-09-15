@@ -1,6 +1,7 @@
 """Recoverable authoring at the canonical workflows destination (ADR-138)."""
 
 import asyncio
+import sqlite3
 
 from textual import on
 from textual.containers import Horizontal, Vertical
@@ -16,6 +17,7 @@ from tldw_chatbook.UI.Workflows_Modules.controller import (
 from tldw_chatbook.UI.Workflows_Modules.editor import WorkflowEditor
 from tldw_chatbook.UI.Workflows_Modules.library import (
     ChoiceModal,
+    PagedChoiceModal,
     StepChooser,
     WorkflowLibrary,
     compact_button,
@@ -26,9 +28,11 @@ from tldw_chatbook.Widgets.workbench_focus import (
     WorkbenchPaneTarget,
     focus_relative_workbench_pane,
 )
+from tldw_chatbook.Workflows.document_service import PAGE_SIZE
 from tldw_chatbook.Workflows.models import (
     DraftConflict,
     DraftWriteFailed,
+    InvalidDraft,
     Issue,
     RevisionConflict,
 )
@@ -54,6 +58,7 @@ class WorkflowsScreen(BaseAppScreen):
         self._loaded = False
         self._error = ""
         self._notice = ""
+        self._raw_only_reason = ""
         self._run_reason = "Run unavailable in this authoring release. Sequential v1; branching v2; parallel v3."
         self._issue_index = 0
         self._workflow_views = {}
@@ -228,6 +233,7 @@ class WorkflowsScreen(BaseAppScreen):
             or not draft
             or (bool(draft.error) and not stale)
             or bool(controller.inspection)
+            or bool(self._raw_only_reason)
         )
         self.query_one("#workflow-validate", Button).disabled = locked or not draft
         for identifier in (
@@ -240,6 +246,9 @@ class WorkflowsScreen(BaseAppScreen):
         ):
             self.query_one("#" + identifier).disabled = locked
         self.query_one("#workflow-run", Button).disabled = True
+        self.query_one("#workflow-add-step", Button).disabled = (
+            locked or bool(self._raw_only_reason) or bool(controller.inspection)
+        )
         self.query_one("#workflow-retry-save", Button).display = (
             not self._loaded or controller.drafts.status.startswith("Not saved")
         )
@@ -263,21 +272,16 @@ class WorkflowsScreen(BaseAppScreen):
             return
         self._notice = ""
         if rebuild:
-            self.query_one(WorkflowLibrary).show_rows(
-                (
-                    str(
-                        controller.documents.project(revision.raw_json).get(
-                            "name", "Untitled workflow"
-                        )
-                    ),
-                    revision.workflow_id,
-                    revision.revision_id,
-                )
-                for revision in controller.workflows
-            )
+            await self._show_library()
         draft = controller.draft
+        self._raw_only_reason = ""
         if draft:
-            document = controller.documents.project(draft.last_valid_json)
+            try:
+                document = controller.documents.project(draft.last_valid_json)
+            except InvalidDraft as error:
+                self._raw_only_reason = str(error)
+                document = {"steps": [], "name": "Raw inspection only"}
+                controller.section = "overview"
             if controller.section.startswith("step:") and not any(
                 step["id"] == controller.section[5:] for step in document["steps"]
             ):
@@ -301,6 +305,7 @@ class WorkflowsScreen(BaseAppScreen):
                 else controller.drafts.field_edit,
                 raw_repair_required=not controller.inspection
                 and controller.drafts.raw_repair_required,
+                raw_only_reason=self._raw_only_reason or None,
             )
         elif rebuild:
             self.query_one("#workflow-editor-heading", Static).update(
@@ -311,6 +316,51 @@ class WorkflowsScreen(BaseAppScreen):
 
     def on_resize(self):
         self.call_after_refresh(self._layout_panes)
+
+    def _library_rows(self, revisions):
+        rows = []
+        for revision in revisions:
+            try:
+                label = str(
+                    self.controller.documents.project(revision.raw_json).get(
+                        "name", "Untitled workflow"
+                    )
+                )
+            except InvalidDraft:
+                label = "Raw inspection · " + revision.workflow_id
+            rows.append((label, revision.workflow_id, revision.revision_id))
+        return tuple(rows)
+
+    async def _show_library(self):
+        controller = self.controller
+        revisions = controller.workflows
+        rows = await asyncio.to_thread(self._library_rows, revisions)
+        if self.is_mounted and revisions is controller.workflows:
+            self.query_one(WorkflowLibrary).show_rows(
+                rows,
+                offset=controller.library_offset,
+                has_next=controller.library_has_next,
+            )
+
+    @on(WorkflowLibrary.PageRequested)
+    def library_page_requested(self, event):
+        event.stop()
+        self.run_worker(
+            self._library_page(event.offset, event.query),
+            group="workflow-library-page",
+            exclusive=True,
+        )
+
+    async def _library_page(self, offset, query):
+        try:
+            await self.controller.load_library(offset, query)
+            await self._show_library()
+            if self._error.startswith("Unable to load the library page."):
+                self._error = ""
+                self._show_status()
+        except (OSError, RuntimeError, ValueError, sqlite3.Error):
+            self._error = "Unable to load the library page. Change the search or reopen Workflows to retry."
+            self._show_status()
 
     def _layout_panes(self):
         if not self.is_mounted or self.controller is None:
@@ -550,16 +600,9 @@ class WorkflowsScreen(BaseAppScreen):
         try:
             await self.controller.drafts.save_revision()
         except RevisionConflict:
-            self.controller.workflows = await asyncio.to_thread(
-                self.controller.documents.list_workflows
-            )
+            await self.controller.refresh_head()
             raise
-        self.controller.workflows = await asyncio.to_thread(
-            self.controller.documents.list_workflows
-        )
-        self.controller.versions = await asyncio.to_thread(
-            self.controller.documents.list_revisions, self.controller.draft.workflow_id
-        )
+        await self.controller.refresh_library()
         self._error = ""
         await self._refresh_authoring()
 
@@ -762,11 +805,26 @@ class WorkflowsScreen(BaseAppScreen):
                 ("Return to current draft", "return"),
                 ("Edit as new revision", "edit-history"),
             ]
+        if self._raw_only_reason:
+            choices = [
+                choice
+                for choice in choices
+                if choice[1]
+                not in {"add", "discard", "pending", "recover", "edit-history"}
+            ]
         self._open_choice(
             ChoiceModal("Workflow actions", tuple(choices)), self._more_selected
         )
 
     def _more_selected(self, action):
+        if self._raw_only_reason and action in {
+            "add",
+            "discard",
+            "pending",
+            "recover",
+            "edit-history",
+        }:
+            return
         if action == "new":
             self._open_choice(
                 ChoiceModal(
@@ -806,13 +864,25 @@ class WorkflowsScreen(BaseAppScreen):
                 lambda _: self._start(discard()),
             )
         elif action == "versions" and self.controller.draft:
+            workflow_id = self.controller.draft.workflow_id
+
+            def history(offset, query):
+                return tuple(
+                    (
+                        f"v{offset + i + 1} · {revision.revision_id}",
+                        revision.revision_id,
+                    )
+                    for i, revision in enumerate(
+                        self.controller.documents.list_revisions(
+                            workflow_id, page_size=PAGE_SIZE + 1, offset=offset
+                        )
+                    )
+                )
+
             self._open_choice(
-                ChoiceModal(
+                PagedChoiceModal(
                     "Inspect a saved revision",
-                    tuple(
-                        (f"v{i + 1} · {revision.revision_id}", revision.revision_id)
-                        for i, revision in enumerate(self.controller.versions)
-                    ),
+                    history,
                     detail="Inspection flushes the draft and opens a separate read-only projection.",
                 ),
                 lambda rid: self._start(self._inspect(rid)),
@@ -830,21 +900,24 @@ class WorkflowsScreen(BaseAppScreen):
     async def _local_drafts(self):
         await self.controller.drafts.flush()
         workflow_id = self.controller.drafts.current.workflow_id
-        drafts = await asyncio.to_thread(
-            self.controller.documents.list_drafts, workflow_id
-        )
+
+        def local_drafts(offset, query):
+            return tuple(
+                (
+                    ("Repair raw JSON" if draft.error else "Local draft")
+                    + " · base "
+                    + draft.base_revision_id,
+                    draft.base_revision_id,
+                )
+                for draft in self.controller.documents.list_drafts(
+                    workflow_id, page_size=PAGE_SIZE + 1, offset=offset
+                )
+            )
+
         self._open_choice(
-            ChoiceModal(
+            PagedChoiceModal(
                 "Open a local draft",
-                tuple(
-                    (
-                        ("Repair raw JSON" if draft.error else "Local draft")
-                        + " · base "
-                        + draft.base_revision_id,
-                        draft.base_revision_id,
-                    )
-                    for draft in drafts
-                ),
+                local_drafts,
                 detail="These are durable local buffers, including older bases. Opening preserves every other draft; it does not merge or overwrite.",
             ),
             lambda rid: self._start(self._select_workflow(workflow_id, rid)),
@@ -855,9 +928,7 @@ class WorkflowsScreen(BaseAppScreen):
         source, version = owner.current, owner.confirmation_version
         if source is None or self.controller.inspection:
             return
-        self.controller.workflows = await asyncio.to_thread(
-            self.controller.documents.list_workflows
-        )
+        await self.controller.refresh_head()
         head = self.controller.head
         if owner.current != source or owner.confirmation_version != version:
             raise DraftConflict(
@@ -1022,19 +1093,31 @@ class WorkflowsScreen(BaseAppScreen):
         elif identifier in ("workflow-add-step", "workflow-add-first"):
             self._step_chooser()
         elif identifier == "workflow-library-selector":
-            rows = self.query_one(WorkflowLibrary).rows
-            choices = tuple((label + " · Local", wid) for label, wid, rid in rows) + (
-                ("New workflow…", "new"),
-            )
+
+            def library(offset, query):
+                page = self.controller.documents.list_workflows(
+                    page_size=PAGE_SIZE + 1, offset=offset, query=query
+                )
+                return tuple(
+                    (label + " · Local", wid + ":" + rid)
+                    for label, wid, rid in self._library_rows(page)
+                )
 
             def chosen(wid):
-                if wid == "new":
+                if wid == "__new_workflow__":
                     self._more_selected("new")
                 else:
-                    row = next(row for row in rows if row[1] == wid)
-                    self._start(self._select_workflow(row[1], row[2]))
+                    self._start(self._select_workflow(*wid.split(":")))
 
-            self._open_choice(ChoiceModal("Workflow library", choices), chosen)
+            self._open_choice(
+                PagedChoiceModal(
+                    "Workflow library",
+                    library,
+                    searchable=True,
+                    new_workflow=True,
+                ),
+                chosen,
+            )
         elif identifier == "workflow-step-selector":
             choices = [
                 ("Overview", "overview"),

@@ -158,6 +158,15 @@ DISCOVERY = (
 
 @dataclass(frozen=True)
 class StepContract:
+    """Bundled local-subset field and effect description, not execution proof.
+
+    Attributes:
+        step_type: Canonical server step type.
+        fields: Configuration fields exposed by the local subset.
+        output_fields: Named outputs described by that subset.
+        effects: Effect categories requiring execution-time admission.
+    """
+
     step_type: str
     fields: tuple[str, ...]
     output_fields: tuple[str, ...]
@@ -281,6 +290,17 @@ def new_step(step_type: str) -> dict:
 
 @dataclass(frozen=True)
 class DiscoveryEntry:
+    """Searchable presentation of a bundled canonical step type.
+
+    Attributes:
+        step_type: Canonical server step type.
+        family: Task-oriented group used by the chooser.
+        disposition: Current local support classification.
+        label: Human-readable action name.
+        example: Brief example of the action's inputs and outputs.
+        available: Whether the authoring chooser permits inserting this type.
+    """
+
     step_type: str
     family: str
     disposition: str

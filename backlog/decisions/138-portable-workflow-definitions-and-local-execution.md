@@ -61,6 +61,33 @@ visual, privacy and review requirements remain. The stable-file limitation above
 is unchanged. This is not permission to merge, push, execute workflows or change
 shared SQLite infrastructure, nor an inherited exception for other tasks.
 
+### PR review hardening (2026-09-15)
+
+The requested PR integration includes bounded collection reads: workflow heads,
+revision history and local drafts accept a page size of 1–100 (default 20) and
+a nonnegative offset, rejecting booleans and nonintegers before opening a
+transaction. Lists retain their existing deterministic order. UI selectors expose
+previous/next pages; a page is not an assertion that no other items exist.
+Workflow search applies across the entire library, using bounded name/identity
+reads and Unicode casefold matching before retrieving matching full definitions.
+Selected-head lookup is independent of the visible page, so paging/search cannot
+change a draft's identity or disable recovery/export. Reads run through existing
+workers and SQLite transactions; no schema, connection owner or storage subsystem
+is added. Offset pages are a live view, not a snapshot across external writes.
+
+New structural admission also limits definitions to 500 steps, 64 container levels
+and 100,000 value/container nodes, including opaque subtrees. The 16 MiB raw-text
+limit is unchanged. These are local authoring bounds, not server schema claims.
+An iterative bounded check precedes recursive projection/dependency traversal;
+bounded rejected raw edits retain the previous valid form projection and remain
+recoverable. Existing above-limit saved content must remain exportable without
+requiring projection or silently rewriting it. Derived display/required-field
+reads reuse a prepared projection, never a new full parse per field. The measured
+500-step/large-scalar case spent 28 seconds on 1,335 complete parses versus 24 ms
+for one projection; remove this multiplicative work before adding concurrency.
+If bounded remaining pure analysis exceeds 100 ms, use the existing worker seam
+and freshness checks; draft ownership and widget mutation remain on the app loop.
+
 ## Context
 
 The user approved a Workflows redesign with a workflow library, step navigator, and overview/focused-card canvas. Forms are continuous and collapsible. V1 must execute workflows locally without tldw_server; branching follows in v2 and parallelism in v3. Definitions should be shareable and synchronized across Chatbook and tldw_server where reasonably possible.

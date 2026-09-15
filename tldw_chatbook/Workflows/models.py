@@ -5,6 +5,15 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Revision:
+    """Immutable saved definition with portable identity and lineage.
+
+    Attributes:
+        workflow_id: Stable identity of the workflow.
+        revision_id: Identity of this saved definition.
+        parent_revision_ids: Revisions from which this definition descends.
+        raw_json: Complete definition, including preserved opaque fields.
+    """
+
     workflow_id: str
     revision_id: str
     parent_revision_ids: tuple[str, ...]
@@ -13,6 +22,17 @@ class Revision:
 
 @dataclass(frozen=True)
 class Draft:
+    """Recoverable editor buffer attached to an exact saved base.
+
+    Attributes:
+        workflow_id: Workflow owning the buffer.
+        base_revision_id: Saved revision on which editing began.
+        generation: Monotonic edit generation for conflict detection.
+        raw_text: Exact editor text, including incomplete or invalid JSON.
+        last_valid_json: Last structurally valid projection for form rendering.
+        error: Validation failure, or None when the buffer is valid.
+    """
+
     workflow_id: str
     base_revision_id: str
     generation: int
@@ -48,6 +68,14 @@ class RevisionConflict(ValueError):
 
 @dataclass(frozen=True)
 class Issue:
+    """Addressable authoring validation feedback.
+
+    Attributes:
+        pointer: JSON Pointer identifying the affected document location.
+        code: Stable machine-readable issue category.
+        message: Explanation shown to the author.
+    """
+
     pointer: str
     code: str
     message: str

@@ -1,11 +1,11 @@
 ---
 id: TASK-32601
 title: Restore the authoring-only Workflows editor on dev
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-15 04:09'
-updated_date: '2026-09-15 16:47'
+updated_date: '2026-09-15 19:09'
 labels: []
 dependencies: []
 ---
@@ -24,6 +24,7 @@ Deliver the approved portable workflow editor on current dev while keeping unfin
 - [x] #4 Only existing SQLite safety utilities are used; new execution and process-ownership infrastructure remain absent.
 - [x] #5 The authoring slice meets the user-approved no-new-static-debt gate: introduced findings are fixed and retained baseline failures are source-attributed and documented.
 - [x] #6 Validation notices and retry actions reflect the selected workflow and actual retryable failures; step labels and issue summaries update during editing without replacing focused controls or resetting view state.
+- [ ] #7 PR 2690 is rebased onto current dev, all Qodo findings have verified resolutions or evidence-backed replies, and required checks pass before the requested merge.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,6 +53,20 @@ Reason: bounded feedback/reconciliation fixes in the existing authoring UI; no s
 3. Run targeted editor/lifecycle tests and scoped static checks; repeat the original live-app reproductions in the disposable UAT profile.
 4. Record fresh evidence and review; complete AC2 and AC6 only after the corrections pass.
 
+### Requested PR integration and Qodo remediation (2026-09-15)
+
+ADR required: amend existing ADR-138 if admission bounds or collection API contracts change; no new storage/runtime architecture.
+ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
+Reason: the user explicitly requested rebase, address every Qodo comment, then merge. Existing authoring ownership, preservation, and stable-file decisions remain in force.
+
+1. Commit verified UAT fixes, retain a backup branch and local evidence, and replay only the feature range onto the fetched dev tip. Inspect range-diff and resolve conflicts without losing dev work.
+2. Track all seven Qodo comments by discussion ID. Reproduce the two shutdown claims with real draft-owner tests; preserve cancellation shielding and allow rejected revision saves to settle before the final durable flush. Add the requested class documentation and concrete Console item annotations.
+3. Profile raw validation and imported complexity before changing their paths. Add narrow regression tests for responsive/stale-safe validation and controlled complexity rejection; keep invalid drafts recoverable. Record precise limits/worker ownership in ADR-138 before implementation.
+4. Bound workflow/revision/draft listing queries and provide reachable pages in existing selectors. Preserve selection and history identity; validate paging arguments and test multiple pages, search and save/recovery across page boundaries. Record the exact API contract in ADR-138 before implementation.
+5. Run affected domain, storage, editor, lifecycle and production-CSS tests plus the repository preflight guards. Inspect introduced static findings, not only net counts. Push the rebased branch using an explicit lease tied to the reviewed remote head.
+6. Reply in each Qodo inline thread with fix/test evidence or a demonstrated false-positive explanation. Recheck reviews on the final pushed head and address new findings. Use the app's follow-up mechanism if awaiting posted reviews or CI; never bypass required checks.
+7. Merge PR2690 into dev only after review disposition and required checks are satisfied for the exact final head; verify GitHub reports MERGED. Keep disposable evidence and unrelated worktrees intact.
+
 ## ID provenance
 
 The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans already contained IDs through 32600. Only this newly created file/header was moved to the checked-free TASK-32601 before implementation. No existing task was renumbered.
@@ -60,7 +75,10 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Current qualification:** the approved UAT corrections are verified. Ordinary
+**Current qualification:** reopened for the separately requested PR integration
+and Qodo remediation. The following UAT qualification describes the prior checkpoint.
+
+The approved UAT corrections are verified. Ordinary
 validation notices no longer hide draft/revision status or imply Retry. Successful
 context transitions clear operation errors; Validate preserves unrelated errors.
 Step headings, navigator prompts and required/execution summaries update in place,

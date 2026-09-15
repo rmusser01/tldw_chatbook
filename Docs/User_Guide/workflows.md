@@ -32,6 +32,12 @@ widths retain the navigator and editor; compact widths use **Workflow…** and
 **Step / Overview…** selectors above the editor. **F6** moves between
 visible workbench panes; Tab moves through controls. Hidden panes are skipped.
 
+The library, saved-revision history and local-draft selectors show 20 items per
+page. Use **Previous**/**Next** in the library, or **Previous page**/**Next page**
+in selectors, to reach the rest. Library search matches names across all pages,
+including case-insensitive Unicode text. Paging or searching does not change
+your open draft. Pages reflect the current store, not a frozen snapshot.
+
 ## Draft recovery
 
 The status line says **Draft stored · not a saved revision** for durable edits
@@ -55,6 +61,12 @@ not a merge; conflicting drafts and saved revisions are preserved.
 
 **Import** opens the existing local file picker for one UTF-8 `.json` file, up to
 16 MiB. Import creates/selects a local saved definition; it never executes it.
+Local authoring accepts up to 500 steps, 64 levels of container nesting and
+100,000 JSON values/containers, including opaque fields. These are Chatbook
+editor limits, not claims about server limits. Over-complex raw edits remain
+recoverable while forms retain the prior valid structure.
+Older saved definitions above these limits remain available for read-only raw
+inspection and exact export; they are not silently reduced or rewritten.
 Stable step IDs and opaque envelope/metadata fields survive an edit to another
 field and a save/export round trip.
 
