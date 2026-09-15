@@ -306,6 +306,13 @@ FOLDER_FILES_EMPTY_COPY = (
 FILE_TREE_BATCH_SIZE = 100
 
 
+#: How many deferred re-fits one geometry change may queue before the path
+#: lines keep whatever they last fitted (task-32614, review F6). Settling took
+#: two passes in every size x mode combination measured; four is slack, and a
+#: pair of widths that alternated would otherwise re-arm each other forever.
+_PATH_FIT_ATTEMPT_LIMIT = 4
+
+
 class _ServiceLockBusy(Exception):
     """An earlier File Notes operation still owns the service lock."""
 
@@ -1328,8 +1335,13 @@ class LibraryFileNotesWorkspace(Vertical):
         self._editor_action_focus_target: str | None = None
         # task-32614: one deferred re-fit is armed at a time, and it stops
         # as soon as two consecutive fits agree on the widths they used.
+        # The attempt count is the cycle guard the flag alone is not (review
+        # F6): the flag stops RE-ENTRY, but two widths that alternate would
+        # re-arm each other forever. Converged in every size x mode measured;
+        # this bounds the pathological case instead of trusting that.
         self._path_fit_scheduled = False
         self._path_fit_widths: tuple[int, ...] = ()
+        self._path_fit_attempts = 0
         self._maintenance_expanded = False
         self._work_mode: FileNotesWorkMode = "edit"
         self._path_task: FileNotesPathTask = "none"
@@ -2417,6 +2429,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def on_resize(self, event: Resize) -> None:
         """Choose wide or narrow panes from the mounted workspace width."""
+        self._reset_path_fit_budget()
         self._apply_responsive_layout(event.size.width)
         self.call_after_refresh(self._fit_root_status)
 
@@ -3054,12 +3067,17 @@ class LibraryFileNotesWorkspace(Vertical):
                 elide_path_middle(copy, budget=budget) if budget > 0 else copy,
             )
         settled = tuple(budgets)
-        if settled != self._path_fit_widths and not self._path_fit_scheduled:
+        if (
+            settled != self._path_fit_widths
+            and not self._path_fit_scheduled
+            and self._path_fit_attempts < _PATH_FIT_ATTEMPT_LIMIT
+        ):
             # The width this fit used is not the width the last one used, so
             # the geometry is still moving (the stack class alone changes the
             # breadcrumb's row twice). Come back once it has settled; when
             # the same widths come round again this stops on its own.
             self._path_fit_scheduled = True
+            self._path_fit_attempts += 1
             self.call_after_refresh(self._refit_path_surfaces)
         self._path_fit_widths = settled
 
@@ -3067,6 +3085,10 @@ class LibraryFileNotesWorkspace(Vertical):
         """Re-fit both identity lines against settled geometry."""
         self._path_fit_scheduled = False
         self._fit_path_surfaces()
+
+    def _reset_path_fit_budget(self) -> None:
+        """Give the settling loop its attempts back for a new geometry."""
+        self._path_fit_attempts = 0
 
     def _fit_root_status(self) -> None:
         """Fit the friendly root summary while retaining exact detail."""

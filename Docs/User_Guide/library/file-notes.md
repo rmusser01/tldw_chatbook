@@ -745,10 +745,19 @@ tree now fills the navigator pane instead of sharing its spare rows with the
 20, and 18 at 100x30 where there were 10. At 100x30 the two panes divide
 46/44 rather than 56/34: Folder files uses the same 44-column work-pane floor
 as every other Library destination instead of its own 30. Both identity lines
-— the breadcrumb above the editor and the full path under "File details &
-path" — now paint on exactly one row, middle-elided with "…" so the file's
-own name survives; before this the absolute path folded over six rows at
-100x30, broken inside a directory name.
+— the breadcrumb above the editor and the full path under **File details &
+path** — now paint on exactly one row, middle-elided with an … so the row
+spends the head of the path and keeps its end: the file's own name, or as
+much of the name as the row holds. The breadcrumb's own budget is only 25 cells at 100x30,
+narrow enough that a long daily-note name is itself cut short there; the line
+under File details keeps the whole pane width, so it holds more. Before this
+the absolute path folded over six rows at 100x30, broken inside a directory
+name.
+
+The line under File details also now always shows the absolute path. It used
+to alternate — opening a file, or selecting a deleted one, wrote the path
+relative to the folder, and switching to Manage rewrote it as the full path —
+so the same line said different things depending on what you had just done.
 
 *Verified against fix/library-notes-w5-density — 2026-09-15 (task-32615, same
 three sizes): in Session Git's Commit workflow the Cancel/Review actions now

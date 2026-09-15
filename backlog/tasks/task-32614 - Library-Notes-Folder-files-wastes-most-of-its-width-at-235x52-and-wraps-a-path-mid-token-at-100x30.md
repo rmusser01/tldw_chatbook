@@ -87,4 +87,30 @@ Folder files' allocation is now **byte-identical to Conversations'**, with zero
 mismatches. It was the only Library destination under a 44-cell work pane; it
 now resolves exactly as its peers do at every width, which is the consistency
 this change is for and is worth more than the two sizes I originally named.
+**Fix round 1 — three smaller corrections (review F6/F7/F8).**
+
+*F6, the settling loop is now bounded.* `_path_fit_scheduled` stops RE-ENTRY,
+not a cycle: two widths that alternated would re-arm each other forever. It
+converged in every size x mode measured, but that is trust, not a guard.
+`_PATH_FIT_ATTEMPT_LIMIT = 4` bounds it (settling took two passes everywhere
+measured), and a real resize hands the budget back.
+
+*F7, the guide claimed more than the code delivers.* It said the lines elide
+"so the file's own name survives". Measured on the branch with a file open in
+Manage mode: budgets are 146/164 cells at 235x52, **25**/43 at 100x30, 50/50 at
+60x24. At 25 cells the breadcrumb paints `…pages and reflections.md` -- the
+name itself is cut. The guide now says what is true: the row spends the HEAD
+and keeps the END, as much of the name as it holds, and it names the 25-cell
+case. (The review also read the breadcrumb's 60x24 budget as 31 where I wrote
+50. Both are real: 31 before `-stack-editor-actions` applies and 50 after it
+gives the breadcrumb its own row. That the number moves mid-settle is exactly
+why the fit memoises the widths it used.)
+
+*F8, a user-visible copy change I had not flagged.* `_exact_path_copy` makes
+the File-details line always ABSOLUTE. Before, `_apply_opened_document` and
+`select_deleted` wrote the RELATIVE path and `_sync_work_mode` wrote the
+absolute one, so the line changed under the reader depending on the last event.
+Unifying is the right call -- that line is labelled as the exact path -- but it
+is a copy change and belongs in the record, not smuggled in with a refactor. It
+is in the guide now.
 <!-- SECTION:NOTES:END -->
