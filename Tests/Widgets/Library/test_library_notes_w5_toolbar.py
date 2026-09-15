@@ -172,3 +172,51 @@ async def test_the_notes_list_action_budget_is_the_stated_number(
         assert len(actions) == NOTES_LIST_VISIBLE_ACTION_BUDGET, [
             button.id for button in actions
         ]
+
+
+async def test_the_compact_shell_keeps_its_rows_for_the_notes(
+    widget_pilot,  # noqa: F811
+) -> None:
+    """task-32617 AC#1, scoped: the 60-column shell is a row budget.
+
+    Three blocked actions wrap its 50-cell toolbar onto two more rows and
+    take a third for their reason, and
+    ``test_library_note_60x20_navigator_state_allocation`` reads those rows
+    straight off the list -- caught by that pin, not by review. Same call as
+    the heading above and as task-32261's hidden select counter: this shell
+    keeps the rows for the notes, and the unselected state stays as it was.
+    """
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=_tree_projection(),
+        tree_selected_placement_id="",
+        compact=True,
+    ) as pilot:
+        await pilot.pause()
+        assert not pilot.app.query("#library-notes-placement-add")
+        assert not pilot.app.query("#library-notes-tree-actions-disabled-reason")
+        assert not pilot.app.query("#library-notes-tree-actions-heading")
+        assert pilot.app.query_one("#library-notes-folder-new", Button)
+
+
+async def test_a_compact_shell_still_disables_the_actions_it_does_show(
+    widget_pilot,  # noqa: F811
+) -> None:
+    """The scoping is about ABSENCE of a selection, not about disabling.
+
+    With a note selected the compact shell composes the same three actions
+    it always did, so nothing this task added is load-bearing there.
+    """
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=_tree_projection(),
+        tree_selected_placement_id="note:work:n1:m1",
+        compact=True,
+    ) as pilot:
+        await pilot.pause()
+        assert (
+            pilot.app.query_one("#library-notes-placement-add", Button).disabled
+            is False
+        )

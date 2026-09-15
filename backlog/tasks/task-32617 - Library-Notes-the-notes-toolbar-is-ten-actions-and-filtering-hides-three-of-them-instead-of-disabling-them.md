@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-09-15 06:41'
-updated_date: '2026-09-15 18:32'
+updated_date: '2026-09-15 18:39'
 labels:
   - library
   - notes
@@ -44,18 +44,14 @@ Cause PROVEN by capture. Wave 4's layout work (tasks 32544/32549, PR #2684) stop
 4. Write the action count down where a later change trips over it.
 <!-- SECTION:PLAN:END -->
 
-## Implementation Notes
-
-<!-- SECTION:NOTES:BEGIN -->
-**The critique's attribution was wrong, and the fix is better for it.** Driving `LibraryNotesCanvas` directly across the four combinations (filter on/off x selection present/absent) shows the three placement actions are dropped whenever `tree_selected_placement_id` resolves to no row -- filter or no filter. A filter is simply the usual way to end up with no selection. Fixing the SELECTION case therefore fixes the filtered case and every other one; fixing 'the filter' would have left the rest.
-
-AC#1: `_tree_action_buttons`'s note branch used to require `selected.kind == 'note'`; it is now the `else` of the folder branch, and with no row selected the three actions compose disabled, marked with the shared '○' (`library_disabled_action_label`) and explained on one shared line -- 'Note actions unavailable — select a note in the list' -- through `library_disabled_reason_line`, the same helper and the same sentence shape as Sort's 'Sort unavailable — clear the filter' one control to the left. One line for the group rather than three, because every row of this pane is a measured budget. The visible count does not grow: the folder and note branches remain mutually exclusive, so this group is at most four actions in every state.
-
-AC#2: the group gets a `destination-section` heading, 'Folders & placement' -- the same heading grammar Folder files uses for 'File actions' / 'Session Git' / 'Danger' one mode over. The rule a reader can now state: everything above it acts on the LIST, everything under it on the folder tree and the row selected in it. Suppressed in the compact shell, whose list rows are a measured budget (task-32123/32261) and where a label costs more than it explains.
-
-AC#3: `NOTES_LIST_VISIBLE_ACTION_BUDGET = 13`, derived by COMPOSING the canvas's widest reachable state and counting the buttons (filter + selected note + restorable folder + import receipt + sync root), not by hand. The pin asserts equality, not '<=': a new action has to displace one, move behind a disclosure, or move the number on purpose.
-
-**Modified:** `Widgets/Library/library_notes_canvas.py`, `Tests/Widgets/Library/test_library_notes_w5_toolbar.py` (new), `Docs/User_Guide/library/notes.md`.
-
-**Red first:** both parameters of the disabled-with-a-reason pin failed with the buttons absent; the heading pin failed with no heading composed. A positive control (a selected note enables them and the reason line goes) guards the other direction.
-<!-- SECTION:NOTES:END -->
+**Fix round 1 (caught by an existing pin, not by review).** At 60x20 the
+compact shell lost THREE rows of the notes list: the three blocked actions
+wrap its 50-cell toolbar onto two more rows and their reason line takes a
+third. `test_library_note_60x20_navigator_state_allocation` reads those rows
+straight off `#library-notes-list` and failed 4-of-7 and then 6-of-7 before
+the gate went in. The compact shell now keeps the unselected state exactly as
+it was -- same call as the heading, and as task-32261's hidden select counter.
+Checked against dev afterwards: that test is a BASELINE red on both sides with
+the identical value (`Region(x=5, y=13, width=50, height=6)`, 3 failed /
+1 passed on dev @ c0d3d4dad7 and on this branch), so the parity is by value,
+not just by name.

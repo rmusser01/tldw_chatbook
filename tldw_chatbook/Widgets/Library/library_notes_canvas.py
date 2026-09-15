@@ -2339,7 +2339,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if projection is not None and self.tree_selected_placement_id
             else None
         )
-        return selected is None
+        return selected is None and not self.compact
 
     def _tree_action_buttons(self, *, operation_running: bool) -> list[Button]:
         """Every action the selected placement offers, in composed order.
@@ -2435,6 +2435,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             note = selected
             protected = note is not None and note.protected
             unselected = note is None
+            if unselected and self.compact:
+                # The compact shell is a measured row budget: three blocked
+                # actions wrap its 50-cell toolbar onto two extra rows and
+                # take a third for their reason, and
+                # `test_library_note_60x20_navigator_state_allocation` reads
+                # those rows straight off the list. Same reasoning as the
+                # heading above and as task-32261's hidden select counter --
+                # this shell keeps the rows for the notes.
+                return buttons
             unplaced = note is not None and not note.membership_id
             protected_placement_reason = (
                 "This placement is managed by sync; change its sync root instead."

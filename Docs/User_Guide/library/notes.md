@@ -2066,8 +2066,10 @@ row selected, "Add to folder", "Move note" and "Remove placement" render
 disabled with the "○" marker and the line "Note actions unavailable — select a
 note in the list" instead of disappearing; selecting a note enables them and
 the line goes. (A filter is the usual way to end up with no selection, which
-is why they seemed to vanish when filtering.) The compact shell omits the
-heading, where its row is worth more than the label.*
+is why they seemed to vanish when filtering.) The compact shell omits the heading, and there keeps the
+unselected state as it was — three blocked actions wrap its 50-cell
+toolbar onto two more rows and take a third for their reason, which is
+three rows of notes.*
 
 *Verified against fix/library-notes-w5-density — 2026-09-15 (task-32625, at
 100 columns): a lasting-sync review row that needs no decision now costs one
