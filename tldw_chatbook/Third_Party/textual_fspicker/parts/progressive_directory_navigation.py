@@ -37,6 +37,11 @@ from .directory_navigation import (
 )
 
 SORT_OPTIONS = [
+    # task-32611 AC#4 / task-32643 AC#1: folders first, name-ascending. It is
+    # the DEFAULT only on a dialog that can return a folder (see
+    # `FileSystemPickerScreen._default_listing_sort`); a file picker still
+    # opens on "Discovery order", which stays on the menu for both.
+    ("Folders first", "folders"),
     ("Discovery order", "discovery"),
     ("Name", "name"),
     ("Last modified", "modified"),
@@ -118,7 +123,8 @@ def project_records(
         show_hidden: Whether dot-prefixed entries are visible.
         query: Stripped, casefolded filename substring to match.
         file_filter: Optional caller predicate, applied to non-directories.
-        sort_key: Discovery, name, modified, accessed, created, or size ordering.
+        sort_key: Folders-first, discovery, name, modified, accessed, created,
+            or size ordering.
         descending: Whether known sort values are ordered descending.
         cancelled: Cooperative cancellation signal checked between entries.
 
@@ -145,14 +151,21 @@ def project_records(
             continue
         if dot_hidden or (query and query not in record.location.name.casefold()):
             continue
-        if sort_key not in ("discovery", "name"):
+        if sort_key not in ("discovery", "name", "folders"):
             record = read_metadata(record)
         visible.append(record)
-    if sort_key == "name":
+    if sort_key in ("name", "folders"):
         visible.sort(
             key=lambda r: (r.location.name.casefold(), r.location.name),
             reverse=descending,
         )
+        if sort_key == "folders":
+            # A SECOND, stable sort on the one bit that separates the groups
+            # (task-32611 AC#4). Folding `not is_directory` into the key above
+            # instead would make "Descending" put files first; here descending
+            # reverses the NAMES and leaves folders on top, which is what
+            # "Folders first" has to keep meaning in both directions.
+            visible.sort(key=lambda r: not r.is_directory)
     elif sort_key != "discovery":
         attribute = {
             "modified": "st_mtime",

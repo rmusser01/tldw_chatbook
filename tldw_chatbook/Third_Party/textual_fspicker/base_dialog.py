@@ -442,6 +442,25 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     leaves it False and keeps browsing-first focus.
     """
 
+    SELECT_BUTTON_DEFAULT = "Select"
+    """Default label for the confirm button, when the caller names none.
+
+    A class attribute rather than a literal in ``compose`` so a folder-only
+    dialog can say "Select folder" -- the same verb+noun the files-and-folder
+    door already uses for the button that returns a directory (task-32611
+    AC#3). Critique #4 met "Select folder" on Import once and a bare "Select"
+    on the other two doors of the same decision.
+    """
+
+    FOLDER_CONFIRM_LABEL = "Select folder"
+    """What the hint line calls the action that commits a folder.
+
+    One literal, read by ``_hint_text`` for every folder-returning dialog and
+    by the "Select folder" button ``compose`` adds on a dialog that offers
+    files as well; see ``SELECT_BUTTON_DEFAULT`` above for the folder-only
+    half.
+    """
+
     BINDINGS = [
         # Order is the footer's order (task-32606): `Footer` lays its chips
         # out left to right in binding order and scrolls the overflow off
@@ -505,18 +524,25 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     def _hint_text(self) -> str:
         """One-line Enter-vs-Select hint shown above the input bar.
 
-        Empty by default: most ``FileSystemPickerScreen`` dialogs (a plain
-        file-only ``FileOpen``, ``FileSave``) have no folder-selection
-        ambiguity to clarify, and this line simply isn't yielded in
-        ``compose()`` when it returns "" -- so callers unrelated to
-        task-32122 (character import, skill-folder import, TTS model
-        directories, ...) render exactly as before. ``SelectDirectory`` and
-        ``FileOpen(offer_select_folder=True)`` override this: both let
-        Enter descend into a directory while a separate action confirms
-        "use this one", and neither dialog had any on-screen hint for that
-        at all.
+        Empty unless this dialog can return a folder: a plain file-only
+        ``FileOpen`` or a ``FileSave`` has no folder-selection ambiguity to
+        clarify, and ``compose()`` simply does not yield the line when this
+        returns "" -- so callers unrelated to task-32122 (character import,
+        skill-folder import, TTS model directories, ...) render exactly as
+        before.
+
+        ONE wording for every folder-returning door (task-32611 AC#3).
+        ``SelectDirectory`` and ``FileOpen(offer_select_folder=True)`` each
+        used to override this with its own sentence, and critique #4 read the
+        difference off two doors of the same decision: "Select folder to use
+        this folder" on Import once against "Select to use this folder" on
+        Folder files. Keyed on ``RETURNS_A_FOLDER`` -- the same single
+        declarative fact that decides initial focus (task-32606) -- rather
+        than on a second per-dialog flag.
         """
-        return ""
+        if not self.RETURNS_A_FOLDER:
+            return ""
+        return f"Enter Open  ·  {self.FOLDER_CONFIRM_LABEL} to use this folder"
 
     @staticmethod
     def _label(label: ButtonLabel, default: str) -> str:
@@ -533,12 +559,32 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         # parameter; otherwise use it as-is as it'll be a string.
         return label(default) if callable(label) else label or default
 
+    def _default_listing_sort(self) -> str:
+        """The sort key this dialog opens on (task-32611 AC#4, task-32643 AC#1).
+
+        A dialog whose answer is a FOLDER opens folders-first, name-ascending:
+        critique #4 opened all three Notes folder doors on "Discovery order"
+        and got a vault rendered as ``Reading, scratch.txt, Inbox, Archive,
+        Projects, Daily, ... attachments`` -- files and folders interleaved,
+        unsorted, in a dialog whose whole job is choosing between the folders.
+        Every other picker keeps "Discovery order", where rows appearing in
+        the order the disk yields them is the point (the listing is usable
+        before enumeration finishes), and "Discovery order" stays on the menu
+        for both.
+
+        Keyed on ``RETURNS_A_FOLDER`` -- the one declarative fact task-32606
+        introduced for exactly this question -- so ``FileOpen``'s per-instance
+        answer is honoured and no second flag has to be kept in step.
+        """
+        return "folders" if self.RETURNS_A_FOLDER else "discovery"
+
     def _listing_controls(self) -> ComposeResult:
+        default_sort = self._default_listing_sort()
         with Horizontal(id="listing-controls"):
             yield Label("Sort", id="listing-sort-label")
             yield Select(
                 SORT_OPTIONS,
-                value="discovery",
+                value=default_sort,
                 allow_blank=False,
                 compact=True,
                 id="listing-sort",
@@ -549,7 +595,7 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
                 allow_blank=False,
                 compact=True,
                 id="listing-direction",
-                disabled=True,
+                disabled=default_sort == "discovery",
             )
         yield Static("Scanning…", id="listing-progress", markup=False)
 
@@ -628,14 +674,17 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             # Input bar with buttons
             with InputBar():
                 yield from self._input_bar()
-                yield Button(self._label(self._select_button, "Select"), id="select")
+                yield Button(
+                    self._label(self._select_button, self.SELECT_BUTTON_DEFAULT),
+                    id="select",
+                )
                 # (task-2222) Opt-in folder affordance: a file picker whose
                 # caller also accepts a directory can offer "this folder"
                 # without a second dialog. Off by default, so every other
                 # caller's bar is unchanged.
                 if getattr(self, "_offer_select_folder", False):
                     yield Button(
-                        "Select folder", id="select-current-folder"
+                        self.FOLDER_CONFIRM_LABEL, id="select-current-folder"
                     )
                 yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
 
@@ -663,6 +712,11 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     def on_mount(self) -> None:
         """Focus the initial widget on mount and set the initial path."""
         dir_nav = self.query_one(DirectoryNavigation)
+        # Both families reach this: Textual dispatches `on_mount` to every
+        # class in the MRO, so `EnhancedFileDialog`, which builds its own
+        # navigation in its own `compose`, is configured here too rather than
+        # needing the same two lines copied into it.
+        dir_nav.sort_key = self._default_listing_sort()
         current_path_label = self.query_one("#current_path_display", Label)
         current_path_label.update(str(dir_nav.location))
 

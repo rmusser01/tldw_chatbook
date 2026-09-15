@@ -76,19 +76,6 @@ class FileOpen(BaseFileDialog):
         import, skill folders, TTS models, ...) keeps browsing-first focus.
         """
 
-    def _hint_text(self) -> str:
-        """Name both actions once "Select folder" is offered (task-32122).
-
-        Neither ``FileOpen(offer_select_folder=True)`` nor the vendored
-        ``SelectDirectory`` had any on-screen hint distinguishing "Enter
-        descends" from "the folder-confirming button uses this one" --
-        AC#4 requires that hint actually render.
-        """
-        if not self._offer_select_folder:
-            return ""
-        open_label = self._label(self._select_button, "Open")
-        return f"Enter {open_label}  ·  Select folder to use this folder"
-
     def _should_return(self, candidate: Path) -> bool:
         """Perform the final checks on the chosen file.
 
