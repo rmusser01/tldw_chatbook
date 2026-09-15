@@ -3,7 +3,7 @@ id: TASK-32621
 title: >-
   Library Notes: Folder files asserts Saved over no file selected and silently
   drops non-note entries from its tree
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 06:43'
 labels:
@@ -28,7 +28,109 @@ Cause PROVEN by capture.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With no file selected the right pane shows no save state and no editable body
-- [ ] #2 The Folder-files tree states what it lists, so a missing file is explained rather than silently absent
-- [ ] #3 The two vault-reading paths agree on whether an unreadable source is reported or ignored, or each says which it does
+- [x] #1 With no file selected the right pane shows no save state and no editable body
+- [x] #2 The Folder-files tree states what it lists, so a missing file is explained rather than silently absent
+- [x] #3 The two vault-reading paths agree on whether an unreadable source is reported or ignored, or each says which it does
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Find the producer of the "Saved" chip with nothing open.
+2. Hide the editable body when there is no file to edit.
+3. State what the tree lists, and what each vault-reading path reads.
+
+## Implementation Notes
+
+**Re-measured after merging dev @f2c635c899 (G6 density + the P0 + the picker).**
+G6's task-32614 re-budgets the same Folder-files navigator this task adds a
+legend to, which no merge check can see. The numbers, through the production
+Library screen and through a standalone mount of the same pane:
+
+| size | context | navigator | tree rows | legend | of max-height 3 |
+|---|---|---|---|---|---|
+| 100x30 | production Library | **closed** | 0 | not on screen | -- |
+| 100x30 | standalone, no rail | 46 wide | 22 | 2 rows | 1 spare |
+| 60x20 | production Library | 32 wide | 5 | 3 rows | 0 spare |
+| 60x20 | standalone, no rail | 32 wide | 11 | 3 rows | 0 spare |
+
+The finding worth carrying: **at 100x30 the production shell CLOSES the
+navigator.** The width resolver spends 29 on the Library rail, 61 on the
+reader and 10 on the two grips, and the items pane needs 32 it has not got
+(`AdaptiveReaderEffectiveLayout(library_open=True, items_open=False,
+items_width=0, reader_width=61)`). So neither G6's recovered rows nor this
+task's legend is visible there, and the two changes can only collide where
+the navigator is open -- where the legend costs 2 rows at 46 cells and 3 at
+30. Nothing to reconcile between the branches; the direction is favourable.
+
+**AC#2/AC#3 are now pinned on the RENDERED pane, not on `inspect.getsource`.**
+A source substring cannot see a pane that never composes, a `display: none`,
+or copy clipped by the legend's own `max-height: 3`. Both pins now assert the
+painted text equals the Static's full text and that the line sits where the
+guide says it does. Proven by reverting: a legend long enough to need a
+fourth row goes red at 60x20 with the clipped text in the message, moving the
+scope line above the review summary goes red on placement, and renaming the
+Static's id goes red on `NoMatches`. Measured at 30 cells the sentence fills
+3 rows (30/26/5), so it has about 25 characters of slack, not "one word" --
+the pin is what makes any actual overflow red.
+
+**Seven tests pinned the defect.** `test_library_file_notes_workspace.py` had
+fourteen failing cases across seven functions asserting "Saved" as the content
+channel with NO file open -- including one that asserted it on the line before
+it opened its first file. Their subject is the Git channel and the
+"no cross-channel masking" contract, which is preserved; only the false content
+claim moved. Baseline established first: dev @3b26c66ce0 is **8 failed, 154
+passed** on that file, and every one of those eight (three
+`test_notes_authority_switch_*`, `test_notes_authority_round_trip_*` x2,
+`test_wide_files_task_return_*`, `test_high_stakes_..._legible_in_shipped_
+themes` x2) is red without this branch. The fourteen new ones are the copy
+change and nothing else -- checked by disabling the editor-visibility half
+alone, which changed none of them.
+
+**Copy, second pass.** The first version was "No file open. Next: Choose a file
+in the tree." Two things argued it down to "No file open.": at 60x20 the
+sentence is three rows of a two-row box, and every other safe action on this
+pane names a CONTROL ("Save Copy", "Choose folder", "Open Manage") where this
+one named a gesture. The tree is the only thing to act on and it is already on
+screen.
+
+**AC#1 -- the producer.** `resolve_file_note_status_channels` is a chain of
+`elif`s ending in `else: content = "Saved"`, and with no file open every
+save-state input is False -- so the fallback asserted a save for a file that
+does not exist. A `file_open` input (defaulting True, so every existing pin
+stands) gives that state its own branch: "No file open. Next: Choose a file in
+the tree". The editable body goes with it -- `_sync_editor_visibility`, called
+from `_update_controls`, hides the retained editor when nothing is open
+(hidden, not unmounted: every caller queries `#file-notes-editor`
+unconditionally) and drops focus if it was there, since a hidden widget keeps
+focus in Textual.
+
+**AC#2 -- the tree says what it lists.** One line under the pane heading:
+"Lists .md, .markdown, .txt and .text. Other files stay on disk." Both
+assessors were right that the omission is correct behaviour; it was the only
+thing on the pane not saying so.
+
+**AC#3 -- each path says which it does.** Neither path changes what it does.
+The lasting-sync review gains its own scope line under the summary ("Syncs
+.md, .markdown and .txt only; other files are left alone"), so "0 need
+attention" no longer covers sources Import once reports under Failed and
+Skipped.
+
+**Three different sets, deliberately.** Folder files reads
+`SUPPORTED_EXTENSIONS` (.md/.markdown/.txt/.text), lasting sync reads
+`_SYNC_FILE_EXTENSIONS` (.md/.markdown/.txt -- NOT .text), and Import once
+reads `SUPPORTED_NOTE_EXTENSIONS` (nine, including .csv/.yaml). Each sentence
+names its own set and each pin reads that set from its own constant rather
+than retyping it, so a change to any of them fails the pin instead of rotting
+the copy.
+
+**Owned files touched (flagged for the merge check):**
+`Widgets/Library/library_file_notes_workspace.py` -- a Static in
+`_build_reader_items_pane`, one CSS rule, a new `_sync_editor_visibility`, and
+the `file_open` argument; `library_notes_add_from_files_canvas.py` -- one
+Static in `_compose_phase`'s review branch.
+
+**Files.** `Widgets/Library/library_file_notes_workspace.py`,
+`Widgets/Library/library_notes_add_from_files_canvas.py`,
+`Tests/UI/test_library_notes_w5_import_preview.py`,
+`Docs/User_Guide/library/file-notes.md`,
+`Docs/User_Guide/library/notes.md`.

@@ -160,7 +160,10 @@ class LastingSyncSetup:
     direction: str = "bidirectional"
     server_available: bool = False
     server_disabled_reason: str = (
-        "Unavailable - server sync-folder capability not installed"
+        # task-32623: a hyphen here was the one exception to the em dash
+        # this screen otherwise uses throughout, including its own
+        # `_disabled_action_label` grammar in library_note_import_canvas.py.
+        "Unavailable — server sync-folder capability not installed"
     )
     validation_message: str = "Choose a display name, folder, and local destination."
     can_check: bool = False
@@ -693,7 +696,11 @@ def initial_lasting_sync_snapshot(
         setup=LastingSyncSetup(),
         review=LastingSyncReview(),
         roots=(),
-        status_line="Choose how files should relate to Library notes.",
+        # task-32612 AC#1: this line and the pane's own "Add files to Library
+        # notes." heading were two thirds of a three-sentence stack that asked
+        # the same question three times. The heading asks; this says where the
+        # chooser stands.
+        status_line="Nothing chosen yet.",
     )
 
 

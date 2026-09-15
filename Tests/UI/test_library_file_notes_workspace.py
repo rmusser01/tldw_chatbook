@@ -2900,7 +2900,8 @@ async def test_folder_files_authority_row_tracks_root_save_and_session_git(
         workspace._render_session_git_label(2)
         git_attention = _static_text(workspace, "#file-notes-authority")
         assert "Outcome uncertain" in git_attention
-        assert "Saved" in _static_text(workspace, "#file-notes-save-status")
+        # task-32621 AC#1: no file is open here, so the content channel no longer asserts a save for a file that does not exist. The Git channel is still this test's subject.
+        assert "No file open." in _static_text(workspace, "#file-notes-save-status")
     replica.close()
 
 
@@ -3026,7 +3027,8 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
             for row in range(content.region.height)
         )
         assert " ".join(rendered_authority.split()) == expected_authority
-        assert "Saved" in " ".join(rendered_content.split())
+        # task-32621 AC#1: no file is open here, so the content channel no longer asserts a save for a file that does not exist. The Git channel is still this test's subject.
+        assert "No file open." in " ".join(rendered_content.split())
         assert "\n" not in _static_text(workspace, "#file-notes-authority")
         assert "\n" not in _static_text(workspace, "#file-notes-save-status")
         assert workspace.query_one("#file-notes-body").region.height >= 8
@@ -3164,12 +3166,13 @@ def test_configured_root_authority_state_table_is_two_line_and_bounded(
         elif offline is True:
             expected_content = "Unavailable"
         else:
+            # task-32621 AC#1: no file is open here, so the content channel no longer asserts a save for a file that does not exist. The Git channel is still this test's subject.
             expected_content = {
                 "conflict": "Conflict",
                 "error": "Save failed",
                 "saving": "Saving",
                 "dirty": "Unsaved changes",
-            }.get(save_value, "Saved")
+            }.get(save_value, "No file open.")
         assert content.startswith(expected_content), context
 
     replica.close()
@@ -3218,7 +3221,8 @@ def test_file_notes_status_channels_include_consequential_commit_lifecycle(
     channels = workspace._status_channels(0)
 
     assert expected in channels.authority_git
-    assert channels.content_recovery == "Saved"
+    # task-32621 AC#1: no file is open here, so the content channel no longer asserts a save for a file that does not exist. The Git channel is still this test's subject.
+    assert channels.content_recovery == "No file open."
 
 
 @pytest.mark.asyncio
@@ -3892,7 +3896,8 @@ async def test_saved_authority_with_session_git_paints_at_60x20(
         )
         assert "Folder files" in painted
         assert "Folder:" in painted
-        assert "Saved" in _static_text(workspace, "#file-notes-save-status")
+        # task-32621 AC#1: no file is open here, so the content channel no longer asserts a save for a file that does not exist. The Git channel is still this test's subject.
+        assert "No file open." in _static_text(workspace, "#file-notes-save-status")
         if push_copy:
             assert push_copy in painted
             assert "1 session change" not in painted
@@ -4910,7 +4915,9 @@ async def test_save_status_names_local_folder_and_preserved_draft(
 
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
-        assert _static_text(workspace, "#file-notes-save-status") == "Saved"
+        # task-32621 AC#1: no file is open here, so the content channel no longer asserts a save for a file that does not exist. The Git channel is still this test's subject. The "Saved" this used to assert here was the defect: it
+        # claimed a save before any file had been opened.
+        assert _static_text(workspace, "#file-notes-save-status") == "No file open."
 
         assert await workspace.open_path("note.md")
         assert _static_text(workspace, "#file-notes-save-status") == "Saved"
@@ -6870,7 +6877,8 @@ async def test_file_notes_authority_is_painted_and_contained_at_60x20_shell(
         assert shell_grid.content_region.contains_region(workspace.region)
         assert 0 < authority.region.height <= 2
         assert _painted_style_of_text(pilot.app, authority.region, "Folder files")
-        assert _painted_style_of_text(pilot.app, content.region, "Saved")
+        # task-32621 AC#1: no file is open here, so the content channel no longer asserts a save for a file that does not exist. The Git channel is still this test's subject. Still painted and still contained, which is the subject.
+        assert _painted_style_of_text(pilot.app, content.region, "No file open.")
 
     await workspace.shutdown()
 

@@ -1439,7 +1439,12 @@ class LibraryNotesController:
             raise RuntimeError("A note presentation requires an active session.")
         base_meta = self._library_note_meta_base_line()
         word_count = self._note_word_count(snapshot.body)
-        word_copy = f"{word_count} words" if word_count != 1 else "1 word"
+        # task-32623: match `library_note_chrome_facts`'s thousands
+        # separator -- Info and the editor footer share this exact int
+        # (see the `word_count=word_count` comment below), so a note over
+        # 999 words used to read two different numbers-as-text for the one
+        # count ("5,453" in the footer, "5453" in Info).
+        word_copy = f"{word_count:,} words" if word_count != 1 else "1 word"
         status_line = self._library_note_status_line()
         metadata_line = " · ".join(part for part in (base_meta, word_copy) if part)
         operation = self._library_notes_operation_for_active_region()
@@ -3765,7 +3770,29 @@ class LibraryNotesController:
         if snapshot is None or snapshot.note_id != self._selected_note_id:
             return
         if outcome.kind is NoteSaveOutcomeKind.SAVED:
-            self._patch_library_note_list_from_session()
+            renamed = bool(self._patch_library_note_list_from_session())
+            if renamed and self.is_mounted:
+                # task-32616 AC#1 (A caps 06/07, B cap 58): patching the list
+                # CACHES is not painting the list. Until this sync the only
+                # durable artefact on screen -- the row beside the editor --
+                # still read "Untitled · now" while the editor's own heading
+                # read the new title and its status read "Saved 22:50": the
+                # screen answering "is my writing safe" two ways at once, at
+                # the moment a first-timer checks.
+                #
+                # The task-32062 focus guard is NOT weakened by this (AC#2).
+                # It lives in ``LibraryNotesCanvas.sync_state`` and is
+                # measured per canvas, so the WORK pane still skips its
+                # rebuild while the reader's hands are in the title or body;
+                # the Items pane beside it is a sibling canvas, recomposes as
+                # it already does for every other sync, and ``canvas_sync``'s
+                # ``notes_editor_owned`` branch restores its scroll offset
+                # without touching focus.
+                #
+                # Gated on a genuine rename, not on every save: a body-only
+                # autosave changes no row label, and repainting a 54-note
+                # tree on each debounce tick would buy nothing.
+                _sync_library_canvas(self, "notes")
             # task-32536 AC#3: a successful save ends a failed operation's
             # message -- "Saved" and "Can't use this note…" cannot both be
             # the truth of one status line.
@@ -5385,6 +5412,25 @@ class LibraryNotesController:
         event.stop()
         current = self._library_note_import_controller.snapshot.page.page_number
         self._library_note_import_controller.set_page(current + event.delta)
+    @on(LibraryNoteImportCanvas.ViewImportedNotesRequested)
+    def handle_library_note_import_view_notes(
+        self, event: LibraryNoteImportCanvas.ViewImportedNotesRequested
+    ) -> None:
+        """Leave the settled receipt for the list the import just filled.
+
+        task-32622 AC#1. The destination is the same list "‹ Notes" reaches
+        (``handle_library_notes_import_back``) -- the import controller
+        already reloads Notes when execution settles
+        (``_refresh_after_settlement``), so the rows are fresh by the time
+        this runs.
+
+        ponytail: it lands on the Notes list, not scrolled to the
+        destination folder -- revealing one folder needs a tree-reveal seam
+        the list does not have yet. Filed as the ceiling on task-32622.
+        """
+        event.stop()
+        self._library_notes_view = "list"
+        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
     @on(LibraryNoteImportCanvas.RetryRequested)
     def handle_library_note_import_retry(
         self, event: LibraryNoteImportCanvas.RetryRequested

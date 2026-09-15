@@ -1011,7 +1011,12 @@ def test_receipt_counts_the_links_the_import_resolved() -> None:
     projection = project_library_note_import_snapshot(_linked_settled_state())
 
     assert projection.resolved_links == 1
-    assert projection.receipt_line == "2 notes created · 1 link resolved"
+    # task-32622 AC#2: "1 link resolved" said nothing about WHAT resolved, and
+    # the figure counts link occurrences reaching a note the same batch
+    # creates -- which is why it can exceed the number of notes carrying one.
+    assert projection.receipt_line == (
+        "2 notes created · 1 link to an imported note rewritten"
+    )
 
 
 def test_a_revisited_receipt_keeps_its_resolved_link_count() -> None:

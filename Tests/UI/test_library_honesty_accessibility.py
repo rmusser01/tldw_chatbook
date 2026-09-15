@@ -610,6 +610,12 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     )
     fake._notes_state.compact = True
     fake._library_notes_focus_region = lambda: "editor"
+    # task-32623: `ctrl+end` is now dropped from this tier unless the note
+    # body itself holds focus (the key is a TextArea-class binding, dead
+    # from any other control) -- this section is about compact/full KEY
+    # parity, not that filter, so give the fake the focus state under
+    # which both tiers keep their full key set.
+    fake.focused = SimpleNamespace(id="library-note-body")
     compact = LibraryScreen._library_notes_footer_shortcuts(fake)
     assert compact == LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT
     assert [key for key, _ in compact] == [

@@ -932,6 +932,37 @@ async def test_the_editor_footer_advertises_the_document_end_key():
         assert shortcuts.get("ctrl+end") == "end of note", shortcuts
 
 
+@pytest.mark.asyncio
+async def test_ctrl_end_drops_off_the_footer_once_focus_leaves_the_body():
+    """task-32623: the chip named a key that did nothing off the body.
+
+    ``ctrl+end`` (task-32247) is a ``TextArea``-class binding, live only
+    while the note body itself is the focused widget -- Tab (task-32246)
+    moves focus to a toolbar Button, where the key reaches nothing, yet the
+    static editor tier kept advertising it regardless.
+    """
+    host = _build_notes_host(_LONG_NOTE_BODY)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        body = screen.query_one("#library-note-body", TextArea)
+        body.focus()
+        await pilot.pause()
+        assert dict(screen._library_notes_footer_shortcuts()).get(
+            "ctrl+end"
+        ) == "end of note"
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert screen.focused is not None and screen.focused.id != "library-note-body"
+        shortcuts = dict(screen._library_notes_footer_shortcuts())
+        assert "ctrl+end" not in shortcuts, shortcuts
+        # The rest of the tier survives -- only the dead key is dropped.
+        assert "esc" in shortcuts, shortcuts
+
+
 # --- task-32253: Shift+Tab into the Title must not select it ---------------
 
 

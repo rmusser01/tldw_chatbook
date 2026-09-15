@@ -8344,12 +8344,22 @@ class LibraryScreen(BaseAppScreen):
             # editor the way the create canvas and delete prompt apply it.
             # (The append-don't-prepend reasoning now lives on the shared
             # helper, which the Preview and Notes-list tiers also use.)
-            return self._with_library_notes_focus_chip(
-                self._notes_footer_tier(
-                    self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
-                    self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
-                )
+            tier = self._notes_footer_tier(
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
             )
+            # task-32623: `ctrl+end` (task-32247) is a `TextArea`-class
+            # binding -- live only while the note body itself is the
+            # focused widget, per Textual's focus-chain binding lookup.
+            # Tab out of the body onto a toolbar Button (the same move the
+            # comment above already accounts for with the "enter" chip)
+            # and the key reaches nothing, yet the static tier kept
+            # advertising it regardless of which control actually holds
+            # focus. Same id-off-`self.focused` idiom
+            # `_library_focus_enter_label` already uses, not a fresh query.
+            if str(getattr(self.focused, "id", "") or "") != "library-note-body":
+                tier = tuple(pair for pair in tier if pair[0] != "ctrl+end")
+            return self._with_library_notes_focus_chip(tier)
         if region == "create":
             if self._notes_state.create_running:
                 return ()
@@ -16940,6 +16950,12 @@ class LibraryScreen(BaseAppScreen):
             ),
             delete_receipt=self._notes_state.delete_receipt,
         )
+        # task-32616 AC#3: set here rather than threaded through
+        # ``build_library_notes_list_state`` -- whether a note is OPEN is a
+        # fact about the screen beside the list, not about the rows.
+        state = dataclasses.replace(
+            state, note_open=bool(self._notes_state.selected_note_id)
+        )
         if self._notes_state.select_mode:
             projection = self._build_library_notes_tree_projection()
             if projection is None:
@@ -20470,7 +20486,7 @@ class LibraryScreen(BaseAppScreen):
     def _update_library_note_meta_static(self, *, content: str) -> None:
         return self._notes_controller._update_library_note_meta_static(content=content)
 
-    def _patch_library_note_list_from_session(self) -> None:
+    def _patch_library_note_list_from_session(self) -> bool:
         """Patch list caches from the payload the coordinator actually saved.
 
         (P0) The baseline title is the DRAFT's title; the save port
@@ -20479,10 +20495,16 @@ class LibraryScreen(BaseAppScreen):
         named an emptied-out note ``""`` while the persisted row said
         "Untitled". Both sides now run the payload through
         :func:`library_note_persisted_title`.
+
+        Returns:
+            Whether this save changed the title the list caches were
+            rendering -- the one case the rows on screen are now stale
+            (task-32616). A body-only autosave returns ``False`` and costs
+            the Items pane nothing.
         """
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
-            return
+            return False
         baseline = snapshot.baseline
         persisted_title = library_note_persisted_title(baseline.title)
         # Capture the title the list caches currently show BEFORE patching, so
@@ -20546,6 +20568,7 @@ class LibraryScreen(BaseAppScreen):
                 getattr(self._notes_state, "filter_generation", 0) + 1
             )
             self._notes_state.tree_filter_state = None
+        return title_changed
 
     @staticmethod
     def _placement_note_id(placement: Any) -> str:
@@ -27402,6 +27425,10 @@ class LibraryScreen(BaseAppScreen):
             exclusive=True,
             group="library_note_import_execute",
         )
+
+    @on(LibraryNoteImportCanvas.ViewImportedNotesRequested)
+    def handle_library_note_import_view_notes(self, event: LibraryNoteImportCanvas.ViewImportedNotesRequested) -> None:
+        return self._notes_controller.handle_library_note_import_view_notes(event)
 
     @on(LibraryNoteImportCanvas.RetryRequested)
     def handle_library_note_import_retry(self, event: LibraryNoteImportCanvas.RetryRequested) -> None:

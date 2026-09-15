@@ -62,7 +62,14 @@ def render_obsidian_callouts(text: str) -> str:
             kind = kind.capitalize()
         title = match.group("title").strip()
         label = f"{kind}: {title}" if title else kind
-        return f"{match.group('quote')}**{label}**"
+        # task-32620 AC#3: the guide promises "a quoted block HEADED by its
+        # type", but the lines under a callout header are a lazy paragraph
+        # continuation, so "**Warning**" and the first body line rendered as
+        # one run -- "Warning The preview and the editor disagree…" (A cap 25,
+        # B cap 27). The two trailing spaces are CommonMark's hard break; at
+        # the end of a block they are stripped, so a bodyless callout is
+        # unchanged.
+        return f"{match.group('quote')}**{label}**  "
 
     lines = text.split("\n")
     open_fence: str | None = None

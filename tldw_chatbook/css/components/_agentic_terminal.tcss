@@ -3062,6 +3062,19 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-x: hidden;
 }
 
+/* task-32620 AC#1/AC#2: the same Textual ``MarkdownH1`` default the Library
+   Reader already overrides (``content-align: center middle``, task-31635).
+   Preview prints the note's own title left-aligned in
+   #library-note-preview-body-title directly above this body, so a centred H1
+   underneath it read as a SECOND title -- and the task-32551 de-duplication
+   only fires on an exact title match, which a note titled from Obsidian
+   frontmatter never produces (A cap 25: "Q3 planning — library review" over a
+   centred "Library review"). Left-aligned, the body's first heading reads as
+   the first heading of the body. */
+#library-note-preview-body MarkdownH1 {
+    content-align: left middle;
+}
+
 /* Muted meta line: same tier as the media viewer's metadata block
    (#library-media-viewer-meta) so both editors read consistently.
 
@@ -11720,6 +11733,27 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     max-height: 1;
     margin: 0;
     overflow-x: hidden;
+}
+
+/* task-32623: at a wide (non-compact) terminal, Discard new note is
+ * display-toggled (LibraryNotesCanvas.apply_session_state /
+ * discard_new.display), and #library-note-primary-actions is width:auto --
+ * hiding Discard shrank #library-note-task-actions, which shrank the auto
+ * width and shifted Edit/Preview/Info in #library-note-mode-controls
+ * (its left sibling in the same row) left under the pointer whenever the
+ * button appeared or disappeared. 61 is the row's own measured width with
+ * Save + Use in Console + Discard new note all painted (the widest state);
+ * reserving it keeps the mode-controls row's position independent of
+ * whether Discard is currently shown. The compact override just below
+ * restores 0: compact already forces one fixed-height row via the block
+ * above and never exhibited this shift.
+ */
+#library-note-task-actions {
+    min-width: 61;
+}
+
+#library-shell-grid.library-notes-compact #library-note-task-actions {
+    min-width: 0;
 }
 
 #library-shell-grid.library-notes-compact .library-canvas-action {
