@@ -20,7 +20,10 @@ from pathlib import Path
 
 from defusedxml import ElementTree as ET
 
-_NATIVE_TESTS = ("Tests/Utils/test_windows_files.py",)
+_NATIVE_TESTS = (
+    "Tests/Utils/test_windows_files.py",
+    "Tests/Utils/test_windows_security_decode.py",
+)
 _PRODUCT_TESTS = (
     "Tests/DB/test_private_sqlite_windows_descriptor.py",
     (

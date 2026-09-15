@@ -1,0 +1,21 @@
+{
+  "base": "9dff9dd1b2a73795eece24970ac43f1dc571c2b6",
+  "files": {
+    "tldw_chatbook/Utils/windows_files.py": "d7122b58529895b564c061700365c9b58aa3948a36ce82f3472ae3d5a59d4d55",
+    "Tests/Utils/test_windows_security_decode.py": "af62b7d8f8e281c3841b9d30c00736c5cd5f649d8d7af709697db2a37b706ed8",
+    "Tests/Backup_Recovery/run_platform_product.py": "2d807c5d08c10c56b1a86593e77b6a2dc9fe9806e795c18426631881add01916"
+  },
+  "independent_tests": {
+    "passed": 40,
+    "skipped_native_windows": 19,
+    "seconds": 0.87,
+    "log": "/private/tmp/uat-security-decode-independent.log",
+    "junit": "/private/tmp/uat-security-decode-independent.xml"
+  },
+  "proofs": {
+    "decoder_ast_equal_after_sid_parameterization": true,
+    "runner_ast_unchanged_except_native_test_tuple": true,
+    "native_pointer_counting_seam_returns_int": true
+  },
+  "windows_execution": "pending; no Windows or performance acceptance claim"
+}

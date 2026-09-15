@@ -295,6 +295,11 @@ class _Native:
                 _I32,
             ),
             (self.advapi, "ConvertSidToStringSidW", [_P, C.POINTER(_P)], _I32),
+            (self.advapi, "GetSecurityDescriptorLength", [_P], _U32),
+            (
+                self.advapi, "GetSecurityDescriptorOwner",
+                [_P, C.POINTER(_P), C.POINTER(_I32)], _I32,
+            ),
             (
                 self.advapi,
                 "ConvertStringSecurityDescriptorToSecurityDescriptorW",
@@ -448,6 +453,7 @@ class _Native:
             raise OSError(errno.ENOTSUP, "remote_filesystem_refused")
 
     def security(self, handle, is_directory):
+        """Read fresh security; reuse only decoding of byte-identical descriptors."""
         owner, dacl, descriptor = _P(), _P(), _P()
         result = self.advapi.GetSecurityInfo(
             handle, 1, 5, C.byref(owner), None, C.byref(dacl), None, C.byref(descriptor)
@@ -455,27 +461,53 @@ class _Native:
         if result:
             raise C.WinError(result)
         try:
-            sid = self.sid_string(owner)
-            uid = 1000 if sid == self.user_sid else (0 if sid in _SYSTEM_SIDS else -1)
-            if not dacl.value:
-                return uid, 0o777
-            header = C.string_at(dacl, 8)
-            count = struct.unpack_from("<H", header, 4)[0]
-            aces = []
-            for index in range(count):
-                ace = _P()
-                self.check(self.advapi.GetAce(dacl, index, C.byref(ace)))
-                kind, flags, length = struct.unpack("<BBH", C.string_at(ace, 4))
-                if length < 8:
-                    raise OSError(errno.EACCES, "malformed_windows_acl")
-                mask = struct.unpack("<I", C.string_at(ace.value + 4, 4))[0]
-                trustee = self.sid_string(ace.value + 8) if kind in {0, 1} else ""
-                aces.append((kind, flags, mask, trustee))
-            return uid, _acl_mode(
-                aces, self.user_sid, is_directory=is_directory, owner_sid=sid
-            )
+            # GetSecurityInfo owns a complete valid descriptor. Self-relative
+            # descriptors are contiguous; never retain its native pointers.
+            # 128 entries of at most 4096 bytes bound retained descriptor data.
+            control = struct.unpack_from("<H", C.string_at(descriptor, 4), 2)[0]
+            if control & 0x8000:  # SE_SELF_RELATIVE
+                size = self.advapi.GetSecurityDescriptorLength(descriptor)
+                if 20 <= size <= 4096:
+                    return self._decoded_security(
+                        C.string_at(descriptor, size), is_directory, self.user_sid
+                    )
+            return self._decode_security(owner, dacl, is_directory, self.user_sid)
         finally:
             self.kernel.LocalFree(descriptor)
+
+    @functools.lru_cache(maxsize=128)  # noqa: B019 - _native already retains this process-lifetime singleton.
+    def _decoded_security(self, data, is_directory, user_sid):
+        """Decode immutable bytes, never a cached handle or filesystem decision."""
+        descriptor = C.create_string_buffer(data)
+        owner, dacl = _P(), _P()
+        defaulted, present = _I32(), _I32()
+        self.check(self.advapi.GetSecurityDescriptorOwner(
+            descriptor, C.byref(owner), C.byref(defaulted)
+        ))
+        self.check(self.advapi.GetSecurityDescriptorDacl(
+            descriptor, C.byref(present), C.byref(dacl), C.byref(defaulted)
+        ))
+        return self._decode_security(owner, dacl, is_directory, user_sid)
+
+    def _decode_security(self, owner, dacl, is_directory, user_sid):
+        """Conservatively project the native owner and ordered ACL entries."""
+        sid = self.sid_string(owner)
+        uid = 1000 if sid == user_sid else (0 if sid in _SYSTEM_SIDS else -1)
+        if not dacl.value:
+            return uid, 0o777
+        header = C.string_at(dacl, 8)
+        count = struct.unpack_from("<H", header, 4)[0]
+        aces = []
+        for index in range(count):
+            ace = _P()
+            self.check(self.advapi.GetAce(dacl, index, C.byref(ace)))
+            kind, flags, length = struct.unpack("<BBH", C.string_at(ace, 4))
+            if length < 8:
+                raise OSError(errno.EACCES, "malformed_windows_acl")
+            mask = struct.unpack("<I", C.string_at(ace.value + 4, 4))[0]
+            trustee = self.sid_string(ace.value + 8) if kind in {0, 1} else ""
+            aces.append((kind, flags, mask, trustee))
+        return uid, _acl_mode(aces, user_sid, is_directory=is_directory, owner_sid=sid)
 
     def open_handle(
         self,
