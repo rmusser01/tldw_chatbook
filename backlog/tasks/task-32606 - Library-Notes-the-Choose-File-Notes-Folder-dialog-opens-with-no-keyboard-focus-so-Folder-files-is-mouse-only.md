@@ -48,6 +48,18 @@ Docs contradicted: notes.md says the picker 'opens with that File name field alr
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+**The Description's INFERRED half is wrong — superseded here.** It says "That
+Tab does not enter the dialog at all is INFERRED (not traced to the modal's
+focus chain)." Focus never left the dialog and could not have: a focus chain
+is per screen, so a `ModalScreen` cannot hand focus to the screen underneath
+it. What actually happened is two things at once — focus sat on the dialog's
+own directory listing, which paints no caret, while the Library screen's
+status row kept its own chips painted through the translucent modal. Probed
+headless at dev 4e4558bff2 (`SelectDirectory focused=ProgressiveDirectory
+Navigation`, typed text landing nowhere) and corroborated by capture
+`02-picker-open-235x52.txt`. Both halves are fixed: AC#1 moves focus to the
+field, AC#2 replaces the chips.
+
 Folder files' "Choose File Notes Folder" now opens on its path field, and every
 folder-returning picker in the family does the same through one shared seam.
 
@@ -97,17 +109,41 @@ Tab/Shift+Tab/Enter and no click; a pasted absolute path REPLACED the pre-filled
 value with no click first (`04`, `10`). Log grep after both walks: zero
 `unhandled_exception`, zero `| ERROR`, two `app_stopping` (my own Ctrl+Q).
 The remaining leg — opening a file from the Files tree — is pinned headless on
-the real route (`test_folder_files_reaches_and_edits_a_file_with_no_mouse`)
+the real route (`test_folder_files_chooses_a_folder_and_edits_a_file_by_key_presses`)
 rather than live: Tab from the folder navigator's search field leaks into the
 Library rail, which is a separate pre-existing gap filed as a rider.
 
-**Trade-off / known residue.** `^s Select this folder` now renders in the
-dialog's footer, dimmed, on pickers that do not offer it — Textual's
-`Footer` composes every `show=True` binding and marks a `check_action`-vetoed
-one disabled rather than dropping it, which the task-2222 guard's comment
-assumed it did. Making ctrl+s live on `SelectDirectory` would bypass
+**Trade-off / known residue.** `^s Select this folder` still renders in the
+dialog's footer, dimmed, on pickers that do not offer it — Textual's `Footer`
+composes every `show=True` binding and marks a `check_action`-vetoed one
+disabled rather than dropping it, which the task-2222 guard's comment assumed
+it did. Making ctrl+s live on `SelectDirectory` would bypass
 `EnhancedSelectDirectory`'s own select handler and its remembered-directory
-bookkeeping, so it is left dimmed and documented; rider filed.
+bookkeeping, so it stays dimmed; review round 1 moved it LAST in `BINDINGS`
+so a narrow terminal scrolls it off first instead of spending 23 of 60
+columns on it. Rider stands for suppressing it outright.
+
+**Out of scope, stated rather than half-done (review round 1).** The
+`EnhancedFileDialog` family gets NO footer. It re-implements `compose()`, so
+the base's never reached it, and adding one costs a content row there: that
+dialog is `height: 95%` against the vendored one's 80%, and at the 60x24 its
+pickers are pinned at, the character-import picker's selection marker fell
+off the bottom and three existing size pins went red. Those pins' premise —
+what is visible at that size — is honest, so re-baselining them would be a
+loosening. The gap is recorded in that `compose()`, in ENHANCEMENTS §8, and
+as a rider. `EnhancedSelectDirectory` keeps the focus fix, which is the
+defect this task is actually about.
+
+**Review round 1 also fixed a Critical of its own making.** Docking the
+footer at screen level put it outside `SAFE_MODAL_CONTENT`, so
+`SafeModalDismissMixin.on_click` read a chip click as a backdrop click and
+cancelled the dialog — destructive on `FileSave`. The exemption is in the
+shared classifier (`modal_dismissal.py`, `target_is_modal_chrome`), not an
+`on_click` override on the screen, which would have run in addition to the
+mixin's handler rather than instead of it. It tests by POINT, not by the
+target's ancestry: `FooterKey` fires its key from `on_mouse_down`, and a key
+that moves focus changes the active bindings, so `Footer` recomposes and the
+chip is already detached when the `Click` arrives.
 
 **Follow-on test repair, not a loosening.** Two task-32251 pins drove
 "click an UNFOCUSED field" on `SelectDirectory`, which now arrives focused.
@@ -116,7 +152,7 @@ treatment task-32540 already applied to the `FileOpen` pin sitting beside them.
 The seam under test is unchanged.
 
 **Files.** `Third_Party/textual_fspicker/base_dialog.py`, `select_directory.py`,
-`file_open.py`, `Widgets/enhanced_file_picker.py`,
+`file_open.py`, `Widgets/modal_dismissal.py`, `Widgets/enhanced_file_picker.py`,
 `Tests/UI/test_library_notes_w5_picker_keyboard.py` (new),
 `Tests/UI/test_picker_path_field.py`, `Docs/User_Guide/library/file-notes.md`.
 No CSS changed (Textual's `Footer` plus the existing app-tier

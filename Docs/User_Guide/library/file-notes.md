@@ -128,9 +128,10 @@ Every step has a keyboard route (task-32606):
 
 While the picker is open the bottom row of the terminal shows the picker's own
 keys instead of Library's, starting with `esc Cancel` — that row is how you
-tell you are inside the dialog. `^s Select this folder` appears dimmed here:
-it belongs to the file-and-folder picker Import once uses, and this dialog's
-**Select** button does that job instead.
+tell you are inside the dialog. Those keys are clickable as well as typable,
+and clicking one runs it without closing the picker. The last key on the row,
+`^s Select this folder`, is dimmed: it belongs to the file-and-folder picker
+Import once uses, and this dialog's **Select** button does that job instead.
 
 ## Features & controls
 
@@ -713,3 +714,19 @@ reached live but Tab from the folder navigator's search field leaks into the
 Library rail, which is a separate open issue; that leg is pinned instead by
 `Tests/UI/test_library_notes_w5_picker_keyboard.py::test_folder_files_reaches_and_edits_a_file_with_no_mouse`,
 which drives the real workspace inside the real Library screen.)*
+
+*Verified against fix/library-notes-w5-picker-kbd — 2026-09-15 (task-32606
+review round 1). Two corrections to the paragraph above. (a) The picker's key
+row is clickable, and clicking a key used to ALSO cancel the dialog: the row
+docks outside the modal's content, so the safe-dismiss classifier read a chip
+click as a backdrop click (`Widgets/modal_dismissal.py`). Re-walked live at
+235x52 and 100x30 — clicking `^h Toggle hidden files` listed `.obsidian` and
+left the picker open (`14-r1-toggle-hidden-chip-235x52.txt`), clicking
+`^f Search in directory` revealed the "Search files..." input and left it open
+(`17-r1-search-chip-click-100x30.txt`). (b) `^s Select this folder` moved from
+second to LAST on the row, because Textual renders a key a dialog cannot run
+dimmed rather than dropping it and at 60 columns it was crowding out live
+actions; the 100-column row now reads `esc Cancel  ^l Edit path directly  ^f
+Search in directory  ^h Toggle hidden files  f5 Refresh direc`
+(`15-r1-picker-100x30.txt`). Log grep after both walks: zero
+`unhandled_exception`, zero `| ERROR`.)*
