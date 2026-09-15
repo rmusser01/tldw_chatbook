@@ -3789,3 +3789,230 @@ async def test_write_receipts_name_path_title_effect_for_completed_operations(
         ]
     finally:
         await owner.shutdown()
+
+
+# --- task-32605: lasting sync recognises what Import once already imported ---
+
+
+def _record_import_once(
+    ledger_path: Path,
+    root_path: Path,
+    note_ids: dict[str, str],
+) -> None:
+    """Record a COMPLETED Import once of ``root_path`` in the real ledger.
+
+    The plan is built by the importer's own discovery, parser and classifier
+    over the same folder the sync root will walk, and written through
+    ``NoteImportReceiptRepository``'s public lifecycle -- so nothing about the
+    join (the source locator digest) is supplied by this helper.
+
+    Args:
+        ledger_path: The device-state database the runtime also uses.
+        root_path: Folder to import.
+        note_ids: Display path of each source mapped to the note it created.
+    """
+    from tldw_chatbook.Notes.note_import_discovery import discover_import_sources
+    from tldw_chatbook.Notes.note_import_execution_models import (
+        ImportEffectState,
+        ImportItemOutcome,
+        ImportSessionState,
+        approve_note_import_plan,
+    )
+    from tldw_chatbook.Notes.note_import_parsers import parse_import_sources
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        ImportAction,
+        ImportBounds,
+    )
+    from tldw_chatbook.Notes.note_import_planner import (
+        apply_item_override,
+        classify_import_batch,
+    )
+    from tldw_chatbook.Notes.note_import_receipts import (
+        EffectTransition,
+        ImportEffectCategory,
+        NoteImportReceiptRepository,
+    )
+
+    bounds = ImportBounds(
+        max_files=1_000,
+        max_file_bytes=1 << 20,
+        max_total_bytes=1 << 26,
+        max_depth=32,
+    )
+    discovery = discover_import_sources((root_path,), bounds)
+    batch = parse_import_sources(
+        discovery, bounds, destination_folder_segments=None, obsidian_mode=True
+    )
+    plan = classify_import_batch(batch, bounds)
+    # The user's own Skip on every row this import is not recording.
+    for item in plan.items:
+        if item.source.display_path not in note_ids:
+            plan = apply_item_override(plan, item.item_id, ImportAction.SKIP)
+    approved = approve_note_import_plan(plan)
+    path_by_item = {item.item_id: item.source.display_path for item in plan.items}
+    action_by_item = {item.item_id: item.selected_action for item in plan.items}
+
+    repository = NoteImportReceiptRepository(ledger_path)
+    snapshot = repository.begin(approved, batch_size=25)
+    approval_id = snapshot.approval_id
+    repository.transition_session(approval_id, ImportSessionState.RUNNING)
+    durable = repository.load_session_snapshot(approval_id)
+
+    def note_for(effect) -> str:
+        return note_ids[path_by_item[effect.item_id]]
+
+    def _opaque_folder_id(effect) -> str:
+        digest = getattr(effect, "folder_path_digest", None)
+        return f"opaque-folder-{digest[:12]}" if digest else "opaque-folder-root"
+
+    transitions = [
+        EffectTransition(
+            category=effect.category,
+            effect_id=effect.effect_id,
+            state=ImportEffectState.APPLIED,
+            target_note_id=note_for(effect),
+            observed_version=1,
+        )
+        for effect in durable.payload_effects
+        if path_by_item[effect.item_id] in note_ids
+    ]
+    transitions.extend(
+        EffectTransition(
+            category=ImportEffectCategory.FOLDER,
+            effect_id=effect.effect_id,
+            state=ImportEffectState.APPLIED,
+            target_folder_id=_opaque_folder_id(effect),
+        )
+        for effect in durable.folder_effects
+    )
+    transitions.extend(
+        EffectTransition(
+            category=effect.category,
+            effect_id=effect.effect_id,
+            state=ImportEffectState.APPLIED,
+            target_note_id=note_for(effect),
+            target_folder_id=_opaque_folder_id(effect),
+        )
+        for effect in durable.membership_effects
+        if path_by_item[effect.item_id] in note_ids
+    )
+    repository.transition_effects(approval_id, transitions)
+    for item in durable.items:
+        repository.transition_item(
+            approval_id,
+            item.item_id,
+            ImportItemOutcome.IMPORTED
+            if action_by_item[item.item_id] is ImportAction.CREATE_NEW
+            else ImportItemOutcome.SKIPPED,
+        )
+    repository.transition_session(approval_id, ImportSessionState.COMPLETED)
+
+
+@pytest.mark.asyncio
+async def test_keeping_an_already_imported_vault_synced_plans_no_duplicate_notes(
+    tmp_path: Path,
+) -> None:
+    """task-32605 AC#1/#3/#4, critique #4 B D1: Import once created 54 notes
+    from the power vault, then Keep a folder synced on the SAME folder planned
+    54 fresh creates -- activating would have left 108 notes. The two paths
+    mint different note identities, so sync never saw the importer's notes."""
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
+
+    root_path = tmp_path / "vault"
+    (root_path / "Daily").mkdir(parents=True)
+    (root_path / "People").mkdir()
+    (root_path / "Daily" / "2026-09-07.md").write_text(
+        "---\ntitle: Monday\n---\n# Monday\n\nStand-up notes.\n", encoding="utf-8"
+    )
+    (root_path / "People" / "Sam.md").write_text("# Sam\n\nHi.\n", encoding="utf-8")
+    (root_path / "Added later.md").write_text("# Later\n", encoding="utf-8")
+    _store(tmp_path)
+    owner, _folders, local_notes = _vault_owner(tmp_path)
+    # The two notes Import once made, as ordinary Library notes: no binding,
+    # and a body the importer deliberately transformed (it strips the
+    # frontmatter block, which lasting sync keeps byte-exact).
+    local_notes.add_note("user-1", "Monday", "# Monday\n\nStand-up notes.\n", note_id="imported-monday")
+    local_notes.add_note("user-1", "Sam", "# Sam\n\nHi.\n", note_id="imported-sam")
+    _record_import_once(
+        tmp_path / "sync.sqlite3",
+        root_path,
+        {"vault/Daily/2026-09-07.md": "imported-monday", "vault/People/Sam.md": "imported-sam"},
+    )
+    await owner.start()
+
+    def setup() -> NotesSyncRootSetup:
+        return NotesSyncRootSetup(
+            display_name="Vault",
+            canonical_path=str(root_path),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+        )
+
+    review = await owner.review_setup(setup())
+
+    assert sorted(
+        (skip.relative_path, skip.reason_code) for skip in review.item_skips
+    ) == [
+        ("Daily/2026-09-07.md", "already_imported"),
+        ("People/Sam.md", "already_imported"),
+    ]
+    # Only the file Import once never touched is a create; before this fix all
+    # three were, and the vault's notes would have been made a second time.
+    labels = await owner.binding_labels(
+        review.root_id, tuple(action.binding_id for action in review.safe_actions)
+    )
+    assert [label.relative_path for label in labels] == ["Added later.md"]
+    assert all(
+        action.kind is NotesSyncActionKind.CREATE_NOTE
+        for action in review.safe_actions
+    )
+    assert review.attention == ()
+    await owner.abandon_setup(review.root_id)
+
+    # Negative control: delete the note Import once made and the file is a
+    # create again -- the recognition tracks the live note, not the receipt.
+    local_notes.notes["imported-sam"]["deleted"] = True
+    recovered = await owner.review_setup(setup())
+    assert sorted(
+        (skip.relative_path, skip.reason_code) for skip in recovered.item_skips
+    ) == [("Daily/2026-09-07.md", "already_imported")]
+    recovered_labels = await owner.binding_labels(
+        recovered.root_id,
+        tuple(action.binding_id for action in recovered.safe_actions),
+    )
+    assert sorted(label.relative_path for label in recovered_labels) == [
+        "Added later.md",
+        "People/Sam.md",
+    ]
+    await owner.abandon_setup(recovered.root_id)
+    await owner.shutdown()
+
+
+def test_importing_the_runtime_leaves_the_receipt_ledger_off_the_boot_path() -> None:
+    """task-32605 / ADR-097: reading Import once's receipts must stay deferred.
+
+    ``notes_sync_runtime`` is resident at ``_ui_ready``, so a module-level
+    import of ``note_import_receipts`` drags it and ``note_import_execution
+    _models`` onto the boot path -- which is what the first cut of this task
+    did, taking the ui-ready census from 977 to 980 against a 975 ratchet.
+    A subprocess, because sys.modules is shared across this file's tests.
+    """
+
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys;"
+        "import tldw_chatbook.Notes.notes_sync_runtime;"
+        "print(','.join(n for n in ("
+        "'tldw_chatbook.Notes.note_import_receipts',"
+        "'tldw_chatbook.Notes.note_import_execution_models',"
+        ") if n in sys.modules))"
+    )
+    resident = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert resident == "", f"pulled onto the boot path: {resident}"

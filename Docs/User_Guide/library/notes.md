@@ -1080,6 +1080,31 @@ the note's only name, so cutting it keeps the note findable where dropping it
 would silently rename the note to its file name). Neither costs you the note,
 and neither stops the rest of the folder from syncing.
 
+**Running both on the same folder does not import it twice.** If you have
+already used **Import once** on a folder, keeping that same folder synced
+leaves those files alone rather than making a second note for each one: the
+review lists them as skipped, reading "Already imported by Import once — left
+as it is", and the counts line says `0 safe`. Only the files the import never
+turned into a note — added since, or skipped at the time — are created and
+synced. A note you have since deleted stops counting, so the file is created
+and synced on the next check.
+
+The consequence worth knowing: **those files are not synced.** They are
+ordinary Library notes with no connection to the folder, and Chatbook will
+not carry your edits either way for them. To put an already-imported vault
+under lasting sync, delete the notes Import once made from it first and then
+run **Check changes** again — each file is then created once and kept synced.
+**Know the cost before you start:** Chatbook has no bulk delete for notes, so
+that is one note at a time, each with its own confirmation — select mode
+offers Export selected and nothing else. For a vault of any size it is worth
+setting the sync up on a folder you have not imported, rather than undoing an
+import of fifty notes by hand.
+
+**The other order is not protected yet.** Running **Import once** on a folder
+you are *already* keeping synced still copies every file into a second set of
+notes — Import once recognises its own earlier imports, not sync's notes. Set
+the sync up first and leave Import once alone for that folder.
+
 Two things still differ:
 
 - **The frontmatter block stays in a synced note's body**, byte for byte,
@@ -1101,6 +1126,17 @@ title and keywords are lifted while the block stays in the note body.
 Keeping the vault's folder tree — AC#4 — is NOT delivered: the folder layer
 refuses a manual child of a sync-managed subtree, so every synced note sits
 in the root folder, as this section now says).*
+
+*Verified against fix/library-notes-w5-vault-dup — 2026-09-15 at 235x52
+(task-32605: Import once on the 65-file vault created 54 notes, 10 → 64;
+keeping the SAME folder synced then read "0 safe · 0 need attention · 58
+skipped · 0 folder moves" with every imported file "Already imported by
+Import once — left as it is", and activating applied 0 — the database still
+holds 64 notes. The other order is untested and unprotected, as this section
+now says. The "no bulk delete" clause is read from source, not driven: select
+mode yields Done / Select all / Clear / Export selected and nothing else
+(`Widgets/Library/library_notes_canvas.py:1636-1683`), and no bulk-delete
+handler exists — deletion is per note through the editor's confirm).*
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
