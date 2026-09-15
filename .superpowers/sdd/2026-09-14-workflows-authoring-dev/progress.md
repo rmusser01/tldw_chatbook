@@ -2,7 +2,13 @@
 
 ## Reopened PR integration — 2026-09-15
 
-Latest checkpoint: all 14 patches replayed identically onto newer dev94cc1200d5;
+Latest checkpoint: code4fe2c2b5c8 passed314 domain/storage/projection/paging tests.
+Independent scoped re-review found both lineage bugs resolved and no new
+actionable findings; legacy preservation remained intact. Final26-file scoped
+Ruff/check/format and diff-check passed. GitHub publication/replies/checks/merge
+remain pending; task stays In Progress until its integration gate is satisfied.
+
+Previous checkpoint: all 14 patches replayed identically onto newer dev94cc1200d5;
 code head e1e4223745. Domain/storage271, editor/paging/projection102, CSS11,
 new-base editor/destination77 passed, and complete preflight passed again.
 Mounted500-step same-layout raw edit measured55.84ms with controls preserved.

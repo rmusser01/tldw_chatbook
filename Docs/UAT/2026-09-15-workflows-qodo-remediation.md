@@ -36,6 +36,7 @@ feature worktree, and isolated test profiles. No full repository test sweep.
 - `pytest Tests/UI/test_workflows_editor.py Tests/UI/test_workflows_paging.py Tests/UI/test_workflows_projection_performance.py -q --timeout=60 --tb=short --show-capture=no -p no:randomly`: **102 passed**, 115.29s.
 - `pytest Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py -q --timeout=60 --tb=short --show-capture=no -p no:randomly`: **11 passed**, 7.36s.
 - After the final rebase, `pytest Tests/UI/test_workflows_editor.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_shells.py -k workflows -q --timeout=60 --tb=short --show-capture=no -p no:randomly`: **77 passed**, 170 deselected, 115.86s.
+- After the boundary corrections, `pytest Tests/Workflows Tests/DB/test_workflows_authoring_storage.py Tests/UI/test_workflows_projection_performance.py Tests/UI/test_workflows_paging.py -q --timeout=60 --tb=short --show-capture=no -p no:randomly`: **314 passed**, 54.24s.
 - Scoped Ruff check and format: all 26 authoring/domain/new-test files clean;
   `git diff --check` clean. The separately approved, source-attributed legacy
   no-new-static-debt qualification remains unchanged.
@@ -65,6 +66,8 @@ complexity before encoding, and copy refuses an invalid validated result before
 writing. Six boundary cases cover successful exact-limit Save, rejected Save,
 and revision/draft Copy with absent or existing clean target buffers.
 
-Scoped re-review and the latest regression run are pending. GitHub replies,
-required-check results, and merge outcome must be verified separately; this
-record is not a merge-success claim.
+The 314-test regression run passed. Independent scoped re-review of
+`4fe2c2b5c8b73e5812de04d251dc29b37071c686` confirmed both findings resolved,
+including unchanged saved heads/drafts and exact legacy preservation; no new
+actionable findings. GitHub replies, required-check results, and merge outcome
+must be verified separately; this record is not a merge-success claim.

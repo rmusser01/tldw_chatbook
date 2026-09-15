@@ -78,6 +78,17 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 **Current qualification:** reopened for the separately requested PR integration
 and Qodo remediation. The following UAT qualification describes the prior checkpoint.
 
+PR integration code checkpoint4fe2c2b5c8: rebased onto dev94cc1200d5 with all
+14 feature patches unchanged. Seven Qodo findings have tested code resolutions
+or evidence-backed cancellation-shield disposition. Bounded paging, projection
+reuse, complexity admission and shutdown fixes preserve authoring-only scope.
+Independent review caught and verified corrections for two lineage/node-budget
+boundary failures; no remaining actionable findings. Latest314 targeted tests,
+prior102 editor/projection tests,11 CSS checks and77 new-base destination/editor
+tests passed. Scoped lint/format/diff checks pass. ADR-138 hardening and detailed
+evidence: Docs/UAT/2026-09-15-workflows-qodo-remediation.md. AC7 remains open
+pending GitHub replies, final-head required checks and the requested merge.
+
 The approved UAT corrections are verified. Ordinary
 validation notices no longer hide draft/revision status or imply Retry. Successful
 context transitions clear operation errors; Validate preserves unrelated errors.
