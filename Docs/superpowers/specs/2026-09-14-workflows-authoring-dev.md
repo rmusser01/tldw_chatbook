@@ -2,9 +2,9 @@
 
 Status: Approved in conversation on 2026-09-14; implementation of the existing editor, not a new runtime design.
 Task: TASK-32601.
-ADR required: no new decision.
+ADR required: yes — amendment to existing ADR-138, not a new ADR number.
 ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
-Reason: authoring subset of the accepted portable-definition/editor design; ADR-125 and ADR-150 retain their existing boundaries.
+Reason: user-approved stable-file exchange contract (2026-09-15) bounds this authoring subset; shared ADR-125 implementation and ADR-150 boundaries remain unchanged.
 
 ## Outcome
 
@@ -29,8 +29,10 @@ sync protocol, or automatic execution is authorized by this port.
 ## Persistence and application lifecycle
 
 Use current dev's registered connect_private_sqlite factory and normal serialized
-SQLite transactions. No ordinary raw-file handles may be opened on a live DB or
-its sidecars in the application process. The workflow owner registration is an
+SQLite transactions. Database setup/validation must not open ordinary raw-file
+handles on live DB/sidecar inodes in the application process. File exchange
+excludes those inodes under the stable-file contract below, not a race-free
+actual-open guarantee. The workflow owner registration is an
 additive domain entry, not another SQLite implementation. Keep the four existing
 migration files byte-identical for existing workflow-store compatibility. Expose
 authoring transactions only; do not expose execution admission or acquire a
@@ -58,6 +60,17 @@ utilities and a size bound. Export a selected saved definition, not credentials,
 local run state, grants or draft/view metadata. Opaque embedded content requires a
 clear review warning; preserving it is not certification that it contains no secrets.
 No server fetch/publish or sync action is advertised as implemented.
+
+The user approved a stable-file contract on 2026-09-15. Do not externally move,
+replace or relink the live workflow database or sidecars while the store is open,
+or the selected JSON file/containing path during exchange. Normal SQLite-managed
+writes and sidecar lifecycle remain supported. Reject visible DB/sidecar aliases,
+symlinks, multiple hard links and non-regular files before generic file access;
+retain the existing private-file checks and explicit overwrite confirmation.
+Metadata validation is not a path lease: post-validation substitution or a
+detached live inode can bypass the precheck and still disrupt SQLite locking.
+That limitation is accepted outside the operating contract, not technically
+fixed. No shared SQLite changes or isolated file-I/O infrastructure are added.
 
 The server reference for this delivery is origin/dev at
 2e1a5e58d3 (refreshed 2026-09-14). Its Workflows API schemas, endpoint and core

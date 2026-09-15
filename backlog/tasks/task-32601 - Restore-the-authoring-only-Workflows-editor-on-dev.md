@@ -17,7 +17,7 @@ Deliver the approved portable workflow editor on current dev while keeping unfin
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Users can create, edit, save, import and export workflow definitions in the canonical Workflows screen.
+- [ ] #1 Users can create, edit, save, import and export workflow definitions in the canonical Workflows screen under ADR-138's approved stable-file exchange contract.
 - [ ] #2 The library, step navigator, overview and collapsed continuous form remain usable with keyboard and at supported terminal sizes.
 - [ ] #3 Drafts survive navigation and restart, failed persistence stays recoverable, and opaque server fields survive round trips.
 - [ ] #4 Only existing SQLite safety utilities are used; new execution and process-ownership infrastructure remain absent.
@@ -25,9 +25,9 @@ Deliver the approved portable workflow editor on current dev while keeping unfin
 
 ## Implementation Plan
 
-ADR required: no new decision.
+ADR required: yes — amendment to existing ADR-138, not a new ADR number.
 ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md; ADR-125 and ADR-150 also apply.
-Reason: implement only the previously approved authoring contract on current dev; runtime and the unapproved helper-owned-lock proposal are excluded.
+Reason: record the user-approved stable-file exchange contract (2026-09-15) for authoring on current dev; runtime and the unapproved helper-owned-lock proposal are excluded.
 
 1. Preserve the original and integration branches; use the clean codex/workflows-authoring-dev worktree based on 77eb2601a6.
 2. Follow Docs/superpowers/plans/2026-09-14-workflows-authoring-dev.md. Reuse the reviewed editor-only checkpoint b34eda3d64 and the lossless document/draft code.
@@ -42,15 +42,14 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 
 ## Implementation Notes
 
-**Current review gate:** In Progress, awaiting a user decision. The metadata-only
-exchange guard passes its 35-test authoring/storage verification and rejects
-existing DB/sidecar aliases before file I/O. Scoped code re-review still flags an
-Important issue: replacing the selected file after validation can bypass that
-guard and cause raw-open/close of a live SQLite inode. Its documented limitation
-is not an accepted waiver. No extra helper or file-I/O subsystem has been added.
-Changing that boundary, explicitly accepting a stable-path contract, or deferring
-file-picker exchange requires direction. Final whole-branch review has not run;
-the existing static-analysis debt also remains unwaived. No Done transition.
+**Current review gate:** In Progress. On 2026-09-15 the user approved retaining
+file-picker exchange under the stable-file assumption now recorded in ADR-138,
+the spec, plan and user guide. Existing metadata-only alias rejection remains;
+post-validation substitution or a detached live inode can still disrupt SQLite
+locking. This is an accepted operating limitation, not a technical race fix.
+No extra helper or file-I/O subsystem is authorized or added. The original
+reviewer's contract disposition and final whole-branch review are pending;
+baseline static-analysis debt remains unwaived. No Done transition.
 
 Implemented the reviewed b34eda3d64 authoring slice: real library, navigator,
 overview and independently collapsed continuous forms; immutable saved revisions,
@@ -64,7 +63,8 @@ and close; v0-v4 migration bytes are preserved. Added only the domain registrati
 and owner census row. Tests exercise real SQLite foreign writers, persistence,
 cancelled setup/close/exchange, failed flush retry, real app navigation/quit and
 actual file pickers. The user guide documents privacy and local/server validation
-limits. ADR-138, ADR-125 and ADR-150 remain the applicable decisions; no new ADR.
+limits. ADR-138 (including its approved stable-file amendment), ADR-125 and
+ADR-150 remain the applicable decisions; no new ADR number or shared boundary.
 
 Final targeted verification: 355 passed (authoring/storage/editor/quit/token/
 bundle/census) plus 19 passed, 276 deselected (affected Workflows destination and

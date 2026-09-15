@@ -10,9 +10,9 @@
 
 **Spec:** Docs/superpowers/specs/2026-09-14-workflows-authoring-dev.md
 
-ADR required: no new decision.
+ADR required: yes — amendment to existing ADR-138, not a new ADR number.
 ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md
-Reason: authoring-only implementation of the accepted design; ADR-125 and ADR-150 also govern.
+Reason: record the user-approved stable-file exchange contract (2026-09-15); ADR-125 shared implementation and ADR-150 also govern unchanged.
 
 ## Global Constraints
 
@@ -20,7 +20,8 @@ Reason: authoring-only implementation of the accepted design; ADR-125 and ADR-15
 - Base dev: 77eb2601a63ba473318b8ec1e4edb53f8ac5899e. UI source: b34eda3d64. Full source preserved: 8aa1987af9357655af9354610b878f247fd1e929.
 - Sequential v1; branching v2; parallelism v3. New execution is unavailable in this slice.
 - No new SQLite helper subsystem, runtime lock, schema v5, PID tracking, run/recovery engine, provider calls or server writes.
-- Reuse current connect_private_sqlite; no parent raw-open/close of live DB or sidecars. Preserve existing four migrations byte-for-byte.
+- Reuse current connect_private_sqlite; database setup/validation performs no parent raw-open/close of live DB or sidecars. Exchange retains metadata-only alias rejection under ADR-138's approved stable-file contract, not a race-free actual-open guarantee. Preserve existing four migrations byte-for-byte.
+- Keep live database/sidecar names stable against external moves/replacements/relinks while open, and selected JSON files/containing paths stable during exchange. Normal SQLite-managed writes/sidecar lifecycle remain supported; no new file-I/O infrastructure.
 - Preserve current dev navigation, Console follow, permissions and profile behavior. Do not copy old app.py, config.py, Console or shared SQLite files wholesale.
 - Three panes at >=132 usable columns; navigator/editor at 96-131; editor and labeled selectors below 96. Verify actual 160x48, 110x36, 60x20 frames.
 - Follow backlog/docs/design-language.md. Edit source CSS and rebuild; no direct generated CSS edits or new visual language.
@@ -100,11 +101,15 @@ these are not waived. Completing the implementation steps does not mark the
 Backlog task Done. Task code review and final branch review are separate gates.
 Visual evidence and scoped correction verdict: Docs/superpowers/qa/workflows-authoring-dev/README.md.
 
-## Open review gate
+## Approved contract amendment and review gate
 
 Fix `9b13b49d51` adds metadata-only exchange admission; 35 covering tests pass.
-Task re-review remains open for replacement between path validation and file
-opening. No shared helper changes or safety-contract waiver are authorized.
-Pause for the user's choice of file-I/O scope/contract before continuing; final
-whole-branch review has not run. Implementation checkboxes above record completed
-work, not approval of this remaining safety gap or a Backlog Done transition.
+On 2026-09-15 the user approved retaining picker exchange under the stable-file
+assumption, recorded in ADR-138 and the spec. Retain existing checks; do not claim
+the replacement race is technically fixed. This approval does not waive baseline
+static debt or authorize infrastructure, execution, merge or push.
+
+Coordinator follow-through: align the user guide and task with that contract,
+request the original reviewer's finding disposition and final whole-branch review,
+then record the evidence and remaining DoD gaps. Implementation checkboxes above
+record completed work, not a Backlog Done transition.

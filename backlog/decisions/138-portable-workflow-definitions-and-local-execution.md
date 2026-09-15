@@ -19,6 +19,30 @@ SQLite utilities and ADR-150 UI tokens govern integration. Preserve migrations
 v1-v4 for document-store compatibility; introduce no execution lock or execution
 API and do not claim completion of the wider original milestone.
 
+### Stable-file exchange contract (user approved, 2026-09-15)
+
+The user approved retaining v1 file-picker import/export under a stable-file
+assumption: do not externally move, replace or relink the live workflow database
+or its sidecars while the store is open; do not move, replace or relink the
+selected JSON file or its containing path during exchange. Normal SQLite-managed
+writes and sidecar lifecycle are not prohibited by this assumption.
+
+Retain the feature-local metadata precheck: reject visible database/sidecar
+aliases, symlinks, multiple hard links and non-regular files before generic file
+I/O. Existing private-file checks, permissions, size bounds and overwrite
+confirmation remain required. This precheck is not a path lease or retained-inode
+proof. Concurrent substitution after validation, or moving a live inode away
+from its known database name, can bypass it; raw opening/closing of that inode
+can still disrupt SQLite locking. That race is accepted outside this delivery's
+operating contract, not technically fixed or qualified as safe.
+
+This narrowly amends the authoring spec's unconditional file-exchange guarantee;
+it does not change ADR-125's shared SQLite validation/proof implementation or
+weaken other storage owners' contracts. No new helper operation, process, lease,
+schema or runtime is authorized. Deferring picker exchange and introducing an
+isolated JSON-I/O boundary were considered; the user chose the bounded existing
+implementation. Static-analysis debt, review and integration gates are not waived.
+
 ## Context
 
 The user approved a Workflows redesign with a workflow library, step navigator, and overview/focused-card canvas. Forms are continuous and collapsible. V1 must execute workflows locally without tldw_server; branching follows in v2 and parallelism in v3. Definitions should be shareable and synchronized across Chatbook and tldw_server where reasonably possible.

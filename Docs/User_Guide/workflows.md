@@ -65,9 +65,12 @@ written atomically with owner-only permissions.
 
 Choose a standalone JSON file. Files with multiple hard links and aliases of
 the active workflow database or its sidecars are refused before generic file
-access. This metadata precheck is not protection against concurrent pathname
-replacement; do not move or relink the selected file or live database during
-exchange.
+access. V1 assumes stable files: do not externally move, replace or relink the
+live workflow database or its sidecars while Workflows storage is open. During
+import/export, also keep the selected JSON file and its containing path unchanged.
+Normal database edits through the app remain supported. This metadata precheck
+does not prevent concurrent pathname substitution; a substituted database alias
+can still disrupt SQLite locking. Quit the app before relocating its database.
 
 ## Storage and compatibility
 

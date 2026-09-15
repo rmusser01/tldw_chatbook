@@ -226,3 +226,20 @@ Developer scope/authority instructions require stopping for this material choice
 rather than automatically exhausting fix rounds with unauthorized boundary work.
 All code/docs remain on the isolated authoring branch; no merge/push/old-work
 mutation. Review/implementer seats closed after their reports; resumable on reply.
+
+## User-approved contract amendment (2026-09-15)
+
+The user replied "approved" to the recommendation to retain picker exchange
+under a stable-file assumption instead of deferring it. The preceding pause is
+resolved for this decision only. ADR-138, spec, plan, user guide and task now state
+the limitation explicitly: no external moving/replacing/relinking live database
+or sidecar names while open, or the selected JSON/containing path during exchange.
+Normal SQLite-managed writes and sidecar lifecycle are not excluded.
+
+Existing metadata alias checks and generic private-file protections remain.
+The replacement/detached-inode race is not technically fixed. No SQLite helper,
+file-I/O subsystem, runtime, schema, execution, server/provider call, merge or
+push is authorized. Baseline lint/format debt is not waived; keep Backlog In
+Progress. Historical task review reports remain intact, and the original reviewer
+will receive the actual approval plus amended contract for finding disposition
+and the still-required broader whole-branch review.
