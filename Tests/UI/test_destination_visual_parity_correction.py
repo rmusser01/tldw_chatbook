@@ -44,6 +44,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import (
     MainNavigationBar,
     NavigateToScreen,
 )
+from tldw_chatbook.UI.Workflows_Modules.console_context import WorkflowConsoleContext
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens import (
@@ -51,7 +52,6 @@ from tldw_chatbook.UI.Screens import (
     library_screen as library_screen_module,
     skills_screen as skills_screen_module,
     watchlists_collections_screen as wc_screen_module,
-    workflows_screen as workflows_screen_module,
 )
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
@@ -1602,8 +1602,12 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         ),
         (
             "workflows",
-            "#workflows-workbench",
-            ("Procedure Library", "Run Detail", "Run Inspector"),
+            "#workflow-panes",
+            (
+                "Workflow library",
+                "Step navigator",
+                "No workflows yet · New workflow opens a named draft",
+            ),
         ),
         # With no runtime configured (the harness default), ACP's middle pane
         # is the Runtime Setup column rather than Session Detail.
@@ -1648,9 +1652,18 @@ async def test_destination_pane_titles_are_user_facing_not_ordinal(
         await _wait_for_selector(screen, pilot, workbench)
         visible_text = _visible_static_text(screen)
 
-        assert _visible_workbench_pane_titles(screen, workbench) == list(
-            expected_titles
-        )
+        if route == "workflows":
+            titles = [
+                str(screen.query_one("#" + identifier).renderable)
+                for identifier in (
+                    "workflow-library-heading",
+                    "workflow-navigator-heading",
+                    "workflow-editor-heading",
+                )
+            ]
+        else:
+            titles = _visible_workbench_pane_titles(screen, workbench)
+        assert titles == list(expected_titles)
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
@@ -1697,37 +1710,27 @@ async def test_schedules_screen_matches_approved_control_plane_columns():
 
 
 @pytest.mark.asyncio
-async def test_workflows_screen_matches_approved_procedure_columns():
+async def test_workflows_screen_matches_approved_authoring_columns():
     app = _build_test_app()
     host = DestinationHarness(app, "workflows")
-
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#workflows-console-unavailable")
-
+        await _wait_for_selector(screen, pilot, "#workflow-panes")
         visible_text = _visible_static_text(screen)
         for expected in (
-            "Workflows | Procedures, runs, dry-runs, approvals | Local | Console handoff",
-            "Modes: Recipes Inputs Steps Dry Run Approvals Outputs",
-            "Procedure Library",
-            "Run Detail",
-            "Run Inspector",
-            "State: blocked",
-            "Console: blocked",
-            "Next action: start or select a workflow run",
+            "Workflows · Local authoring",
+            "Workflow library",
+            "Step navigator",
+            "No workflows yet",
+            "Run unavailable",
+            "No active workflow run",
         ):
             assert expected in visible_text
-        assert "Column 1:" not in visible_text
-        assert "Column 2:" not in visible_text
-        assert "Column 3:" not in visible_text
-
-        for selector in (
-            "#workflows-list-detail-divider",
-            "#workflows-detail-inspector-divider",
-        ):
-            divider = screen.query_one(selector)
-            assert divider.has_class("destination-pane-divider")
-            assert divider.region.width == 1
+        assert screen.query_one("#workflow-run", Button).disabled
+        assert not screen.query_one("#workflow-import", Button).disabled
+        _assert_horizontal_panes(
+            screen, ("#workflows-library", "#workflows-navigator", "#workflows-editor")
+        )
 
 
 @pytest.mark.asyncio
@@ -1958,14 +1961,14 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
         ),
         (
             "workflows",
-            "#workflows-mode-strip",
-            "#workflows-workbench",
+            "#workflow-readiness",
+            "#workflow-panes",
             (
-                "#workflows-list-pane",
-                "#workflows-detail-pane",
-                "#workflows-inspector-pane",
+                "#workflows-library",
+                "#workflows-navigator",
+                "#workflows-editor",
             ),
-            ("#workflows-launch-in-console",),
+            ("#workflow-import",),
         ),
     ],
 )
@@ -2008,16 +2011,16 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
         ),
         (
             "workflows",
-            "#workflows-mode-strip",
-            "#workflows-workbench",
+            "#workflow-readiness",
+            "#workflow-panes",
             (
-                "#workflows-list-pane",
-                "#workflows-detail-pane",
-                "#workflows-inspector-pane",
+                "#workflows-library",
+                "#workflows-navigator",
+                "#workflows-editor",
             ),
-            ("#workflows-launch-in-console",),
+            ("#workflow-import",),
             ("#workflows-console-unavailable",),
-            "#workflows-detail-pane",
+            "#workflows-console-context",
         ),
     ],
 )
@@ -2069,14 +2072,14 @@ OPERATIONAL_LOADING_CONTRACTS = [
     ),
     (
         "workflows",
-        workflows_screen_module.WorkflowsScreen,
-        "_refresh_latest_console_context",
-        "#workflows-loading-state",
-        "#workflows-detail-pane",
-        "#workflows-mode-strip",
-        "#workflows-workbench",
-        ("#workflows-list-pane", "#workflows-detail-pane", "#workflows-inspector-pane"),
-        ("#workflows-launch-in-console",),
+        WorkflowConsoleContext,
+        "refresh_context",
+        "#workflows-run-status",
+        "#workflows-console-context",
+        "#workflow-readiness",
+        "#workflow-panes",
+        ("#workflows-library", "#workflows-navigator", "#workflows-editor"),
+        ("#workflow-import",),
     ),
 ]
 
@@ -2602,10 +2605,10 @@ COMPACT_DESTINATION_CONTRACTS = {
     },
     "workflows": {
         "identity": "#workflows-title",
-        "workbench": "#workflows-workbench",
-        "object": "#workflows-list-pane",
-        "detail": "#workflows-detail-pane",
-        "actions": ("#workflows-launch-in-console",),
+        "workbench": "#workflow-panes",
+        "object": "#workflows-navigator",
+        "detail": "#workflows-editor",
+        "actions": ("#workflow-import",),
     },
     "mcp": {
         # #mcp-workbench / #mcp-server-tree-pane / #mcp-detail-pane /
@@ -2772,7 +2775,7 @@ VISIBLE_FOCUS_TARGETS = {
         "watchlists-switch-local",
     },
     "schedules": {"schedules-follow-in-console"},
-    "workflows": {"workflows-launch-in-console"},
+    "workflows": {"workflow-import"},
     # #unified-mcp-action-run is retired with the `UnifiedMCPPanel` embed
     # (Task 8); its direct successor is #mcp-adv-run, the workbench
     # inspector's Advanced "Run Action" button. It is legitimately disabled

@@ -74,6 +74,11 @@ Classifications have these meanings:
 | C55 | tldw_chatbook/Chat/console_trace_maintenance | PhysicalTraceCompactor._open_maintenance_connection | chat.trace_maintenance | private_file | same-file maintenance write | Migrated via `connect_private_sqlite`. Registered under its actual module owner. Reopens the existing conversation database with `must_exist=True` for leased physical maintenance, preserving path hardening, connection options and PRAGMAs. Memory compaction remains deferred; no centralized backup permission. |
 | C56 | tldw_chatbook/Library/collections_legacy_recovery | LegacyCollectionsRecovery._read_transaction | library.legacy_recovery | read_only_uri | schema-independent legacy recovery read | Migrated via `connect_private_sqlite`. Existing-file, read-only access without schema initialization or mode changes; namespace checks fail closed. No centralized backup authority. SQLite may maintain WAL/SHM sidecars while reading committed WAL frames. |
 | C57 | tldw_chatbook/Chat/console_launch_wake | pending_conversations_at_launch | chat.launch_wake | read_only_uri | native fleet launch discovery | Migrated via `connect_private_sqlite`. TASK-32037 / ADR-135 reads identities from an existing private sibling runs database without creating, migrating, or reconciling it. Claimed results remain discoverable without attention badges; the native runtime separately owns recovery. The read-only WAL view includes committed frames and retains the normal private file and sidecar policy. |
+| C58 | tldw_chatbook/DB/Workflows_DB | WorkflowsDB.__init__ | workflows.local | private_file, memory | authoring read/write | Migrated via `connect_private_sqlite`. Private definitions, immutable revisions and recoverable drafts; existing v1-v4 migration bytes retained. No execution API, runtime lock, or centralized backup authority. |
+
+Workflow authoring (C58) uses only the existing checked connection factory.
+Its v1-v4 schema preserves historical file compatibility; no execution lock or
+execution API is initialized. It is excluded from centralized backup.
 
 ## SQLite backup and restore inventory
 

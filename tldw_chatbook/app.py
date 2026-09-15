@@ -8124,6 +8124,11 @@ class TldwCli(
         self._shutting_down = False  # Track if app is shutting down
         self._quit_in_progress = False
 
+        # Lazily initialized by the Workflows destination; survives screen replacement.
+        self._workflow_authoring = None
+        self.workflow_documents = None
+        self.workflow_drafts = None
+
         # TASK-22215: staggered boot-worker fleet state. The gate is built at
         # `_ui_ready` (`_start_staggered_boot_workers`); until then there is
         # deliberately nothing to admit, because every member of the fleet is
@@ -18168,6 +18173,13 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        workflow_error = None
+        workflow_authoring = getattr(self, "_workflow_authoring", None)
+        if workflow_authoring is not None:
+            try:
+                await workflow_authoring.close()
+            except (OSError, RuntimeError, sqlite3.Error) as exc:
+                workflow_error = exc
         lab_owner = getattr(self, "_chunking_lab_coordinator", None)
         lab_error = None
         if lab_owner is not None:
@@ -18210,6 +18222,8 @@ class TldwCli(
         await self._shutdown_file_notes_session_owner()
         if lab_error is not None:
             raise lab_error
+        if workflow_error is not None:
+            raise workflow_error
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""
@@ -19146,6 +19160,17 @@ class TldwCli(
             return
         self.post_message(NavigateToScreen(destination.primary_route))
 
+    async def ensure_workflow_authoring(self) -> None:
+        """Supply the one app-owned document/draft pair on first entry."""
+        if self._workflow_authoring is None:
+            from .config import get_workflows_db_path
+            from .Workflows.authoring import WorkflowAuthoring
+
+            self._workflow_authoring = WorkflowAuthoring(get_workflows_db_path)
+        await self._workflow_authoring.open()
+        self.workflow_documents = self._workflow_authoring.documents
+        self.workflow_drafts = self._workflow_authoring.drafts
+
     async def action_focus_next_workbench_pane(self) -> None:
         """Delegate pane focus cycling to the active Workbench screen."""
         handler = getattr(self.screen, "action_focus_next_workbench_pane", None)
@@ -19240,6 +19265,9 @@ class TldwCli(
                 return
 
             try:
+                workflow_authoring = getattr(self, "_workflow_authoring", None)
+                if workflow_authoring is not None:
+                    await workflow_authoring.flush()
                 prepare_for_quit = getattr(current_screen, "prepare_for_quit", None)
                 if callable(prepare_for_quit):
                     preparation = prepare_for_quit()
@@ -19297,6 +19325,16 @@ class TldwCli(
                         )
                     except Exception:
                         pass
+                    return
+            if workflow_authoring is not None:
+                try:
+                    await workflow_authoring.close()
+                except (OSError, RuntimeError, sqlite3.Error):
+                    self._quit_in_progress = False
+                    self.notify(
+                        "Workflow draft could not be saved; staying in Chatbook. Retry.",
+                        severity="warning",
+                    )
                     return
             self._shutting_down = True
             # TASK-22215: the user has approved the quit -- nothing further from

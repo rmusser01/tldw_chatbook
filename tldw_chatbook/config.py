@@ -9347,6 +9347,14 @@ def get_research_db_path() -> Path:
     )
 
 
+def get_workflows_db_path() -> Path:
+    """Return the local authoring store; called only on Workflows entry."""
+    return (
+        _get_custom_database_path("workflows_db_path")
+        or get_user_data_dir() / "tldw_chatbook_workflows.db"
+    )
+
+
 def get_writing_db_path() -> Path:
     return (
         _get_custom_database_path("writing_db_path")

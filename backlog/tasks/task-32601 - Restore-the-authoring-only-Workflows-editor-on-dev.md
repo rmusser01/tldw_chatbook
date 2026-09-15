@@ -39,3 +39,33 @@ Reason: implement only the previously approved authoring contract on current dev
 ## ID provenance
 
 The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans already contained IDs through 32600. Only this newly created file/header was moved to the checked-free TASK-32601 before implementation. No existing task was renumbered.
+
+## Implementation Notes
+
+Implemented the reviewed b34eda3d64 authoring slice: real library, navigator,
+overview and independently collapsed continuous forms; immutable saved revisions,
+durable recoverable drafts, explicit private JSON import/export and disabled Run.
+The app owns lazy document/draft setup and drains across navigation/quit. Existing
+Console follow is a separate stable region. No execution API, runtime model graph,
+new helper protocol, schema v5, server/provider writes or model calls were added.
+
+WorkflowsDB uses the existing `connect_private_sqlite` seam, ordinary transactions
+and close; v0-v4 migration bytes are preserved. Added only the domain registration
+and owner census row. Tests exercise real SQLite foreign writers, persistence,
+cancelled setup/close/exchange, failed flush retry, real app navigation/quit and
+actual file pickers. The user guide documents privacy and local/server validation
+limits. ADR-138, ADR-125 and ADR-150 remain the applicable decisions; no new ADR.
+
+Final targeted verification: 355 passed (authoring/storage/editor/quit/token/
+bundle/census) plus 19 passed, 276 deselected (affected Workflows destination and
+Console cases). The two visual findings now have the retained reviewer's scoped
+ship verdict: precise draft-versus-revision status and Prompt label/value/focus
+painted together at 60x20. Final interaction fixes serialize widget reconciliation,
+retain raw-editor focus visibility and settle test modal mounting. Full failing
+test names, diagnoses, exact RED/GREEN commands and final evidence are in
+`.superpowers/sdd/2026-09-14-workflows-authoring-dev/task-1-report.md`.
+
+Task remains **In Progress** pending coordinator code review and full DoD.
+Existing whole-file Ruff/formatter debt is reported separately, not waived or
+suppressed. New/rewritten authoring files pass Ruff and formatting. All work is
+confined to the named authoring-dev worktree; preserved checkouts are untouched.

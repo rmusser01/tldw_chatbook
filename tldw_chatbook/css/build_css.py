@@ -287,6 +287,7 @@ CSS_MODULES = [
     "features/_research_workspace.tcss",
     "features/_logs.tcss",
     "features/_writing.tcss",
+    "features/_workflows.tcss",
     "features/config_search.tcss",
     "features/feature_alerts.tcss",
     # 5. Utilities - Helpers and Overrides (can override anything)
