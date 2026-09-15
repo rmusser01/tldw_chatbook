@@ -137,8 +137,8 @@ so how much of it you see depends on your terminal's width. At 100 columns it
 ends around `f5 Refresh direc`; the keys past that — `^r Show recent
 locations` and `^s Select this folder` — appear only on a wide terminal.
 `^s Select this folder` is dimmed wherever it does appear: it belongs to the
-file-and-folder picker Import once uses, and this dialog's **Select** button
-does that job instead.
+file-and-folder picker Import once uses, and this dialog's **Select folder**
+button does that job instead.
 
 ## Features & controls
 
@@ -146,7 +146,7 @@ does that job instead.
 
 | Control | What it does |
 |---|---|
-| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. The **Folder path** field holds focus from the moment the picker opens, with the folder it opened on selected, so the first thing you type replaces that path rather than going into the file listing (task-32606). Press **Enter** to browse into what you typed, or **Select** to use it right away without needing Enter first; an invalid path shows an inline reason and leaves the picker open |
+| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. The **Folder path** field holds focus from the moment the picker opens, with the folder it opened on selected, so the first thing you type replaces that path rather than going into the file listing (task-32606). Press **Enter** to browse into what you typed, or **Select folder** to use it right away without needing Enter first; an invalid path shows an inline reason and leaves the picker open. The listing opens with folders first in name order (**Sort** still offers discovery order and the rest), each folder saying how many notes sit directly inside it and marking an Obsidian vault as `· vault`; **Ctrl+R** offers the folders you last chose through this door and **Enter** on one uses it without browsing (task-32611, task-32643) |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
 | **Cancel** (folder change) | Appears once a folder change has been running about three seconds — the same moment the line stops being a bare "Changing folder…". Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
@@ -737,3 +737,19 @@ actions; the 100-column row now reads `esc Cancel  ^l Edit path directly  ^f
 Search in directory  ^h Toggle hidden files  f5 Refresh direc`
 (`15-r1-picker-100x30.txt`). Log grep after both walks: zero
 `unhandled_exception`, zero `| ERROR`.)*
+
+*Verified against fix/library-notes-w5-picker-followon — 2026-09-15
+(task-32611, task-32643). Three changes to the folder picker. (a) "Keep a
+folder synced" now opens the same folder-only dialog this door does, instead
+of the file-and-folder one whose field said "File name" — so all three Notes
+folder doors show one hint, `Enter Open  ·  Select folder to use this folder`,
+and one name for the button that commits a folder. (b) Their listings default
+to **Folders first**, name-ascending, rather than to discovery order, which
+was interleaving a vault's files and folders unsorted; the other pickers in
+the app are unchanged and "Discovery order" stays on the Sort menu. (c) Folder
+rows in those three pickers carry a note count and a `· vault` marker, both
+read from the folder itself only — never a sub-tree walk, and never more than
+500 entries of one folder — and **Ctrl+R** offers the roots that door
+returned before, focused, so Enter takes one. Pinned by
+`Tests/UI/test_library_notes_w5_picker_followon.py` (18 tests; 15 of them red
+at dev 48d40df8ce).)*

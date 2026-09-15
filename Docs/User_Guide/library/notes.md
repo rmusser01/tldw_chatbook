@@ -852,9 +852,10 @@ and leaves the dialog open. **Select folder** picks the folder row you last
 clicked if you clicked one, otherwise the folder being browsed. (Was "Its
 **Folder path** field … The field arrives pre-filled with the directory being
 browsed, and the click that puts the cursor in it selects that value" —
-superseded by task-32271 below: Import once and Keep a folder synced open the
-files-or-one-folder dialog, whose field is "File name" and starts empty; only
-Folder files' "Choose File Notes Folder" has the pre-filled "Folder path".)
+superseded by task-32271 below: Import once opens the files-or-one-folder
+dialog, whose field is "File name" and starts empty. Keep a folder synced no
+longer does — see task-32611 below; it and Folder files both open the
+folder-only dialog with the pre-filled "Folder path".)
 Once a folder is picked, the confirmation line shows its full path
 (elided in the middle only when the path is longer than the pane is wide,
 keeping the folder name itself visible), not just its name — and it is the
@@ -1086,12 +1087,14 @@ The receipt is then on screen. Tab stays inside Import once throughout —
    cutover release.
 2. In the notes list, click **Add from files…** and choose **Keep a folder
    synced**.
-3. Click **Choose folder…**; type a path into the **File name** field ("File
-   name or path") and either press Enter (browses into it) or click **Select
-   folder** (uses the folder being browsed, or the folder row you last
-   clicked). (Was "type into the **Folder path** field" — superseded by
-   task-32271 below: this is the files-or-one-folder dialog, whose field is
-   "File name" and starts empty.) Choose a direction and local destination.
+3. Click **Choose folder…**; type a path into the **Folder path** field and
+   either press Enter (browses into it) or click **Select folder** (uses the
+   folder being browsed). (Was "type into the **File name** field ('File name
+   or path')… this is the files-or-one-folder dialog" — superseded by
+   task-32611 below: this door now opens the folder-only picker, whose field
+   is **Folder path**, arrives pre-filled with the folder being browsed and
+   selected, and which lists no files at all.) Choose a direction and local
+   destination.
    Server sync remains unavailable until its separate capability is
    installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
@@ -2137,3 +2140,20 @@ watching; that one is pinned in
 `Tests/UI/Library_Modules/test_library_notes_sync_controller.py`, with a
 negative control, and was NOT walked — reaching it live means killing the
 watcher task of a running app.)*
+
+*Verified against fix/library-notes-w5-picker-followon — 2026-09-15
+(task-32611, task-32643). **Keep a folder synced** opened the same
+files-and-folder dialog Import once uses, even though it can only answer with
+a folder: its field said "File name", its placeholder said "File name or
+path", and it listed every file in the folder. It now opens the folder-only
+dialog — "Folder path", pre-filled and selected, folders only, **Select
+folder** / **Cancel** — the same one Folder files uses, so all three Notes
+folder doors arrive on their field, show one hint
+(`Enter Open  ·  Select folder to use this folder`) and name the folder-
+committing button the same way. All three also default their listing to
+**Folders first**, name-ascending, instead of discovery order; folder rows in
+them carry a note count and a `· vault` marker read from the folder itself
+only (never a sub-tree walk, at most 500 entries); and **Ctrl+R** offers the
+roots that door returned before, focused, so Enter takes one. Pinned in
+`Tests/UI/test_library_notes_w5_picker_followon.py` — 18 tests, 15 of them red
+at dev 48d40df8ce.)*
