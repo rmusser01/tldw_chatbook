@@ -644,7 +644,10 @@ async def test_deferred_comparison_focus_rechecks_origin_before_moving(
         view.focus()
         await pilot.pause()
         canvas.sync_state(replace(snapshot, comparison=comparison))
-        assert len(pending) == 1
+        # task-32610: _sync_review also defers a `sync_fold_hint` refresh
+        # now, scheduled before the focus callback this test cares about --
+        # `pending.pop()` below still reaches for the last-scheduled one.
+        assert len(pending) == 2
         back = app.query_one("#notes-sync-back", Button)
         back.focus()
         await pilot.pause()
@@ -1646,7 +1649,12 @@ async def test_empty_review_does_not_claim_hidden_scroll_content() -> None:
     )
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
-        assert not app.query("#notes-sync-fold-hint")
+        # task-32610: the hint is always mounted (task-3304/MI-08
+        # convention) and display-managed from the laid-out body's real
+        # overflow, rather than conditionally composed from a row-count
+        # heuristic -- an empty review does not overflow this body.
+        hint = app.query_one("#notes-sync-fold-hint", Static)
+        assert hint.display is False
 
 
 async def test_same_mode_snapshot_sync_retains_live_input_identity() -> None:
@@ -1697,5 +1705,53 @@ async def test_configure_canvas_is_contained_and_initial_focus_is_safe_at_60x20(
         assert "Keep a folder synced" in _frame(app)
         hint = app.query_one("#notes-sync-fold-hint", Static)
         # task-32545 AC#3: was "Additional setup content is scrollable."
+        # The Static's text is now the same string regardless of overflow
+        # (task-32610 moved visibility to `.display`), so this no longer
+        # asserts the body overflows here -- see the two tests below for
+        # that, at sizes measured to actually cross the fold.
         assert "More below — scroll." in str(hint.renderable)
         assert "above" not in str(hint.renderable).casefold()
+
+
+async def test_configure_fold_hint_hides_once_the_body_actually_fits() -> None:
+    """task-32610: "configure" used to claim overflow unconditionally.
+
+    The old heuristic (``_expects_body_overflow``) returned True for every
+    "configure" phase render regardless of terminal size, printing "More
+    below — scroll." above 21 blank rows on a tall pane. The hint is now
+    display-managed from the laid-out body's real virtual vs container
+    size. At the very size the old bug was caught at (60x20 -- see
+    ``test_configure_canvas_is_contained_and_initial_focus_is_safe_at_60x20``
+    above), the initial-setup form's real content fits without scrolling:
+    the hint stays hidden there, and this test pins a size wide enough to
+    make that unmissable.
+    """
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True), phase="configure"
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        body = app.query_one("#notes-sync-body")
+        assert body.virtual_size.height <= body.container_size.height, (
+            "precondition: the configure body fits at this size"
+        )
+        hint = app.query_one("#notes-sync-fold-hint", Static)
+        assert hint.display is False
+
+
+async def test_configure_fold_hint_shows_when_the_body_actually_overflows() -> None:
+    """task-32610: the mirror case -- a genuinely cramped viewport still
+    gets the hint, unlike the CSS-only regression that pattern would risk."""
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True), phase="configure"
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        body = app.query_one("#notes-sync-body")
+        assert body.virtual_size.height > body.container_size.height, (
+            "precondition: the configure body overflows at this size"
+        )
+        hint = app.query_one("#notes-sync-fold-hint", Static)
+        assert hint.display is True
