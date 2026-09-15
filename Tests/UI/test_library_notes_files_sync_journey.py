@@ -842,7 +842,21 @@ async def test_database_notes_import_once_journey_is_painted_focused_and_retaine
         purpose = str(
             screen.query_one("#library-notes-database-purpose", Static).renderable
         )
-        assert "Library notes" in str(authority.renderable)
+        source_strip = screen.query_one("#library-notes-source-strip")
+        assert "Library notes | Folder files" in _painted_widget_text(
+            host, source_strip
+        )
+        assert screen.query_one("#library-notes-source-database").has_class("-selected")
+        assert not screen.query_one("#library-notes-source-files").has_class(
+            "-selected"
+        )
+        # Below 64 columns the source strip owns the noun, leaving room for
+        # the complete status and next action (task-32360).
+        status = "Ready · Next: Create a note or add from files."
+        expected_authority = status if size[0] < 64 else f"Library notes · {status}"
+        assert str(authority.renderable) == expected_authority
+        assert _painted_widget_text(host, authority) == expected_authority
+        assert "Library's own database" in purpose
         assert "use Sync to mirror" not in purpose
         assert "switch to Folder files" in purpose
         assert "choose Add from files" in purpose
@@ -883,11 +897,13 @@ async def test_database_notes_import_once_journey_is_painted_focused_and_retaine
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((120, 36), (60, 20)))
 async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
+    size: tuple[int, int],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exercise check/review/cancel and a fresh durable import in one screen."""
+    """Review/cancel, import to SQLite, and reopen the receipt at both sizes."""
     notes_path = tmp_path / "notes.sqlite"
     receipt_path = tmp_path / "import-receipts.sqlite"
     source = tmp_path / "review-me.md"
@@ -916,7 +932,7 @@ async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
     host = _JourneyHarness(app)
 
     try:
-        async with host.run_test(size=(120, 36)) as pilot:
+        async with host.run_test(size=size) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-notes", Button).press()
@@ -990,6 +1006,30 @@ async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
             assert receipt.imported == 1
             assert folders.get_folder_by_path(("Inbox",)) is not None
             assert receipt_path.exists()
+
+            receipt_widget = screen.query_one("#note-import-receipt")
+            assert _painted_widget_text(host, receipt_widget) == "1 note created"
+            back = screen.query_one("#library-notes-import-back", Button)
+            back.focus()
+            await pilot.pause()
+            assert screen.focused is back
+            assert str(back.label) in _painted_widget_text(host, back)
+            await pilot.press("enter")
+            reopen = await _wait_for_selector(
+                screen, pilot, "#library-notes-import-receipt"
+            )
+            reopen.focus()
+            await pilot.pause()
+            assert screen.focused is reopen
+            assert str(reopen.label) in _painted_widget_text(host, reopen)
+            await pilot.press("enter")
+            receipt_widget = await _wait_for_selector(
+                screen, pilot, "#note-import-receipt"
+            )
+            assert _painted_widget_text(host, receipt_widget) == "1 note created"
+            assert controller.snapshot.receipt is receipt
+            assert controller.snapshot.latest_receipt is receipt
+            assert database.count_notes() == 1
     finally:
         interop.close_all_user_connections()
         database.close_connection()

@@ -76,3 +76,38 @@ Native shutdown returned to the shell with exit status **0**; its exit status an
 Repair hidden rail focus first, then resolve the Workspace refresh and query-budget findings. Fix the compact Notes assertion and existing modal inventory so later changes have trustworthy verification. The broader feature review still includes Library Prompts/Skills/Collections/ingestion details and the other application destinations; this report does not mark those reviewed.
 
 The [evidence directory](../qa/2026-09-14-library-workflow-audit/README.md) contains selected SVG/ANSI captures, measured state, test summaries and the disposable probes. Full raw logs, the complete capture matrix and private databases remain in ignored audit scratch. This change commits audit documentation and task records only.
+
+## Compact Notes import follow-up — TASK-32600
+
+The compact verification gap is closed with test changes only. At both 60×20 and
+120×36, the journey now checks the compositor-painted source strip, selected
+Library authority, and complete status/next-action text. The compact line keeps
+task-32360's intentional omission of the repeated prefix; the wide line retains
+it. Assertions still distinguish the Library's own database from Folder files.
+
+The original chooser test ended at requesting the file picker, so fixing that
+assertion alone would not verify an import. The adjacent real SQLite journey now
+runs at both sizes. It confirms review leaves notes/folders untouched,
+cancellation creates no note, and a fresh approved import creates one note and an
+Inbox folder. The completed receipt paints “1 note created”; keyboard activation
+of Back and Last import reopens the same receipt while the note count stays one.
+The chooser's existing focus and mounted-pane retention checks also pass.
+
+Baseline at `f69b1c8bbc`: **1 failed, 2 passed**, with the sole failure at the
+obsolete compact prefix assertion. Final targeted selection: **10 passed**:
+
+- Both sizes of the chooser and review/cancel/import/receipt journeys in
+  `Tests/UI/test_library_notes_files_sync_journey.py` (four cases), plus its
+  test-delegation guard.
+- Compact clipping and authority-prefix boundary checks in
+  `Tests/UI/test_library_crit10_notes_details.py` (three cases).
+- Receipt reopening and real-file read-only-check/import-refresh cases in
+  `Tests/UI/test_library_note_import_flow.py` (two cases).
+
+Changed functions pass Ruff formatting; the complete journey file has the same
+six pre-existing Ruff diagnostics as the baseline, with none added. Diff whitespace
+checks pass. Pytest reports two unrelated warnings while cleaning old Kokoro test
+directories. These are mounted Textual checks with production stylesheets and
+disposable databases; the picker response and cancellation timing are controlled
+fixtures. This follow-up makes no new native file-picker or real-server claim.
+No new ADR is required: the existing ADR-086/150/161 contracts remain unchanged.
