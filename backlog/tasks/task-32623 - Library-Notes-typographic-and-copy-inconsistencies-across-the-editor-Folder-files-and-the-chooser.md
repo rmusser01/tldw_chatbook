@@ -96,12 +96,17 @@ advertised this way) rather than a defect; not touched.
 (returns path.name) -- the button always shows the user's OWN configured
 folder's basename, never a hardcoded config-section/key string. Swept the
 touched files (editor, Folder files, chooser) for any other
-config-key-as-label pattern; found none. Concern recorded, not fixed:
-the cited capture is most plausibly a scratch/test fixture folder that
-happened to be named literally "file_notes" on disk, not a code defect --
-INFERRED; the settling experiment is reproducing with [file_notes] root
-pointed at a folder NOT named "file_notes" and confirming the button
-follows suit (expected, given the code path, but not run live here).
+config-key-as-label pattern; found none. Not a defect: the cited capture
+is a scratch/test fixture folder that happened to be named literally
+"file_notes" on disk. **REPRODUCED, not INFERRED (review round 1, F4)**:
+the settling experiment already existed in the tree --
+Tests/UI/test_library_notes_riders_r_file_notes.py::
+test_use_folder_offers_the_modern_file_notes_root configures
+[file_notes] root / [notes] sync_directory at two OTHER folder names
+("modern-vault", "legacy-sync") and asserts the button label follows suit
+("Use modern-vault", "Use legacy-sync") -- confirming the label is always
+the configured folder's own basename, not a hardcoded key. No code
+change; no new test needed, the existing one already proves it.
 
 5 (dead ctrl+end chip): LIBRARY_NOTES_EDITOR_SHORTCUTS's ctrl+end entry
 was static regardless of which control inside the editor region actually
