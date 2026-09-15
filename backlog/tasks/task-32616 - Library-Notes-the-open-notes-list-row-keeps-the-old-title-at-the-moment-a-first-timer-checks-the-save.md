@@ -3,7 +3,7 @@ id: TASK-32616
 title: >-
   Library Notes: the open note's list row keeps the old title at the moment a
   first-timer checks the save
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 06:41'
 labels:
@@ -28,8 +28,72 @@ Compounding, same pane, same moment: two 'Next:' instructions disagree with each
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The currently open note's own row reflects its committed title, or is marked as the open note so the stale label reads as a pointer rather than a contradiction
-- [ ] #2 The focus guard that skips the refresh still holds for every other row
-- [ ] #3 One pane never shows two Next instructions that disagree
-- [ ] #4 The decision is recorded either way, with the reasoning, so critique 5 does not re-litigate it
+- [x] #1 The currently open note's own row reflects its committed title, or is marked as the open note so the stale label reads as a pointer rather than a contradiction
+- [x] #2 The focus guard that skips the refresh still holds for every other row
+- [x] #3 One pane never shows two Next instructions that disagree
+- [x] #4 The decision is recorded either way, with the reasoning, so critique 5 does not re-litigate it
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Trace the producer: why the row stays stale after a rename save.
+2. Repaint the list on a genuine rename only, without weakening the task-32062
+   focus guard.
+3. Re-derive the "two Next instructions" claim live before fixing it.
+4. Record the decision either way.
+
+## Implementation Notes
+
+**AC#1/AC#2 -- the producer, not the renderer.** A save already patched the
+list CACHES (`_patch_library_note_list_from_session`: the flat records, the
+tree branch slices, the filter window) and then painted nothing, so the row
+beside the editor kept the pre-rename label until the next sync -- in
+practice, until Escape. The patch now RETURNS whether the label it was
+rendering actually changed, and `_apply_library_note_saved_presentation` runs
+one `_sync_library_canvas(self, "notes")` when it did.
+
+The task-32062 focus guard is untouched (AC#2). It lives in
+`LibraryNotesCanvas.sync_state` and is measured per canvas: the WORK pane
+still skips its rebuild while the title or body has focus, and the Items pane
+is a sibling canvas that recomposes as it already does for every other sync,
+with `canvas_sync`'s `notes_editor_owned` branch restoring its scroll offset
+and never touching focus. The pin asserts both halves at once -- the row
+carries the new title AND the title `Input` is the same object, still focused,
+still holding its text.
+
+Gated on a genuine rename rather than on every save, so a body-only autosave
+(one per debounce tick) costs the tree nothing.
+
+**AC#3 -- one half was not a defect.** Re-derived live at dev 3b26c66ce0:
+
+- *Two disagreeing Next instructions: REPRODUCED.* Verbatim, both painted at
+  once: "Library notes · Ready · Next: Create a note or add from files."
+  beside "Saved · Next: Start typing." The list's instruction is advice for a
+  reader with nothing open; with a note open beside it, it is advice against
+  what they are doing. Fixed by standing the list's clause down while the work
+  pane has one (`LibraryNotesListState.note_open`).
+- *"After typing, the editor still reads Next: Start typing": NOT
+  REPRODUCED.* Measured through the real screen: after a TITLE-only edit the
+  body really is empty, so "Start typing." is the true next step, and the line
+  becomes "Keep editing; changes save automatically." the moment the body has
+  words. A first implementation "fixed" this by updating the authority Static
+  inside the task-32062 skip; that change PASSED with the fix reverted -- the
+  proof it was fixing nothing -- and was removed rather than shipped
+  unpinned, since it also partly undoes a deliberately documented ceiling
+  (the skip's own "Known ceiling" comment).
+
+**AC#4 -- the decision, recorded.** The focus guard stays, narrowed to what it
+was actually for. The reasoning: the guard exists so a refresh never rebuilds
+the field under the reader's hands. It was never about the ROW, and applying
+it to the row made the only durable artefact on screen contradict the heading
+and the save status next to it at the exact moment a first-timer checks
+whether their writing is safe. Repainting a sibling canvas rebuilds no field,
+moves no focus, and costs one recompose per rename. Recorded in
+`Docs/User_Guide/library/notes.md`, which previously documented the old
+behaviour as intentional.
+
+**Files.** `UI/Screens/library_screen.py`,
+`UI/Library_Modules/library_notes_controller.py`,
+`Widgets/Library/library_notes_canvas.py`, `Library/library_notes_state.py`,
+`Tests/UI/test_library_notes_w5_import_preview.py`,
+`Docs/User_Guide/library/notes.md`.

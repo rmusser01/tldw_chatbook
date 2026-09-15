@@ -3765,7 +3765,29 @@ class LibraryNotesController:
         if snapshot is None or snapshot.note_id != self._selected_note_id:
             return
         if outcome.kind is NoteSaveOutcomeKind.SAVED:
-            self._patch_library_note_list_from_session()
+            renamed = bool(self._patch_library_note_list_from_session())
+            if renamed and self.is_mounted:
+                # task-32616 AC#1 (A caps 06/07, B cap 58): patching the list
+                # CACHES is not painting the list. Until this sync the only
+                # durable artefact on screen -- the row beside the editor --
+                # still read "Untitled · now" while the editor's own heading
+                # read the new title and its status read "Saved 22:50": the
+                # screen answering "is my writing safe" two ways at once, at
+                # the moment a first-timer checks.
+                #
+                # The task-32062 focus guard is NOT weakened by this (AC#2).
+                # It lives in ``LibraryNotesCanvas.sync_state`` and is
+                # measured per canvas, so the WORK pane still skips its
+                # rebuild while the reader's hands are in the title or body;
+                # the Items pane beside it is a sibling canvas, recomposes as
+                # it already does for every other sync, and ``canvas_sync``'s
+                # ``notes_editor_owned`` branch restores its scroll offset
+                # without touching focus.
+                #
+                # Gated on a genuine rename, not on every save: a body-only
+                # autosave changes no row label, and repainting a 54-note
+                # tree on each debounce tick would buy nothing.
+                _sync_library_canvas(self, "notes")
             # task-32536 AC#3: a successful save ends a failed operation's
             # message -- "Saved" and "Can't use this note…" cannot both be
             # the truth of one status line.

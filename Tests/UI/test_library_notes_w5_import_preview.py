@@ -331,3 +331,102 @@ async def test_the_chooser_renders_its_documented_back_control():
         assert "Notes" in str(back.label)
 
 
+# --- task-32616: the open note's row, and one honest Next -----------------
+
+
+@pytest.mark.asyncio
+async def test_a_rename_repaints_the_open_notes_row_without_losing_the_title():
+    """AC#1 and AC#2 together. A caps 06/07: the editor heading read the new
+    title and the status read "Saved", while the row beside them -- the only
+    durable artefact on screen -- still read the old one. AC#2 is the other
+    half: the task-32062 focus guard must still hold, so the reader's own
+    title field keeps focus AND its text across the repaint."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot, "n-1")
+
+        title_input = screen.query_one("#library-note-title", Input)
+        title_input.focus()
+        await pilot.pause()
+        title_input.value = "My first note"
+        await pilot.pause()
+        screen.query_one("#library-note-save", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: any(
+                "My first note" in str(row.label)
+                for row in screen.query(".library-notes-row")
+            ),
+            message="The open note's row never caught up with its saved title.",
+        )
+
+        # AC#2: the editor was NOT rebuilt underneath the reader.
+        assert screen.query_one("#library-note-title", Input) is title_input
+        assert title_input.has_focus
+        assert title_input.value == "My first note"
+
+
+def test_a_body_only_save_does_not_ask_the_items_pane_to_repaint():
+    """AC#2's cost control: the repaint above is gated on a genuine rename,
+    so a body-only autosave -- one per debounce tick while typing -- costs
+    the tree nothing. Pinned at the producer: the patch reports whether the
+    label the list caches were rendering actually changed."""
+    import inspect
+
+    source = inspect.getsource(LibraryScreen._patch_library_note_list_from_session)
+    assert "return title_changed" in source
+    assert "return False" in source
+
+
+def _next_instructions(screen) -> list[tuple[str, str]]:
+    """Every "Next:" instruction the screen is painting, with its owner."""
+    return [
+        (static.id or "", str(static.renderable))
+        for static in screen.query(Static)
+        if "Next:" in str(static.renderable)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_only_one_pane_at_a_time_issues_a_next_instruction():
+    """AC#3. A cap 04: the list's "Next: Create a note or add from files."
+    beside the editor's "Next: Start typing." -- two instructions at once,
+    and the list's is advice against what the reader is already doing.
+
+    Re-derived live at dev 3b26c66ce0 (both lines present, verbatim). The
+    finding's OTHER half -- that the editor's line goes stale after typing
+    (cap 05) -- did NOT reproduce: after a title-only edit the body really is
+    empty, so "Start typing." is the true next step, and it changes to "Keep
+    editing" the moment the body has words. That half is recorded as
+    not-a-defect on the task rather than "fixed"."""
+    empty = dict(_two_notes()[0], content="")
+    host = _build_notes_host(notes=[empty])
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot, "n-1")
+
+        instructions = _next_instructions(screen)
+        assert len(instructions) == 1, instructions
+        assert instructions[0][0] == "library-note-work-authority", instructions
+
+        # The list pane takes its instruction back the moment it is alone.
+        title = screen.query_one("#library-note-title", Input)
+        title.focus()
+        await pilot.pause()
+        body = screen.query_one("#library-note-body", TextArea)
+        body.focus()
+        await pilot.pause()
+        body.text = "Some words that are definitely not nothing."
+        await _wait_for_condition(
+            pilot,
+            lambda: "Keep editing" in str(
+                screen.query_one("#library-note-work-authority", Static).renderable
+            ),
+            message="the work pane never moved past 'Start typing'",
+        )
+        assert len(_next_instructions(screen)) == 1, _next_instructions(screen)
+
+

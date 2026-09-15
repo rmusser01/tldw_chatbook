@@ -16715,6 +16715,12 @@ class LibraryScreen(BaseAppScreen):
             ),
             delete_receipt=self._notes_state.delete_receipt,
         )
+        # task-32616 AC#3: set here rather than threaded through
+        # ``build_library_notes_list_state`` -- whether a note is OPEN is a
+        # fact about the screen beside the list, not about the rows.
+        state = dataclasses.replace(
+            state, note_open=bool(self._notes_state.selected_note_id)
+        )
         if self._notes_state.select_mode:
             projection = self._build_library_notes_tree_projection()
             if projection is None:
@@ -20245,7 +20251,7 @@ class LibraryScreen(BaseAppScreen):
     def _update_library_note_meta_static(self, *, content: str) -> None:
         return self._notes_controller._update_library_note_meta_static(content=content)
 
-    def _patch_library_note_list_from_session(self) -> None:
+    def _patch_library_note_list_from_session(self) -> bool:
         """Patch list caches from the payload the coordinator actually saved.
 
         (P0) The baseline title is the DRAFT's title; the save port
@@ -20254,10 +20260,16 @@ class LibraryScreen(BaseAppScreen):
         named an emptied-out note ``""`` while the persisted row said
         "Untitled". Both sides now run the payload through
         :func:`library_note_persisted_title`.
+
+        Returns:
+            Whether this save changed the title the list caches were
+            rendering -- the one case the rows on screen are now stale
+            (task-32616). A body-only autosave returns ``False`` and costs
+            the Items pane nothing.
         """
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
-            return
+            return False
         baseline = snapshot.baseline
         persisted_title = library_note_persisted_title(baseline.title)
         # Capture the title the list caches currently show BEFORE patching, so
@@ -20321,6 +20333,7 @@ class LibraryScreen(BaseAppScreen):
                 getattr(self._notes_state, "filter_generation", 0) + 1
             )
             self._notes_state.tree_filter_state = None
+        return title_changed
 
     @staticmethod
     def _placement_note_id(placement: Any) -> str:

@@ -1183,7 +1183,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         status = state.operation_status if state is not None else ""
         running = state is not None and state.operation_running
         status = status or ("Updating notes…" if running else "Ready")
-        next_action = "" if running else "Create a note or add from files."
+        # task-32616 AC#3: measured at dev 3b26c66ce0, both panes carried a
+        # "Next:" at once and they disagreed -- this pane's "Create a note or
+        # add from files." beside the work pane's "Start typing." for the
+        # note already open (A cap 04). "Create a note" is advice for a
+        # reader with nothing open; with a note open beside it, it is advice
+        # against what they are doing. The work pane owns the instruction
+        # while it has something to instruct about.
+        #
+        # NOT the staleness the finding also alleged: cap 05 was re-derived
+        # live and the work pane's line is not stale -- after a TITLE-only
+        # edit the body really is empty, so "Start typing." is the true next
+        # step, and it becomes "Keep editing" as soon as the body has words.
+        note_open = state is not None and state.note_open
+        next_action = (
+            "" if running or note_open else "Create a note or add from files."
+        )
         return line(status, f"Next: {next_action}" if next_action else "")
 
     def _effective_pane_width(self) -> int:
