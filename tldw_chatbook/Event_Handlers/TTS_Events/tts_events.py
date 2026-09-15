@@ -814,9 +814,15 @@ class TTSEventHandler:
             request_text,
             event.message_id,
             playback_lifecycle=event.playback_lifecycle,
+            console_markdown=True,
         )
         if text is None:
             event.report_outcome(False)
+            return
+        if not text:
+            if event.playback_lifecycle is not None:
+                event.playback_lifecycle.report_terminal("stopped")
+            event.report_outcome(True)
             return
         try:
             resolution = await self._resolve_message_speech_request(
@@ -1076,8 +1082,9 @@ class TTSEventHandler:
         text = await self._prepare_tts_text(
             request_text,
             pending.snapshot.message_id,
+            console_markdown=True,
         )
-        if text is None:
+        if not text:
             return
 
         resolver = CharacterTTSRequestResolver(None)
@@ -1147,10 +1154,13 @@ class TTSEventHandler:
         *,
         quiet: bool = False,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
+        console_markdown: bool = False,
     ) -> str | None:
         """Validate and normalize text before assignment or cooldown admission.
 
         Args:
+            console_markdown: Convert a validated completed Console reply into
+                speech. An empty result is a successful no-op for these callers.
             quiet: Task-4 review F5 -- suppress the user-facing
                 `TTSCompleteEvent(error=...)` toast for a rejection.
                 Validation itself, its return value, and the (pre-existing)
@@ -1180,6 +1190,14 @@ class TTSEventHandler:
             return None
 
         max_tts_length = 5000
+        if console_markdown and len(request_text) <= max_tts_length:
+            # Parse original line structure only after bounding the source.
+            # Keep imports off startup and non-Console speech paths.
+            from tldw_chatbook.Chat.console_speech_text import (
+                console_markdown_to_speech,
+            )
+
+            request_text = console_markdown_to_speech(request_text)
         if len(request_text) > max_tts_length:
             logger.warning("TTS text exceeds the configured length limit")
             if not quiet:
@@ -1196,6 +1214,8 @@ class TTSEventHandler:
             return None
 
         text = " ".join(request_text.split())
+        if not text and console_markdown:
+            return ""
         if not text:
             if not quiet:
                 await self._post_tts_message(

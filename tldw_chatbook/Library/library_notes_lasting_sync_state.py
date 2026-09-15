@@ -20,7 +20,6 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     eligible_conflict_reason,
 )
 from tldw_chatbook.Notes.note_import_discovery import _MESSAGES as _DISCOVERY_MESSAGES
-from tldw_chatbook.Notes.note_import_parsers import _MESSAGES as _PARSE_MESSAGES
 from tldw_chatbook.Notes.notes_sync_models import (
     NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
     NotesSyncActionKind,
@@ -58,7 +57,6 @@ _ITEM_SKIP_EFFECTS = {
     for reason, message in _DISCOVERY_MESSAGES.items()
     if reason.startswith("obsidian_")
 } | {
-    "empty_file": _row_effect(_PARSE_MESSAGES["empty_source"]),
     # task-32605: Import once has no counterpart sentence for this -- it is
     # the one skip that exists because the OTHER path already ran.
     "already_imported": "Already imported by Import once — left as it is",
@@ -892,11 +890,16 @@ def build_reconciliation_review(
             )
         )
     for index, item_skip in enumerate(plan.item_skips):
+        effect = _ITEM_SKIP_EFFECTS.get(item_skip.reason_code, "Skipped")
+        if item_skip.reason_code == "empty_file":
+            from tldw_chatbook.Notes.note_import_parsers import _MESSAGES
+
+            effect = _row_effect(_MESSAGES["empty_source"])
         rows.append(
             LastingSyncReviewRow(
                 item_id=f"item-skip-{index}",
                 category="skipped",
-                effect=_ITEM_SKIP_EFFECTS.get(item_skip.reason_code, "Skipped"),
+                effect=effect,
                 relative_path=item_skip.relative_path,
                 reason=item_skip.reason_code,
             )

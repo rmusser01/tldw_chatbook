@@ -121,13 +121,40 @@ goes.)
   During commit or push, **Esc** follows the phase-specific safe action in the
   keyboard table below.
 
+### Linking a folder without a mouse
+
+Every step has a keyboard route (task-32606):
+
+1. From the notes list, **Shift+Tab** back to the mode strip at the top of the
+   screen until **Folder files** carries the focus underline, then **Enter**.
+2. **Tab** to **Choose folder…** (or **Change…** once a folder is linked) and
+   press **Enter**.
+3. The picker opens with the **Folder path** field focused and its value
+   selected — type or paste the folder and it replaces what was there.
+4. **Enter** browses into the typed folder; **Tab** then **Enter** on
+   **Select** links it. **Esc** leaves the picker without changing anything.
+
+While the picker is open the bottom row of the terminal shows the picker's own
+keys instead of Library's, starting with `esc Cancel` — that row is how you
+tell you are inside the dialog. The keys are clickable as well as typable, and
+clicking one does what pressing it does: `esc Cancel` closes the picker, and
+every other key runs without closing it.
+
+The row is ordered by usefulness and the overflow scrolls off the right edge,
+so how much of it you see depends on your terminal's width. At 100 columns it
+ends around `f5 Refresh direc`; the keys past that — `^r Show recent
+locations` and `^s Select this folder` — appear only on a wide terminal.
+`^s Select this folder` is dimmed wherever it does appear: it belongs to the
+file-and-folder picker Import once uses, and this dialog's **Select** button
+does that job instead.
+
 ## Features & controls
 
 ### Folder link
 
 | Control | What it does |
 |---|---|
-| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. Type into the **Folder path** field and either press Enter (browses into it) or click **Select** (uses it right away, without needing Enter first); an invalid path shows an inline reason and leaves the picker open |
+| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. The **Folder path** field holds focus from the moment the picker opens, with the folder it opened on selected, so the first thing you type replaces that path rather than going into the file listing (task-32606). Press **Enter** to browse into what you typed, or **Select** to use it right away without needing Enter first; an invalid path shows an inline reason and leaves the picker open |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
 | **Cancel** (folder change) | Appears once a folder change has been running about three seconds — the same moment the line stops being a bare "Changing folder…". Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
@@ -681,6 +708,75 @@ gained the note that a brand-new profile has no Browse section — see
 unchanged. Not re-walked live: this page's Git chapter was corrected against
 the widget's own compose, not a capture, and says so rather than carrying a
 capture it does not have.)*
+
+*Verified against fix/library-notes-w5-picker-kbd — 2026-09-15 (task-32606:
+critique #4's P1. "Choose File Notes Folder" opened with the directory
+listing focused, so a typed path went into the listing's type-ahead and the
+door needed a mouse. Wave 4 had fixed exactly this for Import once but only
+on `FileOpen`; the behaviour now lives on the shared
+`FileSystemPickerScreen` behind one `RETURNS_A_FOLDER` fact, which
+`SelectDirectory` and `EnhancedSelectDirectory` declare. Walked
+keyboard-only on a scratch power profile at 235x52 and 100x30: the mode
+strip, **Choose folder…**, the picker, the typed path and **Select** were
+all reached with Tab/Shift+Tab/Enter and no click. Captures
+`wave5/caps/picker-kbd/01`–`11`; `04-typed-path-lands-in-field-235x52.txt`
+and `10-typed-path-100x30.txt` show a pasted absolute path REPLACING the
+pre-filled value with no click first, and
+`09-picker-100x30-footer-order.txt` shows the bottom row reading
+`esc Cancel  ^s Select this folder  ^l Edit path directly …`. Not re-walked:
+opening a file from the **Files** tree by Tab from the shell — the tree was
+reached live but Tab from the folder navigator's search field leaks into the
+Library rail, which is a separate open issue; that leg is pinned instead by
+`Tests/UI/test_library_notes_w5_picker_keyboard.py::test_folder_files_reaches_and_edits_a_file_with_no_mouse`,
+which drives the real workspace inside the real Library screen.)*
+
+*Verified against fix/library-notes-w5-picker-kbd — 2026-09-15 (task-32606
+review round 1). Two corrections to the paragraph above. (a) The picker's key
+row is clickable, and clicking a key used to ALSO cancel the dialog: the row
+docks outside the modal's content, so the safe-dismiss classifier read a chip
+click as a backdrop click (`Widgets/modal_dismissal.py`). Re-walked live at
+235x52 and 100x30 — clicking `^h Toggle hidden files` listed `.obsidian` and
+left the picker open (`14-r1-toggle-hidden-chip-235x52.txt`), clicking
+`^f Search in directory` revealed the "Search files..." input and left it open
+(`17-r1-search-chip-click-100x30.txt`). (b) `^s Select this folder` moved from
+second to LAST on the row, because Textual renders a key a dialog cannot run
+dimmed rather than dropping it and at 60 columns it was crowding out live
+actions; the 100-column row now reads `esc Cancel  ^l Edit path directly  ^f
+Search in directory  ^h Toggle hidden files  f5 Refresh direc`
+(`15-r1-picker-100x30.txt`). Log grep after both walks: zero
+`unhandled_exception`, zero `| ERROR`.)*
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32614, at
+235x52, 100x30 and 60x24 through the production Library harness): the file
+tree now fills the navigator pane instead of sharing its spare rows with the
+"Folder files" title row — 38 visible tree rows at 235x52 where there were
+20, and 18 at 100x30 where there were 10. At 100x30 the two panes divide
+46/44 rather than 56/34: Folder files uses the same 44-column work-pane floor
+as every other Library destination instead of its own 30. Both identity lines
+— the breadcrumb above the editor and the full path under **File details &
+path** — now paint on exactly one row, middle-elided with an … so the row
+spends the head of the path and keeps its end: the file's own name, or as
+much of the name as the row holds. The breadcrumb's own budget is only 25 cells at 100x30,
+narrow enough that a long daily-note name is itself cut short there; the line
+under File details keeps the whole pane width, so it holds more. Before this
+the absolute path folded over six rows at 100x30, broken inside a directory
+name.
+
+The line under File details also now always shows the absolute path. It used
+to alternate — opening a file, or selecting a deleted one, wrote the path
+relative to the folder, and switching to Manage rewrote it as the full path —
+so the same line said different things depending on what you had just done.
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32615, same
+three sizes): in Session Git's Commit workflow the Cancel/Review actions now
+sit directly under the Subject and Body they act on rather than at the pane
+floor twenty to forty rows below, and they stay on screen on a pane too short
+for the whole form. The repository-trust prompt prints the repository path on
+its own lines, broken only at "/" — the whole path, with no component split
+in half. An action receipt ("Committed 1 session note as …") now paints under
+the file's save state near the top of the Manage pane instead of below the
+"Danger" heading.*
+
 *Verified against fix/library-notes-w5-import-preview — 2026-09-15 (task-32621,
 critique #4): the Folder-files tree now states what it lists directly under its
 heading, and with no file open the work area claims no save state and shows no
