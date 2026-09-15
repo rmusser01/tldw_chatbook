@@ -2,9 +2,11 @@
 
 import asyncio
 import json
+import os
 import sqlite3
 import stat
-from threading import Event
+from pathlib import Path
+from threading import Event, get_ident
 
 import pytest
 
@@ -109,12 +111,24 @@ async def test_failed_close_retains_exact_buffer_and_retry_persists(
         db.close()
 
 
-async def test_exchange_keeps_opaque_metadata_step_id_and_saved_revision(tmp_path):
+async def test_exchange_keeps_opaque_metadata_step_id_and_saved_revision(
+    tmp_path, monkeypatch
+):
     source = tmp_path / "incoming.json"
     definition = prompt_definition()
     definition["metadata"]["opaque"] = {"vendor": ["unchanged", 9007199254740993]}
     source.write_text(json.dumps(definition), encoding="utf-8")
     owner = WorkflowAuthoring(lambda: tmp_path / "authoring.sqlite3")
+    loop_thread = get_ident()
+    validate = owner._exchange_path
+
+    def validate_off_loop(path):
+        assert get_ident() != loop_thread, (
+            "Exchange metadata must not block the app loop"
+        )
+        return validate(path)
+
+    monkeypatch.setattr(owner, "_exchange_path", validate_off_loop)
     try:
         revision = await owner.import_file(source)
         owner.drafts.update(
@@ -134,6 +148,80 @@ async def test_exchange_keeps_opaque_metadata_step_id_and_saved_revision(tmp_pat
         assert "raw_text" not in exported
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
     finally:
+        await owner.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file identity and aliases")
+@pytest.mark.parametrize("operation", ["import", "export"])
+@pytest.mark.parametrize(
+    "suffix,alias_kind",
+    [
+        ("", "hardlink"),
+        ("-wal", "hardlink"),
+        ("-shm", "hardlink"),
+        ("-journal", "hardlink"),
+        ("", "directory"),
+    ],
+)
+async def test_exchange_refuses_database_alias_before_generic_file_io(
+    tmp_path, monkeypatch, operation, suffix, alias_kind
+):
+    import tldw_chatbook.Workflows.authoring as module
+
+    directory = tmp_path / "store"
+    directory.mkdir()
+    path = directory / "authoring.json"
+    owner = WorkflowAuthoring(lambda: path)
+    alias = tmp_path / "selected.json"
+    try:
+        await owner.open()
+        # PERSIST leaves a real rollback journal available after the write.
+        mode = "PERSIST" if suffix == "-journal" else "WAL"
+        assert (
+            owner._db._connection.execute(f"PRAGMA journal_mode={mode}").fetchone()[0]
+            == mode.lower()
+        )
+        revision = await owner.create("Protected authoring store")
+        await owner.flush()
+        before = owner.drafts.current
+        protected = Path(str(path) + suffix)
+        assert protected.is_file()
+        if alias_kind == "hardlink":
+            alias.hardlink_to(protected)
+            selected = alias
+        else:
+            alias.symlink_to(directory, target_is_directory=True)
+            selected = alias / path.name
+            assert selected.stat().st_nlink == 1
+
+        # Audit the actual unsafe boundary, forwarding unchanged if reached.
+        # Rejection by the generic helper itself is already too late for import.
+        boundary = (
+            "open_private_binary"
+            if operation == "import"
+            else "atomic_private_write_text"
+        )
+        original = getattr(module, boundary)
+        calls = []
+
+        def observe(*args, **kwargs):
+            calls.append(args[0])
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, boundary, observe)
+        with pytest.raises((ValueError, OSError)):
+            if operation == "import":
+                await owner.import_file(selected)
+            else:
+                await owner.export_file(selected, revision)
+        assert calls == [], "Database aliases must be refused before generic file I/O"
+        assert owner.drafts.current == before
+        assert (
+            owner.documents.get_revision(revision.workflow_id, revision.revision_id)
+            == revision
+        )
+    finally:
+        alias.unlink(missing_ok=True)
         await owner.close()
 
 

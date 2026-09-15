@@ -63,6 +63,12 @@ existing private-path policy: symlinks and unsupported file types are refused,
 an imported local file is hardened to owner-only access, and exported files are
 written atomically with owner-only permissions.
 
+Choose a standalone JSON file. Files with multiple hard links and aliases of
+the active workflow database or its sidecars are refused before generic file
+access. This metadata precheck is not protection against concurrent pathname
+replacement; do not move or relink the selected file or live database during
+exchange.
+
 ## Storage and compatibility
 
 Storage initializes only on first entry to Workflows. The default file is

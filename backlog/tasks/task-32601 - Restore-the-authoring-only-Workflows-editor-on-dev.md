@@ -69,3 +69,12 @@ Task remains **In Progress** pending coordinator code review and full DoD.
 Existing whole-file Ruff/formatter debt is reported separately, not waived or
 suppressed. New/rewritten authoring files pass Ruff and formatting. All work is
 confined to the named authoring-dev worktree; preserved checkouts are untouched.
+
+Code-review fix round 1 adds a feature-local, metadata-only exchange precheck for
+database/sidecar aliases. Real DELETE/WAL foreign-writer tests first reproduced
+lock loss after a refused import, then verified preserved exclusion. Import and
+export reject aliases before generic file I/O; shared helpers, SQLite lifecycle,
+migrations and UI are unchanged. The report records exact RED/GREEN evidence and
+the concurrent-path-replacement limitation. The covering authoring/storage suite
+passes 35 tests, including off-loop metadata checks for import and export; scoped
+Ruff/format and diff-check are clean. Task remains In Progress for review.

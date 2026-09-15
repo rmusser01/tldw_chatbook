@@ -13,6 +13,7 @@ import pytest
 
 from Tests.Workflows.helpers import prompt_definition
 from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
+from tldw_chatbook.Workflows.authoring import WorkflowAuthoring
 from tldw_chatbook.Workflows.document_service import DocumentService
 
 
@@ -116,6 +117,61 @@ def test_restarting_store_keeps_saved_revision_and_exact_unfinished_draft(tmp_pa
     finally:
         reopened.close()
     assert not list(tmp_path.glob("*.lock"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-owned SQLite locks")
+@pytest.mark.parametrize(
+    "journal_mode,suffix",
+    [
+        ("DELETE", ""),
+        ("DELETE", "-journal"),
+        ("WAL", ""),
+        ("WAL", "-wal"),
+        ("WAL", "-shm"),
+    ],
+)
+async def test_refused_alias_import_preserves_foreign_writer_exclusion(
+    tmp_path, journal_mode, suffix
+):
+    path = tmp_path / "authoring.sqlite3"
+    setup = sqlite3.connect(path)
+    try:
+        assert (
+            setup.execute(f"PRAGMA journal_mode={journal_mode}").fetchone()[0]
+            == journal_mode.lower()
+        )
+    finally:
+        setup.close()
+    owner = WorkflowAuthoring(lambda: path)
+    alias = tmp_path / "incoming.json"
+    try:
+        revision = await owner.create("Draft transaction")
+        await owner.flush()
+        before = owner.drafts.current
+        with owner._db.transaction() as cursor:
+            cursor.execute(
+                "UPDATE workflow_drafts SET generation = generation + 1 WHERE workflow_id = ?",
+                (revision.workflow_id,),
+            )
+            protected = Path(str(path) + suffix)
+            assert protected.is_file()
+            alias.hardlink_to(protected)
+            assert foreign_begin_immediate(path) == "blocked"
+            with pytest.raises((ValueError, OSError)):
+                await owner.import_file(alias)
+            assert foreign_begin_immediate(path) == "blocked"
+            assert owner.drafts.current == before
+            assert (
+                cursor.execute(
+                    "SELECT generation FROM workflow_drafts WHERE workflow_id = ?",
+                    (revision.workflow_id,),
+                ).fetchone()[0]
+                == before.generation + 1
+            )
+        assert foreign_begin_immediate(path) == "acquired"
+    finally:
+        alias.unlink(missing_ok=True)
+        await owner.close()
 
 
 def test_migration_bytes_remain_compatible_with_existing_stores():

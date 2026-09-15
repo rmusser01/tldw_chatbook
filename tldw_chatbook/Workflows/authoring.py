@@ -1,6 +1,7 @@
 """Lazy application-owned authoring and explicit, bounded JSON exchange."""
 
 import asyncio
+import stat
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any, TypeVar
@@ -137,9 +138,31 @@ class WorkflowAuthoring:
         return revision
 
     def _exchange_path(self, path: Path) -> Path:
+        """Reject visible database aliases without opening a protected inode.
+
+        This metadata preflight is not a lease against concurrent path changes.
+        Generic private-file checks still own normal file access and hardening.
+        """
         selected = lexical_path(validate_path_simple(path, probe_existing=False))
         if selected.suffix.lower() != ".json" or selected == lexical_path(self._path):
             raise ValueError("Select a separate .json definition file")
+        try:
+            entry = selected.lstat()
+        except FileNotFoundError:
+            return selected
+        if not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1:
+            raise ValueError("Select a regular .json definition file without links")
+        # Even a refused generic read can close the inode and release POSIX
+        # SQLite locks. Only stat here, including for aliases via parent paths.
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            try:
+                protected = Path(str(self._path) + suffix).stat()
+            except FileNotFoundError:
+                continue
+            if (entry.st_dev, entry.st_ino) == (protected.st_dev, protected.st_ino):
+                raise ValueError(
+                    "Select a .json definition separate from database files"
+                )
         return selected
 
     def _read_import(self, path: Path) -> str:
@@ -169,5 +192,5 @@ class WorkflowAuthoring:
         )
         if saved != revision:
             raise ValueError("Select an exact saved revision before exporting")
-        selected = self._exchange_path(path)
+        selected = await asyncio.to_thread(self._exchange_path, path)
         await asyncio.to_thread(atomic_private_write_text, selected, saved.raw_json)

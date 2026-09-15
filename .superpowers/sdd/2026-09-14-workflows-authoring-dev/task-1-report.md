@@ -511,3 +511,149 @@ Those three untracked areas are coordinator-owned and were not staged or edited
 by implementation. The report was ignored until explicitly staged by its exact
 owned path. Parent and preserved worktree files were not modified. No push,
 merge, stash or reset. No tests or capture process remain running at handoff.
+
+## Task code-review fix round 1: database aliases and file exchange
+
+Resumed from coordinator-only documentation commit
+`b0ce08a093b49b7abb9652d94863e72c33a30111`; all its QA/parity/lesson files are
+preserved. The review reported one Important finding and zero Critical findings.
+The receiving-code-review and TDD skills were used; only the requested
+authoring/storage/exchange scope was exercised, with no UI edits or recapture.
+
+### Finding and confirmed cause
+
+`WorkflowAuthoring._exchange_path` previously rejected only the lexical DB path.
+The existing `open_private_binary` checks regular-file type, then calls `os.open`,
+then rejects a multiply-linked inode via `fstat` and closes that raw descriptor.
+That close can cancel SQLite's process-owned POSIX locks even though the import
+failed. The shared helper was inspected read-only; its protocol was not changed.
+
+`Tests/DB/test_workflows_authoring_storage.py::test_refused_alias_import_preserves_foreign_writer_exclusion`
+holds a real ordinary draft transaction and probes writer exclusion through the
+existing bounded stdlib-only subprocess helper. The cases use the actual main
+DB, DELETE rollback journal, WAL, and WAL SHM files; no runtime aliases or new
+helper subprocess design. In RED, the DELETE main-file and WAL SHM cases changed
+from `blocked` to `acquired` after the refused import. Other cases remained
+blocked, so the report does not claim every SQLite file carries writer locks.
+
+`Tests/Workflows/test_authoring.py::test_exchange_refuses_database_alias_before_generic_file_io`
+uses real SQLite DB/WAL/SHM/PERSIST-journal files and both import and export.
+Hard links cover all four protected files; a trusted parent-directory alias of
+a `.json`-named database covers equal device/inode with link count one. The
+generic file boundary is observed while forwarding to the real implementation,
+not replaced by a fabricated success/failure. Rejection by that boundary itself
+is too late; all ten RED cases reached it.
+
+### Exact RED evidence
+
+```text
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/DB/test_workflows_authoring_storage.py -k refused_alias_import -q --timeout=60 --tb=short --show-capture=no -p no:randomly
+2 failed, 3 passed, 6 deselected, 1 warning in 1.37s (exit 1)
+FAILED test_refused_alias_import_preserves_foreign_writer_exclusion[DELETE-]
+FAILED test_refused_alias_import_preserves_foreign_writer_exclusion[WAL--shm]
+AssertionError: assert 'acquired' == 'blocked'
+
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Workflows/test_authoring.py -k database_alias -q --timeout=60 --tb=short --show-capture=no -p no:randomly
+10 failed, 14 deselected, 1 warning in 1.79s (exit 1)
+All ten test_exchange_refuses_database_alias_before_generic_file_io cases:
+AssertionError: Database aliases must be refused before generic file I/O
+The boundary was called once instead of zero times.
+```
+
+### Minimal change and bounded limitation
+
+- `authoring.py` now uses `lstat` before any generic file opening to reject
+  non-regular/multiply-linked selected targets, and compares device/inode metadata
+  with the active workflow DB and any existing `-journal`, `-wal`, `-shm` files.
+  Missing selected targets remain valid for ordinary new-file export; other
+  metadata errors propagate as refusal rather than bypassing checks.
+- Export metadata inspection now runs off the UI thread, as import inspection
+  already does. Ordinary generic private-file checks, hardening and atomic
+  replacement remain unchanged after the feature preflight.
+- **Limit:** this is a metadata-only preflight for aliases present at validation
+  time, not a pathname lease or retained live-inode proof. It cannot prevent a
+  concurrent actor from replacing/relinking a selected path after validation,
+  or discover a detached live inode whose known database name was moved away.
+  Existing generic post-open identity checks do not undo POSIX lock loss caused
+  by opening/closing such a raced inode. Race-free cross-owner protection would
+  require authority/lifetime coordination outside this approved tiny fix; no
+  such protocol is introduced or claimed. Users should not move/relink selected
+  paths or the live database during exchange. This limitation is also clarified
+  in the guide.
+- No shared SQLite/private-path changes, descriptor retention, new subprocess
+  protocol, runtime lock, migration or UI change. Existing execution and ordinary
+  transaction behavior are untouched. Coordinator artifacts remain untouched.
+
+### Focused GREEN evidence
+
+```text
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/DB/test_workflows_authoring_storage.py Tests/Workflows/test_authoring.py -k 'refused_alias_import or database_alias' -q --timeout=60 --tb=short --show-capture=no -p no:randomly
+15 passed, 20 deselected, 1 warning in 1.91s (exit 0)
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check tldw_chatbook/Workflows/authoring.py Tests/Workflows/test_authoring.py Tests/DB/test_workflows_authoring_storage.py
+All checks passed! (exit 0)
+```
+
+The previously failed foreign probe remains blocked until the transaction ends,
+then acquires normally. Refused imports retain the selected draft and transaction
+contents. Both exchange directions refuse all tested aliases before reaching
+generic file I/O. The baseline 713 Ruff findings/five formatter files and existing
+Requests/Kokoro noise remain recorded and unwaived; no cleanup was attempted.
+
+### Existing exchange/lifecycle suite and off-loop regression
+
+```text
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Workflows/test_authoring.py Tests/DB/test_workflows_authoring_storage.py -q --timeout=60 --tb=short --show-capture=no -p no:randomly
+35 passed, 1 warning in 25.68s (exit 0)
+```
+
+The coordinator reiterated the binding requirement that export metadata checks
+must stay off the app loop. The implementation already used the existing
+`asyncio.to_thread(self._exchange_path, path)` seam. Added an assertion to the
+existing ordinary exchange roundtrip that both import and export validation run
+on a different thread while calling the real validator. Temporarily restored
+only the old direct export call to verify that this regression genuinely fails:
+
+```text
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Workflows/test_authoring.py -k exchange_keeps -q --timeout=60 --tb=short --show-capture=no -p no:randomly
+1 failed, 23 deselected, 1 warning in 0.87s (exit 1)
+AssertionError: Exchange metadata must not block the app loop
+Failure at the export call; import metadata remained off-loop.
+```
+
+Restored the existing `to_thread` seam before final verification. No abstraction
+or UI code was added.
+
+### Final fix-round verification and self-review
+
+```text
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Workflows/test_authoring.py Tests/DB/test_workflows_authoring_storage.py -q --timeout=60 --tb=short --show-capture=no -p no:randomly
+35 passed, 1 warning in 22.80s (exit 0)
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check tldw_chatbook/Workflows/authoring.py Tests/Workflows/test_authoring.py Tests/DB/test_workflows_authoring_storage.py
+All checks passed! (exit 0)
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff format --check tldw_chatbook/Workflows/authoring.py Tests/Workflows/test_authoring.py Tests/DB/test_workflows_authoring_storage.py
+3 files already formatted (exit 0)
+
+git diff --check
+(no output; exit 0)
+```
+
+Self-review verified that the only production change is the feature-local
+preflight plus the existing off-thread export seam. `stat`/`lstat` inspect
+metadata without opening/closing database or sidecar descriptors. Both exchange
+paths reach this guard; ordinary new/overwrite export and import still use the
+existing private helpers after validation. Real writer exclusion, selected
+draft preservation, roundtrip fields, failed writes, retained cancellation,
+navigation/quit and actual exchange pickers pass the bounded suite. No 374-test
+rerun, unrelated suite or visual capture was performed for this non-UI fix.
+
+Fix commit subject: `fix(workflows): reject database aliases before file exchange`.
+The full SHA is supplied in the final handoff rather than self-referenced in this
+commit's report content. Six explicit owned paths: `Workflows/authoring.py`, its
+authoring tests, the storage tests, this report, task notes and user-guide
+clarification. Parent commit remains the coordinator's `b0ce08a093b49b7abb9652d94863e72c33a30111`;
+no shared helpers or coordinator-owned documents are staged. Backlog remains
+In Progress pending coordinator review of the fix and the existing unwaived DoD
+concerns. No push/merge/stash/reset.
