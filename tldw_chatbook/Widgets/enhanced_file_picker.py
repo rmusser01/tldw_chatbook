@@ -20,7 +20,16 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 from textual.timer import Timer
-from textual.widgets import Button, Input, Label, ListItem, ListView, OptionList, Static
+from textual.widgets import (
+    Button,
+    Footer,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    OptionList,
+    Static,
+)
 from textual.widgets.option_list import Option
 
 from ..Third_Party.textual_fspicker import Filters
@@ -1462,6 +1471,14 @@ class EnhancedFileDialog(BaseFileDialog):
                                 "Close without importing a character card."
                             )
                         yield cancel_button
+
+        # task-32606: this family mirrors the base layout by hand rather than
+        # calling it, so the base's own `Footer` never reached it -- leaving
+        # `EnhancedSelectDirectory` (the second dialog this task fixed for
+        # initial focus) still showing the HOST screen's chips through the
+        # translucent modal. Docked at screen level for the same reason as
+        # the base: see `FileSystemPickerScreen.compose`.
+        yield Footer()
 
     def on_mount(self) -> None:
         """Initialize the dialog on mount.
