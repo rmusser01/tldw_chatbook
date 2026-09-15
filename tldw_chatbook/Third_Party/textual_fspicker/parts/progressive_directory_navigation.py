@@ -443,12 +443,30 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
             self._interaction_serial += 1
 
     def _settle_highlight(self) -> None:
+        """Put the highlight on the first real row, or on ".." if there is none.
+
+        The ``elif`` is the empty-directory case, and it may only be believed
+        once NO further projection is owed. A projection reads
+        ``self._records`` when it starts and publishes when its off-loop sort
+        returns, so one that began before the scan's first batch landed
+        publishes an empty listing while ``_scan_finished`` has since become
+        True -- and this method then concluded "empty directory" and pinned
+        the highlight to ".." for good, because the guard above returns early
+        once ``highlighted`` is set.
+
+        Latent before task-32643 and timing-dependent; the folder-note badge
+        made it deterministic at 100x30 (4 runs of 4, against 0 of 4 without a
+        ``notes_context``: the picker opened with ".." highlighted, so the
+        first Enter in the listing went UP a directory). ``_projection_dirty``
+        is the same "more is owed" fact ``_settle_projection_highlight``
+        already consults one line above its call to this method.
+        """
         if self.highlighted is not None:
             return
         first_entry = 0 if self.is_root else 1
         if self.option_count > first_entry:
             self.highlighted = first_entry
-        elif self._scan_finished and self.option_count:
+        elif self._scan_finished and self.option_count and not self._projection_dirty:
             self.highlighted = 0
 
     @property

@@ -19,6 +19,8 @@ pinned on their real call sites.
 from __future__ import annotations
 
 import asyncio
+import re
+from html import unescape
 from pathlib import Path
 from threading import Event
 
@@ -40,6 +42,7 @@ from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedSelectDirectory
 pytestmark = pytest.mark.asyncio
 
 CRITIQUE_COMPACT = (100, 30)
+WIDE = (235, 52)
 
 
 class _PickerHost(App[None]):
@@ -83,6 +86,19 @@ def _rows(nav: DirectoryNavigation) -> list[str]:
     return [
         option.location.name for option in nav.options if option.location.name != ".."
     ]
+
+
+def _painted(app) -> str:
+    """What the compositor actually drew, as plain text.
+
+    The established SVG-export idiom (`test_library_media_trash
+    ._compositor_text`): a widget's `.renderable` exists whether or not it was
+    painted, while content the compositor clipped or hid never becomes a
+    `<text>` node at all. Used for the badge, which lives in a fixed-width
+    right-aligned column that a narrow terminal can drop.
+    """
+    joined = "".join(re.findall(r"<text[^>]*>([^<]*)</text>", app.export_screenshot()))
+    return unescape(joined).replace("\xa0", " ")
 
 
 def _row_text(nav: DirectoryNavigation, name: str) -> str:
@@ -346,6 +362,82 @@ async def test_folder_rows_carry_a_note_count_and_a_vault_marker(tmp_path) -> No
         )
 
 
+async def test_the_badge_and_the_marker_reach_the_screen(tmp_path) -> None:
+    """The same two facts, read off the compositor rather than the record.
+
+    At a WIDE size on purpose. A picker's listing is `height: 1fr` between a
+    lot of chrome, and at the 100x30 this file otherwise uses it has exactly
+    ONE visible content row -- a pre-existing layout fact, nothing to do with
+    badges, but enough to make a paint assertion there meaningless.
+    """
+    root = _tree(tmp_path)
+    host = _PickerHost(
+        SelectDirectory(root, title="Choose File Notes Folder", notes_context="probe")
+    )
+    async with host.run_test(size=WIDE) as pilot:
+        picker = await _wait_for_picker(pilot)
+        nav = picker.query_one(DirectoryNavigation)
+        await _wait_until(lambda: "2 notes" in _row_text(nav, "Reading"))
+        for _ in range(6):
+            await pilot.pause()
+        painted = _painted(pilot.app)
+        assert "2 notes" in painted, painted
+        assert f"Reading{pdn.VAULT_MARKER}" in painted, painted
+
+
+async def test_a_folder_door_opens_on_the_first_real_row_not_on_dot_dot(
+    tmp_path,
+) -> None:
+    """The badge work must not cost the listing its opening highlight.
+
+    A SMOKE check: its failure mode is a race, and it passed with the fix
+    reverted when run alone (conftest's imports warm the process enough to
+    lose the window). The deterministic pin for the same guard is
+    `test_an_owed_projection_blocks_the_empty_directory_fallback` below; this
+    one is here because it is the shape the user actually meets.
+
+    Regression found by probe, not by these pins: with the badge on, the
+    picker opened with ".." highlighted at 100x30 in 4 runs out of 4 (0 of 4
+    without a `notes_context`), so the first Enter inside the listing went UP
+    a directory. Cause and fix are in `_settle_highlight` -- the
+    empty-directory fallback firing while a projection was still owed.
+    """
+    root = _tree(tmp_path)
+    host = _PickerHost(
+        SelectDirectory(root, title="Choose File Notes Folder", notes_context="probe")
+    )
+    async with host.run_test(size=CRITIQUE_COMPACT) as pilot:
+        picker = await _wait_for_picker(pilot)
+        nav = picker.query_one(DirectoryNavigation)
+        # Folder-only, so the two files in the fixture are not listed.
+        await _wait_until(lambda: len(_rows(nav)) == 3)
+        for _ in range(10):
+            await pilot.pause()
+        highlighted = nav.highlighted_option
+        assert highlighted is not None
+        assert highlighted.location.name == "Archive", (
+            "the listing must open on its first real row, not on '..'; it "
+            f"opened on {highlighted.location.name!r}"
+        )
+
+
+async def test_a_genuinely_empty_folder_still_highlights_the_parent_row(
+    tmp_path,
+) -> None:
+    """Negative control for the guard above: ".." IS the answer when it is the
+    only row there is, and the fix must not have removed that case."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    host = _PickerHost(
+        SelectDirectory(empty, title="Choose File Notes Folder", notes_context="probe")
+    )
+    async with host.run_test(size=CRITIQUE_COMPACT) as pilot:
+        picker = await _wait_for_picker(pilot)
+        nav = picker.query_one(DirectoryNavigation)
+        await _wait_until(lambda: nav.highlighted is not None)
+        assert nav.highlighted_option.location.name == ".."
+
+
 async def test_a_picker_without_a_notes_context_draws_no_badge(tmp_path) -> None:
     """Negative control: "12 notes" is noise in a model-file picker."""
     root = _tree(tmp_path)
@@ -509,3 +601,48 @@ async def test_the_hint_line_renders_the_shared_wording(tmp_path) -> None:
             picker = await _wait_for_picker(pilot)
             painted = str(picker.query_one("#picker-hint-line", Static).renderable)
             assert painted == "Enter Open  ·  Select folder to use this folder"
+
+
+class _HighlightState:
+    """Exactly the five attributes `_settle_highlight` reads, nothing else."""
+
+    def __init__(self, **kwargs) -> None:
+        self.highlighted = None
+        self.is_root = False
+        self.option_count = 1
+        self._scan_finished = False
+        self._projection_dirty = False
+        self.__dict__.update(kwargs)
+
+
+def test_an_owed_projection_blocks_the_empty_directory_fallback() -> None:
+    """The guard itself, run against the production method, no race.
+
+    A projection reads `_records` when it starts and publishes when its
+    off-loop sort returns, so one that began before the scan's first batch
+    landed publishes an EMPTY listing while `_scan_finished` has since become
+    True. `_settle_highlight` then concluded "empty directory", pinned the
+    highlight to "..", and never moved it again -- the guard at the top
+    returns early once `highlighted` is set.
+    """
+    settle = pdn.ProgressiveDirectoryNavigation._settle_highlight
+
+    # The bug: only ".." published, scan over, but another projection is owed.
+    owed = _HighlightState(option_count=1, _scan_finished=True, _projection_dirty=True)
+    settle(owed)
+    assert owed.highlighted is None, (
+        "'..' must not be claimed as the answer while the listing may still grow"
+    )
+
+    # A genuinely empty directory: nothing more is owed, so ".." is the answer.
+    empty = _HighlightState(option_count=1, _scan_finished=True)
+    settle(empty)
+    assert empty.highlighted == 0
+
+    # The ordinary case is untouched either way.
+    for dirty in (True, False):
+        loaded = _HighlightState(
+            option_count=4, _scan_finished=True, _projection_dirty=dirty
+        )
+        settle(loaded)
+        assert loaded.highlighted == 1
