@@ -772,10 +772,26 @@ note — you do not have to run **Check changes**, and the row goes on saying
 produced no signal at all: Chatbook watches the folder, not the notes
 database, so a note you saved stayed in Notes only and its file kept its old
 bytes until something else touched the disk — with the row reading
-"✓ Up to date" the whole time. Chatbook still watches only while it is
-running: a note saved in one session reaches its file in that session, and a
-root whose notes changed outside a session reconciles at the next startup
-check.
+"✓ Up to date" the whole time.
+
+**What this covers, exactly: editing an existing synced note in the Library
+note editor.** That is the one write into a note that tells lasting sync
+anything. These do not, and their files stay as they are until you run
+**Check changes**, until something changes on disk, or until the next start —
+while the row goes on reading "✓ Up to date":
+
+- **New note**, including a new note created straight into a synced folder.
+- **Save as note** from Console, and the note actions on a message span.
+- A note written by Research, by an ingest job, by an MCP tool, by
+  **Import notes from files** over a note that already exists, by a generated
+  document, or by a chatbook import.
+- Deleting or restoring a note.
+
+None of that is new — before task-32604 the editor behaved the same way — but
+none of it is fixed either, so if you need one of those on disk now, run
+**Check changes** on the root and apply the review. Chatbook also watches only
+while it is running: a root whose notes changed outside a session reconciles
+at the next startup check.
 
 Tab moves through the root controls; the footer names the one you are on
 ("enter check changes", "enter pause") instead of a generic "run action", and

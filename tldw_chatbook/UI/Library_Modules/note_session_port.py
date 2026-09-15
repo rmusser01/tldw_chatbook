@@ -147,8 +147,18 @@ class _LibraryDatabaseNoteSessionPort:
 
         A saved note inside an active sync root has to reach its file on the
         same terms a disk-side edit reaches the note. The watcher signs
-        filesystem metadata only, so this -- the editor's one write seam --
-        is where the note side hands the runtime its hint.
+        filesystem metadata only, so this -- the editor's write seam for an
+        already-bound note -- is where the note side hands the runtime its
+        hint.
+
+        This is the ONLY covered write path (fix round 1 enumerated the rest;
+        task-32604's Implementation Notes carry the list). Every other write
+        into a local note still produces no signal: the update paths
+        (Research quick notes, note-import's in-place replace, delete and
+        restore) are one ``note_changed`` call away each, but the CREATE
+        paths -- New note included -- are not, because ``note_changed`` keys
+        on an existing binding and a new note has none. Covering those needs
+        a folder-membership predicate, not a binding one.
         """
         reply = await self._persist_note(note_id, expected_version, payload)
         if reply.kind is PortSaveKind.SAVED:

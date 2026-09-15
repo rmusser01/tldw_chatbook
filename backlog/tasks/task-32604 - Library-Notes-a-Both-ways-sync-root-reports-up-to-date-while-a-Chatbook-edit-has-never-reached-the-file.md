@@ -32,11 +32,11 @@ Docs contradicted: notes.md promises Receipts shows 'Wrote note to file' for a n
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 A root holding note-side changes that are not on disk never renders '✓ Up to date'; it renders an explicit pending state naming the count and the next action
+- [x] #1 After a check, a root holding note-side changes that are not on disk never renders '✓ Up to date': the row renders an explicit pending state with the next action ('◌ Changes available · Next: Review changes') and the status line beside it names the count. SHIPPED SCOPE, narrowed in fix round 1: 'never' holds after a check and for an editor save of an already-bound note (written within seconds, so the label is honest by the time it is read). It does NOT hold for the note-write paths that still produce no signal -- see the ceiling list in the Implementation Notes; those keep showing '✓ Up to date' over a stale file until a check or a disk-side change, unchanged by this task and pre-existing
 - [x] #2 A Chatbook-side save inside an active root either writes to disk on the same terms a disk-side edit is picked up, or the editor's own status line says the note is saved in Notes and not yet written to the named file
 - [x] #3 Check changes from Manage sync folders reaches the review it builds: when the plan has actions the user lands on them, and when it has none the status line says 'Nothing to review', not 'Review exact effects'
 - [x] #4 Every note-to-file write leaves the Receipts row the guide already promises, and notes.md's Receipts paragraph matches what ships
-- [x] #5 Regression test on the production runtime: note edit -> check -> the plan's update_file is reachable and applied; a row is never projected as up to date while an update_file action is pending
+- [x] #5 Regression test on the production runtime: note edit -> check -> the plan's update_file is reachable and applied; after a check, a row is never projected as up to date while an update_file action is pending. SHIPPED SCOPE, narrowed in fix round 1: the 'never' is scoped to after a check, for the same reason as AC#1
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,7 +63,21 @@ Three links, fixed at three seams; the machinery underneath was already correct.
 
 Status-line copy: "Manual check finished. N change(s) to review." (count from the plan, filtered by `NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS` so a `no_change` action is not counted) / "Nothing to review." / for offline/unsupported/paused the existing `_restate_root` restates the row.
 
-**Trade-off / ceiling.** The signal is on the editor's save seam, not on every note write. A note mutated by some other path (deletion, a future Chat-side write) still waits for the next disk-side change or the next startup check. The alternative - signing note versions inside `changed_root_ids` - would cover every path but puts a ChaChaNotes read on the watcher's polling thread once per second per root and inverts the adapter's layering; rejected.
+**Trade-off / ceiling (enumerated in fix round 1; the first wording said "deletion, a future Chat-side write" and badly understated this).** Exactly ONE write path into a local note is covered: `UI/Library_Modules/note_session_port.py:140`, the Library editor's save of an **already-bound** note. Every other path still produces no signal and waits for a disk-side change or the next startup check. They split in two, and the split matters because only the first half is cheap:
+
+*Updates to an already-bound note - one `note_changed` call away each:*
+- `Research_Workspace/local_adapter.py:389` (quick-note save of an existing note)
+- `Notes/note_import_executor.py:302` `replace_note` (Import notes from files updates existing notes in place)
+- `Notes/notes_scope_service.py:1638` `delete_note` / `:1672` `restore_note`
+
+*Creates - these would NOT be covered even if wired, because `note_changed` keys on an existing binding (`notes_sync_runtime.py:3031`, `if note_id in bound`) and a new note has none. They need a folder-membership predicate (is this note in a root's managed folder?), not a binding predicate:*
+- `UI/Screens/library_screen.py:30039` - **the Library's own New note, on the same screen as this P0**, which bypasses the port entirely with `note_id=None`
+- `UI/Console_Modules/message.py:1933/2207/2286` - Console Save-as-Note and the span actions. These are an EXISTING Chat-side write, not a future one
+- `Research_Workspace/local_adapter.py:419`, `Event_Handlers/note_ingest_events.py:557`, `MCP/local_runtime_delegate.py:602`, `Chat/document_generator.py:596`, `Chatbooks/chatbook_importer.py:2393`
+
+None of these are regressions - all pre-existing, all unchanged by this task - but "New note inside a synced folder never reaches disk until something touches the disk" is the same defect class as this P0, reachable from the same screen. Follow-up requested from the coordinator; not built here.
+
+The alternative that would have covered every path at once - signing note versions inside `changed_root_ids` - was rejected: it puts a ChaChaNotes read on the watcher's polling thread once per interval per root, and reaching the notes DB from there goes around `NotesScopeSyncAuthority` into `NotesScopeService.local_notes_service`, past the scope/policy gate the adapter otherwise always uses. `observe_versions` is async, and the watcher callback is deliberately sync and dependency-free.
 
 **Evidence.** Five tests in `Tests/UI/test_library_notes_files_sync_journey.py` on the production runtime/executor/controller stack (and, for link 3, a mounted LibraryScreen over a REAL runtime owner). Substantive REDs before the fix: `assert 'baseline' == 'edited in Chatbook'` (link 1, with only the hint call disabled), `assert 'up_to_date' == 'changes_available'` (link 2), "Check changes never reached the review it built" (link 3), `'Manual check...xact effects.' == 'Nothing to review.'` (AC#3). Live walk on a scratch profile with a 65-file git vault: `md5 People/Sam.md` 1d209615... -> 4cd06840... within 4 s of pressing Save, with nothing touching the disk, and "2026-09-15 08:06 . Wrote note to file . People/Sam.md . Sam" at the top of Receipts. Profile log: zero `unhandled_exception`, zero ERROR.
 
