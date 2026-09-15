@@ -446,21 +446,16 @@ async def test_a_recent_root_is_offered_and_enter_chooses_it(
         assert host.picked == recent
 
 
-async def test_recent_roots_write_and_read_through_one_store(
-    tmp_path, monkeypatch
-) -> None:
+async def test_recent_roots_write_and_read_through_one_store(tmp_path) -> None:
     """AC#3's persistence: the picker reads what a selection wrote.
 
-    Both halves run for real against an isolated config; only the config file
-    is redirected.
+    Both halves run for real -- a real config write and a real
+    ``RecentLocations`` read -- against the per-test config profile
+    ``Tests/conftest.py`` already isolates, so nothing here touches the user's
+    own config.toml and nothing is left pointing at a deleted file afterwards.
     """
     from tldw_chatbook import config as config_module
     from tldw_chatbook.Library import library_browse_location
-
-    profile = tmp_path / "profile.toml"
-    profile.write_text("[general]\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
-    config_module.load_settings(force_reload=True)
 
     chosen = tmp_path / "chosen"
     chosen.mkdir()

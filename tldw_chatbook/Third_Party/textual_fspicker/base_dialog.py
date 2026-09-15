@@ -1161,19 +1161,25 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     def _on_recent_selected(self, event: ListView.Selected) -> None:
         """Handle selection from recent locations.
 
-        On a dialog that can only hand back a folder, Enter on an offered root
-        IS the answer and dismisses with it (task-32643 AC#3): navigating there
-        and making the user press Select as well would leave the root two
-        keystrokes away, not one. Everywhere else it still just moves the
-        listing -- on a file picker a recent DIRECTORY is a place to look, not
-        a result.
+        On a Notes folder door, Enter on an offered root IS the answer and
+        dismisses with it (task-32643 AC#3): navigating there and making the
+        user press Select as well would leave the root two keystrokes away,
+        not one. Everywhere else it still just moves the listing -- on a file
+        picker a recent DIRECTORY is a place to look, not a result.
+
+        Keyed on ``notes_context`` and not on ``RETURNS_A_FOLDER`` alone,
+        deliberately: these entries are roots this door RETURNED, so choosing
+        one is choosing an answer. `EnhancedSelectDirectory`'s own recents are
+        places the user has been, and turning selection there into a dismiss
+        would change a picker (Personas, vLLM model directories) outside this
+        task.
         """
         if hasattr(event.item, "data") and event.item.data:
             try:
                 path = Path(event.item.data)
                 if not path.exists():
                     return
-                if self.RETURNS_A_FOLDER and path.is_dir():
+                if self._notes_context and self.RETURNS_A_FOLDER and path.is_dir():
                     self.dismiss(path)
                     return
                 dir_nav = self.query_one(DirectoryNavigation)
@@ -1208,12 +1214,20 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         left on the path field, reaching an offered root still cost a Tab walk
         through the listing, which is the navigation the recents exist to
         avoid. Focused, the first root is highlighted and Enter takes it.
+
+        Scoped to a dialog with a ``notes_context``, i.e. to the panel this
+        task actually filled. `EnhancedFileDialog` keeps its own recents list
+        and appends a "No recent files yet" placeholder row when it is empty,
+        so focusing unconditionally would strand a keyboard user on a dead
+        row in a picker nothing here asked me to change.
         """
         try:
             recent_panel = self.query_one("#recent-locations")
             recent_panel.set_class(show, "visible")
+            if not (show and self._notes_context):
+                return
             recent_list = self.query_one("#recent-list", ListView)
-            if show and recent_list.children:
+            if recent_list.children:
                 if recent_list.index is None:
                     recent_list.index = 0
                 recent_list.focus()
