@@ -14215,3 +14215,45 @@ additive to the FAILED-name-SET diff over whole files against a detached
 grep finds the dead pins that will never be red. And when one comes back:
 tighten it to the shipped string. Loosening an assertion to clear a red is a
 defect, and a pin loosened to a substring becomes the tripwire in incident 2.
+
+## Settle "did our own wave cause this?" with an A/B control, not a code read
+
+**The incident (critique #4 consolidation, 2026-09-14).** Critique #4 arrived
+with a P0 sitting directly beside wave 4's own diff: an active `⇄ Both ways`
+sync root reporting "✓ Up to date" while a note edited in Chatbook never
+reached disk — the *inverse* of the symptom wave 4's task-32534 had just
+fixed on the same surface ("Up to date" beside "Manual check failed" while
+sync wrote silently). Every available shortcut pointed the wrong way. The
+diff was large (`notes_sync_runtime.py` +484, the controller +302), the
+symptom looked like a fix's mirror image, and reading the changed hunks
+supports any story you like. This programme has already filed one P0 whose
+inferred site was wrong.
+
+**What settled it in twenty minutes.** A standalone probe — ~180 lines, no
+pytest, no fixtures — that builds the *production* runtime, executor and
+controller over a real DB and a real folder (copy the shape from
+`Tests/UI/test_library_notes_files_sync_journey.py::_start_real_conflict_stack`),
+performs the user's exact action, and prints the row projection, the status
+line, the raw plan and the bytes on disk at each step. Then run the identical
+file against the pre-wave tree:
+
+```
+git archive <pre-wave-sha> | tar -x -C /tmp/pre-wave
+cd /tmp/pre-wave && PYTHONPATH=. python /path/to/probe.py
+```
+
+`git archive` needs no worktree, mutates nothing, and takes seconds. Both runs
+printed the same row, the same status line and the same
+`[('update_file', 'note_changed')]` plan — independent of the wave, PROVEN,
+with the pre-wave run diverging only where the probe read a field the wave
+added. A `git log -S` on the same functions would have shown real churn in
+every one of them and proved nothing.
+
+**The rule.** When a finding lands next to your own diff, the evidence that
+counts is the same action measured on both trees, not an argument about the
+diff. Write the probe against production objects (a fake's `**kwargs` will
+happily accept a call the real service refuses), print state at every step
+rather than asserting one thing, and keep the probe — it is the regression
+test's first draft. If you genuinely cannot run it, say INFERRED and name the
+experiment that would settle it; never let proximity to your own change
+decide the verdict in either direction.
