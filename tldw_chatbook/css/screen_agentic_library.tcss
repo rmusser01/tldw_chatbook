@@ -2295,6 +2295,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* Toolbar Import… row (library_skills_canvas.py, Task 5): the path Input
    matches the filter box's field look; the outcome line is muted like the
    editor's save-status Static. */
+/* TASK-32655: content-width pairs fit the 32-column Items pane.
+   Import browsing and submission occupy separate rows so no action clips. */
+.library-skills-actions > .library-canvas-action {
+    width: auto;
+    min-width: $ds-size-0;
+}
+
 #library-skills-import-path {
     width: $ds-width-full;
     height: $ds-size-3;

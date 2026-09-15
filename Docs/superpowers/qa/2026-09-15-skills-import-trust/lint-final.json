@@ -1,0 +1,56 @@
+[
+  {
+    "path": "Tests/Skills/test_skills_import.py",
+    "current": 6,
+    "HEAD": 6,
+    "added": []
+  },
+  {
+    "path": "Tests/Skills/test_skills_library_flow.py",
+    "current": 5,
+    "HEAD": 5,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_widget_css_consolidation.py",
+    "current": 1,
+    "HEAD": 1,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_skills_controller.py",
+    "current": 13,
+    "HEAD": 13,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "current": 205,
+    "HEAD": 205,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/skills_screen.py",
+    "current": 7,
+    "HEAD": 7,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_skill_work_pane.py",
+    "current": 0,
+    "HEAD": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_skills_canvas.py",
+    "current": 2,
+    "HEAD": 2,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_library_skills_canvas.py",
+    "current": 6,
+    "HEAD": 6,
+    "added": []
+  }
+]

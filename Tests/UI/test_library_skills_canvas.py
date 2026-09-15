@@ -3454,7 +3454,7 @@ async def test_trust_passphrase_modal_accepts_purpose_copy():
     class _Host(ConsolidatedCSSApp):
         pass
 
-    app = _Host()
+    app = _Host(css_path=list(APP_STYLESHEETS))
     async with app.run_test() as pilot:
         modal = SkillTrustPassphraseModal(
             confirm_bootstrap=False,
@@ -3487,7 +3487,7 @@ async def test_skill_trust_library_modal_contract_exact_negative_once(
     kind: str,
     source: str,
 ) -> None:
-    app = ConsolidatedCSSApp()
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
     results: list[str | None] = []
     modal = _skill_trust_modal(kind)
     selector = f"#skill-trust-{kind}-modal"
@@ -3513,7 +3513,7 @@ async def test_skill_trust_library_modal_contract_exact_negative_once(
 async def test_skill_trust_library_modal_contract_inside_and_non_primary_stay_open(
     kind: str,
 ) -> None:
-    app = ConsolidatedCSSApp()
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
     results: list[str | None] = []
     modal = _skill_trust_modal(kind)
 
@@ -3545,7 +3545,7 @@ async def test_skill_trust_library_modal_contract_inside_and_non_primary_stay_op
 @pytest.mark.parametrize("kind", ["passphrase", "bootstrap"])
 @pytest.mark.asyncio
 async def test_skill_trust_library_modal_contract_positive_is_str(kind: str) -> None:
-    app = ConsolidatedCSSApp()
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
     results: list[str | None] = []
     modal = _skill_trust_modal(kind)
 
@@ -3567,7 +3567,7 @@ async def test_skill_trust_library_modal_contract_positive_is_str(kind: str) -> 
 @pytest.mark.parametrize("kind", ["passphrase", "bootstrap"])
 @pytest.mark.asyncio
 async def test_skill_trust_repeated_input_dismisses_once(kind: str) -> None:
-    app = ConsolidatedCSSApp()
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
     results: list[str | None] = []
     modal = _skill_trust_modal(kind)
 

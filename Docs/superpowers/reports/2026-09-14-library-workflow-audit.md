@@ -395,3 +395,30 @@ this native journey.
 
 Next: Skills import and trust journeys, then the remaining Library destinations.
 Integration into `dev` remains pending.
+
+## Skills import and trust — TASK-32655
+
+The [import and trust review](../qa/2026-09-15-skills-import-trust/README.md)
+repairs unreadable trust dialogs, narrow import actions, selected-Skill Import,
+lost Review/Cancel focus and import receipt races. Retained Items now refreshes
+after trust changes while Work is open, preserving newer editor drafts. Exact
+snapshot approval still rejects files changed after capture and permits a fresh
+review. Existing trust authority and storage contracts remain unchanged.
+
+**355 distinct targeted checks pass**, including four size/theme journeys,
+eight dialog cases, a forced delayed-event race, prior editor save/return tests,
+Skills behavior and governance. Legacy modal harnesses now load the app CSS.
+No new Ruff diagnostics or token values. Two inherited governance checks remain
+red: the unchanged 22 CSS allowlist offenders and LibraryScreen's 35,202 lines
+against 33,204. The screen is one line smaller than HEAD; no budget was raised.
+
+The final private native run passes at 170×48 dark and 80×24 light. Twelve
+rendered captures show readable dialogs, candidate controls, captured content
+and natural focus returns. Normal Ctrl+Q returned exit 0 and the owned shell
+was closed. Exact file hashes, absent unselected packages, fresh locked-to-trusted
+service reopening, ten SQLite integrity checks and zero messages were verified.
+An existing stale-approval notice can linger over the lower pane. Full app
+restart, provider execution and full-suite qualification were not performed.
+
+Next: Skills Files and supporting-file interactions, then the remaining Library
+destinations. Integration into `dev` remains pending.

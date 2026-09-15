@@ -100,7 +100,14 @@ chrome is drawn; this matches every other Library list.
 **Import skill…** opens an inline row: an input with placeholder "SKILL.md file
 or skill folder path… or GitHub/zip URL", plus **Browse…** (pick a
 SKILL.md file), **Browse folder…** (pick a skill folder), **Import**, and
-**Cancel**. A `http(s)://` value fetches the skill from that URL.
+**Cancel**. Browsing and submission use separate rows, and the list's Sort and
+Import actions stay readable in the narrow Skills pane. A `http(s)://` value
+fetches the skill from that URL.
+
+You can open Import while a Skill is selected. Save or discard any unsaved
+edits first. After an error, focus returns to the path; after a successful
+import, it moves to **Review…**. Cancelling the candidate chooser returns to
+the preserved path. These returns respect a later keyboard focus change.
 
 Only one skill import runs at a time. While Chatbook shows
 `Inspecting/importing…`, the path, Browse, Browse folder, Import, and Cancel
@@ -325,7 +332,9 @@ parentheses when something differs from the trusted baseline.
   trust passphrase to make the reviewed files the new trusted baseline.").
   If the files changed again in between: "Skill files changed after the
   review was captured, so it was discarded. Press Review changes again,
-  then Approve."
+  then Approve." Review stays visible while the captured preview expands.
+  Successful approval returns keyboard focus to the **Trust** tab and refreshes
+  the skill's state in Items.
 - **Unlock** — enabled only while trust is locked for the session.
 - **Scripts** — the panel states either "Scripts: you are asked to confirm
   each time this skill runs a script." or "Scripts: this skill may run its

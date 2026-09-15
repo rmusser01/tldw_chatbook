@@ -1246,10 +1246,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             id=LIBRARY_SKILLS_FILTER_ID,
             value=self.filter_value,
         )
-        # One horizontal ds-toolbar row for sort/Import -- mirrors
-        # library_prompts_canvas.py's toolbar exactly (same render-safe
-        # shape: every child is a fixed-width compact Button).
-        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar = Vertical(classes="ds-toolbar library-skills-actions")
         toolbar.add_class("h-auto")
         # task-14902: the sort choice strip replaces this toolbar row while
         # open (the Notes Sort precedent).
@@ -1451,7 +1448,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             value=self.import_path,
             disabled=self.import_in_flight,
         )
-        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar = Horizontal(classes="ds-toolbar library-skills-actions")
         toolbar.add_class("h-auto")
         with toolbar:
             # Browse… picks a FILE via the shared FileOpen dialog;
@@ -1472,6 +1469,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 compact=True,
                 disabled=self.import_in_flight,
             )
+        with Horizontal(classes="ds-toolbar library-skills-actions h-auto"):
             yield Button(
                 "Import",
                 id="library-skills-import-run",

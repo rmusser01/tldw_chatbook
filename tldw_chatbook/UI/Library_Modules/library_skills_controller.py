@@ -1100,7 +1100,6 @@ class LibrarySkillsController:
         if (
             result.request_token != controller.result.request_token
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
-            or self._library_skills_view != "list"
         ):
             return LibraryEntryReconcileResult.SUPERSEDED
 
@@ -1124,6 +1123,12 @@ class LibrarySkillsController:
         )
 
         def restore_focus() -> None:
+            current = self.focused
+            if (
+                current is not None and current is not focused
+                and current.parent is not None and current.id != focus_identity
+            ):
+                return
             if not focus_identity:
                 return
             if result.status == "loading" and focus_identity in {
@@ -1148,10 +1153,20 @@ class LibrarySkillsController:
                 if cursor_position is not None and isinstance(target, Input):
                     target.cursor_position = cursor_position
 
+        if self._library_skills_view == "editor":
+            # Refresh retained Items independently: Work may hold a newer draft.
+            try:
+                canvas = self.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
+            except (NoMatches, QueryError):
+                return LibraryEntryReconcileResult.FAILED
+            if focus_identity:
+                canvas.queue_default_after_recompose(restore_focus)
+            canvas.sync_state(**self._library_skills_list_canvas_kwargs())
+            return LibraryEntryReconcileResult.APPLIED
         if _sync_library_canvas(
             self,
             "skills",
-            then=restore_focus,
+            then=restore_focus if focus_identity else None,
             allow_screen_fallback=False,
         ):
             return LibraryEntryReconcileResult.APPLIED
@@ -1192,10 +1207,7 @@ class LibrarySkillsController:
             )
         else:
             controller.invalidate(refresh_scope)
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
-        ):
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
             self._request_library_skills_browse(refresh_scope)
 
     async def _load_library_skills_trust_posture(
@@ -1478,11 +1490,7 @@ class LibrarySkillsController:
         self._refresh_library_skill_script_grant()
 
     def _arm_library_skill_editor(self) -> None:
-        """Enable dirty-tracking once the skill editor's mount-time
-        ``Input.Changed``/``TextArea.Changed`` (fired for the non-empty
-        initial values) has already been delivered, so it is never mistaken
-        for a real edit.
-        """
+        """Enable dirty tracking after initial field-change events have settled."""
         self._library_skill_editor_armed = True
 
     def _enter_library_skill_create_editor(self) -> None:
@@ -1740,13 +1748,7 @@ class LibrarySkillsController:
             )
         except (NoMatches, QueryError):
             pass
-        # Task 7 (skills-script-execution): reads the CACHED grant
-        # (``_library_skill_script_grant``), never the trust service
-        # directly -- ``script_execution_granted`` re-scans the skill's
-        # on-disk directory to verify its fingerprint, which is blocking
-        # file I/O this method (called from synchronous event handlers) must
-        # not perform. ``_refresh_library_skill_script_grant`` is what keeps
-        # the cache current, off-thread.
+        # Render the cached script grant; disk scans stay in the worker.
         try:
             self.query_one("#library-skill-script-grant", Static).update(
                 skill_script_grant_line(self._library_skill_script_grant)
@@ -1756,6 +1758,11 @@ class LibrarySkillsController:
             ).disabled = not self._library_skill_script_grant
         except (NoMatches, QueryError):
             pass
+        panes = self.query("#library-skill-work-pane")
+        if panes:
+            pane = panes.first()
+            pane.call_after_refresh(pane.restore_workflow_focus)
+
 
     @on(Input.Changed, "#library-skill-name")
     def handle_library_skill_name_changed(self, event: Input.Changed) -> None:
@@ -2289,16 +2296,7 @@ class LibrarySkillsController:
         )
 
     async def _flush_library_skill_save(self) -> bool:
-        """Veto leaving the skill editor while an edit is unsaved.
-
-        Mirrors ``_flush_library_prompt_save`` exactly: the skill editor is
-        explicit-Save-only, so this simply reports whether it is safe to
-        proceed -- ``False`` whenever ``_library_skill_dirty`` is set.
-
-        Returns:
-            ``True`` when there is nothing unsaved (safe to proceed);
-            ``False`` when a dirty edit must be resolved first.
-        """
+        """Permit editor exit only when no unsaved changes remain."""
         return not self._library_skill_dirty
 
     def _notify_skill_dirty_veto(self) -> None:

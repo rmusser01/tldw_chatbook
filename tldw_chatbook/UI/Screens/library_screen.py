@@ -3825,7 +3825,6 @@ class LibraryScreen(BaseAppScreen):
             sync_view=lambda: self._sync_library_skills_browse_result,
             request_is_active=lambda: (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-                and self._skills_state.view == "list"
             ),
         )
         self._library_media_browse_controller = LibraryMediaBrowseController(
@@ -24022,21 +24021,17 @@ class LibraryScreen(BaseAppScreen):
         return self._skills_controller.handle_library_skills_retry(event)
 
     @on(Button.Pressed, "#library-skills-import")
-    def handle_library_skills_import(self, event: Button.Pressed) -> None:
-        """Open the inline Import row below the skills toolbar.
-
-        Idempotent while already open, mirrors
-        ``handle_library_prompts_import`` exactly: Cancel is the only way
-        to close the row once opened.
-
-        Args:
-            event: Button press event emitted by the "Import…" action.
-        """
+    async def handle_library_skills_import(self, event: Button.Pressed) -> None:
+        """Open import in Work, preserving any unsaved editor draft."""
         event.stop()
         if not _library_screen_is_current(self):
             return
         if self._library_skills_import_open:
             return
+        if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
+            return
+        self._skills_state.view = "list"
         if not self._library_skill_import_coordinator.open_draft():
             self._apply_library_skills_import_status(
                 "An import is already in progress."
@@ -24069,17 +24064,20 @@ class LibraryScreen(BaseAppScreen):
                 "An import is already in progress."
             )
             return
+        anchor = self.focused
         self._library_skill_import_coordinator.dismiss()
-        # task-21116: canvas-scoped close; focus returns to the Import…
-        # opener the row folds back into.
-        _sync_library_canvas(
-            self,
-            "skills",
-            then=lambda: self._focus_library_control("#library-skills-import"),
-        )
-        # The permanent Work pane settles its adaptive layout during this
-        # targeted sync, so reassert the semantic return target afterwards.
-        self.call_after_refresh(self._focus_library_control, "#library-skills-import")
+        generation = self._library_skills_import_generation
+
+        def return_to_import() -> None:
+            if (
+                self._library_skills_import_row_visible()
+                and generation == self._library_skills_import_generation
+                and self.focused in (None, anchor)
+            ):
+                self._focus_library_control("#library-skills-import")
+
+        _sync_library_canvas(self, "skills", then=return_to_import)
+        self.call_after_refresh(return_to_import)
 
     @on(Button.Pressed, "#library-skills-import-browse")
     def handle_library_skills_import_browse(self, event: Button.Pressed) -> None:
@@ -24245,7 +24243,7 @@ class LibraryScreen(BaseAppScreen):
                 current_input = self.query_one("#library-skills-import-path", Input)
             except (NoMatches, QueryError):
                 return
-            if changed_input is not current_input:
+            if changed_input is not current_input or current_input.disabled:
                 return
         if self._library_skills_import_path != event.value:
             self._library_skills_import_generation += 1
@@ -24390,7 +24388,6 @@ class LibraryScreen(BaseAppScreen):
             and self.app.screen is self
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
         ):
-            terminal_status = self._library_skills_import_status
             if refresh_sources:
                 # task-32058: the snapshot above only feeds the RAIL badge.
                 # The mounted list renders the browse controller's applied
@@ -24401,11 +24398,7 @@ class LibraryScreen(BaseAppScreen):
                 self._request_library_skills_browse(
                     self._library_skills_browse_controller.mutation_refresh_scope,
                 )
-            _sync_library_canvas(
-                self,
-                "skills",
-                then=lambda: self._apply_library_skills_import_status(terminal_status),
-            )
+            _sync_library_canvas(self, "skills")
             self.call_after_refresh(
                 self._present_library_skills_import_choice_if_needed
             )
@@ -24434,17 +24427,23 @@ class LibraryScreen(BaseAppScreen):
             ):
                 return
             if candidate is None:
+                anchor = self.focused
                 self._library_skill_import_coordinator.cancel_choice()
-                _sync_library_canvas(
-                    self,
-                    "skills",
-                    then=lambda: self._focus_library_control(
-                        "#library-skills-import-path"
-                    ),
-                )
+                generation = self._library_skills_import_generation
+
+                def return_to_path() -> None:
+                    if (
+                        self._library_skills_import_row_visible()
+                        and generation == self._library_skills_import_generation
+                        and self.focused in (None, anchor)
+                    ):
+                        self._focus_library_control("#library-skills-import-path")
+
+                _sync_library_canvas(self, "skills", then=return_to_path)
                 return
             if not self._library_skill_import_coordinator.claim_candidate(candidate):
                 return
+            self.set_focus(None)
             _sync_library_canvas(self, "skills")
             self.app.run_worker(
                 self._library_skill_import_coordinator.run_candidate(
@@ -24455,7 +24454,7 @@ class LibraryScreen(BaseAppScreen):
 
         self.app.push_screen(
             SkillImportChoiceModal(snapshot.candidates),
-            resolve,
+            lambda candidate: self.call_after_refresh(resolve, candidate),
         )
 
     @on(Button.Pressed, ".library-skill-row")

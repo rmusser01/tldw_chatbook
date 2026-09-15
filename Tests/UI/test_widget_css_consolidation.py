@@ -1088,8 +1088,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("UI/Navigation/nav_overflow_menu.py", "NavOverflowMenu", "DEFAULT_CSS"),
     ("UI/Outputs_Panel.py", "OutputsPanel", "DEFAULT_CSS"),
     ("UI/Screens/scheduling/forms/reminder_form.py", "ReminderForm", "DEFAULT_CSS"),
-    ("UI/Screens/skills_screen.py", "SkillTrustBootstrapModal", "DEFAULT_CSS"),
-    ("UI/Screens/skills_screen.py", "SkillTrustPassphraseModal", "DEFAULT_CSS"),
     ("UI/Sharing_Panel.py", "SharingPanel", "DEFAULT_CSS"),
     ("UI/Speech/speech_clone_setup.py", "SpeechCloneSetup", "DEFAULT_CSS"),
     ("UI/stts_profile_library.py", "STTSProfileLibrary", "DEFAULT_CSS"),

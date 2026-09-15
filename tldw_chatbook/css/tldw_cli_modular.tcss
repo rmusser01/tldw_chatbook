@@ -2188,6 +2188,67 @@ FileSystemPickerScreen Button:focus {
     min-width: $ds-size-12;
 }
 
+
+SkillTrustPassphraseModal,
+SkillTrustBootstrapModal {
+    align: center middle;
+}
+
+#skill-trust-passphrase-modal,
+#skill-trust-bootstrap-modal {
+    width: $ds-size-64;
+    max-width: $ds-width-full;
+    height: auto;
+    max-height: $ds-height-full;
+    border: tall $ds-control-edge;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#skill-trust-passphrase-modal Static,
+#skill-trust-bootstrap-modal Static {
+    color: $ds-text-primary;
+}
+
+#skill-trust-passphrase-message,
+#skill-trust-bootstrap-message {
+    margin: $ds-space-1 $ds-space-0;
+}
+
+#skill-trust-passphrase-input,
+#skill-trust-bootstrap-input,
+#skill-trust-bootstrap-confirm-input {
+    width: $ds-width-full;
+}
+
+#skill-trust-bootstrap-input {
+    margin-bottom: $ds-space-1;
+}
+
+#skill-trust-passphrase-modal #skill-trust-passphrase-error,
+#skill-trust-bootstrap-modal #skill-trust-bootstrap-error {
+    height: auto;
+    min-height: $ds-size-1;
+    color: $ds-status-error-readable;
+}
+
+#skill-trust-passphrase-actions,
+#skill-trust-bootstrap-actions {
+    height: $ds-control-height;
+    min-height: $ds-control-height;
+    margin-top: $ds-space-1;
+    align-horizontal: right;
+}
+
+#skill-trust-passphrase-actions Button,
+#skill-trust-bootstrap-actions Button {
+    width: $ds-size-10;
+    min-width: $ds-size-10;
+    height: $ds-control-height;
+    min-height: $ds-control-height;
+}
+
 /* ===== MODULE: components/_status.tcss ===== */
 
 

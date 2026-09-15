@@ -605,19 +605,9 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
             "onboarding-check",
             content=_skill_content(title="Onboard", description="v2"),
         )
-        # Items stays mounted in the split reader. Re-selecting the row is
-        # the direct refresh path; no round-trip through the old list-only
-        # screen state is needed.
-        screen.query_one("#library-skill-row-onboarding-check", Button).press()
-        await pilot.pause()
-        for _ in range(150):
-            state = screen._skills_state.editor_state
-            if state is not None and state.trust_blocked:
-                break
-            await pilot.pause(0.02)
-        await pilot.pause()
-        screen.query_one("#library-skill-mode-trust", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-skill-trust-region")
+        # Re-enter the route after the old trust-details recompose settles.
+        # A matching row ID alone may still identify the outgoing widget.
+        await _open_skill_editor(screen, pilot, "onboarding-check", mode="trust")
 
         assert screen._skills_state.editor_state.trust_blocked is True
         screen.query_one("#library-skill-trust-review", Button).press()

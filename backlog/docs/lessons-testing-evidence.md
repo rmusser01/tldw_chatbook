@@ -14338,3 +14338,19 @@ Use `threading.Event` for a gate crossed by the service worker and UI loops.
 An initial `asyncio.Event` gate in the held-save probe did not release across
 those loops and stalled the test process; the thread-safe gate reproduced the
 actual save race without changing production scheduling.
+
+## Retained Items needs refresh admission while Work is open (TASK-32655, 2026-09-15)
+
+After Skills trust approval, the mounted row was current but disabled. Three
+old list-only gates remained after Items became permanent: mutation refresh,
+request activity and result application. Removing only the first two still
+left the browse controller stale. Refreshing Items independently of Work fixed
+the row without replacing draft fields; the held-write editor test checks that
+newer text survives. The compact assertion must reopen Items before requiring
+`row.focusable`, because the shell intentionally disables collapsed panes.
+
+The same import journey exposed a disabled Input's delayed mount event erasing
+the committed Review receipt before replacement. A deterministic test delivers
+that event in the terminal-outcome gap, then executes an old presentation callback
+after a genuine new draft edit. This checks operation ownership without relying
+on a lucky native scheduler ordering.
