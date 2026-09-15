@@ -5,6 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-15 17:39'
+updated_date: '2026-09-15 19:11'
 labels:
   - design
   - plugins
@@ -23,10 +24,12 @@ Define a reviewable plugin system and Git marketplace experience for Chatbook, i
 - [x] #2 The companion hook spec defines events, ordering, structured effects, authority, cancellation and bounded resource behavior.
 - [x] #3 Canonical ADRs record the package and hook architecture and are linked from both specs and this task.
 - [x] #4 Document checks and a self-review resolve placeholders, broken local links and contradictory requirements; the written specs are ready for user review.
+- [x] #5 The approved written-spec review gaps are resolved consistently across both specs and ADRs, with a concrete failure/control acceptance scenario for each.
 <!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Consolidate the six approved design sections and all review amendments.
 2. Write the managed-plugin spec and companion expanded-hook-runtime spec with concrete contracts and resource limits.
 3. Record package ownership and shared hook-runtime decisions in ADR-162 and ADR-163 and link all documents.
@@ -40,6 +43,17 @@ Reason: New package storage, trust, runtime and adapter boundaries plus shared l
 ## ID allocation
 
 Created through Backlog CLI, then renumbered from its uncommitted offer of TASK-32632 to TASK-32645. Fresh origin refs, reachable object paths and 46 worktrees showed an existing maximum of TASK-32644; ADR maximum was 161. Numbers remain subject to the normal pre-merge collision check.
+
+### Approved written-spec amendments
+
+1. Separate inspection from activation when a recognized extension loses dependency information.
+2. Bind activation, selection, mappings and hook requirements into authenticated authority.
+3. Specify complete recovery snapshots, marker identity and authenticated SQLite commit evidence.
+4. Define required hook success/context, post-event failure checkpoints and master-switch behavior.
+5. Define provisional SessionStart admission and MCP initialization prerequisites/cycle rejection.
+6. Add aggregate v2 admission limits, fair scheduling and distinct notification/reaping deadlines.
+7. Add failure/control acceptance scenarios, align both ADRs, verify the documentation and commit the amendment.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
@@ -74,4 +88,10 @@ No product code changed and no runtime tests were run. Runtime acceptance,
 cross-platform qualification and implementation plans remain future work.
 Task stays In Progress for the brainstorming skill's written-spec review
 checkpoint. Implementation planning starts after the user reviews these files.
+
+Written-spec review amendment: resolved all six approved findings in the two specs and ADR-162/ADR-163. Recognized malformed extensions preserve inspection while blocking activation with lost constraints. Authenticated authority now explicitly covers activation, selection, dependency/hook policy and execution/credential mappings. Recovery names a complete protected snapshot and marker tuple, with commit proof published only after durable SQLite commit; missing proof in that crash window requires reviewed recovery.
+
+Hook definitions now distinguish required success from required nonempty context, retain requirements when hooks are disabled, and fence subsequent input after required post-event failure without replaying settled work. Provisional initialization uses ordinary authority and independently eligible connected MCP dependencies. Application-wide v2 execution/reservation/observation limits use fair admission and keep cleanup-pending children counted; notification and host-reaping deadlines are separate.
+
+Added concrete failure and successful-control acceptance scenarios for each finding. Self-review aligned failure scopes, initialization timing, recovery evidence and budget units across the specs and ADRs. Documentation checks passed for four JSON examples, 34 local links, balanced fences, unresolved-marker absence and whitespace. No runtime tests were run: the scenarios describe required implementation evidence, not implemented behavior. Implementation planning remains the next phase after written-spec review.
 <!-- SECTION:NOTES:END -->

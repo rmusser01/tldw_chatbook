@@ -34,10 +34,19 @@ Package discovery and shared execution need separate module boundaries.
    Tab focus is not a session boundary.
 3. A live hook session is tied to conversation/workspace and an immutable active
    hook set. Idle configuration replacement starts a new set explicitly;
-   required initialization precedes dependent capability admission.
+   required initialization precedes dependent capability admission. Reserve a
+   provisional session/run under normal authority and budgets; MCP initialization
+   needs already-connected, independently eligible dependencies and rejects
+   cycles. Failed initialization publishes no dependent capabilities or root Stop.
 4. Hooks may deny, add bounded untrusted context, propose complete tool inputs,
    narrow child limits or request continuation only where the event allows it.
-   Unknown/undeclared effects do not become authority.
+   Unknown/undeclared effects do not become authority. Explicit required and
+   require_context fields distinguish successful completion from mandatory
+   nonempty context, including standalone user handlers. Dependency edges retain
+   their narrower scope; explicit required handlers control their owning event.
+   Required post-event failure fences subsequent input/use without undoing settled
+   results. Disabling hooks cannot erase active requirements; required teardown,
+   approval-observation and Stop dependencies are invalid.
 5. Run input transformers in deterministic order, validate each proposal, freeze
    final arguments, run guards, then perform full existing permission review.
    Fresh dispatch checks bind approval to the actual call.
@@ -53,6 +62,10 @@ Package discovery and shared execution need separate module boundaries.
 9. V2 has explicit input/output/time/concurrency/context limits and safe
    metadata-only ordinary diagnostics. Legacy output/logging remains its named
    contract; plugins are never silently placed into legacy raw-output logging.
+   Per-runtime and application-wide v2 admission limits include provisional,
+   child, late and cleanup work, with fair queues and counted surviving children.
+   The teardown notification deadline and subsequent host-reaping allowance
+   are distinct; neither delays immediate cancellation/admission sealing.
 10. Runtime interfaces consume owned definitions and authority validators;
     they do not depend on marketplace discovery. Adapters qualify complete
     event/matcher/payload/output behavior and report stricter adaptations.

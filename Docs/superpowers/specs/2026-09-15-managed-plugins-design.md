@@ -95,7 +95,9 @@ locally shipped validation rules; it never downloads a schema during inspection.
 Core discovery uses immediate skill children and root MCP configuration.
 Schema failures use the standard's component-specific failure boundaries,
 including its documented nonfatal handling of unknown top-level manifest fields
-and malformed extensions. Every ignored item is visible in inspection.
+and malformed extensions. These are inspection boundaries, not permission to
+activate components whose required constraints were lost. Every ignored item
+is visible in inspection; activation also applies the dependency rule below.
 See [loading and discovery](https://agent-plugins.org/client-implementers/loading-and-discovery).
 
 ~~~text
@@ -146,6 +148,17 @@ Unknown versions or execution-affecting fields invalidate that extension,
 while valid portable components remain inspectable. Duplicate IDs and
 dependency cycles invalidate affected components. Unknown namespaces are ignored.
 The extension cannot override portable root identity, skills or MCP paths.
+
+If a recognized Chatbook extension is malformed or has an unsupported version,
+retain the valid portable inventory for inspection but do not assume its missing
+requires/hooks declarations were empty. Block activation of affected components;
+when their scope cannot be established, conservatively block all executable or
+automatically invoked components in that installation. An explicitly invoked
+component whose dependencies are unknown is blocked too. A reviewed narrower
+adaptation must enumerate the retained components and preserved/replaced
+constraints, with its own authenticated digest. A generic acknowledgement of
+the parser warning is insufficient. Unrecognized client namespaces alone do
+not impose this block. A corrected package receives a fresh inspection/review.
 
 An optional variables object maps configuration names to closed declarations:
 type (string, integer or boolean), required (boolean), secret (boolean) and
@@ -277,8 +290,34 @@ Extend ADR-009's passphrase-rooted trust with a separate plugin namespace and
 secure generation marker. Do not reset or migrate standalone skill trust into
 implicit plugin trust. Review covers all effective instruction/executable
 material, catalog overlays, component selection, mappings and configuration
-that can change execution or authority. Authenticity includes installation ID,
-revision digest, selected interpretation and revocation generation.
+that can change execution or authority. The versioned, deterministically encoded
+authenticated authority snapshot explicitly covers:
+
+- Installation ID, revision/content digest, acquisition/overlay identity and
+  selected dialect/adapter interpretation.
+- Selected and excluded components, dependency closure, reviewed adaptations
+  and required-hook success/context policy.
+- User-wide activation default and every named-workspace override keyed by
+  stable workspace ID, including Disabled values and the meaning of Inherit.
+- Execution-affecting configuration and exact connection/tool/model mappings,
+  including definition digests and credential reference IDs/service versions.
+- Authority/revocation generations and uninstall tombstones.
+
+Absence and explicit values have defined distinct encodings. An activation row
+or configuration mapping must match this authenticated snapshot at admission
+and use; authentic package bytes alone do not validate it. Legitimate activation,
+selection and mapping edits go through the coordinator's commit protocol even
+when the package bytes are unchanged. Display labels, cached search results,
+connection liveness and other transient readiness are not authority.
+
+Secret values remain in the credential service, never in this snapshot or its
+diagnostics. Changing a credential reference/service version invalidates the
+captured mapping until reconciled through that service and the coordinator.
+Authenticate plugin hook requirement/selection decisions, not a copy of the
+legacy user hook configuration. The live hook master switch can suppress
+execution, but switching it off cannot remove an authenticated dependency;
+affected capabilities become unready. Switching it on grants no new selection
+or trust. Existing standalone hook configuration retains its own ownership.
 
 The registry controls visibility, but an unauthenticated registry row is never
 sufficient to execute or inject content. Authentication failure or a marker
@@ -317,6 +356,10 @@ file-triggered rules. See [Cursor skills](https://cursor.com/docs/skills) and
 
 Declared dependencies are mandatory. Deselection or failure propagates to
 dependents with an explanation; it never silently broadens their tool access.
+Unknown dependency references are failures, not empty dependency lists. A
+required hook must be enabled, available and successful at its applicable event
+boundary under the companion spec's success/context rules. Disabling the hook
+master switch or an individual required handler leaves the dependency unsatisfied.
 For vendor guard hooks whose dependency scope cannot be established, treat
 all that installation's executable/automatic capabilities as dependent until
 the user reviews an explicit narrower adaptation. Plaintext can describe
@@ -529,6 +572,10 @@ The flow is Inspect → Review → Install → Configure → explicit use/test.
 Inspection/review do not execute plugin commands, hooks or MCP processes.
 Activation only makes components eligible at a subsequent runtime admission.
 Connecting/testing a server is an explicit execution action.
+SessionStart uses the companion spec's provisional admission context: an
+initialization hook can use an already-connected, independently eligible MCP
+dependency through ordinary authorization. It cannot start a disconnected
+server or borrow authority from a component still awaiting that initialization.
 
 Review is bound to installation/replacement identity, exact package/catalog
 digests, adapter interpretation, selection, dependencies, target workspace or
@@ -545,40 +592,69 @@ Trust/bootstrap and missing configuration remain visible separate gates.
 ### 8.2 Authoritative commit and recovery
 
 Use one operation_id and an authenticated write-ahead intent with old/new
-authority generations and digests. Files and derived registrations are staged
-before publication. No derived Skills/MCP entry is independently advertised
-without its active, authenticated plugin registry reference.
+marker identities. Prepare a complete resulting logical authority snapshot in
+the protected trust store, outside SQLite and package content. It contains the
+authoritative registry state needed to reconstruct all installations, selections,
+activation, mappings, revocations/tombstones and the operation result; unrelated
+installations must not disappear during recovery. Package bytes remain separate
+and must match the snapshot's digests. Secrets remain credential references.
+Use the trust service's encrypted/authenticated snapshot storage.
+
+The plugin namespace's secure marker is the tuple (generation, operation_id,
+recovery_snapshot_digest), not a generation counter alone. The prepared intent
+binds its exact old marker, proposed new marker and snapshot digest. A separate,
+domain-separated authenticated commit certificate binds the same transition;
+create it only after SQLite reports a successful durable commit, then durably
+persist it in the protected trust store outside SQLite. Do not put precomputed
+commit proof in prepared material or uncommitted SQLite/WAL pages. A prepared
+intent cannot serve as a commit certificate. Files and derived registrations
+are staged before publication. No derived Skills/MCP entry is independently
+advertised without its active, authenticated plugin registry reference.
 
 The commit order is:
 
-1. Acquire mutation ownership; validate the exact reviewed inputs again.
-2. Persist prepared immutable material and authenticated recovery intent.
+1. Acquire mutation ownership; reconcile any incomplete authority transition
+   before starting another, then validate the exact reviewed inputs again.
+2. Durably persist prepared immutable material, the complete resulting authority
+   snapshot and authenticated recovery intent.
 3. Commit registry state and operation phase atomically in SQLite.
-4. Advance the external secure trust generation marker.
-5. Publish eligible runtime projections and acknowledge completion.
+4. After successful durable commit, create and durably persist the authenticated
+   commit certificate in the protected trust store.
+5. Verify the committed state/certificate and exact old marker; advance the
+   external marker to the tuple naming this operation and recovery snapshot.
+6. Publish eligible runtime projections and acknowledge completion.
 
-Between steps 3 and 4, affected plugin authority is fenced. The operation has
+Between steps 3 and 5, affected plugin authority is fenced. The operation has
 committed state to reconcile, not permission to execute. An authenticated
 intent describes the exact approved transition; an arbitrary journal file is
-not recovery authority.
+not recovery authority. Only a matching commit certificate can advance an old
+marker during reconciliation. Once the secure marker names the new snapshot,
+that marker supplies independent commitment evidence if SQLite is later lost.
 
 | Observed durable state | Recovery |
 | --- | --- |
-| Prepared intent; registry and marker still old | Abort unpublished staging; preserve old installation. |
-| Registry new; marker old; matching authenticated intent | Keep execution blocked; complete the exact marker transition after trust unlock. |
+| Prepared intent only; no commit certificate; registry and marker still old | Abort unpublished staging; preserve old installation. |
+| Marker old; matching intent, snapshot and authenticated commit certificate | Keep execution blocked; reconstruct the exact committed registry state if rolled back, then complete the marker transition after trust unlock. Prepared evidence alone cannot promote registry rows. |
+| Registry appears new; marker old; commit certificate absent/invalid | Recovery required. A crash between database commit and certificate publication is deliberately conservative: require an explicit reviewed recovery decision, not automatic promotion from a registry phase flag. |
 | Registry and marker new; completion response missing | Rebuild projections and return the recorded committed result for the same operation_id. |
-| Marker new; registry old/missing | Fail closed. Recover the exact new state only from an authenticated committed recovery record; otherwise require recovery. |
+| Marker new; registry old/missing | Keep execution blocked. Reconstruct only from the authenticated complete snapshot whose digest and operation ID match the secure marker; validate retained package/configuration references. Missing or mismatched evidence requires recovery. |
 | Invalid journal, content mismatch, unrelated generations or corrupt registry | Quarantine affected authority; preserve evidence; do not guess defaults or overwrite it. |
 | Committed removal; filesystem cleanup failed | Keep revocation effective and report Uninstalled — cleanup pending. |
 
-The journal remains until the registry, secure marker and recoverable
-publication agree. Do not prune the only recovery record. File fsync/replace
-and directory durability follow platform-qualified storage helpers; a
-successful write call alone is not a cross-platform durability claim.
+The current marker's complete snapshot remains protected from pruning even
+after successful publication. Older journals remain until the registry, secure
+marker and recoverable publication agree. Restoring authority state does not
+restore external grants, replay operations or prove that old processes stopped;
+missing runtime/provenance evidence still follows section 8.5. Do not prune the
+only recovery record. File fsync/replace and directory durability follow
+platform-qualified storage helpers; a successful write call alone is not a
+cross-platform durability claim.
 
 Retries reconcile the same operation. A lost response cannot cause a second
 install, recreated grants or blind rollback. An independent process must be
 able to recover each interrupted transition without running plugin code.
+States marked Recovery required need an explicit reviewed decision; recovery is
+not claimed to be fully automatic when commitment evidence is missing.
 
 ### 8.3 Applying an update
 
@@ -833,6 +909,31 @@ Do not execute third-party plugin code just to establish parser compatibility.
     changed-file lint/format and document-link checks. Full suite only on
     explicit user request.
 
+Written-spec amendment scenarios are mandatory acceptance evidence:
+
+- **Lost constraints:** corrupt or raise the version of a known Chatbook
+  extension containing a required guard. Portable inventory stays inspectable,
+  but components with affected or unknown dependencies cannot activate, including
+  explicit manual invocations. A valid guarded package and an unrelated unknown
+  namespace are successful controls; a reviewed narrower adaptation preserves
+  its constraints.
+- **Authority coverage:** keep package bytes unchanged while changing a global
+  default, workspace override, component selection, required-hook policy or
+  connection/credential mapping in unauthenticated storage. Admission/use reject
+  the mismatch. The same legitimate coordinator edit succeeds and stales an
+  earlier pending review; master-off never admits a guard-dependent capability.
+- **Recovery proof:** kill the owner after each durable step. A prepared intent
+  plus fabricated new registry rows cannot advance the marker without a commit
+  certificate. A crash before certificate publication requires reviewed recovery;
+  a committed registry/certificate with the old marker completes exactly once.
+  With the new marker and a deleted registry, its matching complete snapshot
+  restores all authority, including other installations' disables/tombstones;
+  a missing/different snapshot blocks recovery. No case recreates grants or
+  starts plugin code, and surviving-process reconciliation remains necessary.
+- Required hook effects, provisional MCP initialization and aggregate admission/
+  teardown scenarios are specified in the companion hook acceptance section;
+  exercise them through plugin-owned registrations as well as standalone v2.
+
 Run UI/live verification with isolated config, data, credential and process
 roots and prove the isolation. Follow the repository's
 [testing evidence](../../../backlog/docs/lessons-testing-evidence.md) and
@@ -880,6 +981,10 @@ The written design incorporates all accepted section reviews:
   display, stable async selection, dismissal and accessible navigation.
 - Surviving children, platform evidence, dependency-aware milestones,
   independently derived fixtures, regressions/migrations and concrete limits.
+- Written-spec amendments: conservative activation after lost constraints,
+  explicit authenticated activation/mappings, marker-bound complete recovery
+  snapshots and commit certificates, required hook success/context checkpoints,
+  provisional MCP initialization, and aggregate v2/cleanup budgets.
 
 This is a proposed implementation contract, not a report of implemented
 features or passing runtime tests. The two written specs receive a final user
