@@ -101,10 +101,17 @@ Manage mode: budgets are 146/164 cells at 235x52, **25**/43 at 100x30, 50/50 at
 60x24. At 25 cells the breadcrumb paints `…pages and reflections.md` -- the
 name itself is cut. The guide now says what is true: the row spends the HEAD
 and keeps the END, as much of the name as it holds, and it names the 25-cell
-case. (The review also read the breadcrumb's 60x24 budget as 31 where I wrote
-50. Both are real: 31 before `-stack-editor-actions` applies and 50 after it
-gives the breadcrumb its own row. That the number moves mid-settle is exactly
-why the fit memoises the widths it used.)
+case. (The review also read the breadcrumb's 60x24 budget as 31 where I wrote 50.
+**Both are real, and my stated cause was wrong** -- corrected in fix round 2.
+It is not a mid-settle transient: re-measured with a file open and five pauses
+per mode, each budget is STABLE and belongs to a work mode. **31 in Manage**,
+where the Edit/Manage chips sit beside the breadcrumb and take 18 of the 50
+cells; **50 in Edit**, where the breadcrumb has the row to itself. So the
+budget moves with STATE, not with settling -- which still justifies memoising
+and bounding the fit, for the right reason. (I measured
+`-stack-editor-actions` as applied in Edit and not in Manage at this size; the
+review measured it applied in neither. That disagreement does not change the
+two budgets or the mode that owns each, and I have not chased it further.)
 
 *F8, a user-visible copy change I had not flagged.* `_exact_path_copy` makes
 the File-details line always ABSOLUTE. Before, `_apply_opened_document` and

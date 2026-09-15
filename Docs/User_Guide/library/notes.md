@@ -2153,7 +2153,9 @@ three rows of notes.*
 
 *Verified against fix/library-notes-w5-density — 2026-09-15 (task-32625, at
 100 columns): a lasting-sync review row that needs no decision now costs one
-screen row rather than three, so a 54-file vault fits 54 rows; and skipped
-content is named by FOLDER with a file count and a reason (".trash · 4 files ·
-Obsidian system folder"), the granularity Import once already uses, instead of
-one row per skipped file.*
+screen row rather than three, so a 54-file vault fits 54 rows. Skipped content
+reads the same way here as it does in Import once, and by the same rule: up to
+seven skipped files from one folder are listed one per row, and eight or more
+collapse into a single openable summary row naming the folder, the count and
+the reason. Both screens use that threshold, so the same vault never reads one
+way in Import once and another in lasting sync.*
