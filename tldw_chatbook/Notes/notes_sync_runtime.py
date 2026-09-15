@@ -3080,6 +3080,41 @@ class NotesSyncRuntimeOwner:
         self._hint_tasks[root_id] = task
         return task
 
+    async def note_changed(self, note_id: str) -> tuple[str, ...]:
+        """Hint every admitted root that binds this note (task-32604).
+
+        The note side had no change producer at all: ``changed_root_ids``
+        signs filesystem metadata only, so the polling watcher was the sole
+        source of hints and a note edited in Chatbook left its root looking
+        unchanged -- the planner's pending ``update_file`` was never run and
+        the file kept its old bytes until something touched the disk. This
+        is the note-side producer for the SAME mechanism the watcher drives
+        (:meth:`schedule_hint`), so both sides converge on one automatic
+        pass with one set of gates.
+
+        Args:
+            note_id: The note a caller just persisted.
+
+        Returns:
+            tuple[str, ...]: The root ids that were hinted, for callers that
+            report or test the signal.
+
+        Raises:
+            ValueError: If ``note_id`` is not a bounded opaque identifier.
+        """
+
+        validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        if not self._admission_open or self._status != "active":
+            return ()
+        hinted: list[str] = []
+        for root_id in self._watchable_root_ids():
+            bound = await asyncio.to_thread(
+                self._store.active_binding_note_ids, root_id
+            )
+            if note_id in bound and self.schedule_hint(root_id) is not None:
+                hinted.append(root_id)
+        return tuple(hinted)
+
     def _watchable_root_ids(self) -> tuple[str, ...]:
         return tuple(
             sorted(
