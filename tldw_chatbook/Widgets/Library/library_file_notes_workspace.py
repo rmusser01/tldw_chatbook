@@ -108,6 +108,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     PaneName,
     resolve_adaptive_reader_layout,
 )
+from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.path_validation import (
     validate_existing_absolute_directory,
@@ -148,6 +149,7 @@ FileNotesWorkMode = Literal["edit", "manage"]
 def resolve_file_note_status_channels(
     *,
     root: str | Path | None,
+    file_open: bool = True,
     conflict: bool = False,
     unavailable: bool = False,
     read_only: bool = False,
@@ -168,6 +170,12 @@ def resolve_file_note_status_channels(
 
     Args:
         root: Active Folder Files root, or ``None`` when no root is linked.
+        file_open: Whether a file is actually open in the editor. task-32621
+            AC#1 (A cap 29): with nothing selected every save-state input is
+            False, so the final ``else`` asserted "Saved" over an empty
+            editor -- a save state claimed for a file that does not exist,
+            on the one surface whose whole promise is that it edits the real
+            file.
         conflict: Whether disk and editor content conflict.
         unavailable: Whether the linked root cannot currently be reached.
         read_only: Whether the opened document cannot be edited.
@@ -209,6 +217,11 @@ def resolve_file_note_status_channels(
         content, safe = "Saving…", None
     elif dirty:
         content, safe = "Unsaved changes", None
+    elif not file_open:
+        # No "Next:" clause: this pane's safe actions name CONTROLS ("Save
+        # Copy", "Choose folder"), the tree is already the only thing to act
+        # on, and at 60x20 a sentence here is three rows of a two-row box.
+        content, safe = "No file open.", None
     else:
         content, safe = "Saved", None
 
@@ -304,6 +317,13 @@ FOLDER_FILES_EMPTY_COPY = (
     "Nothing is copied into the Library."
 )
 FILE_TREE_BATCH_SIZE = 100
+
+
+#: How many deferred re-fits one geometry change may queue before the path
+#: lines keep whatever they last fitted (task-32614, review F6). Settling took
+#: two passes in every size x mode combination measured; four is slack, and a
+#: pair of widths that alternated would otherwise re-arm each other forever.
+_PATH_FIT_ATTEMPT_LIMIT = 4
 
 
 class _ServiceLockBusy(Exception):
@@ -916,11 +936,30 @@ class LibraryFileNotesWorkspace(Vertical):
         overflow-y: auto;
     }
 
+    /* task-32614: ``Horizontal`` defaults to ``height: 1fr``, so the
+       navigator's own title row split the pane's spare rows with the tree
+       -- measured 19 rows of it at 235x52 and 9 at 100x30, all but one of
+       them blank, which is the "rows 6 through 26 are entirely blank, the
+       Search box sits at row 27" capture (B cap 35). It holds a title and
+       one button; it claims what that costs. */
+    #file-notes-tree-header {
+        height: auto;
+        min-height: 1;
+    }
+
     #file-notes-search-row,
     #file-notes-search,
     #file-notes-path {
         height: 3;
         min-height: 3;
+    }
+
+    #file-notes-tree-scope {
+        width: 100%;
+        height: auto;
+        max-height: 3;
+        color: $text-muted;
+        text-wrap: wrap;
     }
 
     #file-notes-path-row {
@@ -975,10 +1014,30 @@ class LibraryFileNotesWorkspace(Vertical):
         min-height: 1;
     }
 
+    /* task-32614: a path is one long token, and Textual folds a token that
+       does not fit at the column it runs out of. At the 34 cells a 100x30
+       terminal gave this pane, the breadcrumb broke at "2026"/"-09-14" and
+       the absolute path painted over SIX rows, broken at
+       "…m80n2j152t"/"9gw3w8qwk…" -- no separator, no ellipsis, nothing
+       saying it was cut. One row each, and ``_fit_path_surfaces``
+       middle-elides to it so the basename survives. */
     #file-notes-breadcrumb {
         width: 1fr;
         min-width: 0;
         text-style: bold;
+    }
+
+    #file-notes-breadcrumb,
+    #file-notes-exact-path {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        text-wrap: nowrap;
+        overflow: hidden hidden;
+    }
+
+    #file-notes-exact-path {
+        width: 100%;
     }
 
     #file-notes-work-header {
@@ -1295,6 +1354,15 @@ class LibraryFileNotesWorkspace(Vertical):
         self._navigator_mode_before_git: Literal["files", "search"] = "files"
         self._editor_action_layout_sync_scheduled = False
         self._editor_action_focus_target: str | None = None
+        # task-32614: one deferred re-fit is armed at a time, and it stops
+        # as soon as two consecutive fits agree on the widths they used.
+        # The attempt count is the cycle guard the flag alone is not (review
+        # F6): the flag stops RE-ENTRY, but two widths that alternate would
+        # re-arm each other forever. Converged in every size x mode measured;
+        # this bounds the pathological case instead of trusting that.
+        self._path_fit_scheduled = False
+        self._path_fit_widths: tuple[int, ...] = ()
+        self._path_fit_attempts = 0
         self._maintenance_expanded = False
         self._work_mode: FileNotesWorkMode = "edit"
         self._path_task: FileNotesPathTask = "none"
@@ -1399,6 +1467,17 @@ class LibraryFileNotesWorkspace(Vertical):
                 Button("New", id="file-notes-new", compact=True),
                 id="file-notes-tree-header",
             ),
+            # task-32621 AC#2 (A cap 29, B cap 35): the tree silently omitted
+            # notes.csv, meta.yaml, a Canvas folder and an attachments folder.
+            # The behaviour is right -- this workspace only ever edits note
+            # files (``file_notes_service.SUPPORTED_EXTENSIONS``) -- and it
+            # was the only thing on the pane not saying so, which reads as a
+            # folder whose contents went missing.
+            Static(
+                "Lists .md, .markdown, .txt and .text. Other files stay on disk.",
+                id="file-notes-tree-scope",
+                markup=False,
+            ),
             Horizontal(
                 Static(
                     "Search",
@@ -1493,6 +1572,14 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-save-status",
                 markup=False,
             ),
+            # task-32615 AC#3: this is where an action RECEIPT belongs -- it
+            # was the pane's last child, so "Committed 1 session note as
+            # c1db79e…; unrelated changes untouched." and "Commit review
+            # ready." both painted directly under the Manage region's
+            # "Danger" heading (B caps 44/47/48). Under the breadcrumb and
+            # the save state, above both regions, it reads as what it is at
+            # every one of the three sizes.
+            Static("", id="file-notes-action-status", markup=False),
             preview_status,
             Vertical(
                 self._editor_widget,
@@ -1591,7 +1678,6 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-manage-region",
             ),
             path_task,
-            Static("", id="file-notes-action-status", markup=False),
             id="file-notes-editor-pane",
         )
         return Vertical(editor_pane, id="file-notes-work")
@@ -1796,12 +1882,7 @@ class LibraryFileNotesWorkspace(Vertical):
             # semantic class while preventing a selected chip from growing
             # to two rows and clipping its label.
             button.styles.border = ("none", "transparent")
-        exact_path = self.query_one("#file-notes-exact-path", Static)
-        relative_path = self._current_path or self._selected_deleted_path
-        if relative_path and self._root is not None:
-            self._update_static_content(exact_path, str(self._root / relative_path))
-        else:
-            self._update_static_content(exact_path, relative_path or "No file selected")
+        self._fit_path_surfaces()
         self._sync_editor_action_visibility()
         self._sync_navigator_mode()
 
@@ -2163,6 +2244,7 @@ class LibraryFileNotesWorkspace(Vertical):
             authority_running = "Checking folder…"
         return resolve_file_note_status_channels(
             root=self._root,
+            file_open=opened is not None,
             repository_confirmed=self._repository_confirmed_for(binding),
             conflict=self._save_state == "conflict",
             unavailable=self._root is None or self._root_offline is True,
@@ -2258,14 +2340,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         self._active = True
         self._apply_responsive_layout(self.size.width)
-        if self._opened is not None:
-            self.query_one("#file-notes-breadcrumb", Static).update(
-                self._opened.relative_path
-            )
-        elif self._selected_deleted_path:
-            self.query_one("#file-notes-breadcrumb", Static).update(
-                f"Recently deleted: {self._selected_deleted_path}"
-            )
+        self._fit_path_surfaces()
         self._set_save_state(self._save_state, self._save_detail)
         self._sync_large_file_preview()
         self._set_action_status(self._action_detail)
@@ -2387,6 +2462,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def on_resize(self, event: Resize) -> None:
         """Choose wide or narrow panes from the mounted workspace width."""
+        self._reset_path_fit_budget()
         self._apply_responsive_layout(event.size.width)
         self.call_after_refresh(self._fit_root_status)
 
@@ -2962,6 +3038,91 @@ class LibraryFileNotesWorkspace(Vertical):
         self._apply_responsive_layout(self.size.width)
         self.call_after_refresh(self._fit_root_status)
 
+    def _exact_path_copy(self) -> str:
+        """Return the opened file's full identity, unfitted."""
+        relative_path = self._current_path or self._selected_deleted_path
+        if relative_path and self._root is not None:
+            return str(self._root / relative_path)
+        return relative_path or "No file selected"
+
+    def _breadcrumb_copy(self) -> str:
+        """Return the work header's identity line, unfitted."""
+        if self._opened is not None:
+            return self._opened.relative_path
+        if self._selected_deleted_path:
+            return f"Recently deleted: {self._selected_deleted_path}"
+        return "No file selected"
+
+    def _fit_path_surfaces(self, width: int = 0) -> None:
+        """Keep both identity lines on one row instead of folding them.
+
+        task-32614: a path is one long token, and Textual folds a token that
+        does not fit at whatever column it runs out of -- at the 34 cells a
+        100x30 terminal gave this pane, the breadcrumb broke at
+        "2026"/"-09-14" and the absolute path took six rows broken at
+        "…m80n2j152t"/"9gw3w8qwk…". ``elide_path_middle`` rather than a
+        plain truncate for the reason it was written: the basename is the
+        fragment the reader recognizes the file by, and a tail-cut spends
+        the row on ``/private/var/folders/...`` and hides it.
+
+        Args:
+            width: Settled work-pane width to fall back on when a widget has
+                not been laid out yet (``0`` to use its own region).
+
+        Returns:
+            None.
+        """
+        if not self._active or not self.is_mounted:
+            return
+        budgets: list[int] = []
+        for selector, copy in (
+            ("#file-notes-breadcrumb", self._breadcrumb_copy()),
+            ("#file-notes-exact-path", self._exact_path_copy()),
+        ):
+            try:
+                target = self.query_one(selector, Static)
+            except NoMatches:
+                continue
+            # Each line's OWN width, not the pane's: the breadcrumb shares
+            # its row with the Edit/Manage chips (31 of 49 cells at 60x24)
+            # until ``-stack-editor-actions`` gives it the row to itself
+            # (50), and a value fitted to the wrong one of those loses the
+            # basename it exists to show. The pane width is only the
+            # fallback for the paint that reveals a display-toggled region,
+            # where the widget still measures zero.
+            own_width = target.content_region.width
+            budget = (
+                own_width or width or max(self._reader_layout.reader_width - 1, 0)
+            )
+            budgets.append(budget)
+            self._update_static_content(
+                target,
+                elide_path_middle(copy, budget=budget) if budget > 0 else copy,
+            )
+        settled = tuple(budgets)
+        if (
+            settled != self._path_fit_widths
+            and not self._path_fit_scheduled
+            and self._path_fit_attempts < _PATH_FIT_ATTEMPT_LIMIT
+        ):
+            # The width this fit used is not the width the last one used, so
+            # the geometry is still moving (the stack class alone changes the
+            # breadcrumb's row twice). Come back once it has settled; when
+            # the same widths come round again this stops on its own.
+            self._path_fit_scheduled = True
+            self._path_fit_attempts += 1
+            self.call_after_refresh(self._refit_path_surfaces)
+        self._path_fit_widths = settled
+
+    def _refit_path_surfaces(self) -> None:
+        """Re-fit both identity lines against settled geometry."""
+        self._path_fit_scheduled = False
+        self._fit_path_surfaces()
+
+    def _reset_path_fit_budget(self) -> None:
+        """Give the settling loop its attempts back for a new geometry."""
+        self._path_fit_attempts = 0
+
     def _fit_root_status(self) -> None:
         """Fit the friendly root summary while retaining exact detail."""
         if not self._active or not self.is_mounted or not self.children:
@@ -3007,7 +3168,11 @@ class LibraryFileNotesWorkspace(Vertical):
             layout = resolve_adaptive_reader_layout(
                 max(width, 0),
                 preferences,
-                AdaptiveReaderLayoutProfile(work_min_width=30),
+                # Same profile the screen resolves with
+                # (``LIBRARY_FILE_NOTES_READER_PROFILE``); task-32614 dropped
+                # this destination's 30-cell work-pane floor for the shared
+                # default, so the two must not drift apart again.
+                AdaptiveReaderLayoutProfile(),
                 previous=self._reader_layout,
                 priority=priority,
             )
@@ -3191,6 +3356,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self.query_one("#file-notes-delete-spacer", Static).display = (
             delete.display and not needs_stack
         )
+        # The settled work-pane width is what the path has to fit (task-32614);
+        # this is the one hook that runs for a resize, a pane re-split and a
+        # control change alike.
+        self._fit_path_surfaces(available_width)
 
     def _rebuild_tree(self) -> None:
         if not self._active or not self.is_mounted:
@@ -5383,7 +5552,28 @@ class LibraryFileNotesWorkspace(Vertical):
             transitioning or mutation_active
         )
         self._sync_editor_read_only()
+        self._sync_editor_visibility()
         self._git_panel_widget.set_mutating(mutation_active)
+
+    def _sync_editor_visibility(self) -> None:
+        """Show the editable body only when there is a file to edit.
+
+        task-32621 AC#1 (A cap 29): with nothing selected the right pane drew
+        a full, apparently editable box beside the words "No file selected".
+        Typing into it went nowhere, on the one surface whose promise is that
+        it edits the real file. Hidden rather than unmounted: every caller
+        queries ``#file-notes-editor`` unconditionally, and the editor is a
+        retained widget this workspace constructs once.
+        """
+        editor = self._editor_widget
+        visible = self._opened is not None
+        if editor.display == visible:
+            return
+        if not visible and editor.has_focus:
+            # A hidden widget keeps focus in Textual, which strands the
+            # keyboard on a box that is not on screen.
+            self.screen.set_focus(None)
+        editor.display = visible
 
     def _sync_editor_action_disabled_presentation(self) -> None:
         """Keep every disabled editor action readable and visibly inert."""
@@ -5877,11 +6067,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._sync_editor_read_only()
         self._sync_large_file_preview()
         self.query_one("#file-notes-path", Input).value = opened.relative_path
-        self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
-        self._update_static_content(
-            self.query_one("#file-notes-exact-path", Static),
-            opened.relative_path,
-        )
+        self._fit_path_surfaces()
         if opened.editable:
             self._set_save_state("saved")
         else:
@@ -5934,8 +6120,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._sync_large_file_preview()
         if not keep_restore_path:
             self.query_one("#file-notes-path", Input).value = ""
-            self.query_one("#file-notes-breadcrumb", Static).update("No file selected")
-            self.query_one("#file-notes-exact-path", Static).update("No file selected")
+            self._fit_path_surfaces()
         self._set_delete_confirmation()
         self._set_save_state("idle")
         self._update_controls()
@@ -5951,10 +6136,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._selected_deleted_path = relative_path
         self._clear_open_document(keep_restore_path=True)
         self.query_one("#file-notes-path", Input).value = relative_path
-        self.query_one("#file-notes-breadcrumb", Static).update(
-            f"Recently deleted: {relative_path}"
-        )
-        self.query_one("#file-notes-exact-path", Static).update(relative_path)
+        self._fit_path_surfaces()
         self._set_action_status("Ready to restore.")
         if self._narrow:
             self._narrow_view = "editor"
@@ -8172,9 +8354,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._sync_work_mode()
             self._clear_open_document(keep_restore_path=True)
             self.query_one("#file-notes-path", Input).value = deleted_path
-            self.query_one("#file-notes-breadcrumb", Static).update(
-                f"Recently deleted: {deleted_path}"
-            )
+            self._fit_path_surfaces()
             if not await self._rescan_after_action():
                 return
             self._set_action_status("Deleted. Restore remains available.")

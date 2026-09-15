@@ -103,9 +103,71 @@ its link count. Those came last and were the first thing the row lost.
 _UNIFORM_RUN_MIN = UNIFORM_RUN_MIN
 
 
+#: Cells the folder prefix may keep when the FILE NAME alone overflows the
+#: row budget. Enough for "vault/Inbox/" and a "…"-headed tail of anything
+#: deeper; the rest of the budget goes to the name.
+_ROW_FOLDER_BUDGET = 20
+
+
+def _elide_name_middle(name: str, budget: int) -> str:
+    """Elide inside one file name, keeping its start and its extension."""
+    if len(name) <= budget:
+        return name
+    if budget <= 1:
+        return "…"[:budget]
+    keep = budget - 1
+    head = (keep + 1) // 2
+    tail = keep - head
+    # ``name[head - keep:]`` read as ``name[0:]`` whenever head == keep (a
+    # budget of 2), returning the WHOLE name after the ellipsis and busting
+    # the budget it was given. Take the last ``tail`` characters explicitly;
+    # a tail of 0 is the empty string, not the whole string.
+    return f"{name[:head]}…{name[len(name) - tail:] if tail else ''}"
+
+
 def bounded_row_name(name: str) -> str:
-    """Keep a review row's path recognizable without spending the whole row."""
-    return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+    """Keep a review row's path recognizable without spending the whole row.
+
+    task-32622 AC#4 (B cap 23): ``elide_path_middle`` keeps the basename
+    whole and truncates the head, which is right until the basename ALONE
+    overflows -- then it falls back to the basename's tail, so one row of a
+    review table read as a fragment ending in ".md" with its "vault/Inbox/"
+    gone, while every sibling row carried its folder. The folder is the one
+    thing that lets a reader find the file in the tree, so keep it and elide
+    inside the name instead, where the information is least: the start of a
+    file name and its extension both survive.
+    """
+    folder, separator, base = name.rpartition("/")
+    if len(name) <= _ROW_NAME_BUDGET or not separator:
+        return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+    if len(base) + len(separator) <= _ROW_NAME_BUDGET - len("…"):
+        # The FOLDER is what overflows; the existing head-truncate is right.
+        return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+    prefix = f"{folder}{separator}"
+    if len(prefix) > _ROW_FOLDER_BUDGET:
+        prefix = f"…{prefix[len(prefix) - _ROW_FOLDER_BUDGET + 1:]}"
+    return f"{prefix}{_elide_name_middle(base, _ROW_NAME_BUDGET - len(prefix))}"
+
+
+def review_row_line(*parts: str) -> str:
+    """Join one review row's clauses into the grammar both reviews use.
+
+    task-32625 AC#1/AC#4 (idea 7 of task-32627): Import once and lasting
+    sync each had their own copy of "name · what happens · where", with
+    their own trailing-punctuation rules -- which is how the two reviews
+    drifted apart in the first place. This is the one place that shape is
+    written down; the surfaces still own their own row WIDGETS, because
+    an Import row carries per-item Skip/Create/Update controls and a sync
+    row carries conflict choices and a diff.
+
+    Args:
+        *parts: Clauses in reading order. Empty ones are dropped, and each
+            keeps its own trailing full stop out of the joined line.
+
+    Returns:
+        The clauses joined with " · ".
+    """
+    return " · ".join(part.rstrip(" .") for part in parts if part)
 
 
 def group_heading(label: str, *, rendered: int, total: int) -> str:
@@ -212,10 +274,9 @@ def _run_summary(
         else f"{len(run)} of {total} files"
     )
     if first.classification in _NON_IMPORTABLE:
-        return f"{where} · {count} · {first.reason.rstrip(' .')}"
+        return review_row_line(where, count, first.reason)
     verb = "Skip" if first.action == "skip" else "Create"
-    destination = first.membership_summary.rstrip(" .")
-    return f"{where} · {count} · {verb} all · {destination}"
+    return review_row_line(where, count, f"{verb} all", first.membership_summary)
 
 
 _SOURCE_NAME_BUDGET = 48
@@ -480,6 +541,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     class RetryRequested(Message):
         """Request retry of only receipt-reported retryable failures."""
 
+    class ViewImportedNotesRequested(Message):
+        """Request the Notes list that now holds what this import created."""
+
     class PageRequested(Message):
         """Request a bounded preview-page change."""
 
@@ -742,16 +806,30 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 "Import the exact choices shown in this review."
             )
             yield submit
-        elif state.phase == "receipt" and (
-            state.retry_available or state.retryable_failures
-        ):
-            noun = "failure" if state.retryable_failures == 1 else "failures"
-            yield Button(
-                state.retry_label or f"Retry {state.retryable_failures} {noun}",
-                id="note-import-retry",
-                classes="library-canvas-action note-import-primary",
-                compact=True,
-            )
+        elif state.phase == "receipt":
+            if state.retry_available or state.retryable_failures:
+                noun = "failure" if state.retryable_failures == 1 else "failures"
+                yield Button(
+                    state.retry_label or f"Retry {state.retryable_failures} {noun}",
+                    id="note-import-retry",
+                    classes="library-canvas-action note-import-primary",
+                    compact=True,
+                )
+            if state.notes_written:
+                # task-32622 AC#1 (B cap 25): after a 54-note import the
+                # receipt offered a collapsed Skipped disclosure and "esc
+                # back to notes" -- no way forward from the biggest thing the
+                # user had done all session. The count is on the label so the
+                # control names its own destination.
+                noun = "note" if state.notes_written == 1 else "notes"
+                view = Button(
+                    f"View {state.notes_written} imported {noun}",
+                    id="note-import-view-notes",
+                    classes="library-canvas-action note-import-primary",
+                    compact=True,
+                )
+                view.tooltip = "Go to the Notes list holding these notes."
+                yield view
 
     def _compose_selection(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         count = len(state.selected_names)
@@ -994,7 +1072,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 item.membership_summary,
             )
         )
-        return " · ".join(part.rstrip(" .") for part in parts if part)
+        return review_row_line(*parts)
 
     def _compose_review_item(
         self,
@@ -1207,6 +1285,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         classification, separator, action = (event.button.name or "").rpartition(":")
         if separator and classification and action:
             self.post_message(self.GroupActionRequested(classification, action))
+
+    @on(Button.Pressed, "#note-import-view-notes")
+    def _view_imported_notes(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.ViewImportedNotesRequested())
 
     @on(Button.Pressed, "#note-import-check")
     def _check(self, event: Button.Pressed) -> None:

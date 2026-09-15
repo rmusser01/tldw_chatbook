@@ -516,6 +516,10 @@ class LibraryNotesListState:
         operation_status: Active Navigator transfer status, if any.
         operation_running: Whether Navigator actions must be gated.
         delete_receipt: Most recently deleted note available to Undo.
+        note_open: Whether a note is open in the work pane beside this list.
+            task-32616 AC#3: the list's own "Next:" is advice for a reader
+            with nothing open, so it stands down while the work pane has an
+            instruction of its own.
     """
 
     rows: tuple[LibraryNotesListRow, ...]
@@ -531,6 +535,7 @@ class LibraryNotesListState:
     operation_status: str = ""
     operation_running: bool = False
     delete_receipt: LibraryNoteDeleteReceipt | None = None
+    note_open: bool = False
 
 
 @dataclass(frozen=True)

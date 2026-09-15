@@ -89,7 +89,12 @@ goes.)
   failed Git operation, or a folder problem, takes this slot instead.
 - **Folder navigator** (left) — a **New** action, a "File contents…" search
   input, the **Files** tree of everything under the linked folder, and a
-  **Search results** tree that appears only while a query is active. Every
+  **Search results** tree that appears only while a query is active. Directly
+  under the pane's heading it states what it lists — "Lists .md, .markdown,
+  .txt and .text. Other files stay on disk." — so a `notes.csv`, a
+  `meta.yaml`, a Canvas folder or an attachments folder is explained rather
+  than silently absent: this workspace only ever edits note files, and
+  everything else in the folder is left exactly as it is. Every
   folder whose name starts with a dot is hidden — `.git`, and Obsidian's own
   `.obsidian` and `.trash` alike (task-32552); Folder files edits the folder
   in place, so those stay exactly as they are on disk, just out of the tree
@@ -104,7 +109,10 @@ goes.)
   open one; "Recently deleted: \<path\>" right after a delete), an
   Idle / Dirty / Saving / Saved / Conflict / Error status, and **Edit** /
   **Manage** modes. Edit gives the file body nearly all available space;
-  Manage groups path details, file actions, Session Git, and Danger.
+  Manage groups path details, file actions, Session Git, and Danger. With no
+  file open there is no save state and no body box: the status line reads
+  "No file open." rather than claiming a save, and the editor appears when
+  there is a file to put in it.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **‹ Files** returns to the files.
@@ -738,6 +746,43 @@ Search in directory  ^h Toggle hidden files  f5 Refresh direc`
 (`15-r1-picker-100x30.txt`). Log grep after both walks: zero
 `unhandled_exception`, zero `| ERROR`.)*
 
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32614, at
+235x52, 100x30 and 60x24 through the production Library harness): the file
+tree now fills the navigator pane instead of sharing its spare rows with the
+"Folder files" title row — 38 visible tree rows at 235x52 where there were
+20, and 18 at 100x30 where there were 10. At 100x30 the two panes divide
+46/44 rather than 56/34: Folder files uses the same 44-column work-pane floor
+as every other Library destination instead of its own 30. Both identity lines
+— the breadcrumb above the editor and the full path under **File details &
+path** — now paint on exactly one row, middle-elided with an … so the row
+spends the head of the path and keeps its end: the file's own name, or as
+much of the name as the row holds. The breadcrumb's own budget is only 25 cells at 100x30,
+narrow enough that a long daily-note name is itself cut short there; the line
+under File details keeps the whole pane width, so it holds more. Before this
+the absolute path folded over six rows at 100x30, broken inside a directory
+name.
+
+The line under File details also now always shows the absolute path. It used
+to alternate — opening a file, or selecting a deleted one, wrote the path
+relative to the folder, and switching to Manage rewrote it as the full path —
+so the same line said different things depending on what you had just done.
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32615, same
+three sizes): in Session Git's Commit workflow the Cancel/Review actions now
+sit directly under the Subject and Body they act on rather than at the pane
+floor twenty to forty rows below, and they stay on screen on a pane too short
+for the whole form. The repository-trust prompt prints the repository path on
+its own lines, broken only at "/" — the whole path, with no component split
+in half. An action receipt ("Committed 1 session note as …") now paints under
+the file's save state near the top of the Manage pane instead of below the
+"Danger" heading.*
+
+*Verified against fix/library-notes-w5-import-preview — 2026-09-15 (task-32621,
+critique #4): the Folder-files tree now states what it lists directly under its
+heading, and with no file open the work area claims no save state and shows no
+editable body. Both were measured on the pure status resolver and the pane's
+own compose; the extension list is read from
+`Notes/file_notes_service.py`'s `SUPPORTED_EXTENSIONS` rather than retyped.)*
 *Verified against fix/library-notes-w5-picker-followon — 2026-09-15
 (task-32611, task-32643). Three changes to the folder picker. (a) "Keep a
 folder synced" now opens the same folder-only dialog this door does, instead

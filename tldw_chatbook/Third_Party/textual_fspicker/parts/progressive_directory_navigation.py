@@ -64,54 +64,76 @@ choosing between folders, not a prediction of what an import will take.
 """
 
 NOTE_COUNT_CEILING = 500
-"""Hard bound on one folder's badge count (task-32643 AC#2).
+"""Hard bound on the ENTRIES READ for one folder's badge (task-32643 AC#2).
 
 Reached only by `count_folder_notes`, which reads ONE directory with a single
-`os.scandir` and never descends. The ceiling bounds the pathological case (a
-flat folder of 200k files) so a badge can never cost more than 500 `DirEntry`
-reads; past it the badge reads "500+ notes" instead of a number.
+`os.scandir` and never descends. The bound is on entries read, not on notes
+matched, because that is the work: a flat folder of 200k `.log` files holds no
+notes at all and must still cost 500 `DirEntry` reads, not 200k. A folder that
+runs out the bound reports its notes-so-far as a floor -- "12+ notes" -- since
+a partial read can only under-count.
+
+Review round 1 found the first version of this capping on notes MATCHED while
+six places said "entries read": 20 000 `.log` files plus one `.md` with
+`ceiling=3` read all 20 001. The pin could not see it either, because its
+fixture was all-`.md`, so matches and reads were the same number.
 """
 
 VAULT_MARKER = " · vault"
 """Suffix appended to an Obsidian vault's name in the listing (task-32643 AC#4)."""
 
 
-def count_folder_notes(folder: Path, ceiling: int = NOTE_COUNT_CEILING) -> int | None:
+def count_folder_notes(
+    folder: Path, ceiling: int = NOTE_COUNT_CEILING
+) -> tuple[int, bool] | None:
     """Count note files sitting DIRECTLY inside one folder. Blocking.
 
     Deliberately depth-1 and capped: a picker that walks a subtree to draw a
     badge is worse than a picker with no badge, and this programme already has
     a P0 in its history from an abandoned recursive folder scan. One
-    `os.scandir`, at most `ceiling` entries considered, no recursion, no stat
+    `os.scandir`, at most `ceiling` entries READ, no recursion, no stat
     (`DirEntry.is_file` uses the type the directory read already returned on
     every platform this app ships on).
 
+    The bound counts entries read rather than notes matched. Capping on
+    matches bounds the number but not the work -- a folder of 200k non-notes
+    matches nothing and would be walked to its end.
+
     Args:
         folder: The directory to read.
-        ceiling: Stop counting here; the caller renders the cap with a "+".
+        ceiling: Stop reading after this many entries.
 
     Returns:
-        The number of note files found, capped at `ceiling`, or None when the
-        folder cannot be read (permissions, a race, a dead symlink).
+        `(notes found, stopped early)`, or None when the folder cannot be read
+        (permissions, a race, a dead symlink). When `stopped early` is True the
+        count is a FLOOR, not a total, and the caller renders it with a "+".
+
+        A folder holding EXACTLY `ceiling` entries reports `stopped early` too:
+        distinguishing "ran out" from "fits exactly" costs one more read, and
+        "at least N" stays true either way. The round number in the bound is
+        worth more than a tight flag on one folder size.
     """
     total = 0
+    seen = 0
     try:
         with os.scandir(folder) as entries:
             for entry in entries:
+                seen += 1
                 if entry.name.startswith("."):
                     continue
                 try:
-                    if not entry.is_file():
-                        continue
+                    if entry.is_file() and (
+                        os.path.splitext(entry.name)[1].casefold() in NOTE_SUFFIXES
+                    ):
+                        total += 1
                 except OSError:
                     continue
-                if os.path.splitext(entry.name)[1].casefold() in NOTE_SUFFIXES:
-                    total += 1
-                    if total >= ceiling:
-                        return ceiling
+                finally:
+                    if seen >= ceiling:
+                        return total, True
     except OSError:
         return None
-    return total
+    return total, False
 
 
 @dataclass(frozen=True)
@@ -124,6 +146,7 @@ class FileRecord:
     metadata: os.stat_result | None = None
     metadata_loaded: bool = False
     note_count: int | None = None
+    note_count_partial: bool = False
     is_vault: bool = False
     folder_summary_loaded: bool = False
 
@@ -145,8 +168,9 @@ class FileRecord:
             # forever on a picker that did not ask for one.
             if self.note_count is None:
                 return ""
-            if self.note_count >= NOTE_COUNT_CEILING:
-                return f"{NOTE_COUNT_CEILING}+ notes"
+            if self.note_count_partial:
+                # The read bound ran out, so this is a floor, not a total.
+                return f"{self.note_count}+ notes"
             return f"{self.note_count} note" + ("" if self.note_count == 1 else "s")
         return _human_readable_size(self.metadata.st_size) if self.metadata else "—"
 
@@ -209,9 +233,12 @@ def read_folder_summary(record: FileRecord) -> FileRecord:
         return replace(record, folder_summary_loaded=True)
     from ....Notes.note_import_discovery import folder_is_obsidian_vault
 
+    counted = count_folder_notes(record.location)
+    note_count, partial = counted if counted is not None else (None, False)
     return replace(
         record,
-        note_count=count_folder_notes(record.location),
+        note_count=note_count,
+        note_count_partial=partial,
         is_vault=folder_is_obsidian_vault(record.location),
         folder_summary_loaded=True,
     )
@@ -491,6 +518,13 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
         suffix = (
             " · unavailable creation times last" if self.sort_key == "created" else ""
         )
+        # task-32622 AC#3 (B cap 20): ``count`` is everything the scan FOUND,
+        # so a folder holding three dot-entries reported "17 entries" over a
+        # list of 14 -- the reader counted the rows and found the line wrong.
+        # Say what is shown, and say that something is not.
+        shown = len(self._display_records)
+        if shown < count:
+            return f"Loaded · {shown} of {count} entries shown{suffix}"
         return f"Loaded · {count} entries{suffix}"
 
     def _notify_listing(self):

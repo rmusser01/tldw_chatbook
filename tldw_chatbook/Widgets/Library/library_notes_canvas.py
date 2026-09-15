@@ -108,6 +108,36 @@ def notes_sort_is_blocked(*, tree_projection: object, filter_value: str) -> bool
 #: that band.
 _TOOLBAR_MERGE_MIN_WIDTH = 109
 
+#: What the list's second action group is called on screen (task-32617 AC#2).
+#: The toolbars above it act on the LIST; everything under this heading acts
+#: on the folder tree and on whatever row is selected in it. The groups were
+#: already built that way -- three separately packed rows -- but nothing said
+#: so, so the reader met ten peers with no rule between them (A cap 40).
+#: Suppressed in the compact shell, whose rows are a fixed height budget.
+NOTES_TREE_ACTION_GROUP_HEADING = "Folders & placement"
+
+#: Why the three placement actions are blocked with no row selected
+#: (task-32617 AC#1). Phrased as the reason half of
+#: ``library_disabled_reason_line``, like Sort's "clear the filter".
+NOTE_ACTIONS_UNSELECTED_REASON = "select a note in the list"
+
+#: How many actions the notes list is allowed to put on screen at once.
+#:
+#: task-32617 AC#3. Assessor A counted the decision points on this row and
+#: got ten, against a four-choice checklist; the number was nobody's
+#: decision, it was whatever the last five tasks each added. This is the
+#: deliberate ceiling, and ``test_the_notes_list_action_budget_is_the_stated
+#: _number`` fails when a new action pushes past it -- which is the point:
+#: the next action has to displace one, move behind a disclosure, or move
+#: this number on purpose.
+#:
+#: The 13 are the widest composition the canvas can reach: New, Sort, Select
+#: (browse); Add from files…, Export, Manage sync folders, Last import
+#: (transfer); New folder plus the three placement actions and Restore
+#: folder (folders & placement); Clear filter (status row). Counted from the
+#: composed buttons, not by hand.
+NOTES_LIST_VISIBLE_ACTION_BUDGET = 13
+
 #: Columns a single action group needs to stay on one row. The transfer group
 #: (Add from files…, Export, Last import) is 47 cells and the folder actions
 #: (New folder, Rename, Move, Remove) are 46, so at the 44-column pane a
@@ -1183,7 +1213,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         status = state.operation_status if state is not None else ""
         running = state is not None and state.operation_running
         status = status or ("Updating notes…" if running else "Ready")
-        next_action = "" if running else "Create a note or add from files."
+        # task-32616 AC#3: measured at dev 3b26c66ce0, both panes carried a
+        # "Next:" at once and they disagreed -- this pane's "Create a note or
+        # add from files." beside the work pane's "Start typing." for the
+        # note already open (A cap 04). "Create a note" is advice for a
+        # reader with nothing open; with a note open beside it, it is advice
+        # against what they are doing. The work pane owns the instruction
+        # while it has something to instruct about.
+        #
+        # NOT the staleness the finding also alleged: cap 05 was re-derived
+        # live and the work pane's line is not stale -- after a TITLE-only
+        # edit the body really is empty, so "Start typing." is the true next
+        # step, and it becomes "Keep editing" as soon as the body has words.
+        note_open = state is not None and state.note_open
+        next_action = (
+            "" if running or note_open else "Create a note or add from files."
+        )
         return line(status, f"Next: {next_action}" if next_action else "")
 
     def _effective_pane_width(self) -> int:
@@ -2254,6 +2299,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def _compose_tree_actions(self, *, operation_running: bool) -> ComposeResult:
         """Render actions appropriate to the selected folder-tree placement."""
         buttons = self._tree_action_buttons(operation_running=operation_running)
+        if not self.compact:
+            # task-32617 AC#2: the rule, in the same `destination-section`
+            # grammar Folder files uses for "File actions" / "Session Git" /
+            # "Danger" one mode over. Costs one row, so the compact shell --
+            # whose list rows are a measured budget (task-32123/32261) --
+            # does without it.
+            yield Static(
+                NOTES_TREE_ACTION_GROUP_HEADING,
+                id="library-notes-tree-actions-heading",
+                classes="destination-section",
+                markup=False,
+            )
         rows = toolbar_action_rows(
             tuple(str(button.label) for button in buttons),
             self._effective_pane_width(),
@@ -2275,6 +2332,36 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             with container:
                 for index in row:
                     yield buttons[index]
+        if self._tree_note_actions_unselected():
+            # The reason the three placement actions above render blocked,
+            # on the shared line rather than a tooltip a TUI never paints --
+            # the same sentence, in the same place, as Sort's
+            # (task-32617 AC#1, task-32549's grammar).
+            yield Static(
+                library_disabled_reason_line(
+                    "Note actions", NOTE_ACTIONS_UNSELECTED_REASON
+                ),
+                id="library-notes-tree-actions-disabled-reason",
+                classes="library-disabled-reason",
+                markup=False,
+            )
+
+    def _tree_note_actions_unselected(self) -> bool:
+        """Return whether the blocked-note-actions reason belongs on screen.
+
+        True only when the three placement actions were composed blocked --
+        so never in the compact shell, which does not compose them at all
+        (see ``_tree_action_buttons``).
+        """
+        if self.compact:
+            return False
+        projection = self.tree_projection
+        selected = (
+            projection.row(self.tree_selected_placement_id)
+            if projection is not None and self.tree_selected_placement_id
+            else None
+        )
+        return selected is None
 
     def _tree_action_buttons(self, *, operation_running: bool) -> list[Button]:
         """Every action the selected placement offers, in composed order.
@@ -2357,64 +2444,81 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         ),
                     )
                 )
-        elif selected is not None and selected.kind == "note":
-            protected = selected.protected
+        elif selected is None or selected.kind == "note":
+            # task-32617 AC#1: this branch used to require a selected NOTE,
+            # so with none the three note actions were DROPPED rather than
+            # disabled -- proven by capture with the canvas driven directly:
+            # with `tree_selected_placement_id=""` only "New folder" is
+            # composed, filter or no filter (the critique read the vanishing
+            # as filter-caused; the filter is what LOSES the selection).
+            # Hidden controls teach the reader the feature does not exist,
+            # and Sort one control to the left already has the right
+            # pattern: disabled, marked, with its reason on the shared line.
+            note = selected
+            protected = note is not None and note.protected
+            unselected = note is None
+            if unselected and self.compact:
+                # The compact shell is a measured row budget: three blocked
+                # actions wrap its 50-cell toolbar onto two extra rows and
+                # take a third for their reason, and
+                # `test_library_note_60x20_navigator_state_allocation` reads
+                # those rows straight off the list. Same reasoning as the
+                # heading above and as task-32261's hidden select counter --
+                # this shell keeps the rows for the notes.
+                return buttons
+            unplaced = note is not None and not note.membership_id
             protected_placement_reason = (
                 "This placement is managed by sync; change its sync root instead."
             )
-            buttons.append(
-                Button(
+            for label, button_id, blocked, reason in (
+                (
                     "Add to folder",
-                    id="library-notes-placement-add",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=operation_running or selected_branch_stale,
-                    tooltip=stale_reason if selected_branch_stale else None,
-                )
-            )
-            buttons.append(
-                Button(
+                    "library-notes-placement-add",
+                    False,
+                    None,
+                ),
+                (
                     "Move note",
-                    id="library-notes-placement-move",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=operation_running or protected or selected_branch_stale,
-                    tooltip=(
-                        stale_reason
-                        if selected_branch_stale
-                        else protected_placement_reason
-                        if protected
-                        else None
-                    ),
-                )
-            )
-            buttons.append(
-                Button(
+                    "library-notes-placement-move",
+                    protected,
+                    protected_placement_reason,
+                ),
+                (
                     "Remove placement",
-                    id="library-notes-placement-remove",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=(
-                        operation_running
-                        or protected
-                        or selected_branch_stale
-                        or not selected.membership_id
+                    "library-notes-placement-remove",
+                    protected or unplaced,
+                    (
+                        protected_placement_reason
+                        if protected
+                        else "Unfiled is shown automatically; move the note "
+                        "into a folder."
                     ),
-                    tooltip=(
-                        stale_reason
-                        if selected_branch_stale
-                        else (
-                            protected_placement_reason
-                            if protected
-                            else (
-                                "Unfiled is shown automatically; move the note into a folder."
-                                if not selected.membership_id
-                                else None
-                            )
-                        )
-                    ),
+                ),
+            ):
+                disabled = (
+                    operation_running
+                    or selected_branch_stale
+                    or unselected
+                    or blocked
                 )
-            )
+                buttons.append(
+                    Button(
+                        library_disabled_action_label(label, disabled),
+                        id=button_id,
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=disabled,
+                        tooltip=(
+                            stale_reason
+                            if selected_branch_stale
+                            else NOTE_ACTIONS_UNSELECTED_REASON
+                            if unselected
+                            else reason
+                            if blocked
+                            else None
+                        ),
+                    )
+                )
         if self.tree_deleted_folder_available:
             buttons.append(
                 Button(

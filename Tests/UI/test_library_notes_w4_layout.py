@@ -568,6 +568,52 @@ async def test_resolution_history_states_its_reason_when_it_is_unreachable() -> 
 
 
 @pytest.mark.asyncio
+async def test_resolution_history_reason_clears_when_activation_lands_in_place() -> (
+    None
+):
+    """task-32610: activation used to leave this line stuck.
+
+    ``_sync_review`` -- the in-place update ``sync_state`` takes when a
+    review snapshot changes without its root_id/token/stale/page/rows/
+    receipts changing -- updated the button's own label but never the
+    separate visible reason line, so the pane still read "unavailable"
+    after the root the reason names had already been activated.
+    """
+    from Tests.Widgets.Library.test_library_notes_add_from_files_canvas import (
+        _Host,
+        _conflict_review,
+    )
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        initial_lasting_sync_snapshot,
+    )
+
+    snapshot = dataclasses.replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=dataclasses.replace(_conflict_review(), source="setup"),
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=COMPACT) as pilot:
+        await pilot.pause()
+        reason = app.query_one("#notes-sync-history-disabled-reason", Static)
+        assert reason.display is True
+
+        canvas = app.query_one("LibraryNotesAddFromFilesCanvas")
+        canvas.sync_state(
+            dataclasses.replace(
+                snapshot,
+                review=dataclasses.replace(snapshot.review, source="root"),
+            )
+        )
+        await pilot.pause()
+
+        history = app.query_one("#notes-sync-history-open", Button)
+        assert not history.disabled
+        assert str(history.label) == "Resolution history"
+        assert reason.display is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_width", [235, 100, 60])
 async def test_the_blocked_sort_reason_fits_every_pane_the_list_is_given(
     terminal_width,

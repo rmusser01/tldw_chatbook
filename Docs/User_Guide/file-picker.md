@@ -3,7 +3,12 @@
 File and folder pickers show entries as the filesystem discovers them. You can
 start browsing before the scan finishes. The status line shows **Scanning…**
 and the number of entries found, then **Loaded** when the listing is ready.
-The count includes entries hidden by the current filters; it is not a percentage.
+While scanning, the count is what has been FOUND — filters have not been
+applied yet, and it is not a percentage. The settled line counts what is on
+screen, and says so when they differ: "Loaded · 4 of 6 entries shown" when a
+dot-entry or a file filter is holding something back, and "Loaded · 6
+entries" when nothing is (task-32622: it used to report the found total over
+a shorter list, so counting the rows disagreed with the line above them).
 Enter does nothing while only the parent row is available during scanning. The
 first discovered entry receives the initial highlight; you can still explicitly
 navigate to the parent folder.

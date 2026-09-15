@@ -580,6 +580,70 @@ def test_paged_projection_renders_every_authoritative_parent_and_child_placement
     )
 
 
+def test_a_managed_active_note_row_does_not_echo_its_folders_own_badge() -> None:
+    """task-32623: the owning folder's row already reads "⇄ Sync managed" --
+    every note it manages repeating that exact fact on its own row (54
+    times, on the capture this was found from) was noise, not information.
+    The needs-attention case is real per-note information and keeps its
+    text; only the redundant "connected" echo is dropped.
+    """
+    managed = _folder("managed", None, "/Managed")
+    managed_record = NotePlacementRecord(
+        note={"id": "n1", "title": "Connected note"},
+        folder_id="managed",
+        membership=_membership(
+            "m-connected", "managed", "n1", ownership="managed", owner_id="root"
+        ),
+    )
+    inactive = _folder("inactive", None, "/Inactive")
+    inactive_record = NotePlacementRecord(
+        note={"id": "n2", "title": "Orphaned note"},
+        folder_id="inactive",
+        membership=_membership(
+            "m-inactive",
+            "inactive",
+            "n2",
+            ownership="managed",
+            owner_id="root",
+            owner_active=False,
+        ),
+    )
+    branches = {
+        NotesBranchKey(None, "folders"): _branch(
+            None, "folders", items=(managed, inactive), total=2
+        ),
+        NotesBranchKey("managed", "placements"): _branch(
+            "managed", "placements", items=(managed_record,), total=1
+        ),
+        NotesBranchKey("inactive", "placements"): _branch(
+            "inactive", "placements", items=(inactive_record,), total=1
+        ),
+    }
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states=branches,
+        expanded_folder_ids={"managed", "inactive"},
+        protected_folder_ids=frozenset({"managed", "inactive"}),
+        inactive_managed_folder_ids=frozenset({"inactive"}),
+    )
+
+    folder_row = projection.row(FolderPlacementId.folder("managed"))
+    note_row = projection.row(
+        FolderPlacementId.note("managed", "n1", "m-connected")
+    )
+    assert folder_row is not None and folder_row.status_text == "⇄ Sync managed"
+    assert note_row is not None
+    assert note_row.semantic_status == "connected"
+    assert note_row.status_text == ""
+
+    inactive_note_row = projection.row(
+        FolderPlacementId.note("inactive", "n2", "m-inactive")
+    )
+    assert inactive_note_row is not None
+    assert inactive_note_row.semantic_status == "needs_attention"
+    assert inactive_note_row.status_text == "! Needs owner review"
+
+
 def test_stale_retry_in_flight_preserves_rows_but_disables_local_control() -> None:
     record = _placement("affected", "Affected", None)
     stale_loading = _branch(

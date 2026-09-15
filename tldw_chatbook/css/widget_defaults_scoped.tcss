@@ -1212,9 +1212,13 @@
         border: solid $surface-lighten-1;
     }
 
+    /* task-32613 AC#1: heavy, not solid -- the only shape change these two
+       scroll owners get on focus (see the app-sheet block for the
+       measurement). Same one-cell geometry. */
     LibraryScreen #library-note-preview-region:focus,
     LibraryScreen #library-note-context-region:focus {
-        border: solid $accent;
+        border: heavy $accent;
+        outline: none;
         background: $boost;
     }
 

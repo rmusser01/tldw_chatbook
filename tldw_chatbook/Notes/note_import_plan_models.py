@@ -143,6 +143,31 @@ FIRST and on purpose -- a `[[Target]]` inside a fenced block or backticks is
 sample text, and rewriting it would corrupt the note.
 """
 
+EMBED_SCAN = re.compile(rf"(?P<code>{_CODE_SPAN})" r"|!\[\[(?P<target>[^\[\]]+)\]\]")
+"""One code span, or one Obsidian embed ``![[target]]``.
+
+The mirror of :data:`WIKILINK_SCAN`, whose ``(?<!!)`` deliberately refuses
+these: an embed asks Obsidian to render another file INSIDE the note, and
+nothing in Chatbook can do that, so the executor leaves the span exactly as
+the author wrote it and Preview prints it as literal text (task-32618).
+Code spans are matched first for the same reason they are there: an embed
+inside a fenced block is sample text, not an embed.
+"""
+
+
+def embedded_file_count(text: str) -> int:
+    """Count the ``![[…]]`` embeds one note body will show as literal text.
+
+    Args:
+        text: The parsed note body.
+
+    Returns:
+        How many embeds survive the import as text rather than as the file
+        they point at. Embeds inside code spans are sample text and excluded.
+    """
+    return sum(match.group("code") is None for match in EMBED_SCAN.finditer(text))
+
+
 NOTE_LINK_SCAN = re.compile(
     rf"(?P<code>{_CODE_SPAN})"
     r"|\[\[(?P<target>[^\[\]|#^]+)(?:[#^][^\[\]|]*)?"
@@ -900,6 +925,31 @@ def planned_change_count(action: ImportAction, payload_count: int) -> int:
         The number of durable outcome rows the source is worth.
     """
     return payload_count if action is ImportAction.CREATE_NEW else 1
+
+
+def item_embedded_file_count(item: ImportPreviewItem) -> int:
+    """Count the embeds this one reviewed source will leave as text.
+
+    Only the payloads whose body this item actually WRITES are counted: a
+    create writes every payload, an update writes them only when it is
+    replacing the stored content, and a skip writes nothing (task-32618).
+
+    Args:
+        item: One reviewed preview item.
+
+    Returns:
+        How many ``![[…]]`` embeds the resulting note(s) will show as text.
+    """
+    if item.selected_action is ImportAction.CREATE_NEW or (
+        item.selected_action is ImportAction.UPDATE_EXISTING and item.replace_content
+    ):
+        return sum(embedded_file_count(payload.content) for payload in item.payloads)
+    return 0
+
+
+def embedded_file_plan_count(plan: NoteImportPlan) -> int:
+    """Count every embed this plan will leave as text, across its items."""
+    return sum(item_embedded_file_count(item) for item in plan.items)
 
 
 def planned_plan_change_count(plan: NoteImportPlan) -> int:

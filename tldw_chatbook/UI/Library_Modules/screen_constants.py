@@ -64,7 +64,13 @@ LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(
     # the notes reader laid out 32/18 with nothing in the work pane.
     list_first_when_empty=True,
 )
-LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=30)
+# task-32614: was ``work_min_width=30`` -- the lowest floor of any Library
+# destination, and the reason a 100-column terminal split this pane 56/34 and
+# folded a vault path over six rows in what is left. 44 is the shared default
+# (``READER_COMFORT_WIDTH``); at 100 columns the split becomes 46/44 and at
+# 235 and 60 nothing moves. Kept in step with the standalone-harness profile
+# in ``library_file_notes_workspace._apply_responsive_layout``.
+LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile()
 LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
 LIBRARY_SKILLS_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_min_width=48,

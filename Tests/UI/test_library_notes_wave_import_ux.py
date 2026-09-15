@@ -1238,13 +1238,18 @@ def test_the_review_takes_the_pane_while_it_is_the_task_in_hand() -> None:
 
 # --- task-32256 (relationship descriptions) --------------------------------
 
+#: task-32612 extended both sentences with the consequence neither named --
+#: which of the two keeps the reader's folder structure. The pin below is
+#: unchanged in substance: whatever these sentences say, all of it has to
+#: reach the screen at all three widths.
 _IMPORT_ONCE_COPY = (
-    "Import once — Copy files into Notes. Later changes to the originals "
-    "are not tracked."
+    "Import once — Copy files into Notes, reproducing your folder structure "
+    "as Library folders. Later changes to the originals are not tracked."
 )
 _KEEP_SYNCED_COPY = (
     "Keep a folder synced — Create a lasting connection. Changes continue "
-    "between the folder and Notes."
+    "between the folder and Notes, and every note is collected in one "
+    "managed Library folder rather than your folder structure."
 )
 
 

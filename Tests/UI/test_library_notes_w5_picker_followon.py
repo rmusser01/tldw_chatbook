@@ -281,19 +281,31 @@ async def test_default_listing_order_follows_what_the_dialog_returns(
 
 
 async def test_the_folder_door_lists_folders_before_files(tmp_path) -> None:
-    """AC#4 end to end, through the real dialog and a real directory."""
+    """AC#4 end to end, through the real dialog and a real directory.
+
+    The extra file earns its place. Review round 1 found this pin passing with
+    the folders-first second sort removed, and the reason was the fixture, not
+    the dialog: casefolded, "reading" < "readme.md", so plain name order put
+    the three folders first anyway and the two orderings were the same list.
+    `AAA-first.md` sorts ahead of every folder, so name-only and folders-first
+    now disagree on row 1 and the pin can see which one ran.
+    """
     root = _tree(tmp_path)
+    (root / "AAA-first.md").write_text("x", encoding="utf-8")
     host = _PickerHost(
         FileOpen(root, title="Import once", offer_select_folder=True)
     )
     async with host.run_test(size=CRITIQUE_COMPACT) as pilot:
         picker = await _wait_for_picker(pilot)
         nav = picker.query_one(DirectoryNavigation)
-        await _wait_until(lambda: len(_rows(nav)) == 5)
+        await _wait_until(lambda: len(_rows(nav)) == 6)
+        for _ in range(5):
+            await pilot.pause()
         assert _rows(nav) == [
             "Archive",
             "Inbox",
             "Reading",
+            "AAA-first.md",
             "README.md",
             "scratch.txt",
         ]
@@ -302,22 +314,9 @@ async def test_the_folder_door_lists_folders_before_files(tmp_path) -> None:
 # --- task-32643 AC#2: a bounded note count ---------------------------------
 
 
-def test_the_note_count_reads_one_folder_and_stops_at_the_ceiling(tmp_path) -> None:
-    """AC#2: depth-1 and capped -- the badge may not walk a subtree."""
-    root = _tree(tmp_path)
-    # Two notes at the top of "Reading"; the third lives in "deeper/".
-    assert pdn.count_folder_notes(root / "Reading") == 2
-    assert pdn.count_folder_notes(root / "Inbox") == 0
-    assert pdn.count_folder_notes(root / "missing") is None
-
-    wide = tmp_path / "wide"
-    wide.mkdir()
-    for index in range(12):
-        (wide / f"n{index}.md").write_text("x", encoding="utf-8")
-    assert pdn.count_folder_notes(wide, ceiling=5) == 5
-
-    # The ceiling is a read bound, not just a display bound: the scan stops.
-    seen = 0
+def _counting_scandir(monkeypatch):
+    """Wrap `os.scandir` so a test can count the entries actually READ."""
+    seen = []
     real_scandir = pdn.os.scandir
 
     class _Counting:
@@ -329,20 +328,70 @@ def test_the_note_count_reads_one_folder_and_stops_at_the_ceiling(tmp_path) -> N
             return self._generate()
 
         def _generate(self):
-            nonlocal seen
             for entry in self._scan:
-                seen += 1
+                seen.append(entry.name)
                 yield entry
 
         def __exit__(self, *args):
             self._scan.close()
 
-    pdn.os.scandir = _Counting
-    try:
-        assert pdn.count_folder_notes(wide, ceiling=3) == 3
-    finally:
-        pdn.os.scandir = real_scandir
-    assert seen <= 3, f"the ceiling read {seen} entries, not at most 3"
+    monkeypatch.setattr(pdn.os, "scandir", _Counting)
+    return seen
+
+
+def test_the_note_count_reads_one_folder_and_stops_at_the_ceiling(
+    tmp_path, monkeypatch
+) -> None:
+    """AC#2: depth-1, and the cap is on ENTRIES READ, not on notes matched.
+
+    Review round 1: the first version capped on matches while six places said
+    "entries read", and this pin could not tell, because its fixture was
+    all-`.md` -- matches and reads were the same number. The fixture below is
+    deliberately MIXED and mostly non-notes, which is the shape that separates
+    the two: a match cap reads every one of the 40 entries, a read cap reads 3.
+    """
+    root = _tree(tmp_path)
+    # Two notes at the top of "Reading"; the third lives in "deeper/".
+    assert pdn.count_folder_notes(root / "Reading") == (2, False)
+    assert pdn.count_folder_notes(root / "Inbox") == (0, False)
+    assert pdn.count_folder_notes(root / "missing") is None
+
+    # 40 entries, only the last 4 of which are notes.
+    haystack = tmp_path / "haystack"
+    haystack.mkdir()
+    for index in range(36):
+        (haystack / f"{index:03d}.log").write_text("x", encoding="utf-8")
+    for index in range(4):
+        (haystack / f"9{index:02d}.md").write_text("x", encoding="utf-8")
+
+    seen = _counting_scandir(monkeypatch)
+    count, partial = pdn.count_folder_notes(haystack, ceiling=3)
+    assert len(seen) <= 3, (
+        f"the ceiling must bound ENTRIES READ; it read {len(seen)} of 40 "
+        "looking for notes it had no reason to expect"
+    )
+    assert partial is True, "a folder cut short must say the count is a floor"
+    assert count == 0, "none of the first 3 entries is a note"
+
+    # ...and a folder that FITS is counted exactly, with no "+".
+    seen.clear()
+    assert pdn.count_folder_notes(haystack, ceiling=100) == (4, False)
+    assert len(seen) == 40
+
+    # Exact fit reports a floor too, and that is deliberate -- see the
+    # function's docstring: a tight flag would cost one more read.
+    seen.clear()
+    assert pdn.count_folder_notes(haystack, ceiling=40) == (4, True)
+    assert len(seen) == 40
+
+    # The floor reaches the badge as a "+", and an exact count does not.
+    assert (
+        pdn.FileRecord(haystack, True, note_count=7, note_count_partial=True).size_text
+        == "7+ notes"
+    )
+    assert (
+        pdn.FileRecord(haystack, True, note_count=7).size_text == "7 notes"
+    )
 
 
 async def test_folder_rows_carry_a_note_count_and_a_vault_marker(tmp_path) -> None:

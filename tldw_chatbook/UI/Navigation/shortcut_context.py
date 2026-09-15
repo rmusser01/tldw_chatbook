@@ -17,9 +17,14 @@ class ShortcutAction:
         """Render this hint as the footer's ``key label`` fragment.
 
         Returns:
-            The single-hint text, e.g. ``"ctrl+n new"``.
+            The single-hint text, e.g. ``"ctrl+n new"``. A key-less,
+            label-only hint (e.g. Library's "typing in field" state word)
+            renders as just the label -- task-32623: unconditionally
+            prefixing ``f"{key} {label}"`` put a literal leading space in
+            front of a "" key, and a second one wherever that hint landed
+            mid-line after the `` | `` joiner already added its own.
         """
-        return f"{self.key} {self.label}"
+        return self.label if not self.key else f"{self.key} {self.label}"
 
 
 @dataclass(frozen=True)

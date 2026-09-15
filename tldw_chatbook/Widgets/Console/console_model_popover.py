@@ -44,10 +44,6 @@ from tldw_chatbook.Chat.console_settings_apply import (
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
-from tldw_chatbook.Widgets.select_values import (
-    assign_select_value,
-    select_value_or_blank,
-)
 from .console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -432,6 +428,8 @@ class ConsoleModelPopover(
 
     def compose(self) -> ComposeResult:
         """Build the provider, model, temperature, and streaming controls."""
+        from tldw_chatbook.Widgets.select_values import select_value_or_blank
+
         settings = self._draft.settings
         provider_options = self._provider_select_options()
         model_options = [
@@ -873,6 +871,8 @@ class ConsoleModelPopover(
     ) -> None:
         if not self.is_mounted:
             return
+        from tldw_chatbook.Widgets.select_values import assign_select_value
+
         settings = self._draft.settings
         self._updating_controls = True
         try:

@@ -1963,7 +1963,16 @@ def test_library_notes_focus_cues_are_visible_without_obscuring_content():
             block = css_block(text, selector)
             assert "outline: heavy" not in block
             assert "reverse" not in block
-            assert "border: solid $ds-input-focus-accent;" in block
+            # task-32613 AC#1: `heavy`, not `solid`. The old accent-coloured
+            # `solid` was the SAME glyph the blurred border already painted,
+            # so the only thing that changed on focus was colour and the two
+            # scroll owners were the one pair of Notes stops invisible in a
+            # monochrome dump. `heavy` is still one cell, still non-obscuring
+            # (it repaints border cells, not content), and `outline: none`
+            # keeps the reset's `*:focus { outline: solid }` from painting
+            # `solid` back over it.
+            assert "border: heavy $ds-input-focus-accent;" in block
+            assert "outline: none;" in block
             assert "background: $ds-input-focus-bg;" in block
 
         conflict = css_block(text, "#library-note-conflict-copy:focus")

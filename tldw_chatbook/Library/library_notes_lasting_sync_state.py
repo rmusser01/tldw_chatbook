@@ -20,7 +20,6 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     eligible_conflict_reason,
 )
 from tldw_chatbook.Notes.note_import_discovery import _MESSAGES as _DISCOVERY_MESSAGES
-from tldw_chatbook.Notes.note_import_parsers import _MESSAGES as _PARSE_MESSAGES
 from tldw_chatbook.Notes.notes_sync_models import (
     NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
     NotesSyncActionKind,
@@ -58,7 +57,6 @@ _ITEM_SKIP_EFFECTS = {
     for reason, message in _DISCOVERY_MESSAGES.items()
     if reason.startswith("obsidian_")
 } | {
-    "empty_file": _row_effect(_PARSE_MESSAGES["empty_source"]),
     # task-32605: Import once has no counterpart sentence for this -- it is
     # the one skip that exists because the OTHER path already ran.
     "already_imported": "Already imported by Import once — left as it is",
@@ -162,7 +160,10 @@ class LastingSyncSetup:
     direction: str = "bidirectional"
     server_available: bool = False
     server_disabled_reason: str = (
-        "Unavailable - server sync-folder capability not installed"
+        # task-32623: a hyphen here was the one exception to the em dash
+        # this screen otherwise uses throughout, including its own
+        # `_disabled_action_label` grammar in library_note_import_canvas.py.
+        "Unavailable — server sync-folder capability not installed"
     )
     validation_message: str = "Choose a display name, folder, and local destination."
     can_check: bool = False
@@ -695,7 +696,11 @@ def initial_lasting_sync_snapshot(
         setup=LastingSyncSetup(),
         review=LastingSyncReview(),
         roots=(),
-        status_line="Choose how files should relate to Library notes.",
+        # task-32612 AC#1: this line and the pane's own "Add files to Library
+        # notes." heading were two thirds of a three-sentence stack that asked
+        # the same question three times. The heading asks; this says where the
+        # chooser stands.
+        status_line="Nothing chosen yet.",
     )
 
 
@@ -888,11 +893,16 @@ def build_reconciliation_review(
             )
         )
     for index, item_skip in enumerate(plan.item_skips):
+        effect = _ITEM_SKIP_EFFECTS.get(item_skip.reason_code, "Skipped")
+        if item_skip.reason_code == "empty_file":
+            from tldw_chatbook.Notes.note_import_parsers import _MESSAGES
+
+            effect = _row_effect(_MESSAGES["empty_source"])
         rows.append(
             LastingSyncReviewRow(
                 item_id=f"item-skip-{index}",
                 category="skipped",
-                effect=_ITEM_SKIP_EFFECTS.get(item_skip.reason_code, "Skipped"),
+                effect=effect,
                 relative_path=item_skip.relative_path,
                 reason=item_skip.reason_code,
             )

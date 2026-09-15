@@ -14339,6 +14339,165 @@ subsystem. This also applies to reading a triage you did not write: its
 "cause" for each link is a hypothesis with the same standing as any other
 until the probe prints both sides.
 
+## A truncated FAILED list is indistinguishable from a pass (task-32625, 2026-09-15)
+
+**The incident.** To prove a new pin caught the bug it was written for, an
+implementer reverted the fix and read the resulting FAILED list through
+`head -8`. Four parametrised cases had failed; it saw two, and inferred that the
+other two had passed. It wrote that inference into the task notes as the
+interesting part — "at 8 and 11 it passed even unfixed, which is why the
+one-sided test missed it" — and from there it travelled into a review summary
+and was one round away from hardening into a lesson about threshold blindness.
+The reviewer re-ran the revert and printed the list in full: **4 of 4 failed.**
+The true-at-8-and-11 sentence was about unpatched `dev`, a different tree
+entirely.
+
+**Why it is worth a rule.** `head`, `tail`, `-x`, `--maxfail`, a scrolled
+terminal and a killed run all produce the same artifact: a FAILED list that is
+shorter than the truth, with nothing in it saying so. A short list reads as good
+news — fewer failures — which is exactly the direction that stops you looking.
+The same shape has now bitten this programme three times in one day: a shared
+ratchet red waved through without comparing its NUMBER (977 vs 980), a failure
+count read off `F`/`.` progress marks that Loguru had interleaved, and this.
+
+**The rule.** Evidence that a pin is RED is the **complete** FAILED list, with
+the summary line that says how many there were, from a run you did not truncate.
+If you must page it, page it to a file and count from `grep -c '^FAILED'`, never
+from what fits on screen. And when the interesting claim is that something
+*passed*, say which tree it passed on — "passed unfixed" is meaningless without
+naming whether that was the revert or the base.
+
+## A claim-string checker is blind by construction to composed copy (task-32625, 2026-09-15)
+
+**The incident.** `scripts/check_guide_claim_strings.py` exists because eleven
+false claims were found across three layers of this programme's own
+documentation. It ran green over a guide stanza that promised users a skipped
+folder would read `".trash · 4 files · …"` — a line the product does not produce
+at four files, and never did after the fix. Two more false sentences sat beside
+it, also green.
+
+**Why it could not have caught them.** The checker matches quoted strings in
+prose against string literals in source. That line is **composed at runtime** by
+`review_row_line` out of a folder, a count and a reason; it exists nowhere in
+the tree as a literal, so there is nothing for the checker to match and nothing
+for it to contradict. The gate proves a quoted string is emitted somewhere. It
+cannot prove the sentence around it is true, and it is blind by construction to
+any copy the code assembles rather than stores.
+
+**The rule.** A green claim-checker is not evidence that a guide is honest. For
+any sentence describing composed output — a row, a summary line, a status
+string, anything built from parts — the evidence is a rendered sample at the
+size and state the sentence describes, not a grep. Write the sentence as a rule
+the reader can predict and check ("up to seven listed one per row, eight or more
+collapsed"), not as a specimen output, because a specimen is a claim about a
+literal the checker cannot see.
+
+## The revert-to-RED check also catches a fix that fixes nothing (task-32616, 2026-09-15)
+
+**The incident.** Critique #4 reported that the Notes editor's status line goes
+stale: "after typing, the editor's still reads 'Next: Start typing.'" The
+plausible cause was right there — task-32062's focus guard returns from
+`sync_state` before anything repaints while the title or body has focus. I
+wrote the obvious fix (update the authority `Static` inside the skip, the way
+the import and lasting-sync skips above it already do), wrote the pin, and the
+pin passed.
+
+Then the standing rule — revert the fix, record the RED — was applied. **The
+test passed with the fix reverted.** The line was never stale: after a
+TITLE-only edit the body really is empty, so "Start typing." is the true next
+step, and it becomes "Keep editing" the moment the body has words. Three prints
+against the real screen settled it:
+
+```
+AT OPEN:     'Saved · Next: Start typing.'
+AFTER TITLE: 'Unsaved changes · Next: Start typing.'      <- still true
+AFTER BODY:  'Unsaved changes · Next: Keep editing; …'
+```
+
+The assessor had typed a title, not a body. What was actually wrong was beside
+it: the LIST pane was carrying a second, disagreeing "Next:" at the same time.
+The shipped fix stands that one down; the authority-Static change was deleted
+rather than shipped unpinned, since it also partly undoes a ceiling that skip's
+own comment documents.
+
+**The rule.** The revert-to-RED check is usually read as "prove the test is
+wired to the fix". It is also the cheapest detector of a fix aimed at a cause
+that was never true — and a plausible mechanism sitting in the same function as
+the symptom is exactly when that happens. If the pin passes with the fix
+reverted, do not tighten the pin: go and measure whether the finding reproduces
+at all.
+
+**A trap in the revert harness itself.** If you script the revert/restore with
+a backup directory, do NOT reuse it across runs (`if not bak.exists(): copy`).
+A second run restored a file from a snapshot the FIRST run had taken, silently
+rolling back an edit made in between; it was caught only because a test that
+had been green went red. Delete the backup directory between runs, or key it by
+run.
+
+## The restore that ends a revert-check can eat the fix you were testing (wave 5, 2026-09-15)
+
+**The incidents, two of them in one day.** Proving a pin RED means putting the
+bug back, running, and putting the fix back. Both halves of that are edits, and
+the "put it back" half is where the work goes missing:
+
+- One implementer ended a revert-check with `git checkout -- <file>`. The fix
+  under test was **uncommitted**, so the checkout restored the file to HEAD and
+  silently deleted it. The script's own "source clean" line printed happily.
+- Another ran a restore in the background while still editing the same file.
+  The restore landed second and clobbered the later edit.
+
+Both were caught, and neither by the restore step reporting a problem — the
+first by grepping for the fix's own expression afterwards instead of trusting
+the script, the second by noticing the file had gone backwards.
+
+**Why it is worth a rule.** A revert-check inverts your usual safety: the state
+you must protect is the *working tree*, not the commit, because the thing you are
+proving is not committed yet. `git checkout -- <file>`, `git restore`, and
+`git stash` all mean "throw away the working tree", which during a revert-check
+means "throw away the fix".
+
+**The rule.** Do revert-checks on a **copy**: `cp file file.bak`, break it, run,
+`cp file.bak file`. Never `git checkout`/`git restore`/`git stash` a file whose
+uncommitted content is the thing under test. Never run a restore in the
+background while editing the same file. And verify the restore by **grepping for
+the fix's own text**, not by reading a script's success line — a restore that
+did the wrong thing succeeds just as loudly as one that did the right thing.
+
+Commit the fix first where you can: a committed fix makes the whole class
+impossible, at the cost of one amend.
+
+## A comparison run that never collected scores as perfectly green (wave 5, 2026-09-15)
+
+**The incident.** A branch was being compared against dev the cheap way — swap
+dev's copy of a file in with `git show origin/dev:<path>`, run, swap back — to
+avoid a second worktree on a full disk. Mid-round, dev moved. The newer
+`library_screen.py` referenced `ViewImportedNotesRequested`, a symbol with zero
+occurrences in the branch's canvas file, so every swapped run **died at import**.
+
+Collection failure gives `rc=2`, and:
+
+```
+grep -c '^FAILED'   →  0
+grep -c '^ERROR'    →  1
+```
+
+A harness counting only `^FAILED` read the dev side as **zero failures**. An
+unrun baseline does not score badly; it scores *perfectly*, and it biases the
+comparison in the one direction that matters — toward "no regression here".
+
+**The rule.** Pin the **SHA**, never the branch name, for any baseline you are
+comparing against: `git show <sha>:<path>`, not `git show origin/dev:<path>`. A
+moving baseline silently changes what you measured halfway through. And count
+`^ERROR` alongside `^FAILED`, or assert the collected test count matches what
+you expected — a run that collected nothing is not evidence of anything.
+
+**The family this belongs to.** Four wrong numbers passed as evidence in a single
+day on this programme, each one reading as good news: a ratchet red on both sides
+whose *values* differed (977 vs 980); a failure count read off `F`/`.` progress
+marks that Loguru had interleaved; a FAILED list truncated by `head -8`, whose
+missing entries were inferred to have passed; and this. The common shape is that
+every one of them is a number you did not compute, from output you did not fully
+read, in the direction you were hoping for.
 ## A pin for a RACE has to be a pin for the GUARD, not for the race (task-32643, 2026-09-15)
 
 **The incident.** The folder-note badge added work to the picker's
