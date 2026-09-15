@@ -89,7 +89,12 @@ goes.)
   failed Git operation, or a folder problem, takes this slot instead.
 - **Folder navigator** (left) — a **New** action, a "File contents…" search
   input, the **Files** tree of everything under the linked folder, and a
-  **Search results** tree that appears only while a query is active. Every
+  **Search results** tree that appears only while a query is active. Directly
+  under the pane's heading it states what it lists — "Lists .md, .markdown,
+  .txt and .text. Other files stay on disk." — so a `notes.csv`, a
+  `meta.yaml`, a Canvas folder or an attachments folder is explained rather
+  than silently absent: this workspace only ever edits note files, and
+  everything else in the folder is left exactly as it is. Every
   folder whose name starts with a dot is hidden — `.git`, and Obsidian's own
   `.obsidian` and `.trash` alike (task-32552); Folder files edits the folder
   in place, so those stay exactly as they are on disk, just out of the tree
@@ -104,7 +109,10 @@ goes.)
   open one; "Recently deleted: \<path\>" right after a delete), an
   Idle / Dirty / Saving / Saved / Conflict / Error status, and **Edit** /
   **Manage** modes. Edit gives the file body nearly all available space;
-  Manage groups path details, file actions, Session Git, and Danger.
+  Manage groups path details, file actions, Session Git, and Danger. With no
+  file open there is no save state and no body box: the status line reads
+  "No file open. Next: Choose a file in the tree" rather than claiming a
+  save, and the editor appears when there is a file to put in it.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **‹ Files** returns to the files.
@@ -673,3 +681,9 @@ gained the note that a brand-new profile has no Browse section — see
 unchanged. Not re-walked live: this page's Git chapter was corrected against
 the widget's own compose, not a capture, and says so rather than carrying a
 capture it does not have.)*
+*Verified against fix/library-notes-w5-import-preview — 2026-09-15 (task-32621,
+critique #4): the Folder-files tree now states what it lists directly under its
+heading, and with no file open the work area claims no save state and shows no
+editable body. Both were measured on the pure status resolver and the pane's
+own compose; the extension list is read from
+`Notes/file_notes_service.py`'s `SUPPORTED_EXTENSIONS` rather than retyped.)*
