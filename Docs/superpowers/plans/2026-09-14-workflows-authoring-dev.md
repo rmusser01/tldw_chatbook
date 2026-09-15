@@ -48,7 +48,7 @@ Reason: authoring-only implementation of the accepted design; ADR-125 and ADR-15
 - Reuses DocumentService(db) and DraftSession(documents, ...) signatures from the reviewed source; app.workflow_documents and app.workflow_drafts remain the UI injection points.
 - Workflows/authoring.py provides a lazy app-owned authoring session: await open(), await flush(), await close(); concrete app hooks may use that one object rather than copy the old runtime coordinator. No setup until the user enters Workflows, and a failed flush must not erase its draft.
 
-- [ ] **Step 1: Prove the behavior is missing before porting.**
+- [x] **Step 1: Prove the behavior is missing before porting.**
   Copy the reviewed tests first using apply_patch; their absent production imports establish the initial port RED. Add a behavior test for restart persistence and one for a foreign writer:
   ```python
   with first.transaction() as cursor:
@@ -59,7 +59,7 @@ Reason: authoring-only implementation of the accepted design; ADR-125 and ADR-15
   BEGIN IMMEDIATE in transaction() holds the real writer exclusion even for this read. Port the existing real subprocess probe mechanics from the parked regression file, but only constructor/ordinary-authoring paths; no runtime locks or extra helper operations.
   Run the document/draft tests and the new storage regression alone; record exact RED causes. Tests must name observable lost edits, lost isolation, unavailable controls or changed fields.
 
-- [ ] **Step 2: Port the authoring storage and services.**
+- [x] **Step 2: Port the authoring storage and services.**
   Use the source's normal transaction/migration loop and this connection seam:
   ```python
   self._connection = connect_private_sqlite(
@@ -70,20 +70,32 @@ Reason: authoring-only implementation of the accepted design; ADR-125 and ADR-15
   Keep normal RLock/BEGIN/commit/rollback/cursor cleanup. Remove the source constructor's raw file pinning and ALL WorkflowRuntimeLock/execution methods. Do not replace them with bespoke identity/helper protocols. Keep v1-v4 migrations immutable. Register only the workflow domain in the current shared registry and inventory.
   Reuse DocumentService and DraftSession including opaque-number preservation, revision conflict detection, generation checks and invalid-buffer recovery. Run their targeted tests and the storage regression.
 
-- [ ] **Step 3: Prove and implement real app composition/exchange.**
+- [x] **Step 3: Prove and implement real app composition/exchange.**
   Add actual lifecycle tests that enter Workflows, create/edit a definition, navigate away, quit, reopen the same private temporary DB, and read the draft/revision. Inject write refusal and prove the exact draft stays available; no success toast on failure.
   Add explicit JSON import/export tests using a temporary file with an opaque metadata field and a stable step ID; assert both survive import, edit of a different field, saved revision and export.
   Use the existing path/accessor and file picker APIs. Put potentially slow DB/file operations off the UI thread. Wire only authoring initialization/flush/close into app hooks; no runtime or Notes/provider graph. Keep existing current-screen and Console quit guards.
   Run Tests/Workflows/test_authoring.py and the relevant current navigation/quit tests.
 
-- [ ] **Step 4: Port and adapt the reviewed screen.**
+- [x] **Step 4: Port and adapt the reviewed screen.**
   Port the editor-only source, its six local modules and real editor tests. Before UI edits read the Impeccable craft floor and repo design constitution; inherit the approved layout and dev visual world.
   Add tests for actual three-pane selection, independent collapses, validation without focus theft, hidden-pane traversal, import/export controls, and disabled Run with no runtime/lock module imported or lock file created.
   Keep current Console-follow controls functional in a secondary region; refresh only that region, not the authoring subtree. Use globals for F6 and current navigation guards. Reuse source width behavior and migrate touched styles onto existing tokens.
   Build source CSS with `python tldw_chatbook/css/build_css.py`; run editor tests and only the affected Workflows cases from the existing destination/Console/navigation files.
 
-- [ ] **Step 5: Verify and report the complete authoring slice.**
+- [x] **Step 5: Verify and report the complete authoring slice.**
   Run one final targeted selection of Workflows, new DB authoring tests, private-owner inventory, relevant app/navigation/quit tests, and token/bundle checks. No whole Tests/UI or whole repository sweep.
   Check Ruff/format on changed files. Report existing-file baseline debt separately; do not suppress or waive it. Run git diff --check.
   Document source reuse, actual initialized files, no-execution boundary, size/privacy handling for exchange, test commands/results and any remaining failures. Coordinator performs actual capture/review handoff.
   Commit only explicit task-owned paths after checking the staged diff; do not push, merge, reset, stash or change either preserved branch.
+
+## Implementation evidence
+
+Implementation: `a1f47397eb1a7d62117707df914b63a8ad050998`.
+Detailed report: `.superpowers/sdd/2026-09-14-workflows-authoring-dev/task-1-report.md`
+(committed at `7eeed1efb13d9ad91b8c5e90a379c6ec1c91c58b`).
+Final targeted selections: 355 passed plus 19 passed, 276 unrelated cases deselected.
+New Workflows module/test lint and formatting and diff-check pass. Shared touched
+files retain 713 baseline Ruff findings and five baseline formatter failures;
+these are not waived. Completing the implementation steps does not mark the
+Backlog task Done. Task code review and final branch review are separate gates.
+Visual evidence and scoped correction verdict: Docs/superpowers/qa/workflows-authoring-dev/README.md.

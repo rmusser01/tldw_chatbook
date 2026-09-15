@@ -14616,3 +14616,18 @@ right answer and the wrong answer coincide. Both produce a green suite that
 means nothing, and both are invisible unless you break the fix and watch the
 pin fail *for the reason you expect*. "It went red" is not enough; read the
 message.
+
+## A visible field and label do not prove the field's value paints (TASK-32601, 2026-09-14)
+
+The authoring-only Workflows port's first narrow-screen correction passed checks
+for a painted Prompt label and a hit-testable TextArea. The actual 60x20 app
+capture still showed an empty field: inherited vertical padding and borders left
+its four-row region with zero content rows. The populated reference was absent
+from raw Textual SVG too, so font conversion was not the cause. A feature-local
+compact padding correction restored the value without changing shared tokens.
+
+For compact editors, test nonempty content through the real app's stylesheet and
+ancestor hierarchy. Assert the label, expected value, focus and nonzero content
+area together; mounted widgets and hit tests alone miss clipped interior text.
+Keep raw compositor output alongside converted screenshots to distinguish layout
+failures from capture/font failures.
