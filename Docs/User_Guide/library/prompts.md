@@ -328,6 +328,9 @@ and the rail count refresh while your text fields stay open. Basic, Advanced
 and Info reflect the saved record; **Back to list** clears the editor and
 returns to the current list.
 
+When you resize the terminal, the focused Basic or Advanced field stays visible
+with its text intact. If you move focus during resizing, that newer choice wins.
+
 **Use in Console** sits in the editor **header**, on its own row directly
 under **Basic | Advanced | Info** — the same shape the Media Reader uses for
 its own Use in Console, and not at the bottom of the editor below every

@@ -7827,6 +7827,13 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_notes_stage_visibility()
         self._apply_library_note_presentation_state()
         self._apply_library_notes_footer_context()
+        if self._library_selected_row_id in {
+            LIBRARY_ROW_BROWSE_PROMPTS,
+            LIBRARY_ROW_CREATE_PROMPT,
+        }:
+            # Prompt work fields have no Notes semantic role. Restoring that
+            # tuple falls back to the rail and steals the retained editor focus.
+            return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA and self.query(
             ".library-media-route"
         ):

@@ -955,6 +955,7 @@ async def test_bulk_mode_keeps_loaded_prompt_as_labelled_read_only_preview(
             lambda: (
                 work.query_one("#library-prompt-bulk-status", Static).display
                 and work.query_one("#library-prompt-name", Input).disabled
+                and work.query_one("#library-prompt-system", TextArea).read_only
             ),
             message="Prompt bulk preview did not become read-only",
         )

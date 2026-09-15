@@ -1,0 +1,304 @@
+{
+  "pid": 87681,
+  "steps": [
+    {
+      "theme": "textual-dark",
+      "mode": "basic",
+      "size": [
+        170,
+        48
+      ],
+      "focus": "library-prompt-user",
+      "region": [
+        98,
+        32,
+        70,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "mode": "basic",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "library-prompt-user",
+      "region": [
+        10,
+        10,
+        69,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "mode": "basic",
+      "size": [
+        170,
+        48
+      ],
+      "focus": "library-prompt-user",
+      "region": [
+        98,
+        32,
+        70,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "mode": "basic",
+      "size": [
+        170,
+        24
+      ],
+      "focus": "library-prompt-user",
+      "region": [
+        98,
+        13,
+        69,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "mode": "advanced",
+      "size": [
+        170,
+        48
+      ],
+      "focus": "prompt-block-content-message",
+      "region": [
+        102,
+        10,
+        62,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "mode": "advanced",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "prompt-block-content-message",
+      "region": [
+        14,
+        15,
+        62,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "mode": "advanced",
+      "size": [
+        170,
+        48
+      ],
+      "focus": "prompt-block-content-message",
+      "region": [
+        102,
+        16,
+        62,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "mode": "advanced",
+      "size": [
+        170,
+        24
+      ],
+      "focus": "prompt-block-content-message",
+      "region": [
+        102,
+        14,
+        62,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "mode": "basic",
+      "size": [
+        170,
+        48
+      ],
+      "focus": "library-prompt-user",
+      "region": [
+        98,
+        32,
+        70,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "mode": "basic",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "library-prompt-user",
+      "region": [
+        10,
+        10,
+        69,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "mode": "basic",
+      "size": [
+        170,
+        48
+      ],
+      "focus": "library-prompt-user",
+      "region": [
+        98,
+        32,
+        70,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "mode": "basic",
+      "size": [
+        170,
+        24
+      ],
+      "focus": "library-prompt-user",
+      "region": [
+        98,
+        13,
+        69,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "mode": "advanced",
+      "size": [
+        170,
+        48
+      ],
+      "focus": "prompt-block-content-message",
+      "region": [
+        102,
+        10,
+        62,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "mode": "advanced",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "prompt-block-content-message",
+      "region": [
+        14,
+        15,
+        62,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "mode": "advanced",
+      "size": [
+        170,
+        48
+      ],
+      "focus": "prompt-block-content-message",
+      "region": [
+        102,
+        16,
+        62,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "mode": "advanced",
+      "size": [
+        170,
+        24
+      ],
+      "focus": "prompt-block-content-message",
+      "region": [
+        102,
+        14,
+        62,
+        6
+      ],
+      "painted": true,
+      "preferences_unchanged": true,
+      "browse_generation_unchanged": true
+    }
+  ],
+  "native_resize": true,
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "prompt_id": 6,
+  "passed": true,
+  "quit_size": [
+    80,
+    24
+  ],
+  "normal_quit_requested": true,
+  "app_run_returned": true
+}

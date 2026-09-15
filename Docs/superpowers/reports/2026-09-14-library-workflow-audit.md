@@ -208,3 +208,25 @@ run qualifies a provider interaction or complete app startup/shutdown.
 Basic/Advanced coverage is complete for this journey; responsive focus and the
 remaining Prompt actions, Skills, Collections, ingestion and other destinations
 remain in the feature review. Integration into dev is still pending.
+
+## Prompt resize focus — TASK-32602
+
+The [resize evidence](../qa/2026-09-15-prompt-resize/README.md) closes the
+cross-size focus gap. Prompt routes no longer apply the Notes fallback that
+moved focus to the rail. The work pane scrolls its current focused descendant
+into view after layout, preserving newer focus choices and existing text fields.
+No source requests or reader-preference writes occur during resize.
+
+Verification: **58 Prompt/resize checks**, **6 neighboring Notes focus checks**,
+and **31 governance checks** passed. Two neighboring tests now wait for the
+relevant rendered control or use an actual keyboard event; their original
+behavioral assertions remain. Static review adds no Ruff diagnostics.
+
+The private native run passed **16 actual terminal resize cases** in Basic and
+Advanced, dark and light themes. It exited normally from 80×24 with a fresh
+exit-0 receipt and observed shell return, resolving the outstanding compact
+shutdown qualification for this run. Existing startup warnings remain recorded.
+
+Next in the feature review: remaining Prompt actions and recovery paths, then
+Skills, Collections, ingestion and other destinations. Integration into `dev`
+remains pending.

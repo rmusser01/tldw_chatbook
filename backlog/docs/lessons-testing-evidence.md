@@ -4,6 +4,16 @@ Working knowledge about testing in this repo. Not decisions (see `backlog/decisi
 and not point-in-time audits — these are traps that have actually cost time here, kept
 so the next person does not rediscover them.
 
+## Use actual input when asserting a newer user-focus generation
+
+**TASK-32602, 2026-09-15.** The neighboring Notes stale-restore test failed
+against both the Prompt repair and the unchanged Notes transition. Calling
+`Button.press()` had already moved focus programmatically to Preview; a later
+`preview.focus()` produced no new focus event and could not advance user intent.
+Activating the button with keyboard Enter established the input boundary, and
+the original stale-restore and scroll assertions passed. Focus being present is
+not evidence that a new user action occurred.
+
 ## Retained fields do not certify the surrounding saved state
 
 **TASK-32603, 2026-09-14.** Retaining the first-saved Prompt TextArea passed

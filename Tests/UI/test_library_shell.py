@@ -32933,7 +32933,8 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
             focus_generation=stale_generation
         )
 
-        screen.query_one("#library-note-preview").press()
+        screen.query_one("#library-note-preview").focus()
+        await pilot.press("enter")
         await _wait_for_display(screen, pilot, "#library-note-preview-region")
         preview = screen.query_one("#library-note-preview-region")
         screen._mark_library_notes_user_interaction()
