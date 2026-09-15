@@ -1785,9 +1785,21 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 /* Note editor: title/keywords Inputs match the filter box's field look
    (tall border, focus accent) rather than defaulting to Textual's bare
-   Input styling. */
+   Input styling.
+
+   task-32607 AC#2: `#library-note-context-keywords` is the keywords field
+   that RENDERS. `#library-note-keywords` is its twin inside
+   `#library-note-wide-utilities`, which `apply_session_state` sets
+   `display = False` unconditionally -- so both of these blocks were being
+   spent on a box nobody can focus, and the live Keywords stop in Info fell
+   back to the generic `Input:focus` colour swap: no `text-style: bold`,
+   nothing that survives a monochrome dump. Adding the live id rather than
+   renaming keeps the existing pins (`#library-note-keywords:focus` is
+   asserted by `test_library_notes_labeled_fields_keep_stable_non_semantic_
+   focus_geometry`) honest about the twin that is still composed. */
 #library-note-title,
-#library-note-keywords {
+#library-note-keywords,
+#library-note-context-keywords {
     width: 100%;
     height: 3;
     min-height: 3;
@@ -1799,12 +1811,27 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-note-title:focus,
-#library-note-keywords:focus {
+#library-note-keywords:focus,
+#library-note-context-keywords:focus {
     border: tall $ds-input-focus-accent;
     outline: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+/* task-32607 AC#3: Info's Delete wore `.library-media-action-danger`, whose
+   whole treatment is `color: $ds-text-muted` -- so the ANSI decode of the
+   pane showed the one destructive control at #a5a5a5 against its siblings'
+   #e1e1e1 and it read as the DISABLED button in the group. Muting is right
+   where danger sits inside a neutral strip you must not pull the eye into
+   (the media Reader's More row); it is wrong where the control IS the
+   section, which is what Info's own "Danger" heading already says. Same
+   remedy and the same readable token as the media trash confirm
+   (`#library-media-trash-delete-confirm`), not the 3.06:1
+   `$ds-status-error`. Id selector (1,0,0) beats the class. */
+#library-note-context-delete {
+    color: $ds-status-error-readable;
 }
 
 /* task-32217 (critique #9 density rule): the Body is the primary content

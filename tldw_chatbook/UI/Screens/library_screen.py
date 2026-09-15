@@ -1016,6 +1016,17 @@ class LibraryScreen(BaseAppScreen):
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
         ("ctrl+n", "library_notes_new", "New note"),
         ("/", "library_notes_focus_filter", "Find notes"),
+        # task-32607 AC#5 (critique #4 idea 10): two keys the list footer can
+        # honestly advertise beside "n" (which already fires -- see the bare
+        # accelerator branch in ``on_key``). Both are gated in
+        # ``check_action`` to the Notes navigator with a non-text control
+        # focused: a focused Input swallows a printable key before any screen
+        # binding sees it, so they still type normally in the filter and in
+        # the rail's search box.
+        Binding("g", "library_notes_focus_folders", "Go to folder", show=False),
+        Binding(
+            "e", "library_notes_export_selected", "Export selected", show=False
+        ),
         ("escape", "library_notes_escape", "Back"),
         # task-424: skill-editor accelerators. ``check_action`` gates both
         # to the open skill editor, so the keys pass through untouched
@@ -4523,6 +4534,12 @@ class LibraryScreen(BaseAppScreen):
         """
         if focused is None:
             focused = self.focused
+        # task-32607 AC#1: Info's backlink rows are the one Notes stop with
+        # no DOM id at all -- ``_backlink_buttons`` identifies them by a
+        # ``note_id`` attribute and a class, so an id lookup could never
+        # name them and the tier fell back to its literal "run action".
+        if focused is not None and focused.has_class("library-note-backlink"):
+            return "open linked note"
         widget_id = str(getattr(focused, "id", "") or "")
         if not widget_id:
             return ""
@@ -8292,9 +8309,26 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
         if region == "context":
-            return self._notes_footer_tier(
+            # task-32607 AC#1: this was the ONE Notes tier still rendering
+            # its literal "enter run action" on every stop -- eleven Tabs
+            # through Info produced the identical chip for '‹ Notes', Copy,
+            # Export and Delete, so a blind Enter was a coin toss between
+            # "copy to clipboard" and "delete this note". Replaced IN PLACE
+            # (the ``lasting_add`` rule) rather than appended, because this
+            # tier already spends the narrow budget on "enter"; and DROPPED
+            # where the focused control owns no Enter (the keywords field,
+            # which has no ``Input.Submitted`` handler), because a generic
+            # label there is the same lie one control smaller.
+            tier = self._notes_footer_tier(
                 self.LIBRARY_NOTES_CONTEXT_SHORTCUTS,
                 self.LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT,
+            )
+            enter_label = self._library_focus_enter_label()
+            if not enter_label:
+                return tuple(pair for pair in tier if pair[0] != "enter")
+            return tuple(
+                (key, enter_label if key == "enter" else label)
+                for key, label in tier
             )
         if region == "editor":
             # task-32246 AC#2: Tab out of the body lands on a toolbar Button,
@@ -8522,6 +8556,40 @@ class LibraryScreen(BaseAppScreen):
 
     def action_library_notes_focus_filter(self) -> None:
         return self._notes_controller.action_library_notes_focus_filter()
+
+    def action_library_notes_focus_folders(self) -> None:
+        """``g``: jump to the folder tree beside the notes list.
+
+        task-32607 AC#5. The tree's own rows are the navigation surface --
+        a folder row expands on Enter -- but reaching one from the toolbar
+        cost a Tab per intervening control. Focus lands on the SELECTED
+        placement when there is one, so the key resumes where the reader
+        left the tree rather than snapping to the top.
+        """
+        rows = self.query(".library-notes-folder-row")
+        if not rows:
+            return
+        target = next(
+            (row for row in rows if row.has_class("is-selected")),
+            rows.first(Widget),
+        )
+        self._mark_library_notes_user_interaction()
+        target.focus()
+
+    def action_library_notes_export_selected(self) -> None:
+        """``e``: the select strip's Export selected, from the keyboard.
+
+        task-32607 AC#5. Presses the composed button rather than calling
+        the export seam directly, so the mutation fence and the empty-
+        selection guard in ``handle_library_notes_export_selected`` stay
+        the single authority (and a disabled button presses to nothing).
+        """
+        try:
+            button = self.query_one("#library-notes-export-selected", Button)
+        except (NoMatches, QueryError):
+            return
+        self._mark_library_notes_user_interaction()
+        button.press()
 
     def _show_library_note_shortcut_refusal(self, message: str) -> None:
         return self._notes_controller._show_library_note_shortcut_refusal(message)
@@ -8950,6 +9018,10 @@ class LibraryScreen(BaseAppScreen):
         if self._library_note_work_pane_owns_tab(focused):
             selector = self._LIBRARY_NOTE_WORK_PANE_TAB_REGION
             if direction >= 0:
+                redirect = self._library_reading_region_tab_target(focused)
+                if redirect is not None:
+                    redirect.focus()
+                    return redirect
                 return self.focus_next(selector)
             return self.focus_previous(selector)
         inside = focused is not None and any(
@@ -24823,6 +24895,8 @@ class LibraryScreen(BaseAppScreen):
         if action in {
             "library_notes_new",
             "library_notes_focus_filter",
+            "library_notes_focus_folders",
+            "library_notes_export_selected",
             "library_notes_save",
             "library_notes_escape",
         }:
@@ -24852,6 +24926,25 @@ class LibraryScreen(BaseAppScreen):
                 return bool(
                     visible_notes
                     and region == "navigator"
+                    and not isinstance(self.focused, (Input, TextArea))
+                )
+            # task-32607 AC#5: same navigator-and-not-typing shape as the
+            # filter key above, plus each key's own "there is something to
+            # act on" test, so neither is ever a dimmed-but-advertised chip.
+            if action == "library_notes_focus_folders":
+                return bool(
+                    visible_notes
+                    and region == "navigator"
+                    and not isinstance(self.focused, (Input, TextArea))
+                    and self.is_mounted
+                    and self.query(".library-notes-folder-row")
+                )
+            if action == "library_notes_export_selected":
+                return bool(
+                    visible_notes
+                    and region == "navigator"
+                    and self._notes_state.select_mode
+                    and self._notes_state.row_selection.count
                     and not isinstance(self.focused, (Input, TextArea))
                 )
             if action == "library_notes_save":

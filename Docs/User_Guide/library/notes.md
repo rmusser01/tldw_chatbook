@@ -503,10 +503,19 @@ focus is never unaccounted for: Tab onto "‹ Notes" and the footer reads
 "enter back to list", onto Save and it reads "enter save note". While the
 body or a field has focus there is no enter chip, because Enter types.
 
-That is true in **Preview** as well, not only in Edit and Info: Tab there
+That is true in **Preview** and **Info** as well, not only in Edit: Tab there
 walks the same six controls — "‹ Notes", Edit, Preview, Info, Save, Use in
-Console — and the footer names each one beside the "pgup/pgdn scroll" it
-already advertised, so an Enter pressed in Preview is never a guess.
+Console — and the footer names each one beside the tier's own keys, so an
+Enter pressed in a reading pane is never a guess. In Info that extends to the
+pane's own actions: Copy, Export Markdown, Export text and Delete each name
+themselves ("enter delete note"), and the Keywords field shows no enter chip
+because Enter does nothing there.
+
+Tab out of the rendered body — Preview's or Info's — lands on **Edit**, the
+first of the mode buttons, not on "‹ Notes". "‹ Notes" is one Shift+Tab back
+from Edit, and Escape still leaves the note; the swap exists so that the one
+obvious Tab-then-Enter out of a reading pane cannot close the note by
+accident.
 
 When the note body has keyboard focus, only its boundary becomes more
 prominent. The body background and editor size stay unchanged, so focusing
@@ -1180,16 +1189,22 @@ permanent delete.
 
 | Key | Action |
 |---|---|
-| **Ctrl+N** | Makes a new blank note and opens it — no chooser in between. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** does the same, but the footer advertises Ctrl+N in both places now. |
-| **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". |
+| **n** / **Ctrl+N** | Makes a new blank note and opens it — no chooser in between. Both work on the Library landing (no row selected yet) as well as inside the Notes workflow. The notes list advertises the bare **n**; **Ctrl+N** additionally works from inside the filter box, where a printable key would type instead. |
+| **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". The footer drops the "/ find note" chip while a text field has focus, for that reason. |
+| **g** | Go to the folder tree beside the list — focus lands on the selected placement when there is one, otherwise on the first folder row. |
+| **e** (in select mode) | Export the checked notes. Advertised only once at least one row is checked, which is also when the **Export selected** button stops being disabled. |
 | **Escape** | Focus the rail (in **Recently deleted**, go back to the list) |
 | **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
 | ↑ / ↓ (New note view) | Move between **Blank note**, **From a template…** and the template rows it opens |
 | Enter (New note view) | Create from the focused row |
 
-The footer advertises these as `ctrl+n new note | / find note | esc focus
-rail`. Notes does not register **Ctrl+S** and does not replace it with
+The footer advertises these as `n new note | / find note | g go to folder |
+esc focus rail`, and drops every printable one of them while a text field
+(the filter, or the rail's own search box) has focus — there they are
+literal characters, not accelerators. In select mode the tier becomes
+`enter select note | e export selected | esc done`, with the **e** chip
+present only while something is checked. Notes does not register **Ctrl+S** and does not replace it with
 another save shortcut. Use the visible
 Library notes **Save** button for an immediate save; Folder files saves
 automatically. Global navigation keys live in the [guide index](../index.md).
