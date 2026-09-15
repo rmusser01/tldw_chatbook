@@ -14257,3 +14257,38 @@ rather than asserting one thing, and keep the probe — it is the regression
 test's first draft. If you genuinely cannot run it, say INFERRED and name the
 experiment that would settle it; never let proximity to your own change
 decide the verdict in either direction.
+
+## A stale projection is not proof the publisher is silent (task-32604, 2026-09-15)
+
+**The incident.** The crit-4 P0's triage named three links, and link 2 read
+"the root row is a projection of stored root state, never of a fresh plan" —
+which reads as "the runtime does not publish a pending state, so give it
+one". Writing that publisher would have put a second opinion about row state
+beside the runtime's own, the exact shape that bit the wave-4 sync-roots
+group twice.
+
+Three extra lines in the probe settled it instead:
+
+```python
+rt = owner.snapshot().roots[0]
+print("RUNTIME published :", rt.status, "/", rt.next_action)
+controller.refresh_roots()
+print("row after refresh :", row(controller))
+```
+
+The runtime had published `changes_available` / `review_changes` during the
+manual check all along (`_reconcile_locked`'s `elif selected:` branch).
+`LibraryNotesSyncController.sync_now` simply never called `refresh_roots`
+afterwards, so the row kept the projection it held *before* the check. The
+whole of link 2 — and, because the roots canvas gates its **Review** button
+on `next_action == "review_changes"`, most of link 3 — was one missing
+re-read. The fix is one line; the fix the triage implied is a subsystem.
+
+**The rule.** Before adding a publisher for state that renders stale, print
+what the existing publisher actually holds at that moment — one line against
+the producer's own snapshot, next to the line against the consumer's
+projection. A projection and its source disagreeing is evidence of a missing
+read at least as often as a missing write, and the two fixes are a line and a
+subsystem. This also applies to reading a triage you did not write: its
+"cause" for each link is a hypothesis with the same standing as any other
+until the probe prints both sides.
