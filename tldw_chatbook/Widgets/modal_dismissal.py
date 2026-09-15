@@ -12,6 +12,7 @@ from textual import events
 from textual.app import App
 from textual.screen import Screen
 from textual.widget import Widget
+from textual.widgets import Footer
 
 if TYPE_CHECKING:
 
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
         def is_mounted(self) -> bool: ...
 
         def query_one(self, selector: str, expect_type: type[Widget]) -> Widget: ...
+
+        def query(self, selector: type[Widget]) -> Any: ...
 
         def dismiss(self, result: object) -> object: ...
 
@@ -40,6 +43,7 @@ def is_modal_backdrop_click(
     provenance_known: bool,
     target_is_content_or_descendant: bool,
     point_is_in_content_region: bool,
+    target_is_modal_chrome: bool = False,
 ) -> bool:
     """Return whether a classified click is on a modal's backdrop.
 
@@ -48,6 +52,12 @@ def is_modal_backdrop_click(
         provenance_known: Whether both the event target and coordinates are known.
         target_is_content_or_descendant: Whether the target belongs to the modal.
         point_is_in_content_region: Whether the screen point falls inside the modal.
+        target_is_modal_chrome: Whether the target is the modal's own chrome
+            mounted OUTSIDE ``SAFE_MODAL_CONTENT`` -- today, a screen-docked
+            ``Footer`` (task-32606). Such a widget is part of the dialog and
+            its keys are meant to be clicked, so a click on it is never a
+            backdrop click. Defaults to ``False``, which is the whole of the
+            behaviour every caller had before.
 
     Returns:
         ``True`` only for a known primary click outside modal content.
@@ -56,6 +66,7 @@ def is_modal_backdrop_click(
         button == 1
         and provenance_known
         and not target_is_content_or_descendant
+        and not target_is_modal_chrome
         and not point_is_in_content_region
     )
 
@@ -305,12 +316,34 @@ class SafeModalDismissMixin:
             coordinates_known
             and content.region.contains(event.screen_x, event.screen_y)
         )
+        # task-32606: a modal may dock its own `Footer` at SCREEN level, so
+        # that its keys replace the host screen's row rather than adding a
+        # second one inside the dialog. That row is chrome, not backdrop --
+        # its chips are `pointer: pointer`, they invite a click, and
+        # Textual's `FooterKey.on_mouse_down` neither stops nor prevents the
+        # event, so without this every chip click also cancelled the dialog
+        # (on `FileSave`, discarding a typed filename).
+        #
+        # Tested by POINT, not by the target's ancestry: `FooterKey` fires
+        # its key from `on_mouse_down`, and a key that moves focus changes
+        # the active bindings, which makes `Footer` recompose -- so by the
+        # time the `Click` arrives the chip is already detached and its
+        # `ancestors_with_self` is just itself. Reproduced with ctrl+l and
+        # ctrl+f, which both focus a hidden input (review round 1).
+        target_is_modal_chrome = bool(
+            coordinates_known
+            and any(
+                footer.region.contains(event.screen_x, event.screen_y)
+                for footer in host.query(Footer)
+            )
+        )
 
         if not is_modal_backdrop_click(
             button=event.button,
             provenance_known=provenance_known,
             target_is_content_or_descendant=target_is_content_or_descendant,
             point_is_in_content_region=point_is_in_content_region,
+            target_is_modal_chrome=target_is_modal_chrome,
         ):
             return
 
