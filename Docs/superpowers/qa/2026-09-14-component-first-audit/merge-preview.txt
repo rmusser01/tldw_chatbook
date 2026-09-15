@@ -1,0 +1,36 @@
+1795935a575f7e7cc2caa0940104816b4d73a569
+Tests/UI/test_library_file_notes_workspace.py
+Tests/UI/test_library_shell.py
+tldw_chatbook/css/components/_agentic_terminal.tcss
+tldw_chatbook/css/screen_agentic_console.tcss
+tldw_chatbook/css/tldw_cli_modular.tcss
+
+Auto-merging Tests/UI/test_library_adaptive_reader_shell.py
+Auto-merging Tests/UI/test_library_file_notes_git.py
+Auto-merging Tests/UI/test_library_file_notes_workspace.py
+CONFLICT (content): Merge conflict in Tests/UI/test_library_file_notes_workspace.py
+Auto-merging Tests/UI/test_library_honesty_accessibility.py
+Auto-merging Tests/UI/test_library_shell.py
+CONFLICT (content): Merge conflict in Tests/UI/test_library_shell.py
+Auto-merging backlog/decisions/097-boot-budget-ratchets.md
+Auto-merging backlog/docs/lessons-backlog-hygiene.md
+Auto-merging backlog/docs/lessons-testing-evidence.md
+Auto-merging tldw_chatbook/UI/Screens/chat_screen.py
+Auto-merging tldw_chatbook/UI/Screens/library_screen.py
+Auto-merging tldw_chatbook/UI/Screens/settings_screen.py
+Auto-merging tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py
+Auto-merging tldw_chatbook/Widgets/Console/console_settings_modal.py
+Auto-merging tldw_chatbook/Widgets/Library/library_entry_canvases.py
+Auto-merging tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py
+Auto-merging tldw_chatbook/Widgets/Library/library_file_notes_workspace.py
+Auto-merging tldw_chatbook/Widgets/Library/library_note_import_canvas.py
+Auto-merging tldw_chatbook/Widgets/Library/library_notes_canvas.py
+Auto-merging tldw_chatbook/app.py
+Auto-merging tldw_chatbook/css/components/_agentic_terminal.tcss
+CONFLICT (content): Merge conflict in tldw_chatbook/css/components/_agentic_terminal.tcss
+Auto-merging tldw_chatbook/css/components/_dialogs.tcss
+Auto-merging tldw_chatbook/css/components/_lists.tcss
+CONFLICT (modify/delete): tldw_chatbook/css/screen_agentic_console.tcss deleted in HEAD and modified in origin/dev.  Version origin/dev of tldw_chatbook/css/screen_agentic_console.tcss left in tree.
+Auto-merging tldw_chatbook/css/screen_agentic_library.tcss
+Auto-merging tldw_chatbook/css/tldw_cli_modular.tcss
+CONFLICT (content): Merge conflict in tldw_chatbook/css/tldw_cli_modular.tcss
