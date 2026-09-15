@@ -12,7 +12,7 @@ from __future__ import annotations
 # Python imports.
 import sys
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Dict, List, TypeAlias, Union
+from typing import Any, Callable, Dict, List, TypeAlias, Union
 
 ##############################################################################
 # Third-party imports.
@@ -428,27 +428,26 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     ERROR_PERMISSION_ERROR = "Permission error"
     """Error to tell there user there was a problem with permissions."""
 
-    RETURNS_A_FOLDER: ClassVar[bool] = False
+    RETURNS_A_FOLDER: bool = False
     """Can confirming this dialog hand back a DIRECTORY? (task-32606)
 
     The one fact that decides initial focus (``_focus_initial_widget``): a
     dialog whose answer is a folder opens on its path field, because typing
     or pasting a path is what a keyboard user does first there. Declared
     per class for the dialogs that always return one (``SelectDirectory``,
-    ``EnhancedSelectDirectory``) and per instance by
-    ``FileOpen(offer_select_folder=True)``, which decides it at
-    construction. A file-only dialog leaves it False and keeps
-    browsing-first focus.
+    ``EnhancedSelectDirectory``) and shadowed per instance by ``FileOpen``,
+    which only learns the answer from its ``offer_select_folder`` argument
+    at construction -- hence a plain ``bool`` annotation rather than
+    ``ClassVar``, which would forbid exactly that. A file-only dialog
+    leaves it False and keeps browsing-first focus.
     """
 
     BINDINGS = [
         # Order is the footer's order (task-32606): `Footer` lays its chips
         # out left to right in binding order and scrolls the overflow off
         # the right edge, so at 100 columns only the first few are read.
-        # The way out and the two path actions lead; the conveniences
-        # (hidden files, refresh, bookmarks, recents) follow.
+        # The way out leads, then the path actions, then the conveniences.
         Binding("escape", "request_safe_cancel", "Cancel"),
-        Binding("ctrl+s", "select_current_folder", "Select this folder"),
         Binding("ctrl+l", "focus_path_input", "Edit path directly"),
         Binding("ctrl+f", "focus_search", "Search in directory"),
         Binding("full_stop", "hidden", "Toggle hidden"),
@@ -456,6 +455,13 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         Binding("f5", "refresh", "Refresh directory"),
         Binding("ctrl+d", "bookmark_current", "Bookmark directory"),
         Binding("ctrl+r", "show_recent", "Show recent locations"),
+        # LAST on purpose (review round 1): `check_action` vetoes this on
+        # every dialog that does not offer a folder, and Textual's `Footer`
+        # renders a vetoed binding DIM rather than dropping it -- so on
+        # those dialogs this is a dead chip. Ordered here it is the first
+        # thing a narrow terminal scrolls off the right edge instead of
+        # eating 23 of 60 columns ahead of every live action.
+        Binding("ctrl+s", "select_current_folder", "Select this folder"),
     ]
     """The bindings for the dialog."""
 
@@ -695,7 +701,7 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         in the walk fires and then gets clobbered by this method's own
         ``dir_nav.focus()`` call afterwards).
         """
-        if self.RETURNS_A_FOLDER or getattr(self, "_offer_select_folder", False):
+        if self.RETURNS_A_FOLDER:
             # Read generically via InputBar's one Input child, the way
             # `_resolve_select_folder_target` already reads it: the field's
             # id differs per dialog (#path_input, #dir-path-input, the
