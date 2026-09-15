@@ -115,6 +115,13 @@ use this folder', 'Enter Open  ·  Select folder to use this folder'}`;
 `FileOpen` and a `FileSave` keeping `"discovery"`, and a file-only `FileOpen`
 with an empty hint -- pass on BOTH sides, which is what makes them controls.
 
+**Both-sides comparison.** `Tests/Library/` in full: identical FAILED name
+sets. The 23-file picker test set, run sequentially: branch 1 failed / 510
+passed against dev 19 failed / 492 passed, the branch's single red shared with
+dev. One test in `Tests/UI/test_library_notes_wave_import_ux.py` asserted this
+door pushes a `FileOpen`; it now asserts `SelectDirectory`, with the reason on
+the line.
+
 **Files.** `Third_Party/textual_fspicker/base_dialog.py`,
 `select_directory.py`, `file_open.py`,
 `parts/progressive_directory_navigation.py`, `Utils/input_validation.py`,

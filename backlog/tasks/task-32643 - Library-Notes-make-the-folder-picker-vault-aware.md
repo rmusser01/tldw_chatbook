@@ -146,14 +146,27 @@ reads `notes_sync_runtime._SYNC_FILE_EXTENSIONS`, Import once reads
 `.yaml`, `.yml`, `.csv`). Verified at a prompt that `{.md, .markdown, .txt}`
 is exactly their intersection, so the badge never over-promises on any door.
 
-**RED->GREEN.** `Tests/UI/test_library_notes_w5_picker_followon.py`, 12 tests
-for this task (18 in the file with task-32611's): 12 red at `origin/dev`
-48d40df8ce -- `AttributeError: module '...progressive_directory_navigation' has
-no attribute 'count_folder_notes'`, `ImportError: cannot import name
+**RED->GREEN.** `Tests/UI/test_library_notes_w5_picker_followon.py`, 16 tests
+for this task (22 in the file with task-32611's): at `origin/dev` 48d40df8ce
+the file is 18 red / 4 green, and 22/22 green here. Representative RED text:
+`AttributeError: module '...progressive_directory_navigation' has no attribute
+'count_folder_notes'`, `ImportError: cannot import name
 'folder_is_obsidian_vault'`, `TypeError: SelectDirectory.__init__() got an
-unexpected keyword argument 'notes_context'` -- 12/12 green here. The negative
-control (a picker with no `notes_context` drawing no badge) passes on both
-sides.
+unexpected keyword argument 'notes_context'`, and for the highlight guard
+`AssertionError: '..' must not be claimed as the answer while the listing may
+still grow`. The negative control (a picker with no `notes_context` drawing no
+badge) passes on both sides, which is what makes it a control.
+
+**Both-sides comparison.** `Tests/Library/` in full: identical FAILED name sets
+(4 = 4; the +3 passed are this branch's new pins). The 23-file picker test set,
+run sequentially per the two-worktrees-deadlock lesson: branch 1 failed / 510
+passed against dev 19 failed / 492 passed, and the branch's single red is the
+one shared with dev (`test_library_modal_dismissal`, failing on
+`SkillImportChoiceModal` in an untouched presenter). Zero branch-only failures.
+The first pass of that comparison found five, all in
+`Tests/UI/test_library_notes_wave_import_ux.py`, plus a sixth found by grepping
+the renamed symbol -- test mechanics following the write-seam rename and the
+door switch, repaired without loosening anything.
 
 **Files.** `Third_Party/textual_fspicker/parts/progressive_directory_navigation.py`,
 `base_dialog.py`, `select_directory.py`, `file_open.py`, `file_dialog.py`,
