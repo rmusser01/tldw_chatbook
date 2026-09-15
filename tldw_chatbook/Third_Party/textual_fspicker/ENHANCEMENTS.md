@@ -229,12 +229,33 @@ common base precisely so a second directory dialog cannot miss it.)
   Library's `/ focus search | F6 next pane | esc notes`. An opaque footer on
   the bottom row replaces those chips for as long as the modal is up; mounted
   inside `Dialog` it would instead add a second key row eight lines above a
-  contradicting one. `Footer` lays chips out in binding order and scrolls the
-  overflow off the right edge, so `BINDINGS` leads with `escape` and the two
-  path actions -- at 100 columns `esc Cancel` was otherwise off-screen.
-  Known residue: `Footer` renders every `show=True` binding and marks a
-  `check_action`-vetoed one dim rather than dropping it, so `^s Select this
-  folder` appears dimmed on dialogs that do not offer it.
+  contradicting one. `EnhancedFileDialog` mirrors the base layout by hand
+  rather than calling it, so it yields its own `Footer` for the same reason
+  (`enhanced_file_picker.py`); without that, `EnhancedSelectDirectory` kept
+  the defect this section fixes.
+
+  Three consequences of putting it at screen level, all handled:
+
+  1. It docks OUTSIDE `SAFE_MODAL_CONTENT`, so `SafeModalDismissMixin`
+     classified a chip click as a backdrop click and cancelled the dialog --
+     on `FileSave`, discarding a typed filename. `modal_dismissal.py` now
+     exempts a click landing inside any mounted `Footer` on the screen
+     (`target_is_modal_chrome`). Tested by POINT, not by the target's
+     ancestry: `FooterKey` fires its key from `on_mouse_down`, and a key
+     that moves focus changes the active bindings, so `Footer` recomposes
+     and the chip is already detached when the `Click` arrives.
+  2. `Footer` lays chips out in binding order and scrolls the overflow off
+     the right edge, so `BINDINGS` order IS the narrow-width priority:
+     `escape` leads, the path actions follow. At 100 columns `esc Cancel`
+     was otherwise off-screen entirely.
+  3. `Footer` renders every `show=True` binding and marks a
+     `check_action`-vetoed one dim rather than dropping it, so `^s Select
+     this folder` still appears (dimmed) on dialogs that do not offer it.
+     It is therefore ordered LAST, where a narrow terminal scrolls it off
+     first instead of spending 23 of 60 columns on it.
+
+  `Footer` is `can_focus=False, can_focus_children=False`, so no picker's
+  Tab order changes.
 - **A shape-based focus cue** (task-32540): the bar's buttons told a keyboard
   user which one Enter would press by colour and a label underline only. The
   rule that fixes it cannot live here -- the app's own

@@ -65,13 +65,15 @@ class FileOpen(BaseFileDialog):
         self._must_exist = must_exist
         """Must the file exist?"""
         self._offer_select_folder = offer_select_folder
-        """Offer the "select the folder being viewed" action?
+        """Offer the "select the folder being viewed" action?"""
+        self.RETURNS_A_FOLDER = offer_select_folder
+        """Answer the base's one focus fact per instance (task-32606).
 
-        Also the per-instance answer to ``RETURNS_A_FOLDER``: with it on,
-        ``FileSystemPickerScreen._focus_initial_widget`` opens this dialog
-        on its path field (task-32540, generalised by task-32606). A plain
-        file-only ``FileOpen`` (character import, skill folders, TTS
-        models, ...) keeps browsing-first focus.
+        This dialog decides at construction whether its result can be a
+        folder, so it shadows the ClassVar instead of declaring it. With it
+        on, ``FileSystemPickerScreen._focus_initial_widget`` opens on the
+        path field (task-32540); a plain file-only ``FileOpen`` (character
+        import, skill folders, TTS models, ...) keeps browsing-first focus.
         """
 
     def _hint_text(self) -> str:
