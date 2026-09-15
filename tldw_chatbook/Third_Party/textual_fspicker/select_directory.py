@@ -70,6 +70,7 @@ class SelectDirectory(FileSystemPickerScreen):
         *,
         select_button: ButtonLabel = "",
         cancel_button: ButtonLabel = "",
+        notes_context: str = "",
     ) -> None:
         """Initialise the dialog.
 
@@ -78,6 +79,8 @@ class SelectDirectory(FileSystemPickerScreen):
             title: Optional title.
             select_button: The label for the select button.
             cancel_button: The label for the cancel button.
+            notes_context: Which Library Notes folder door this is, if any;
+                see `FileSystemPickerScreen.__init__` (task-32643).
 
         Notes:
             `select_button` and `cancel_button` can either be strings that
@@ -89,6 +92,7 @@ class SelectDirectory(FileSystemPickerScreen):
             title,
             select_button=select_button,
             cancel_button=cancel_button,
+            notes_context=notes_context,
         )
 
     def on_mount(self) -> None:

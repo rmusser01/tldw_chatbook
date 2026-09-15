@@ -33,6 +33,7 @@ class FileOpen(BaseFileDialog):
         must_exist: bool = True,
         default_file: str | Path | None = None,
         offer_select_folder: bool = False,
+        notes_context: str = "",
     ) -> None:
         """Initialise the `FileOpen` dialog.
 
@@ -48,6 +49,8 @@ class FileOpen(BaseFileDialog):
                 "Select folder" action returning the directory being
                 viewed (task-2222) -- for callers that accept either a
                 file or a folder.
+            notes_context: Which Library Notes folder door this is, if any;
+                see `FileSystemPickerScreen.__init__` (task-32643).
 
         Notes:
             `open_button` and `cancel_button` can either be strings that
@@ -61,6 +64,7 @@ class FileOpen(BaseFileDialog):
             cancel_button=cancel_button,
             filters=filters,
             default_file=default_file,
+            notes_context=notes_context,
         )
         self._must_exist = must_exist
         """Must the file exist?"""

@@ -35,6 +35,7 @@ from tldw_chatbook.config import (
 from tldw_chatbook.Library.library_browse_location import (
     browse_start_directory,
     claim_browse_directory,
+    picker_recent_context,
     remember_browse_directory,
 )
 from tldw_chatbook.Library.library_structural_wait import (
@@ -6465,7 +6466,11 @@ class LibraryFileNotesWorkspace(Vertical):
             else self._file_notes_browse_location()
         )
         await self.app.push_screen(
-            SelectDirectory(location, title="Choose File Notes Folder"),
+            SelectDirectory(
+                location,
+                title="Choose File Notes Folder",
+                notes_context=picker_recent_context("file_notes"),
+            ),
             callback=self._root_selected,
         )
 
@@ -6539,7 +6544,11 @@ class LibraryFileNotesWorkspace(Vertical):
         generation = claim_browse_directory("file_notes", "browse")
         self.run_worker(
             lambda: remember_browse_directory(
-                "file_notes", "browse", path, generation
+                "file_notes",
+                "browse",
+                path,
+                generation,
+                recent_context=picker_recent_context("file_notes"),
             ),
             thread=True,
         )

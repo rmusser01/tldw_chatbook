@@ -10,7 +10,7 @@ from typing import Never, Protocol
 
 from loguru import logger
 
-from tldw_chatbook.Notes.note_import_discovery import OBSIDIAN_MARKER_DIRECTORY
+from tldw_chatbook.Notes.note_import_discovery import folder_is_obsidian_vault
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
@@ -64,16 +64,13 @@ from tldw_chatbook.Notes.notes_sync_models import (
 def _carries_obsidian_marker(folder: str) -> bool:
     """Return whether the chosen folder is an Obsidian vault (task-32535).
 
-    The same marker Import once looks for. An unreadable or missing folder is
-    simply not a vault -- setup validation already has the say on those.
+    The body moved to ``Notes.note_import_discovery.folder_is_obsidian_vault``
+    (task-32643 AC#4) so the folder PICKER can mark a vault in its listing
+    with the same predicate rather than a second copy of it. This name stays
+    as this module's local spelling of the question.
     """
 
-    if not folder.strip():
-        return False
-    try:
-        return (Path(folder) / OBSIDIAN_MARKER_DIRECTORY).is_dir()
-    except OSError:
-        return False
+    return folder_is_obsidian_vault(folder)
 
 
 class LastingSyncRuntimePort(Protocol):

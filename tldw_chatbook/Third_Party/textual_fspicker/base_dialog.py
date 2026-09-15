@@ -496,6 +496,8 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         title: str = "",
         select_button: ButtonLabel = "",
         cancel_button: ButtonLabel = "",
+        *,
+        notes_context: str = "",
     ) -> None:
         """Initialise the dialog.
 
@@ -504,8 +506,18 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             title: Optional title.
             select_button: Label or format function for the select button.
             cancel_button: Label or format function for the cancel button.
+            notes_context: Non-empty on the Library's three Notes folder
+                doors, naming which of them this is (task-32643). It buys two
+                things and nothing else: the ctrl+r panel offers the roots
+                THIS door recently returned, and folder rows carry a bounded
+                note count and a vault marker. Every other picker in the app
+                leaves it blank and is unchanged -- "12 notes" is a useful
+                badge when choosing where notes live and noise in a model-file
+                or character-card picker.
         """
         super().__init__()
+        self._notes_context = notes_context
+        """Which Notes folder door this is, or "" for every other picker."""
         self._location = location
         """The starting location."""
         self._title = title
@@ -717,6 +729,7 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         # navigation in its own `compose`, is configured here too rather than
         # needing the same two lines copied into it.
         dir_nav.sort_key = self._default_listing_sort()
+        dir_nav.show_folder_notes = bool(self._notes_context)
         current_path_label = self.query_one("#current_path_display", Label)
         current_path_label.update(str(dir_nav.location))
 
@@ -992,7 +1005,15 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         self.notify(f"Bookmarked: {current_path.name}", timeout=2)
 
     def action_show_recent(self) -> None:
-        """Toggle the recent locations panel."""
+        """Toggle the recent locations panel.
+
+        Deliberately still opens when there is nothing to show. Refusing to
+        would read better, but ``test_fspicker_keyboard_save`` pins the
+        Escape-peel ORDER (path bar, then search, then recents) by opening all
+        three transients on an empty picker, and that contract is worth more
+        than the empty-box nicety. The empty panel predates task-32643 and is
+        unchanged by it.
+        """
         self.show_recent = not self.show_recent
 
     def action_focus_search(self) -> None:
@@ -1063,13 +1084,10 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     def _load_recent_locations(self) -> None:
         """Load recent locations from storage."""
-        # This is a placeholder - in real implementation,
-        # this would load from a config file or database
         try:
             recent_list = self.query_one("#recent-list", ListView)
             recent_list.clear()
 
-            # Add some example recent locations
             for path in self._get_recent_paths():
                 item = ListItem(Label(str(path)))
                 item.data = path  # Store path in data attribute
@@ -1078,14 +1096,55 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             pass
 
     def _get_recent_paths(self) -> List[Path]:
-        """Get list of recent paths."""
-        # Placeholder - would load from persistent storage
-        return []
+        """The roots this door recently returned, newest first (task-32643 AC#3).
+
+        Empty -- as it has always been -- for every picker that passes no
+        ``notes_context``. For the three that do, the source is the store the
+        enhanced picker family already keeps (``[filepicker] recent_<context>``
+        in config.toml), written by
+        ``Library.library_browse_location.remember_browse_directory``, which
+        all three doors already call on a worker after a selection. Reusing it
+        rather than inventing a second recents format is also why the read is
+        cheap enough for mount: it is one ``get_cli_setting`` off the cached
+        config.
+
+        Imported lazily: ``Widgets.enhanced_file_picker`` imports this module,
+        so a module-level import here is a cycle.
+
+        Returns:
+            Existing directories only. The stored value is persisted user
+            state, i.e. a trust boundary, so every entry goes through the same
+            validator the start directory does; anything relative, traversing
+            or since deleted is dropped rather than offered.
+        """
+        if not self._notes_context:
+            return []
+        try:
+            from ...Library.library_browse_location import validated_browse_directory
+            from ...Widgets.enhanced_file_picker import RecentLocations
+
+            paths = []
+            for entry in RecentLocations(context=self._notes_context).get_recent():
+                validated = validated_browse_directory(entry.get("path"))
+                if validated is not None and validated not in paths:
+                    paths.append(validated)
+            return paths
+        except Exception:
+            # Deliberately path-free and non-fatal: a picker must still open
+            # when the recents store is unreadable.
+            return []
 
     def _add_to_recent(self, path: Path, file_type: str) -> None:
-        """Add a path to recent locations."""
-        # Placeholder - would save to persistent storage
-        pass
+        """Note a BROWSED directory. A no-op here; overridden by the enhanced family.
+
+        Deliberately not the write behind ``_get_recent_paths``: this fires on
+        every ``DirectoryNavigation.Changed``, i.e. on merely passing through a
+        folder on the way somewhere else, and task-32643 AC#3 is about the
+        roots a door actually RETURNED. Those are written by
+        ``Library.library_browse_location.remember_browse_directory``, off the
+        event loop, from the same selection that already persists the
+        start directory.
+        """
 
     @on(Button.Pressed, ".breadcrumb-btn")
     def _on_breadcrumb_click(self, event: Button.Pressed) -> None:
@@ -1100,17 +1159,26 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     @on(ListView.Selected, "#recent-list")
     def _on_recent_selected(self, event: ListView.Selected) -> None:
-        """Handle selection from recent locations."""
+        """Handle selection from recent locations.
+
+        On a dialog that can only hand back a folder, Enter on an offered root
+        IS the answer and dismisses with it (task-32643 AC#3): navigating there
+        and making the user press Select as well would leave the root two
+        keystrokes away, not one. Everywhere else it still just moves the
+        listing -- on a file picker a recent DIRECTORY is a place to look, not
+        a result.
+        """
         if hasattr(event.item, "data") and event.item.data:
             try:
                 path = Path(event.item.data)
-                if path.exists():
-                    dir_nav = self.query_one(DirectoryNavigation)
-                    if path.is_dir():
-                        dir_nav.location = path
-                    else:
-                        dir_nav.location = path.parent
-                    self.show_recent = False
+                if not path.exists():
+                    return
+                if self.RETURNS_A_FOLDER and path.is_dir():
+                    self.dismiss(path)
+                    return
+                dir_nav = self.query_one(DirectoryNavigation)
+                dir_nav.location = path if path.is_dir() else path.parent
+                self.show_recent = False
             except Exception:
                 pass
 
@@ -1134,10 +1202,21 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             pass
 
     def watch_show_recent(self, show: bool) -> None:
-        """React to show_recent changes."""
+        """React to show_recent changes.
+
+        Opening the panel also FOCUSES the list (task-32643 AC#3): with focus
+        left on the path field, reaching an offered root still cost a Tab walk
+        through the listing, which is the navigation the recents exist to
+        avoid. Focused, the first root is highlighted and Enter takes it.
+        """
         try:
             recent_panel = self.query_one("#recent-locations")
             recent_panel.set_class(show, "visible")
+            recent_list = self.query_one("#recent-list", ListView)
+            if show and recent_list.children:
+                if recent_list.index is None:
+                    recent_list.index = 0
+                recent_list.focus()
         except Exception:
             pass
 

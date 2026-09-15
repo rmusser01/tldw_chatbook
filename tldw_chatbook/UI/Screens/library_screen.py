@@ -99,6 +99,7 @@ from ...Library.collections_capture_models import (
 from ...Library.library_browse_location import (
     browse_start_directory,
     claim_browse_directory,
+    picker_recent_context,
     remember_browse_directory,
 )
 from ...Library.library_content_evidence import (
@@ -26910,6 +26911,7 @@ class LibraryScreen(BaseAppScreen):
                 title="Import once (files or one folder)",
                 offer_select_folder=True,
                 location=self._library_note_import_browse_location(),
+                notes_context=picker_recent_context("library.notes_import"),
             ),
             import_callback,
         )
@@ -26937,7 +26939,11 @@ class LibraryScreen(BaseAppScreen):
         generation = claim_browse_directory("library.notes_import", "last_directory")
         self.run_worker(
             lambda: remember_browse_directory(
-                "library.notes_import", "last_directory", selected_path, generation
+                "library.notes_import",
+                "last_directory",
+                selected_path,
+                generation,
+                recent_context=picker_recent_context("library.notes_import"),
             ),
             thread=True,
         )

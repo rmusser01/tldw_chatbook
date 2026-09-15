@@ -50,6 +50,59 @@ SORT_OPTIONS = [
     ("Size", "size"),
 ]
 
+NOTE_SUFFIXES = frozenset({".md", ".markdown", ".txt"})
+"""Extensions the Notes importer/sync treat as a note, for the folder badge."""
+
+NOTE_COUNT_CEILING = 500
+"""Hard bound on one folder's badge count (task-32643 AC#2).
+
+Reached only by `count_folder_notes`, which reads ONE directory with a single
+`os.scandir` and never descends. The ceiling bounds the pathological case (a
+flat folder of 200k files) so a badge can never cost more than 500 `DirEntry`
+reads; past it the badge reads "500+ notes" instead of a number.
+"""
+
+VAULT_MARKER = " · vault"
+"""Suffix appended to an Obsidian vault's name in the listing (task-32643 AC#4)."""
+
+
+def count_folder_notes(folder: Path, ceiling: int = NOTE_COUNT_CEILING) -> int | None:
+    """Count note files sitting DIRECTLY inside one folder. Blocking.
+
+    Deliberately depth-1 and capped: a picker that walks a subtree to draw a
+    badge is worse than a picker with no badge, and this programme already has
+    a P0 in its history from an abandoned recursive folder scan. One
+    `os.scandir`, at most `ceiling` entries considered, no recursion, no stat
+    (`DirEntry.is_file` uses the type the directory read already returned on
+    every platform this app ships on).
+
+    Args:
+        folder: The directory to read.
+        ceiling: Stop counting here; the caller renders the cap with a "+".
+
+    Returns:
+        The number of note files found, capped at `ceiling`, or None when the
+        folder cannot be read (permissions, a race, a dead symlink).
+    """
+    total = 0
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if entry.name.startswith("."):
+                    continue
+                try:
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                if os.path.splitext(entry.name)[1].casefold() in NOTE_SUFFIXES:
+                    total += 1
+                    if total >= ceiling:
+                        return ceiling
+    except OSError:
+        return None
+    return total
+
 
 @dataclass(frozen=True)
 class FileRecord:
@@ -60,18 +113,31 @@ class FileRecord:
     is_symlink: bool = False
     metadata: os.stat_result | None = None
     metadata_loaded: bool = False
+    note_count: int | None = None
+    is_vault: bool = False
+    folder_summary_loaded: bool = False
 
     @property
     def display_name(self) -> str:
         """Keep unusual filesystem names on one terminal row."""
-        return (
+        name = (
             self.location.name.replace("\n", "⏎").replace("\r", "␍").replace("\t", "⇥")
         )
+        return f"{name}{VAULT_MARKER}" if self.is_vault else name
 
     @property
     def size_text(self) -> str:
         if self.is_directory:
-            return ""
+            # task-32643 AC#2: the note badge reuses the size column, which a
+            # directory has always left blank -- no new column, so both the
+            # vendored row and `EnhancedFileDialog`'s responsive one pick it
+            # up unchanged. Blank until the bounded count lands, and blank
+            # forever on a picker that did not ask for one.
+            if self.note_count is None:
+                return ""
+            if self.note_count >= NOTE_COUNT_CEILING:
+                return f"{NOTE_COUNT_CEILING}+ notes"
+            return f"{self.note_count} note" + ("" if self.note_count == 1 else "s")
         return _human_readable_size(self.metadata.st_size) if self.metadata else "—"
 
     @property
@@ -104,6 +170,41 @@ def read_metadata(record: FileRecord) -> FileRecord:
     except OSError:
         metadata = None
     return replace(record, metadata=metadata, metadata_loaded=True)
+
+
+def read_folder_summary(record: FileRecord) -> FileRecord:
+    """Hydrate one VISIBLE folder's note badge and vault marker. Blocking.
+
+    Both halves read only the folder itself: `count_folder_notes` is one
+    bounded `os.scandir`, and the vault question goes to the ONE predicate the
+    rest of the app already uses (`Notes.note_import_discovery.
+    folder_is_obsidian_vault`, the same `.obsidian/` marker Import once and
+    "Keep a folder synced" look for) rather than a second one written here.
+
+    Imported lazily: this vendored package is deliberately absent from the
+    app's boot import closure (`Tests/Packaging/test_app_import_diet_closure`),
+    and so is `note_import_discovery` -- a module-level import here would put
+    the Notes discovery module on every picker's import path for a predicate
+    only three of them ask for.
+
+    Args:
+        record: Snapshot to hydrate; a non-folder or already-summarised
+            snapshot is returned unchanged except for the "done" flag.
+
+    Returns:
+        A snapshot marked `folder_summary_loaded`, so an unreadable folder is
+        asked once and not re-queued on every scroll.
+    """
+    if record.folder_summary_loaded or not record.is_directory:
+        return replace(record, folder_summary_loaded=True)
+    from ....Notes.note_import_discovery import folder_is_obsidian_vault
+
+    return replace(
+        record,
+        note_count=count_folder_notes(record.location),
+        is_vault=folder_is_obsidian_vault(record.location),
+        folder_summary_loaded=True,
+    )
 
 
 def project_records(
@@ -244,6 +345,17 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
     sort_descending = reactive(False)
     BATCH_SIZE = 64
     PUBLISH_INTERVAL = 0.03
+
+    show_folder_notes = False
+    """Draw a note count and a vault marker on folder rows (task-32643 AC#2/#4).
+
+    Off for every picker in the app except the three Notes folder doors, which
+    turn it on through `FileSystemPickerScreen`'s `notes_context`: "12 notes"
+    is a useful badge when choosing where notes live and noise in a model-file
+    or character-card picker. The work it adds is the same shape as the
+    metadata hydration it rides along with -- VISIBLE rows only, one bounded
+    `os.scandir` per folder, never re-asked once answered.
+    """
 
     class ListingChanged(Message):
         def __init__(self, navigation: ProgressiveDirectoryNavigation) -> None:
@@ -467,16 +579,37 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
         if not self._metadata_running:
             start = max(0, int(self.scroll_y) - 8)
             stop = min(self.option_count, int(self.scroll_y) + self.size.height + 8)
-            records = [
-                self._metadata.get(self.options[i].location, self.options[i].record)
-                for i in range(start, stop)
-                if getattr(self.options[i], "record", None) is not None
-                and not self.options[i].record.metadata_loaded
-                and self.options[i].location.name != ".."
-            ]
+            records = []
+            for i in range(start, stop):
+                option = self.options[i]
+                if getattr(option, "record", None) is None:
+                    continue
+                if option.location.name == "..":
+                    continue
+                record = self._metadata.get(option.location, option.record)
+                if self._wants_hydration(record):
+                    records.append(record)
             if records:
                 self._metadata_running = True
                 self._hydrate_visible(self._generation, records)
+
+    def _wants_hydration(self, record) -> bool:
+        """Is there still bounded per-row work owed on this visible record?
+
+        The folder badge is a SECOND reason a row can be unhydrated, and it has
+        to be asked independently of `metadata_loaded`: a metadata sort
+        (`project_records`) stats every record off-loop without ever counting
+        notes, so keying the queue on `metadata_loaded` alone left every folder
+        that first became visible under "Size" or "Last modified" permanently
+        badge-less.
+        """
+        if not record.metadata_loaded:
+            return True
+        return (
+            self.show_folder_notes
+            and record.is_directory
+            and not record.folder_summary_loaded
+        )
 
     def _repopulate_display(self):
         self._stop_projection()
@@ -631,13 +764,17 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
     async def _hydrate_visible(self, generation, records):
         try:
             cancelled = self._scan_cancel
+            summarise_folders = self.show_folder_notes
 
             def hydrate():
                 hydrated = []
                 for record in records:
                     if cancelled.is_set():
                         break
-                    hydrated.append(read_metadata(record))
+                    record = read_metadata(record)
+                    if summarise_folders and record.is_directory:
+                        record = read_folder_summary(record)
+                    hydrated.append(record)
                 return hydrated
 
             hydrated = await asyncio.to_thread(hydrate)

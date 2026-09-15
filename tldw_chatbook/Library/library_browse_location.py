@@ -21,7 +21,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from ..config import get_cli_setting, save_setting_to_cli_config
+from ..config import get_cli_setting, save_settings_to_cli_config
 from ..Utils.path_validation import validate_existing_absolute_directory
 
 #: Serializes the generation check with the config write it guards, so the
@@ -82,6 +82,55 @@ def browse_start_directory(remembered: object) -> Path:
     return Path.home()
 
 
+def picker_recent_context(section: str) -> str:
+    """The recents key for one picker context (task-32643 AC#3).
+
+    The three Notes doors already key their remembered START directory by
+    config section (task-32174: each context remembers its own, deliberately
+    not shared). The list of roots each door recently RETURNED is keyed the
+    same way, off the same string, so a caller cannot pass the picker one
+    context and persist under another.
+
+    Args:
+        section: The config section this picker writes, e.g. ``"file_notes"``.
+
+    Returns:
+        The context name for ``RecentLocations``, i.e. the suffix of the
+        ``[filepicker] recent_<context>`` key it stores under.
+    """
+    return section.replace(".", "_")
+
+
+def _recent_roots_write(context: str, directory: Path) -> dict[str, object]:
+    """Build the ``[filepicker]`` half of a selection's single config write.
+
+    Reuses ``RecentLocations`` -- the store the enhanced picker family has
+    always used -- for the dedupe, the newest-first ordering and the trim, so
+    there is one recents FORMAT in the app rather than a second one invented
+    for the vendored pickers. ``persist=False`` keeps its own synchronous
+    config rewrite out of this, because the caller folds both halves into one
+    write below.
+
+    Args:
+        context: The recents context, from :func:`picker_recent_context`.
+        directory: The directory the picker just returned.
+
+    Returns:
+        A ``save_settings_to_cli_config`` fragment, or ``{}`` when the recents
+        store is unusable -- remembering the start directory must not fail
+        because of the nicety beside it.
+    """
+    try:
+        from ..Widgets.enhanced_file_picker import RecentLocations
+
+        recent = RecentLocations(context=context)
+        recent.add(directory, "directory", persist=False)
+        return {"filepicker": {f"recent_{context}": recent.get_recent()}}
+    except Exception:
+        logger.warning("Could not update a picker's recent-folder list")
+        return {}
+
+
 def claim_browse_directory(section: str, key: str) -> int:
     """Reserve the next write slot for one picker context.
 
@@ -102,13 +151,23 @@ def claim_browse_directory(section: str, key: str) -> int:
 
 
 def remember_browse_directory(
-    section: str, key: str, selected_path: Path, generation: int
+    section: str,
+    key: str,
+    selected_path: Path,
+    generation: int,
+    recent_context: str = "",
 ) -> None:
     """Persist the directory a picker selection came from. Blocking.
 
     Reads the filesystem and rewrites ``config.toml``; run it on a worker
     thread, never on the event loop. A selection whose ``generation`` has
     since been superseded is dropped instead of written.
+
+    Also appends the directory to this context's recent-roots list when
+    ``recent_context`` is given (task-32643 AC#3), in the SAME config write
+    rather than a second one -- the two facts are written by one selection and
+    rewriting config.toml twice per pick would be two chances to lose a
+    concurrent edit.
 
     Args:
         section: The TOML section to write.
@@ -117,6 +176,10 @@ def remember_browse_directory(
             a file contributes its parent.
         generation: The value :func:`claim_browse_directory` returned for
             this selection.
+        recent_context: The :func:`picker_recent_context` value of a picker
+            that OFFERS its recent roots back (the three Notes folder doors).
+            Blank -- the default -- writes no recents list, so a caller whose
+            picker never reads one does not accumulate a key nothing shows.
     """
     try:
         directory = (
@@ -128,7 +191,13 @@ def remember_browse_directory(
                     f"Superseded remembered directory for [{section}].{key}"
                 )
                 return
-            saved = save_setting_to_cli_config(section, key, str(directory))
+            # Inside the lock: the recents update is a read-modify-write of a
+            # LIST, so two selections racing here would otherwise each read
+            # the pre-existing list and the loser's entry would vanish.
+            settings: dict[str, object] = {section: {key: str(directory)}}
+            if recent_context:
+                settings.update(_recent_roots_write(recent_context, directory))
+            saved = save_settings_to_cli_config(settings)
     except Exception:
         logger.exception(
             f"Could not remember the last-used directory for [{section}].{key}"
