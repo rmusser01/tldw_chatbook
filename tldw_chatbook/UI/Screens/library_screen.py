@@ -8869,7 +8869,21 @@ class LibraryScreen(BaseAppScreen):
     #: "Search Library…" box, marking none of Change selection / Clear /
     #: Check selection -- both assessors clicked all three. F6 and Escape
     #: remain the ways out of the pane, as the guide says.
-    _LIBRARY_WORK_PANE_TAB_VIEWS = ("editor", "import")
+    #: task-32608 AC#1: and the lasting-sync canvas, which is mounted in the
+    #: SAME ``#library-note-work-pane`` (``LibraryNotesCanvas.compose``
+    #: yields ``LibraryNotesAddFromFilesCanvas`` for these two modes) and was
+    #: the only full-pane Notes task left out of the closed cycle. Without
+    #: it, Tab ran past the review pane's terminal action -- "Activate
+    #: reviewed root" -- into the rail, where Enter navigates the app to
+    #: Conversations and the root was never activated (assessor B, cap 33 /
+    #: K17; assessor A reports the same shape for the import review). Escape
+    #: and F6 remain the ways out of the pane, as they are for the editor.
+    _LIBRARY_WORK_PANE_TAB_VIEWS = (
+        "editor",
+        "import",
+        "lasting_add",
+        "lasting_roots",
+    )
 
     def _library_note_work_pane_owns_tab(self, focused: Widget | None) -> bool:
         """Whether Tab should cycle inside the open Notes work pane."""

@@ -2297,13 +2297,27 @@ class LibraryFileNotesGitPanel(Vertical):
             return
         push_active = self._push_phase != "list"
         commit_active = self._commit_phase != "list"
+        commit_workflow = self.query_one("#file-notes-git-commit-workflow")
+        push_workflow = self.query_one("#file-notes-git-push-workflow")
         self.query_one("#file-notes-git-list-surface").display = (
             not push_active and not commit_active
         )
-        self.query_one("#file-notes-git-commit-workflow").display = (
-            not push_active and commit_active
-        )
-        self.query_one("#file-notes-git-push-workflow").display = push_active
+        commit_workflow.display = not push_active and commit_active
+        push_workflow.display = push_active
+        # task-32608 AC#2: an open commit (or push) workflow is a modal form
+        # -- its own subject/body/Cancel/Confirm and nothing else. Without a
+        # trap, Tab out of the subject field walked the LIBRARY SCREEN's
+        # focus chain, which Textual orders by screen POSITION
+        # (``Widget._focus_sort_key``), so the next stop from a field at the
+        # top of the pane was whatever sat below it anywhere on the screen
+        # and the form's own footer -- 30 rows down -- was not reached in
+        # four presses (assessor B, caps 42/43, K18: "only reachable by a
+        # computed mouse click at row 48"). ``trap_focus`` is Textual's own
+        # containment for exactly this shape, so no second Tab mechanism is
+        # invented here; Escape still leaves (the screen's binding chain is
+        # not focus-scoped) and so does the form's Cancel.
+        commit_workflow.trap_focus(commit_workflow.display)
+        push_workflow.trap_focus(push_workflow.display)
 
     def _focus_push_control(self, selector: str) -> None:
         operation_id = self._push_operation_id
