@@ -3958,6 +3958,7 @@ class LibraryFileNotesGitPanel(Vertical):
         ):
             self._edit_commit_message()
 
+
 #: Cells ``ConfirmationDialog`` leaves its message: a 60-cell container less
 #: its one-cell border either side and its ``padding: 1 2`` (task-32615,
 #: measured against the painted Label at 235x52, 100x30 and 60x24 -- the
