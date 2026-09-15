@@ -35,7 +35,9 @@ these boundaries and ADR-009's offline-tamper protection.
 1. Native authoring uses the portable Agent Plugins core and the versioned
    io.github.rmusser01.chatbook extension. Deterministic adapters record their
    selected dialect and overlays; ambiguous packages require interpretation
-   selection. No indiscriminate manifest merging.
+   selection. No indiscriminate manifest merging. A malformed recognized extension
+   remains an activation blocker where required constraints cannot be recovered,
+   even when portable components remain inspectable.
 2. Installation IDs are independent of names, publisher claims and catalog
    references. Effective revision identity includes package bytes, catalog
    overlays, interpretation and selected component definitions.
@@ -46,20 +48,31 @@ these boundaries and ADR-009's offline-tamper protection.
    permission are separate. Required guards/dependencies never vanish through
    partial installation. New support does not auto-enable excluded components.
 5. Extend authenticated skill trust through a separate plugin namespace and
-   secure generation marker. Verify content and authority at use time; no
-   hash-only authority, foreign grants or permission-default recovery.
+   secure generation marker. Authenticate activation defaults/workspace overrides,
+   selection/dependencies, hook requirements, execution mappings and credential
+   references/versions as well as content and revocation. Verify at use time;
+   no hash-only authority, foreign grants or permission-default recovery. A live
+   hook-disable switch cannot erase required dependencies.
 6. One OS-locked plugin execution/mutation owner exists per user-data directory
    in v1. Other instances browse validated state. A real run leases its revision;
    idle connections and archived checkpoints do not block updates forever.
 7. Applying updates fences new old-revision admission and drains active work.
-   Publication uses staged files, a durable authenticated intent, one registry
-   commit and secure-marker reconciliation. Projections cannot activate themselves.
+   Publication uses staged files, a complete protected authority snapshot and
+   authenticated intent. After the registry commits in SQLite, persist a separate
+   authenticated commit certificate in the protected trust store; the secure
+   marker then binds generation, operation ID and snapshot digest. A crash before
+   certificate publication requires reviewed recovery. Prepared intent alone cannot
+   advance the marker. Its matching snapshot permits exact authority recovery
+   after registry loss, without recreating grants or bypassing surviving-child
+   reconciliation. Projections cannot activate themselves.
 8. Revocation precedes cleanup. Late approvals/callbacks cannot revive execution,
    and removed plugin cleanup hooks are suppressed. Unclean owner death requires
    surviving-child reconciliation; acquiring its lock does not prove cleanup.
 9. Use the existing Git executable, portalocker, private SQLite, HTTP and
    credential seams. Direct generic MCP transport is a separately qualified
-   prerequisite; a tldw_server wrapper is not equivalent evidence.
+   prerequisite; a tldw_server wrapper is not equivalent evidence. SessionStart
+   uses provisional normal authority and independently eligible, already-connected
+   MCP prerequisites; initialization cannot grant itself readiness.
 10. Plugins owns package management. Library Skills and MCP retain their component
     surfaces with service-enforced package ownership. Canonical Settings owns
     global preferences only. UI shows workspace versus installation-wide effects.

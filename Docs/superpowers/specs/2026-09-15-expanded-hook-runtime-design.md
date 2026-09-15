@@ -42,7 +42,11 @@ arbitrary Python callback imports and permission-bypass results are excluded.
 Existing user config [hooks] + [[hooks.hook]] remains the legacy contract:
 six events, argv commands, current matching, first-deny behavior and current
 UserPromptSubmit output semantics. Do not reinterpret legacy stdout as v2 JSON.
-The existing master enabled switch applies to both versions.
+The existing master enabled switch applies to both versions. It suppresses
+execution, not the requirements captured by an active v2 definition set or a
+plugin dependency. Those requirements remain unsatisfied while hooks are off;
+turning the switch off cannot admit work without its required guard/context.
+Legacy configurations without v2 requirements retain their existing behavior.
 
 New user declarations use [[hooks.handler]], whose fields match a v2 handler.
 Native plugin files use this closed versioned envelope:
@@ -74,7 +78,9 @@ Common fields:
 | id | Unique stable local identifier, 1–128 ASCII letters/digits/underscore/hyphen. |
 | event | One event from section 3; case-sensitive after dialect normalization. |
 | type | command or mcp_tool. |
-| effects | Explicit subset permitted for the event; empty means observation only. |
+| effects | Explicit subset permitted for the event; empty declares no returned effects, but a success requirement can still make the handler controlling. |
+| required | Optional boolean, default false; successful completion is required for the owning event under section 2.4. |
+| require_context | Optional boolean, default false; success requires a nonempty accepted context contribution. Failure follows the event/required/dependency policy. Valid only with the context effect on a context-capable event. |
 | match | Optional structured matcher; absent matches every occurrence of that event. |
 | timeout_seconds | Finite positive execution timeout within host limits. |
 | input | MCP-only JSON argument template, default empty object. |
@@ -82,9 +88,10 @@ Common fields:
 Allowed effect names are deny, context, updated_input, child_limits,
 continuation and stop_continuations. Command-specific fields are argv, env and
 cwd; MCP-specific fields are server, tool and input. Type-inappropriate fields
-are invalid. id, event, type and effects are required. match and
-timeout_seconds are optional; input is optional for MCP and forbidden for
-commands.
+are invalid. id, event, type and effects are required fields. match,
+timeout_seconds, required and require_context are optional; input is optional
+for MCP and forbidden for commands. Requiredness is normalized and included in
+the reviewed definition digest, never inferred from output text.
 
 Command handlers require a nonempty argv array. Optional env contains literal
 or declared variable values; cwd is a contained package path for plugin hooks,
@@ -97,12 +104,15 @@ is ordinary privileged command execution and must be presented as such.
 MCP handlers require a server component/connection reference and tool reference.
 Resolve to exact owned tool identity/definition at admission; require a connected
 eligible server. Do not start a disconnected server automatically to satisfy a
-hook. Authentication/setup happens through explicit connection flow.
+hook. Authentication/setup happens through explicit connection flow. Section 3.2
+defines the provisional authority for initialization before the first run.
 
 Reject duplicate IDs, unknown fields, unsupported versions, illegal effect/event
 combinations and malformed required handlers. Invalid required guards block
-their dependent capabilities. An observation-only hook failure is diagnostic,
-not authority to disable an unrelated component.
+their dependent capabilities. Only handlers without a controlling event policy,
+explicit success/context requirement or active dependency requirement are
+optional observations; their failure is diagnostic, not authority to disable an
+unrelated component.
 
 ### 2.2 Event payload
 
@@ -159,20 +169,72 @@ Nonzero exit, output overflow and invalid JSON are errors; exit code 2 is
 not a new v2 protocol shortcut. Legacy/vendor exit meanings are translated
 by the selected adapter before v2 result validation.
 
+### 2.4 Required success and context
+
+There are three sources of requiredness, with the stricter applicable rule
+winning:
+
+- Existing controlling event policy: selected PreToolUse transformations/guards
+  and SubagentStart restrictions still fail closed, even when required is false.
+- Explicit required: true: a user-configured or reviewed plugin handler must
+  succeed for its owning event to continue. The plugin review
+  shows that this can block the owning run/event, not just one package component.
+- A plugin requires edge: success at the applicable event is a prerequisite for
+  its declared dependent capabilities. This narrower scope does not become a
+  blanket failure of unrelated capabilities. Dependency requirements apply even
+  if the handler's own required field is false.
+
+A successful pass with empty command stdout satisfies a success-only requirement;
+guards may pass and transformers may make no change. It does not satisfy
+require_context: true. That flag requires at least one non-whitespace context
+block with the event's allowed lifetime, accepted in full within all budgets.
+Malformed, missing, rejected or oversized required context is a failure. Merely
+declaring the context effect does not make its output mandatory. Plugin edges
+require success and also inherit the target handler's require_context contract.
+require_context defines a successful result, not its failure scope; it does not
+silently promote a dependency-only requirement into an owning-event requirement.
+
+For standalone user hooks, required initialization uses required: true; required
+context additionally sets require_context: true. No plugin dependency declaration
+is needed. Nonmatching handlers do not create a failure. Disabled, invalid or
+unavailable required handlers do:
+the runtime must retain their requirements when it filters executable handlers.
+Removing a requirement is an explicit definition/dependency change for a newly
+reviewed/admitted set, not a side effect of a switch or a parse failure. An
+already-admitted snapshot cannot lose its requirements halfway through work.
+
+Required pre-event failure blocks the pending admission/action. Required
+PostToolUse, PostToolUseFailure or PostCompact failure preserves the settled
+result/committed compaction and fences the owner's next model input. A required
+SubagentStop contribution similarly fences the active parent's next input while
+preserving the child's settled result. With only a dependency-scoped requirement,
+mark those dependents unready and refuse their next use; never silently omit
+material from an explicit dependent invocation. Show a remediation or cancel
+action. Do not replay the tool, compactor or hook automatically. If the owner
+already settled, retain the diagnostic without reopening it or attaching effects
+to a later run.
+
+ApprovalRequested, Stop, Interrupt and SessionEnd do not support explicit required
+or require_context set true, or incoming required dependency edges. Reject these
+declarations. Observations/continuation proposals at those boundaries cannot
+veto host settlement, cleanup or already-completed work. Stop's existing
+continuation-veto/error rules still apply. Optional observations alone use the
+lossy notification queue; required handlers never do.
+
 ## 3. Event timing and effects
 
 | Event | Exact boundary | Allowed v2 effects | Failure behavior |
 | --- | --- | --- | --- |
-| SessionStart | Before first run of a live hook-runtime session | context with runtime lifetime; deny initialization | Required initialization blocks dependent capability admission; optional context failure is visible. |
-| UserPromptSubmit | Explicit user submission after base input validation, before context preparation/admission | deny; turn context | Explicit denial blocks; other failures remain fail-open as in ADR-148. Required material cannot be silently omitted from an admitted dependent capability. |
+| SessionStart | During provisional admission, before the first run of a live hook-runtime session | context with runtime lifetime; deny initialization | Explicit required failure blocks session admission; dependency-only failure blocks its dependents. Optional context failure is visible. |
+| UserPromptSubmit | Explicit user submission after base input validation, before context preparation/admission | deny; turn context | Explicit denial blocks; optional failures remain fail-open as in ADR-148. Explicit v2 requirements block the owning admission; dependency-only failure blocks its dependents. |
 | PreToolUse | Candidate prepared, before normal approval and dispatch | updated_input; deny; turn context | Fail closed for selected transformation/guard failures. |
 | ApprovalRequested | A normal permission request is created | observation only | Diagnostic only; cannot approve, modify or answer for the user. |
-| PostToolUse | Dispatched call settled, including ordinary execution-error results | turn context; observation | Cannot rewrite the result or undo effects; failure is diagnostic. |
-| PostToolUseFailure | After PostToolUse when a dispatched call reports execution failure | turn context; observation | Diagnostic only; denied/not-dispatched calls do not emit it. |
+| PostToolUse | Dispatched call settled, including ordinary execution-error results | turn context; observation | Preserve the result/effects. Optional failure is diagnostic; required failure fences subsequent input/dependent use under section 2.4. |
+| PostToolUseFailure | After PostToolUse when a dispatched call reports execution failure | turn context; observation | Same required/optional checkpoint policy as PostToolUse; denied/not-dispatched calls do not emit it. |
 | SubagentStart | Child draft has inherited restrictions, before child admission | deny; child_limits; child-turn context | Fail closed for selected guards/restrictions. |
-| SubagentStop | Child result has settled | observation; context for the parent's next model step if still active | No restart or child-output rewriting; otherwise discard late context visibly. |
-| PreCompact | Actual compaction candidate prepared, before compactor runs | context supplied to compaction input | Required context failure aborts compaction; never silently drops history. |
-| PostCompact | New compacted context successfully committed | turn context for subsequent model input | Diagnostic only; no rollback or editing of committed summary. |
+| SubagentStop | Child result has settled | observation; context for the parent's next model step if still active | Required failure fences the active parent's next input/dependent use; no restart or output rewriting. Otherwise discard late context visibly. |
+| PreCompact | Actual compaction candidate prepared, before compactor runs | context supplied to compaction input | Required context needed by the candidate aborts compaction on failure; never silently drops history. |
+| PostCompact | New compacted context successfully committed | turn context for subsequent model input | Optional failure is diagnostic; required failure fences subsequent input/dependent use. No rollback or editing of committed summary. |
 | Stop | One accepted root turn settles normally, before scheduler decides next action | continuation; stop_continuations; observation | Failure ends hook continuation; no retry loop. |
 | Interrupt | After user cancellation seals admission, during bounded cleanup | observation only | Cannot veto, extend or reverse cancellation. |
 | SessionEnd | Graceful disposal/replacement of a live hook-runtime session | observation only | Cannot veto disposal; bounded best effort. |
@@ -193,14 +255,15 @@ root session events; they use child lifecycle events.
 ### 3.1 Live session boundaries
 
 A hook-runtime session is a host-owned live execution context for a specific
-conversation, workspace binding and immutable active hook set. It starts lazily
-when the first run is admitted and ends on explicit conversation runtime
-closure, process shutdown or an idle context/hook-set replacement.
+conversation, workspace binding and immutable active hook set. It is prepared
+lazily during first-run admission, becomes live after required initialization
+succeeds for the capabilities being admitted, and ends on explicit conversation
+runtime closure, process shutdown or an idle context/hook-set replacement.
 
 Changing tab focus does not create or end it. Durable conversation history is
 not itself a live session. Reopening archived history does not run hooks until
-new execution is admitted. A new process creates a fresh live session after
-recovery; there is no replay of missed SessionEnd events.
+a new execution admission is attempted. A new process creates a fresh live
+session after recovery; there is no replay of missed SessionEnd events.
 
 Enabling/updating a plugin applies to the next run. At the idle boundary,
 replace the hook-runtime session and deliver SessionStart for the new set,
@@ -217,6 +280,47 @@ Compaction is the real context operation, not a tab action or every token
 estimate. Runtime context contributions are retained as separately owned
 blocks and reassembled within budgets after compaction; do not duplicate them
 into both the summary and the active context lane.
+
+### 3.2 Provisional initialization and MCP prerequisites
+
+Before SessionStart, perform base submission validation and resolve the actual
+workspace/parent authority. Reserve admission under the existing run-capacity
+and budget limits, pin the trusted component/hook snapshot, and allocate a
+provisional session/run identity. This reservation is cancellable and revocable;
+it is not an accepted root turn and does not advertise dependent capabilities.
+It holds no lifecycle/permission lock or scarce execution slot while awaiting
+setup/approval. No SessionStart event is emitted merely to inspect a package.
+
+Resolve initialization dependencies against a private, prospective capability
+view under those exact restrictions. A SessionStart MCP hook may call only an
+already-connected dependency whose eligibility does not itself depend on that
+unfinished initialization. Explicit connection/setup uses the ordinary reviewed
+connection flow and never bypasses its own requirements. Missing connections
+produce Needs configuration; SessionStart cannot launch/connect them itself.
+
+The dependency graph includes component prerequisites and matching required
+guards on initialization tool calls. Reject known cycles before dispatch,
+including an initializer that needs a server gated on that same initializer;
+retain causal-cycle checks for dynamically resolved invocations. Setup and
+connection tests cannot become a back door around this graph. Authors must use
+an independently eligible initializer dependency or revise the declarations.
+
+Initialization calls use the reserved workspace/parent identity, normal tool
+schema/profile/approval checks, fresh authority checks and ordinary process/run
+leases. They get no borrowed approval stamps or temporary extra tool rights.
+An update/disable can cancel the provisional reservation just as it can block
+normal admission. Stage SessionStart context until its controlling requirements
+succeed, then publish the live session and finish run admission.
+Dependency-only failure leaves those components unready and discards their
+dependent staged material; independently eligible work may still be admitted.
+An explicit request for an unavailable dependent is refused, not silently altered.
+
+On owning-event failure/cancellation, discard staged context and release the reservation
+after owned work is settled or transferred to explicit cleanup-pending ownership.
+Do not emit root Stop or replay initialization automatically. Already-performed
+MCP/command effects remain recorded; initialization is not transactional rollback.
+A setup change requiring different definitions creates a new admission attempt
+with a freshly validated snapshot.
 
 ## 4. Matching and deterministic effects
 
@@ -362,7 +466,14 @@ spec's surviving-child recovery rule; lock acquisition does not establish
 that the previous hook/MCP processes stopped.
 
 User stop seals new work first. Interrupt gets a bounded observation window
-afterward and cannot extend it. SessionEnd is best effort on graceful closure;
+afterward and cannot extend it. Its deadline includes queueing and dispatch;
+on expiry, accept no further hook output and start host termination. The separate
+post-kill reap allowance is host cleanup time, not an extension in which hooks
+may run, prompt or submit effects. The maximum awaited teardown path is the
+notification window plus the reap allowance (at most 3 + 5 seconds); unresolved
+processes remain cleanup-pending after that, without claiming they stopped.
+Cancellation/admission sealing does not wait for either window. SessionEnd is
+best effort on graceful closure;
 crashes do not replay it. Remote cancellation cannot establish that side
 effects were undone; uncertain completion is preserved and never auto-retried.
 
@@ -379,14 +490,15 @@ visible adaptation or remain unsupported.
 | Effectful event execution | 60 s total active execution | Stop launching further handlers; fail controlling required effects. |
 | Effectful event wall time | 180 s total including queue and all approval waits | Settle the required event as failed; no repeated wait can extend the deadline. |
 | Interactive MCP approval wait | 120 s separate wall-time ceiling | Cancel pending hook call; deny required parent guard, otherwise diagnose omission. |
-| Interrupt/SessionEnd | 1 s / 3 s total wall time per event | No new approval, connection or continuation; terminate outstanding owned work. |
-| Post-kill reap | 5 s maximum | Preserve cleanup-pending ownership if unresolved. |
+| Interrupt/SessionEnd notification | 1 s / 3 s wall time per event, including queue and execution | End notification/output acceptance at deadline; no new approval, connection or continuation; initiate host termination. |
+| Post-kill reap | 5 s maximum host cleanup allowance after notification/execution ends | Outside the handler/event window; preserve cleanup-pending ownership if unresolved. |
 | Input envelope | 1 MiB UTF-8, depth 32, 16,384 JSON nodes | Required guard rejects the parent operation whole; optional observation drops with diagnostic. |
 | Structured stdout / MCP result | 16 KiB UTF-8 | Bound during capture; invalid overflow fails the handler. |
 | stderr retained | 4 KiB UTF-8 | Truncate diagnostic capture with marker; never parse as effects. |
 | Context | 4 KiB/block; 16 KiB/event; companion 32 KiB/send aggregate | Reject blocks/effect batch whole when required; no silent constraint truncation. |
-| Concurrent effectful executions | 4/runtime | Bounded FIFO admission; cancellation releases reservations correctly. |
-| Observation queue | 64 events, 4 active workers/runtime | Drop newest optional observation with a count; guards never enter this lossy queue. |
+| Concurrent effectful executions | 4/runtime; 8/application across all v2 sessions | FIFO within a runtime, round-robin admission across eligible runtimes; cancellation releases reservations correctly. |
+| Outstanding effectful handlers | 16/runtime; 64/application, including queued, active and suspended nested/approval continuations | Reserve one lifetime ticket per handler; refuse overflow under the event's required/optional failure policy; never dispatch an unguarded parent call. |
+| Observation queue | 64 pending handler deliveries/runtime; 128/application; 4 active workers/runtime and 8/application | Each matching handler is one delivery. Drop newest optional delivery with a count; fair round-robin admission across runtimes; required handlers never enter this lossy queue. |
 | Definitions | 64 hooks/installation; 256 active/runtime | Refuse activation of the overflowing set; no arbitrary tail omission. |
 | Matcher patterns | 32/handler; 256 characters/pattern | Reject invalid definition. |
 | Causal depth | 4 nested hook/tool levels | Cycle/limit failure as section 6; no guard bypass. |
@@ -400,10 +512,29 @@ slot while waiting for the user or for nested hook tool dependencies. Use
 structured async orchestration; nested callbacks cannot block all available
 workers while waiting for work queued behind themselves.
 
-If an event requires initialization/context that cannot be supplied, the
-dependent capability remains unready. UserPromptSubmit failure remains
-fail-open for unrelated work; that does not authorize omitting a required
-capability constraint. Observation errors cannot rewrite settled results.
+The application-wide v2 counters include provisional initialization, all live
+sessions, child/late event work and teardown; creating another conversation
+does not create another application allowance. They are independent of the
+Console's adjustable root-run cap. Suspended required work retains a bounded
+admission ticket without occupying an execution slot. Nested work needs its own
+ticket; exhaustion fails the controlling event rather than bypassing guards or
+waiting outside the bounds. Use the earlier of inherited and local deadlines.
+Queueing/approval cannot reset those deadlines, and re-admission joins the fair
+queue instead of jumping ahead of other runtimes.
+
+Spawned local children consume their pool's application resource allowance until
+reaped; cleanup-pending ownership retains that accounting. Repeated timeout or
+session replacement cannot accumulate uncounted surviving processes. Settling
+a cancelled waiter is distinct from releasing its owned process resources.
+Remote outcomes can remain uncertain after local transport cleanup; these limits
+bound host-owned work, not arbitrary remote side effects. Existing legacy pools
+and timeout/output behavior remain separate; these are aggregate v2 guarantees,
+not a retroactive change to ADR-148's contract.
+
+If required initialization/context cannot be supplied, apply section 2.4's
+owning-event or dependency-scoped failure. UserPromptSubmit remains fail-open
+for optional errors, while explicit v2 requirements can block submission.
+Observation errors cannot rewrite settled results.
 
 New v2 diagnostics retain identifiers, event, owner, duration, status and
 bounded sanitized reasons. Do not put stdout, exact tool arguments, prompts,
@@ -474,6 +605,39 @@ payloads or unpreservable timing block their declared dependent behavior.
    using credential/prompt sentinels and bounded adversarial input.
 10. Qualify version-pinned vendor fixtures with independent expected behavior,
     including documented adaptations and unsupported required guards.
+
+Written-spec amendment scenarios are mandatory acceptance evidence:
+
+- **Required success/context:** a standalone SessionStart required handler may
+  succeed with empty stdout; the same handler with require_context refuses empty,
+  whitespace-only or oversized context and accepts a valid bounded block. Cover
+  the same distinction through plugin dependency edges. Master-off, disabled and
+  invalid required handlers preserve the failure condition instead of vanishing
+  from the executable list. Optional handler failure is a successful fail-open
+  control where the event permits it.
+- **Post-event checkpoint:** a tool side effect/result and a compacted summary
+  each commit once, then their required context hook fails. Preserve those
+  outcomes, block the next owning model input and do not replay either operation.
+  Check narrower dependency-only failure, active-parent SubagentStop, late owner
+  settlement, and rejection of required teardown/approval/Stop declarations.
+- **Initialization admission:** an explicitly connected independent MCP dependency
+  succeeds through normal approval under a provisional workspace/run identity.
+  A disconnected server launches nothing, a known initialization/guard cycle
+  dispatches no tool, and denied/cancelled/revoked initialization publishes no
+  dependent capability/context or root Stop. A successful control reaches normal
+  run admission; no path can reuse a stamp from another run or bypass a guard.
+- **Aggregate bounds:** exercise enough simultaneous/provisional/late sessions
+  to exhaust application limits as well as per-runtime limits. Count actual
+  active children/workers and pending tickets, prove FIFO/round-robin progress
+  for an admitted quiet runtime, and verify cancellation, nested work and session
+  replacement release or retain the correct reservations. A full optional queue
+  cannot drop a required guard or permit its parent invocation.
+- **Teardown timing:** with a controlled slow/unkillable-child simulation, seal
+  admission immediately, cease notification/output acceptance by its deadline,
+  and bound subsequent awaited host reaping separately. Check both confirmed
+  exit and cleanup-pending outcomes; the latter remains counted and cannot
+  advertise that the child stopped. Use real controlled child processes for
+  the successful kill/reap control on each qualified platform.
 
 Initial implementation targets include Agents/run_hooks.py, existing agent
 dispatch/child lifecycle seams, Console runtime/submit/interrupt owners,
