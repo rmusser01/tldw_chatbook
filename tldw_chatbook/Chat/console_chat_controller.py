@@ -3808,6 +3808,7 @@ class ConsoleChatController:
         staged_evidence_provider: Callable[[str], bool] | None = None,
         cancel_raw_cli_session: Callable[[str], object] | None = None,
         canvas_enabled_reader: Callable[[], bool] | None = None,
+        canvas_disabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
     ) -> None:
@@ -3853,6 +3854,7 @@ class ConsoleChatController:
 
             canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
+        self._canvas_disabled_reader = canvas_disabled_reader
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
         )
@@ -26890,6 +26892,7 @@ class ConsoleChatController:
                     canvas_run,
                     scope=canvas_scope,
                     enabled_reader=self._canvas_enabled_reader,
+                    disabled_reader=self._canvas_disabled_reader,
                 )
                 canvas_authority = canvas_provider.issue_registration_authority()
         try:

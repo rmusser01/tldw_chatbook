@@ -198,7 +198,9 @@ try:
   else:result=runtime._materialize_canvas_native_authority()
  except KeyboardInterrupt:
   assert outcome=='base_error' and not runtime._canvas_disabled_latched
- else:assert result is None and runtime._canvas_disabled_latched
+ else:
+  assert result is None
+  assert runtime._canvas_disabled_latched is (outcome!='native_pause')
  assert runtime._canvas_native_authority is None and runtime._canvas_native_view_binding is original_binding
  assert calls==([] if outcome=='native_pause' else [True])
 finally:

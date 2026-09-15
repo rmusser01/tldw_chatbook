@@ -115,6 +115,7 @@ def _console_hooks(app, screens):
         raise RecoveryRequired("runtime_owner_unqualified")
     controller = None if runtime is None else runtime.chat_controller
     producers = [
+        _bind(runtime, "Chat.console_runtime", "ConsoleRuntime", "_canvas_maintenance"),
         _bind(
             controller,
             "Chat.console_chat_controller",

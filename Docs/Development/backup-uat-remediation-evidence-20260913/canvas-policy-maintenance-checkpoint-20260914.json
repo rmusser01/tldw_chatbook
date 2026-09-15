@@ -1,0 +1,157 @@
+{
+  "base_revision": "05e07702abedcd3b1dac1058385dddb6f880c343",
+  "scope": "Preserve Canvas enabled state through backup temporary storage refusal; retain accepted policy cleanup and downstream availability state. No guard or deadline relaxation.",
+  "reviewed_source_sha256": {
+    "tldw_chatbook/Agents/canvas_tool_provider.py": "deb28000c5556064875088fc39fd234245cbac12b1ad8e723ed62da4ac23eb3f",
+    "tldw_chatbook/Backup_Recovery/runtime_maintenance.py": "3a2ae60bbf6928ac5d55ded1fa1ebc7a2aea52a66de8622e469a25dc7fc20058",
+    "tldw_chatbook/Chat/console_chat_controller.py": "1cd4d228479dcb206532ce63a58294ca9d5092b5228592c5d441f2aee4fd8e1f",
+    "tldw_chatbook/Chat/console_message_actions.py": "3cfde1f53c75ebea960f8c404d52e805bc3f91bd9b3b1953cfc250ca4d5a3b85",
+    "tldw_chatbook/Chat/console_runtime.py": "92332ce489a57b596387fb23146158db1dec8ec3b97ba46bc1e7b5720b58809c",
+    "tldw_chatbook/UI/Console_Modules/message.py": "6c6432121553cf4f02aa3291cc28750a0344c5ffcca9f48eeb37757c5912882a",
+    "Tests/Backup_Recovery/test_canvas_policy_maintenance.py": "9a1204b7d55dc71dae60b92a59d2b063d0305a0332c872eec27d1fee768f715c",
+    "Tests/Backup_Recovery/test_console_canvas_config_order.py": "a11adc9c5a8bd5890b80e25f727ec06bf34a2280940e89e0110a651e9d72f228"
+  },
+  "root_focused": {
+    "passed": 35,
+    "seconds": 31.74
+  },
+  "independent_native": {
+    "passed": 12,
+    "seconds": 13.03
+  },
+  "installed_macos": {
+    "installed_files_retained_by_passing_fixture": 2867,
+    "package_files_verified_against_wheel": 2800,
+    "python_files_match_current_source": 2475,
+    "wheel_sha256": "0557a404af73d9dae36e2bb8ff467236fbdc1beda3b0a91d0f1d4829b6da8f56",
+    "fixtures": "/private/tmp/uat-canvas-transient-mounted-macos",
+    "tests": {
+      "console": "passed",
+      "settings": "passed",
+      "library": "passed"
+    },
+    "seconds": 153.53,
+    "mismatches": []
+  },
+  "module_guards": {
+    "passed": 2,
+    "import": 669,
+    "import_limit": 686,
+    "ui_ready": 1022,
+    "ui_ready_limit": 1022
+  },
+  "collected": {
+    "native-close-diagnostic": 25,
+    "support-diagnostic": 337
+  },
+  "static": {
+    "root": "/private/tmp/uat-canvas-static-_wyquucd",
+    "summary": {
+      "tldw_chatbook/Agents/canvas_tool_provider.py": {
+        "ruff_before": 1,
+        "ruff_after": 1,
+        "new_ruff": [],
+        "bandit_before": {
+          "B101": 1
+        },
+        "bandit_after": {
+          "B101": 1
+        },
+        "new_bandit": {}
+      },
+      "tldw_chatbook/Chat/console_chat_controller.py": {
+        "ruff_before": 191,
+        "ruff_after": 191,
+        "new_ruff": [],
+        "bandit_before": {
+          "B110": 9,
+          "B101": 7
+        },
+        "bandit_after": {
+          "B110": 9,
+          "B101": 7
+        },
+        "new_bandit": {}
+      },
+      "tldw_chatbook/Chat/console_message_actions.py": {
+        "ruff_before": 6,
+        "ruff_after": 6,
+        "new_ruff": [],
+        "bandit_before": {},
+        "bandit_after": {},
+        "new_bandit": {}
+      },
+      "tldw_chatbook/UI/Console_Modules/message.py": {
+        "ruff_before": 38,
+        "ruff_after": 38,
+        "new_ruff": [],
+        "bandit_before": {},
+        "bandit_after": {},
+        "new_bandit": {}
+      },
+      "Tests/Backup_Recovery/test_console_canvas_config_order.py": {
+        "ruff_before": 0,
+        "ruff_after": 0,
+        "new_ruff": [],
+        "bandit_before": {},
+        "bandit_after": {},
+        "new_bandit": {}
+      },
+      "tldw_chatbook/Chat/console_runtime.py": {
+        "ruff_before": 31,
+        "ruff_after": 31,
+        "new_ruff": [],
+        "bandit_before": {
+          "B110": 3
+        },
+        "bandit_after": {
+          "B110": 3
+        },
+        "new_bandit": {}
+      },
+      "tldw_chatbook/Backup_Recovery/runtime_maintenance.py": {
+        "ruff_before": 0,
+        "ruff_after": 0,
+        "new_ruff": [],
+        "bandit_before": {},
+        "bandit_after": {},
+        "new_bandit": {}
+      },
+      "Tests/Backup_Recovery/test_canvas_policy_maintenance.py": {
+        "ruff_before": 0,
+        "ruff_after": 0,
+        "new_ruff": [],
+        "bandit_before": {},
+        "bandit_after": {},
+        "new_bandit": {}
+      },
+      "Tests/Backup_Recovery/test_mounted_console_backup.py": {
+        "ruff_before": 0,
+        "ruff_after": 0,
+        "new_ruff": [],
+        "bandit_before": {},
+        "bandit_after": {},
+        "new_bandit": {}
+      },
+      "Tests/Backup_Recovery/run_platform_product.py": {
+        "ruff_before": 0,
+        "ruff_after": 0,
+        "new_ruff": [],
+        "bandit_before": {},
+        "bandit_after": {},
+        "new_bandit": {}
+      }
+    }
+  },
+  "evidence": {
+    "/private/tmp/uat-canvas-transient-green.log": "ebb4b5a915819ab1ab4f7dc6beacd9eeb493d62706439e7903eda287190342fb",
+    "/private/tmp/uat-canvas-maintenance-independent-final.log": "25182320b70bdb377c598cb81b34a26441b82ae84aca89f13a25914fd95c19b9",
+    "/private/tmp/uat-canvas-transient-mounted-macos.log": "a7d421f0d2cfe532f75787570230fdf5791e96dd4e5bc50e0478bc245ea128a1",
+    "/private/tmp/uat-canvas-transient-module-census.log": "8aeedcef0b9e4bef106a160f5f1567ba4bb0429a5bb960b5715ce1426968d34c",
+    "/private/tmp/uat-canvas-transient-static-status.log": "e8e076930a97a4845ff7875d36cd0b7330b7429e9953d119cd8ffa84db8211fd",
+    "/private/tmp/uat-canvas-mounted-macos.log": "b90790a341b29f0590ad51d8bf14aaff68790d24f582b713e9d7c3f02bb3de57",
+    "/private/tmp/uat-canvas-pause-status.log": "a58210a568517fc9d177e95a89fa1a4fb3a33a450d75174af1457e7bd1fe6e58"
+  },
+  "preserved_failure": "Earlier hook-only candidate: Console and Settings passed, Library archive succeeded but Canvas permanently disabled; superseded by exact temporary-refusal distinction.",
+  "native_followup": "Linux and Windows at the new commit pending. Windows startup four 60-second failures and earlier mounted/restart failures remain unresolved."
+}

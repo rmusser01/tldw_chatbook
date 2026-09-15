@@ -71,6 +71,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_sqlite_inside_config_scope.py",
     "Tests/Backup_Recovery/test_persona_observation_budget.py",
     "Tests/Backup_Recovery/test_db_status_maintenance.py",
+    "Tests/Backup_Recovery/test_canvas_policy_maintenance.py",
     "Tests/Backup_Recovery/test_context_policy_config_lifetime.py",
     "Tests/Backup_Recovery/test_console_projection_config_lifetime.py",
     "Tests/Backup_Recovery/test_console_canvas_config_order.py",
@@ -143,6 +144,7 @@ _SUPPORT_DIAGNOSTIC_TESTS = (
     "Tests/Backup_Recovery/test_sqlite_inside_config_scope.py",
     "Tests/Backup_Recovery/test_persona_observation_budget.py",
     "Tests/Backup_Recovery/test_db_status_maintenance.py",
+    "Tests/Backup_Recovery/test_canvas_policy_maintenance.py",
     "Tests/Backup_Recovery/test_console_projection_config_lifetime.py",
     "Tests/Backup_Recovery/test_console_canvas_config_order.py",
     "Tests/Backup_Recovery/test_config_native_lock_order.py",
@@ -200,6 +202,7 @@ _PRODUCT_SELECTIONS = {
     "native-close-diagnostic": (
         "Tests/TTS/test_profile_native_close_contract.py::test_native_repository_close_preserves_proven_state_and_exclusion",
         "Tests/Backup_Recovery/test_db_status_maintenance.py",
+        "Tests/Backup_Recovery/test_canvas_policy_maintenance.py",
         "Tests/Backup_Recovery/test_mounted_console_backup.py::test_mounted_console_complete_capture_and_resumed_writes[library]",
     ),
 }

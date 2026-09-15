@@ -1016,13 +1016,16 @@ class ConsoleRuntime:
         self._canvas_native_authority: Any | None = None
         self._canvas_native_view_binding: _CanvasNativeViewBinding | None = None
         self._canvas_native_lock = Lock()
+        self._canvas_maintenance_closed = False
+        self._canvas_maintenance_generation = 0
+        self._canvas_policy_cleanups: set[asyncio.Task[None]] = set()
         self._canvas_settlement_listener = self._forward_canvas_settlement
         if canvas_enabled_reader is None:
             from tldw_chatbook.config import get_canvas_execution_enabled
 
             canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
-        self._canvas_disabled_latched = not self._read_canvas_enabled()
+        self._canvas_disabled_latched = self._read_canvas_enabled() is False
         self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         # One app-wide mutation lane for exact persisted-conversation opens.
@@ -2664,7 +2667,7 @@ class ConsoleRuntime:
         if not self._canvas_enabled():
             return None
         with self._canvas_native_lock:
-            if self._disposed or self._canvas_disabled_latched:
+            if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:
                 return None
             self._canvas_native_view_binding = binding
             controller = self._canvas_controller
@@ -2716,7 +2719,7 @@ class ConsoleRuntime:
         if not self._canvas_enabled():
             return None
         with self._canvas_native_lock:
-            if self._disposed or self._canvas_disabled_latched:
+            if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:
                 return None
             binding = self._canvas_native_view_binding
             controller = self._canvas_controller
@@ -2767,28 +2770,48 @@ class ConsoleRuntime:
         )
         return self._materialize_canvas_native_authority()
 
-    def _read_canvas_enabled(self) -> bool:
-        """Read the shared policy without changing the process-lifetime latch."""
+    def _read_canvas_enabled(self) -> bool | None:
+        """Read policy, distinguishing temporary backup refusal from disable."""
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
         try:
             return self._canvas_enabled_reader() is True
+        except RecoveryRequired as error:
+            if type(error) is RecoveryRequired and error.args == ("storage_locally_paused",):
+                return None
+            return False
         except Exception:  # noqa: BLE001 - execution policy fails closed
             return False
 
     def _canvas_enabled(self) -> bool:
         """Read the global kill switch and the restart-required runtime latch."""
 
-        if self._disposed or self._canvas_disabled_latched:
+        generation = self._canvas_maintenance_generation
+        if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:
             return False
-        if not self._read_canvas_enabled():
+        enabled = self._read_canvas_enabled()
+        # A read may span a whole pause/resume on another thread. Keep config
+        # reads independent of the Canvas publication lock, and reject that
+        # observation without converting temporary refusal to permanent disable.
+        if (
+            generation != self._canvas_maintenance_generation
+            or self._disposed
+            or self._canvas_disabled_latched
+            or self._canvas_maintenance_closed
+        ):
+            return False
+        if enabled is False:
             self._canvas_disabled_latched = True
-            return False
-        return True
+        return enabled is True
 
     def canvas_enabled(self) -> bool:
         """Expose this app runtime's restart-latched Canvas availability."""
 
         return self._canvas_enabled()
+
+    def canvas_disabled(self) -> bool:
+        """Distinguish permanent policy disable from temporary backup unavailability."""
+        return self._disposed or self._canvas_disabled_latched
 
     def canvas_authority_is_current(self, authority: Any) -> bool:
         """Return whether *authority* still owns enabled Canvas effects."""
@@ -2812,6 +2835,43 @@ class ConsoleRuntime:
 
         self._start_canvas_policy_watcher()
 
+    def _canvas_maintenance_close_admission(self) -> None:
+        """Stop policy polling without turning temporary storage pause into disable."""
+        with self._canvas_native_lock:
+            self._canvas_maintenance_closed = True
+            self._canvas_maintenance_generation += 1
+
+    async def _canvas_maintenance_drain(self, deadline: float) -> bool:
+        """Retain the watcher and accepted revocation until they actually finish."""
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        if not self._canvas_maintenance_closed:
+            raise RecoveryRequired("runtime_producer_not_closed")
+        tasks = set(self._canvas_policy_cleanups)
+        if self._canvas_policy_watch_task is not None:
+            tasks.add(self._canvas_policy_watch_task)
+        if tasks:
+            done, pending = await asyncio.wait(
+                tasks, timeout=max(0.0, deadline - time.monotonic())
+            )
+            for task in done:
+                if not task.cancelled() and task.exception() is not None:
+                    raise RecoveryRequired("runtime_work_not_settled")
+            if pending or self._canvas_policy_cleanups:
+                return False
+        return True
+
+    def _canvas_maintenance_resume(self) -> None:
+        """Reopen policy checks after native storage readmission, preserving latches."""
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        watcher = self._canvas_policy_watch_task
+        if self._canvas_policy_cleanups or (watcher is not None and not watcher.done()):
+            raise RecoveryRequired("runtime_work_not_settled")
+        with self._canvas_native_lock:
+            self._canvas_maintenance_closed = False
+        self._start_canvas_policy_watcher()
+
     async def apply_canvas_policy(self) -> None:
         """Idempotently revoke all browser delivery after Canvas is disabled.
 
@@ -2821,8 +2881,10 @@ class ConsoleRuntime:
 
         if self._canvas_enabled():
             return
-        self.latch_canvas_disabled()
         with self._canvas_native_lock:
+            if self._canvas_maintenance_closed or not self.canvas_disabled():
+                return
+            self._canvas_disabled_latched = True
             gateway, self._canvas_gateway = self._canvas_gateway, None
             authority, self._canvas_native_authority = (
                 self._canvas_native_authority,
@@ -2830,21 +2892,33 @@ class ConsoleRuntime:
             )
             self._canvas_gateway_authority = None
             self._canvas_native_view_binding = None
-        close_gateway = getattr(gateway, "aclose", None)
-        if callable(close_gateway):
-            result = close_gateway()
-            if inspect.isawaitable(result):
-                await result
-        dispose_authority = getattr(authority, "dispose", None)
-        if callable(dispose_authority):
-            result = dispose_authority()
-            if inspect.isawaitable(result):
-                await result
+        async def cleanup() -> None:
+            close_gateway = getattr(gateway, "aclose", None)
+            if callable(close_gateway):
+                result = close_gateway()
+                if inspect.isawaitable(result):
+                    await result
+            dispose_authority = getattr(authority, "dispose", None)
+            if callable(dispose_authority):
+                result = dispose_authority()
+                if inspect.isawaitable(result):
+                    await result
+
+        completion = asyncio.create_task(cleanup(), name="console-canvas-policy-cleanup")
+        self._canvas_policy_cleanups.add(completion)
+
+        def finished(task):
+            # Unproved cleanup keeps maintenance closed; observe detached errors.
+            if not task.cancelled() and task.exception() is None:
+                self._canvas_policy_cleanups.discard(task)
+
+        completion.add_done_callback(finished)
+        await asyncio.shield(completion)
 
     def _start_canvas_policy_watcher(self) -> None:
         """Watch shared config while a native Canvas preview can be open."""
 
-        if self._disposed:
+        if self._disposed or self._canvas_maintenance_closed:
             return
         task = self._canvas_policy_watch_task
         if task is not None and not task.done():
@@ -2861,9 +2935,11 @@ class ConsoleRuntime:
     async def _watch_canvas_policy(self) -> None:
         """Revoke native delivery promptly after an external config disable."""
 
-        while self._canvas_enabled():
+        while not self._canvas_maintenance_closed:
+            if not self._canvas_enabled() and self.canvas_disabled():
+                await self.apply_canvas_policy()
+                return
             await asyncio.sleep(0.25)
-        await self.apply_canvas_policy()
 
     def _sync_canvas_native_context(self, session_id: str | None) -> None:
         """Forward live store context changes to an already-built authority."""
@@ -3517,7 +3593,9 @@ class ConsoleRuntime:
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
         kwargs.setdefault("scratch_spaces", self._scratch_spaces)
         kwargs.setdefault("activity_receipts", self._activity_receipts)
-        kwargs.setdefault("canvas_enabled_reader", self._canvas_enabled)
+        if "canvas_enabled_reader" not in kwargs:
+            kwargs["canvas_enabled_reader"] = self._canvas_enabled
+            kwargs.setdefault("canvas_disabled_reader", self.canvas_disabled)
         raw_cli_runtime = getattr(self._app, "raw_cli_runtime", None)
         kwargs.setdefault(
             "cancel_raw_cli_session",
@@ -4371,6 +4449,8 @@ class ConsoleRuntime:
                 await canvas_policy_watch_task
             except asyncio.CancelledError:
                 pass
+        if self._canvas_policy_cleanups:
+            await asyncio.shield(asyncio.gather(*self._canvas_policy_cleanups))
         maintenance_task = self._legacy_trace_maintenance_task
         if maintenance_task is not None and not maintenance_task.done():
             maintenance_task.cancel()

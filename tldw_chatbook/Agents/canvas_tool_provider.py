@@ -418,6 +418,7 @@ class CanvasToolProvider:
         scope: CanvasScope,
         enabled: bool = True,
         enabled_reader: Callable[[], bool] | None = None,
+        disabled_reader: Callable[[], bool] | None = None,
     ) -> None:
         if not isinstance(scope, CanvasScope):
             raise TypeError("scope must be a CanvasScope")
@@ -435,7 +436,9 @@ class CanvasToolProvider:
         if not callable(enabled_reader):
             raise TypeError("enabled_reader must be callable")
         self._enabled_reader = enabled_reader
-        self._disabled_latched = not self._read_enabled()
+        self._disabled_reader = disabled_reader
+        self._disabled_latched = False
+        _ = self.canvas_enabled
         self._provider_instance_id = uuid4().hex
         self._authorities: dict[
             int, weakref.ReferenceType[CanvasToolRegistrationAuthority]
@@ -511,7 +514,14 @@ class CanvasToolProvider:
         if self._disabled_latched:
             return False
         if not self._read_enabled():
-            self._disabled_latched = True
+            try:
+                self._disabled_latched = (
+                    not self._enabled
+                    or self._disabled_reader is None
+                    or self._disabled_reader() is not False
+                )
+            except Exception:  # noqa: BLE001 - unavailable policy fails closed
+                self._disabled_latched = True
             return False
         return True
 

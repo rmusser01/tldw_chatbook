@@ -80,6 +80,7 @@ async def main():
    print('MOUNTED_AFTER_PREVIEW',inventory.complete,inventory.issues,flush=True)
    assert inventory.complete,inventory.issues
    print('MOUNTED_BEFORE_START',flush=True)
+   assert app.console_runtime.canvas_enabled(), 'Canvas was disabled before backup'
    operation=service.start_backup((selector,),inventory.scope_digest,destination,options=options,password=None)
    print('MOUNTED_BEFORE_WAIT',flush=True)
    stop_loop=observe_loop_profile(Path.home()/'mounted-loop-profile.log',delay=2,duration=5)
@@ -95,6 +96,7 @@ async def main():
    assert result['result']['complete']
    async with asyncio.timeout(60):
     while storage_admission._pause is not None or app._backup_runtime_maintenance is not None:await asyncio.sleep(.05)
+   assert app.console_runtime.canvas_enabled(), 'Backup permanently disabled Canvas'
    after=app.chachanotes_db.add_note('Resumed','Saved after mounted capture')
    assert app.chachanotes_db.get_note_by_id(before)['content']=='Saved before mounted capture'
    assert app.chachanotes_db.get_note_by_id(after)['content']=='Saved after mounted capture'
