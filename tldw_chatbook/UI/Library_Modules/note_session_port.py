@@ -18,6 +18,7 @@ from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.library_notes_session import (
     DatabaseNotePortLoadReply,
     DatabaseNotePortSaveReply,
+    PortSaveKind,
 )
 from ...Library.library_notes_state import (
     DatabaseNoteSavePayload,
@@ -37,12 +38,16 @@ class _LibraryDatabaseNoteSessionPort:
         notes_service: Any,
         user_id: str,
         clock: Any,
+        notes_sync_runtime: Any = None,
     ) -> None:
         self._run_service_call = run_service_call
         self._notes_scope_service = notes_scope_service
         self._notes_service = notes_service
         self._user_id = user_id
         self._clock = clock
+        #: task-32604: a zero-argument accessor for the app-owned lasting-sync
+        #: runtime, or None in a harness that has no runtime at all.
+        self._notes_sync_runtime = notes_sync_runtime
 
     @staticmethod
     def _keyword_strings(records: Any) -> tuple[str, ...]:
@@ -133,6 +138,40 @@ class _LibraryDatabaseNoteSessionPort:
         return DatabaseNotePortLoadReply.loaded(normalized)
 
     async def save_note(
+        self,
+        note_id: str,
+        expected_version: int,
+        payload: DatabaseNoteSavePayload,
+    ) -> DatabaseNotePortSaveReply:
+        """Persist one versioned payload, then signal lasting sync (task-32604).
+
+        A saved note inside an active sync root has to reach its file on the
+        same terms a disk-side edit reaches the note. The watcher signs
+        filesystem metadata only, so this -- the editor's one write seam --
+        is where the note side hands the runtime its hint.
+        """
+        reply = await self._persist_note(note_id, expected_version, payload)
+        if reply.kind is PortSaveKind.SAVED:
+            await self._signal_lasting_sync(note_id)
+        return reply
+
+    async def _signal_lasting_sync(self, note_id: str) -> None:
+        """Hint the app-owned sync runtime without ever failing the save."""
+        accessor = self._notes_sync_runtime
+        if not callable(accessor):
+            return
+        try:
+            runtime = accessor()
+            note_changed = getattr(runtime, "note_changed", None)
+            if callable(note_changed):
+                await note_changed(note_id)
+        except Exception as error:  # noqa: BLE001 - bounded, metadata only
+            logger.warning(
+                "Lasting sync was not signalled for a saved note; error_type={}",
+                type(error).__name__,
+            )
+
+    async def _persist_note(
         self,
         note_id: str,
         expected_version: int,

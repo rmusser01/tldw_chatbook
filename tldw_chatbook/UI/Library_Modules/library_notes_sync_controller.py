@@ -1410,15 +1410,45 @@ class LibraryNotesSyncController:
         )
         if installed is None:
             return
-        self._state = replace(
-            self._state,
-            phase="review",
-            status_line=(
-                "Manual check finished. Review exact effects."
-                if installed
-                else "Conflict details are unavailable. Check again."
-            ),
-        )
+        # task-32604: the runtime republished this root's status while the
+        # check ran (``changes_available``/``review_changes`` once the plan
+        # holds actions). Re-project it here or the row keeps whatever it
+        # said BEFORE the check -- "✓ Up to date" over a pending
+        # ``update_file``, with no Review offered, because the roots canvas
+        # gates Review on ``next_action == "review_changes"``. The runtime
+        # stays the single publisher of row state; this only re-reads it.
+        self.refresh_roots(publish=False)
+        row = next((r for r in self._state.roots if r.root_id == root_id), None)
+        next_action = row.next_action if row is not None else "review_changes"
+        if not installed:
+            self._state = replace(
+                self._state,
+                phase="review",
+                status_line="Conflict details are unavailable. Check again.",
+            )
+        elif next_action == "review_changes":
+            pending = len(
+                [
+                    action
+                    for action in plan.safe_actions
+                    if action.kind in NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
+                ]
+            ) + len(plan.attention)
+            noun = "change" if pending == 1 else "changes"
+            self._state = replace(
+                self._state,
+                phase="review",
+                status_line=f"Manual check finished. {pending} {noun} to review.",
+            )
+        elif next_action == "sync_now":
+            self._state = replace(
+                self._state, phase="roots", status_line="Nothing to review."
+            )
+        else:
+            # Offline, unsupported, paused: the row already names the state
+            # and the action, and there is no review behind either.
+            self._state = replace(self._state, phase="roots")
+            self._restate_root(root_id)
         self._publish()
 
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> None:
