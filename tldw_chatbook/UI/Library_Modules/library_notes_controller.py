@@ -5156,6 +5156,21 @@ class LibraryNotesController:
         controller = self._library_notes_sync_controller
         if event.action == "check":
             await controller.sync_now(event.root_id)
+            # task-32604 AC#3: the check builds a complete review and used to
+            # leave the user on the roots list looking at it through a
+            # closed door. A check that found effects lands on them; one
+            # that found none says so and stays put. The row keeps the
+            # Review the runtime's own ``review_changes`` now offers, so a
+            # later visit reaches the same review without re-checking.
+            if (
+                self.is_mounted
+                and self._library_notes_view == "lasting_roots"
+                and controller.snapshot.phase == "review"
+            ):
+                self._library_notes_lasting_origin = "roots"
+                self._library_notes_view = "lasting_add"
+                self._apply_library_notes_footer_context()
+                _sync_library_canvas(self, "notes")
         elif event.action in {"migration", "review"}:
             self._library_notes_lasting_origin = "roots"
             self._library_notes_view = "lasting_add"

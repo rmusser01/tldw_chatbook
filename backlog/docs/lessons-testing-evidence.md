@@ -14257,3 +14257,137 @@ rather than asserting one thing, and keep the probe — it is the regression
 test's first draft. If you genuinely cannot run it, say INFERRED and name the
 experiment that would settle it; never let proximity to your own change
 decide the verdict in either direction.
+
+## A shared red is not a baseline red until the NUMBER matches (task-32605, 2026-09-15)
+
+**The incident.** PR #2691's landing pass reported "zero branch-only reds"
+from a `Tests/Notes/` name-set comparison against detached dev — the method
+the entry above prescribes, run correctly. The PR still had a failing check:
+`UI latency guardrails`. That check was *also* failing on `origin/dev` at the
+exact base commit the branch was cut from, which is the shape everyone here
+has learned to wave through as a baseline red.
+
+It was not one. The two runs differed in the only place that mattered:
+
+```
+dev:    assert 977 <= 975   NEW modules (3)  approval_provenance,
+                                             note_import_parsers, select_values
+branch: assert 980 <= 975   NEW modules (6)  ...those three, PLUS
+                                             note_import_execution_models,
+                                             note_import_planner,
+                                             note_import_receipts
+```
+
+Three of the six were ours. `notes_sync_runtime.py` is resident at
+`_ui_ready`, and the task had added module-level imports of
+`PriorImportObservation` (annotation-only) and `NoteImportReceiptRepository`
+(one call, inside a factory) — dragging two modules and a transitive third
+onto the boot path for a read that only ever happens during a sync pass. Had
+it landed, the next PR to touch this area would have inherited the growth as
+*its* baseline and the ratchet would have drifted by three, permanently,
+with every party correctly reporting "already red on dev".
+
+**The rule.** A red you intend to wave through must be compared the same way
+a green one is: by its **value and its named set**, never by its pass/fail
+bit. A ratchet prints its number and its delta list precisely so the
+comparison is possible — read them on both sides. The same applies to any
+budget, census or count-based guard: `failing on dev too` answers a different
+question than `failing by the same amount, for the same reasons`.
+
+**The fix shape, for the next person who trips the ui-ready census.** ADR-097
+forbids raising the constant, and you rarely need to. An annotation-only
+import moves under `TYPE_CHECKING` for free when the module already has
+`from __future__ import annotations`. A runtime import used in one place
+moves inside the function — or, when the call site is a lambda in a factory,
+behind a small helper that imports inside the closure it returns. Pin it with
+a subprocess probe (`sys.modules` is shared across a test file, so an
+in-process assertion proves nothing about ordering) and capture its RED by
+restoring the module-level import.
+
+## A stale projection is not proof the publisher is silent (task-32604, 2026-09-15)
+
+**The incident.** The crit-4 P0's triage named three links, and link 2 read
+"the root row is a projection of stored root state, never of a fresh plan" —
+which reads as "the runtime does not publish a pending state, so give it
+one". Writing that publisher would have put a second opinion about row state
+beside the runtime's own, the exact shape that bit the wave-4 sync-roots
+group twice.
+
+Three extra lines in the probe settled it instead:
+
+```python
+rt = owner.snapshot().roots[0]
+print("RUNTIME published :", rt.status, "/", rt.next_action)
+controller.refresh_roots()
+print("row after refresh :", row(controller))
+```
+
+The runtime had published `changes_available` / `review_changes` during the
+manual check all along (`_reconcile_locked`'s `elif selected:` branch).
+`LibraryNotesSyncController.sync_now` simply never called `refresh_roots`
+afterwards, so the row kept the projection it held *before* the check. The
+whole of link 2 — and, because the roots canvas gates its **Review** button
+on `next_action == "review_changes"`, most of link 3 — was one missing
+re-read. The fix is one line; the fix the triage implied is a subsystem.
+
+**The rule.** Before adding a publisher for state that renders stale, print
+what the existing publisher actually holds at that moment — one line against
+the producer's own snapshot, next to the line against the consumer's
+projection. A projection and its source disagreeing is evidence of a missing
+read at least as often as a missing write, and the two fixes are a line and a
+subsystem. This also applies to reading a triage you did not write: its
+"cause" for each link is a hypothesis with the same standing as any other
+until the probe prints both sides.
+
+## A truncated FAILED list is indistinguishable from a pass (task-32625, 2026-09-15)
+
+**The incident.** To prove a new pin caught the bug it was written for, an
+implementer reverted the fix and read the resulting FAILED list through
+`head -8`. Four parametrised cases had failed; it saw two, and inferred that the
+other two had passed. It wrote that inference into the task notes as the
+interesting part — "at 8 and 11 it passed even unfixed, which is why the
+one-sided test missed it" — and from there it travelled into a review summary
+and was one round away from hardening into a lesson about threshold blindness.
+The reviewer re-ran the revert and printed the list in full: **4 of 4 failed.**
+The true-at-8-and-11 sentence was about unpatched `dev`, a different tree
+entirely.
+
+**Why it is worth a rule.** `head`, `tail`, `-x`, `--maxfail`, a scrolled
+terminal and a killed run all produce the same artifact: a FAILED list that is
+shorter than the truth, with nothing in it saying so. A short list reads as good
+news — fewer failures — which is exactly the direction that stops you looking.
+The same shape has now bitten this programme three times in one day: a shared
+ratchet red waved through without comparing its NUMBER (977 vs 980), a failure
+count read off `F`/`.` progress marks that Loguru had interleaved, and this.
+
+**The rule.** Evidence that a pin is RED is the **complete** FAILED list, with
+the summary line that says how many there were, from a run you did not truncate.
+If you must page it, page it to a file and count from `grep -c '^FAILED'`, never
+from what fits on screen. And when the interesting claim is that something
+*passed*, say which tree it passed on — "passed unfixed" is meaningless without
+naming whether that was the revert or the base.
+
+## A claim-string checker is blind by construction to composed copy (task-32625, 2026-09-15)
+
+**The incident.** `scripts/check_guide_claim_strings.py` exists because eleven
+false claims were found across three layers of this programme's own
+documentation. It ran green over a guide stanza that promised users a skipped
+folder would read `".trash · 4 files · …"` — a line the product does not produce
+at four files, and never did after the fix. Two more false sentences sat beside
+it, also green.
+
+**Why it could not have caught them.** The checker matches quoted strings in
+prose against string literals in source. That line is **composed at runtime** by
+`review_row_line` out of a folder, a count and a reason; it exists nowhere in
+the tree as a literal, so there is nothing for the checker to match and nothing
+for it to contradict. The gate proves a quoted string is emitted somewhere. It
+cannot prove the sentence around it is true, and it is blind by construction to
+any copy the code assembles rather than stores.
+
+**The rule.** A green claim-checker is not evidence that a guide is honest. For
+any sentence describing composed output — a row, a summary line, a status
+string, anything built from parts — the evidence is a rendered sample at the
+size and state the sentence describes, not a grep. Write the sentence as a rule
+the reader can predict and check ("up to seven listed one per row, eight or more
+collapsed"), not as a specimen output, because a specimen is a claim about a
+literal the checker cannot see.

@@ -301,6 +301,51 @@ def elide_path_middle(path: str, budget: int = 48) -> str:
     return f"{ellipsis}{basename[-tail_budget:]}" if tail_budget else ellipsis
 
 
+def fold_path_lines(path: str, width: int) -> str:
+    """Break a path across lines at its separators, keeping every character.
+
+    For the one case where eliding is not allowed: a consent dialog naming
+    the thing being consented to (task-32615). Textual folds a token that
+    does not fit at whatever column it runs out of, so the repository path
+    in the Session Git trust prompt painted as ".../power/vaul" plus "t" on
+    the next line -- a security prompt mangling its own identifier. Breaking
+    after a separator instead keeps each path component whole and loses
+    nothing, which ``elide_path_middle`` cannot promise.
+
+    Args:
+        path: The path to lay out. Both "/" and "\\" separators break.
+        width: Cells available per line. A single component longer than this
+            still takes its own line and wraps -- there is nowhere else to
+            break it.
+
+    Returns:
+        ``path`` with newlines inserted at separator boundaries, unchanged
+        when it already fits or when ``width`` is not positive.
+    """
+    if width <= 0 or len(path) <= width:
+        return path
+    segments: list[str] = []
+    current = ""
+    for character in path:
+        current += character
+        if character in "/\\":
+            segments.append(current)
+            current = ""
+    if current:
+        segments.append(current)
+    lines: list[str] = []
+    line = ""
+    for segment in segments:
+        if line and len(line) + len(segment) > width:
+            lines.append(line)
+            line = segment
+        else:
+            line += segment
+    if line:
+        lines.append(line)
+    return "\n".join(lines)
+
+
 #
 # End of Misc-Functions
 #######################################################################################################################

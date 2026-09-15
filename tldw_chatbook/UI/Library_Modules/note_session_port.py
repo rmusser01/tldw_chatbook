@@ -18,6 +18,7 @@ from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.library_notes_session import (
     DatabaseNotePortLoadReply,
     DatabaseNotePortSaveReply,
+    PortSaveKind,
 )
 from ...Library.library_notes_state import (
     DatabaseNoteSavePayload,
@@ -37,12 +38,16 @@ class _LibraryDatabaseNoteSessionPort:
         notes_service: Any,
         user_id: str,
         clock: Any,
+        notes_sync_runtime: Any = None,
     ) -> None:
         self._run_service_call = run_service_call
         self._notes_scope_service = notes_scope_service
         self._notes_service = notes_service
         self._user_id = user_id
         self._clock = clock
+        #: task-32604: a zero-argument accessor for the app-owned lasting-sync
+        #: runtime, or None in a harness that has no runtime at all.
+        self._notes_sync_runtime = notes_sync_runtime
 
     @staticmethod
     def _keyword_strings(records: Any) -> tuple[str, ...]:
@@ -133,6 +138,63 @@ class _LibraryDatabaseNoteSessionPort:
         return DatabaseNotePortLoadReply.loaded(normalized)
 
     async def save_note(
+        self,
+        note_id: str,
+        expected_version: int,
+        payload: DatabaseNoteSavePayload,
+    ) -> DatabaseNotePortSaveReply:
+        """Persist one versioned payload, then signal lasting sync (task-32604).
+
+        A saved note inside an active sync root has to reach its file on the
+        same terms a disk-side edit reaches the note. The watcher signs
+        filesystem metadata only, so this -- the editor's write seam for an
+        already-bound note -- is where the note side hands the runtime its
+        hint.
+
+        This is the ONLY covered write path. At least a dozen others --
+        18 live seams when task-32604 enumerated them on 2026-09-15, of
+        which this is the one -- still produce no signal at all. Do not
+        trust that number from here: it moved three times inside one task
+        as the search method improved. task-32604's Implementation Notes
+        carry the enumerated list AND the derivation method; re-derive
+        before relying on a count.
+
+        The shape is stable even though the count is not. The update paths
+        (Research quick notes, note-import's in-place replace, the built-in
+        ``update_note`` tool, the ``library_save_note`` agent tool, delete
+        and restore) are one ``note_changed`` call away each. The CREATE
+        paths -- the Library's own New note included -- are not, because
+        ``note_changed`` keys on an existing binding and a new note has
+        none. Covering those needs a folder-membership predicate, not a
+        binding one. Owned by task-32633.
+
+        A refusal is also silent here: ``note_changed`` returns () when the
+        runtime is not active. The row no longer lies about it (the roots
+        list wears "⚠ Sync stopped" then, task-32604 fix round 2), but this
+        seam still reports nothing to the editor.
+        """
+        reply = await self._persist_note(note_id, expected_version, payload)
+        if reply.kind is PortSaveKind.SAVED:
+            await self._signal_lasting_sync(note_id)
+        return reply
+
+    async def _signal_lasting_sync(self, note_id: str) -> None:
+        """Hint the app-owned sync runtime without ever failing the save."""
+        accessor = self._notes_sync_runtime
+        if not callable(accessor):
+            return
+        try:
+            runtime = accessor()
+            note_changed = getattr(runtime, "note_changed", None)
+            if callable(note_changed):
+                await note_changed(note_id)
+        except Exception as error:  # noqa: BLE001 - bounded, metadata only
+            logger.warning(
+                "Lasting sync was not signalled for a saved note; error_type={}",
+                type(error).__name__,
+            )
+
+    async def _persist_note(
         self,
         note_id: str,
         expected_version: int,

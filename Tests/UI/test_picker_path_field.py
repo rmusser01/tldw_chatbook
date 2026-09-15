@@ -79,6 +79,12 @@ async def test_folder_picker_field_is_replaced_by_a_typed_absolute_path(tmp_path
         await pilot.pause()
         field = dialog.query_one("#path_input", Input)
         assert field.value == str(tmp_path), "the field arrives pre-filled"
+        # task-32606: this dialog now OPENS with the field focused too, so
+        # reaching the click-to-focus seam means leaving it first -- the
+        # user who browses the listing and then clicks back into the field.
+        assert field.has_focus
+        dialog.query_one(DirectoryNavigation).focus()
+        await pilot.pause()
         await _click_to_focus(pilot, field)
         await pilot.press(*str(tmp_path / "vault"))
         await pilot.pause()
@@ -119,6 +125,10 @@ async def test_a_second_click_positions_the_cursor_instead_of_reselecting(tmp_pa
     async with app.run_test() as pilot:
         await pilot.pause()
         field = dialog.query_one("#path_input", Input)
+        # task-32606: leave the now-focused-on-open field to reach the
+        # click-to-focus seam this pin is about.
+        dialog.query_one(DirectoryNavigation).focus()
+        await pilot.pause()
         await _click_to_focus(pilot, field)
         await _click_focused_field(pilot, field)
         assert not field.selected_text

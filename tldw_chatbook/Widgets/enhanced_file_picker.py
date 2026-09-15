@@ -1463,6 +1463,18 @@ class EnhancedFileDialog(BaseFileDialog):
                             )
                         yield cancel_button
 
+        # task-32606 deliberately does NOT yield a `Footer` here, although
+        # the vendored base does and `EnhancedSelectDirectory` therefore
+        # keeps showing the HOST screen's chips through the translucent
+        # modal. A screen-docked footer takes the bottom terminal row, and
+        # this dialog is `height: 95%` (the vendored one is 80%): at the
+        # 60x24 these pickers are pinned at, adding it pushed the selection
+        # marker off the bottom of the character-import picker and turned
+        # three existing size pins red
+        # (`test_file_picker_action_tooltips.py`,
+        # `test_file_picker_progressive.py`). Giving this family the chips
+        # needs a layout answer for that row, not one more `yield`.
+
     def on_mount(self) -> None:
         """Initialize the dialog on mount.
 
@@ -2480,6 +2492,9 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
     hints, per-context remembered start directory), so screens that use the
     enhanced family everywhere keep a single picker look (TASK-16477).
     """
+
+    RETURNS_A_FOLDER = True
+    """Directory-only, so it opens on its "Folder path" field (task-32606)."""
 
     # The file-flow select button would query the (absent) filename input;
     # this dialog replaces it with the viewed-directory confirm below.

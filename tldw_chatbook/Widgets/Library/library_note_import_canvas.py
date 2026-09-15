@@ -108,6 +108,27 @@ def bounded_row_name(name: str) -> str:
     return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
 
 
+def review_row_line(*parts: str) -> str:
+    """Join one review row's clauses into the grammar both reviews use.
+
+    task-32625 AC#1/AC#4 (idea 7 of task-32627): Import once and lasting
+    sync each had their own copy of "name · what happens · where", with
+    their own trailing-punctuation rules -- which is how the two reviews
+    drifted apart in the first place. This is the one place that shape is
+    written down; the surfaces still own their own row WIDGETS, because
+    an Import row carries per-item Skip/Create/Update controls and a sync
+    row carries conflict choices and a diff.
+
+    Args:
+        *parts: Clauses in reading order. Empty ones are dropped, and each
+            keeps its own trailing full stop out of the joined line.
+
+    Returns:
+        The clauses joined with " · ".
+    """
+    return " · ".join(part.rstrip(" .") for part in parts if part)
+
+
 def group_heading(label: str, *, rendered: int, total: int) -> str:
     """Name what a group heading's count means on this page.
 
@@ -212,10 +233,9 @@ def _run_summary(
         else f"{len(run)} of {total} files"
     )
     if first.classification in _NON_IMPORTABLE:
-        return f"{where} · {count} · {first.reason.rstrip(' .')}"
+        return review_row_line(where, count, first.reason)
     verb = "Skip" if first.action == "skip" else "Create"
-    destination = first.membership_summary.rstrip(" .")
-    return f"{where} · {count} · {verb} all · {destination}"
+    return review_row_line(where, count, f"{verb} all", first.membership_summary)
 
 
 _SOURCE_NAME_BUDGET = 48
@@ -994,7 +1014,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 item.membership_summary,
             )
         )
-        return " · ".join(part.rstrip(" .") for part in parts if part)
+        return review_row_line(*parts)
 
     def _compose_review_item(
         self,

@@ -730,6 +730,52 @@ def test_item_skips_project_as_skipped_rows_with_reason_copy_and_count() -> None
     assert review.can_apply is True
 
 
+def test_an_already_imported_file_reads_as_a_skip_that_names_the_other_path() -> None:
+    """task-32605 AC#2: the review states what it will do about a file Import
+    once already made a note from -- nothing -- instead of promising a create
+    that would duplicate it, and the group heading counts them."""
+    from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationItemSkip
+
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-1", NotesSyncActionKind.CREATE_NOTE, "bind-1"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+        item_skips=(
+            ReconciliationItemSkip("Daily/2026-09-07.md", "already_imported"),
+            ReconciliationItemSkip("People/Sam.md", "already_imported"),
+        ),
+    )
+
+    review = build_reconciliation_review(plan)
+
+    skipped = [row for row in review.rows if row.category == "skipped"]
+    assert [(row.relative_path, row.effect, row.reason) for row in skipped] == [
+        (
+            "Daily/2026-09-07.md",
+            "Already imported by Import once \u2014 left as it is",
+            "already_imported",
+        ),
+        (
+            "People/Sam.md",
+            "Already imported by Import once \u2014 left as it is",
+            "already_imported",
+        ),
+    ]
+    assert review.skip_count == 2
+    # Every skipped row shares one "Skipped" heading (task-32535); the reason
+    # is carried per row, which is where a mixed folder needs it.
+    assert ("skipped", "", 2) in review.group_totals
+    # The rest of the folder still applies: a per-file skip blocks nothing.
+    assert review.safe_count == 1
+    assert review.can_apply is True
+
+
 def test_no_refusal_table_defines_a_key_twice() -> None:
     """Fix round 1: a duplicate literal key silently replaced shipped copy.
 
