@@ -39,11 +39,12 @@ from unittest.mock import Mock
 
 import pytest
 from textual.dom import DOMNode
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
+    LibraryProductionCSSHarness,
     _active_library_screen,
     _build_test_app,
     _seed_conversations,
@@ -54,6 +55,7 @@ from Tests.UI.test_library_shell import (
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_INGEST_MEDIA,
 )
 from tldw_chatbook.UI.Screens.library_screen import (
@@ -116,8 +118,9 @@ async def _settled_library(host, pilot):
 
 
 @pytest.mark.asyncio
-async def test_resize_gate_skips_library_query_work_on_non_crossing_frames():
-    """Steady non-crossing resize frames issue ZERO library_screen queries.
+@pytest.mark.parametrize("harness", [LibraryHarness, LibraryProductionCSSHarness])
+async def test_resize_gate_skips_library_query_work_on_non_crossing_frames(harness):
+    """Same compact/emergency-band frames issue ZERO library_screen queries.
 
     Born-red against the pre-gate implementation: the same three frames
     issued ~60 library-attributed queries each (the ingest/contract/stage
@@ -125,9 +128,11 @@ async def test_resize_gate_skips_library_query_work_on_non_crossing_frames():
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    host = LibraryHarness(app)
+    host = harness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _settled_library(host, pilot)
+        rail = screen.query_one("#library-rail")
+        compose_generation = screen._library_compose_generation
         counts = {"n": 0, "enabled": False}
         with _counting_queries("UI/Screens/library_screen.py", counts):
             # Warm-up frame: seeds the ref cache and the applied signature.
@@ -143,9 +148,14 @@ async def test_resize_gate_skips_library_query_work_on_non_crossing_frames():
             counts["enabled"] = False
         assert counts["n"] == 0, (
             f"{counts['n']} library_screen-attributed DOM queries across 3 "
-            "non-crossing resize frames; the cheap-state gate should have "
-            "returned before any query work"
+            "same-band resize frames; unchanged geometry should skip work "
+            "and one-cell rail changes should reuse cached references"
         )
+
+        # ADR-086's bounded default now crosses a one-cell width step at 166.
+        # Reusing references must not suppress this legitimate geometry update.
+        assert rail.region.width == 35
+        assert screen._library_compose_generation == compose_generation
 
 
 @pytest.mark.asyncio
@@ -461,8 +471,7 @@ def test_stage_gate_applies_exactly_once_per_emergency_band_crossing():
     screen.set_width(63)  # below LIBRARY_EMERGENCY_WIDTH (64)
     screen._apply_library_notes_stage_visibility_for_resize()
     assert screen.leg_calls == 1, (
-        f"{screen.leg_calls} applications for one crossing into the emergency "
-        "band"
+        f"{screen.leg_calls} applications for one crossing into the emergency band"
     )
 
     # Re-armed: repeating the same frame is free again.
@@ -657,7 +666,8 @@ async def test_resize_ingest_rail_autocollapse_crossing_still_works():
 
 
 @pytest.mark.asyncio
-async def test_tab_focus_path_library_query_volume_is_bounded():
+@pytest.mark.parametrize("harness", [LibraryHarness, LibraryProductionCSSHarness])
+async def test_tab_focus_path_library_query_volume_is_bounded(harness):
     """A Tab on the landing route costs at most 1 library_screen query.
 
     Born-red against the ungated observer installer: each press probed all
@@ -667,9 +677,10 @@ async def test_tab_focus_path_library_query_volume_is_bounded():
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    host = LibraryHarness(app)
+    host = harness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        await _settled_library(host, pilot)
+        screen = await _settled_library(host, pilot)
+        compose_generation = screen._library_compose_generation
         counts = {"n": 0, "enabled": False}
         with _counting_queries("UI/Screens/library_screen.py", counts):
             await pilot.press("tab")  # warm-up: seeds the ref caches
@@ -684,6 +695,8 @@ async def test_tab_focus_path_library_query_volume_is_bounded():
                     f"{counts['n']} library_screen-attributed DOM queries "
                     "for one Tab press on the landing route"
                 )
+
+        assert screen._library_compose_generation == compose_generation
 
 
 @pytest.mark.asyncio
@@ -708,9 +721,7 @@ async def test_details_disclosure_children_stay_queryable_while_closed():
         assert screen.query_one("#library-details-body", Static)
         assert screen.query_one("#library-workspaces-depth-panel")
 
-        screen.query_one(
-            "#console-rail-section-toggle-library-details", Button
-        ).press()
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
         await pilot.pause()
         await pilot.pause()
         assert body.display is True
@@ -793,10 +804,10 @@ async def test_research_pane_layout_gate_skips_queries_and_keeps_crossings():
     The band crossings (wide/medium/narrow) must keep working through the
     gate.
     """
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
     from tldw_chatbook.UI.Screens.research_workspace_screen import (
         ResearchWorkspaceScreen,
     )
-    from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
     class _Harness(ConsolidatedCSSApp):
         async def on_mount(self) -> None:
@@ -809,9 +820,7 @@ async def test_research_pane_layout_gate_skips_queries_and_keeps_crossings():
         assert screen._pane_layout is not None and screen._pane_layout.mode == "wide"
 
         counts = {"n": 0, "enabled": False}
-        with _counting_queries(
-            "UI/Screens/research_workspace_screen.py", counts
-        ):
+        with _counting_queries("UI/Screens/research_workspace_screen.py", counts):
             await pilot.resize_terminal(158, 40)  # warm-up, still wide
             await pilot.pause()
             counts["enabled"] = True
@@ -847,3 +856,73 @@ async def test_research_pane_layout_gate_skips_queries_and_keeps_crossings():
         assert grid.has_class("layout-wide")
         shell = screen.query_one("#research-workspace-shell")
         assert not shell.has_class("height-compact")
+
+
+@pytest.mark.asyncio
+async def test_focusability_cache_tracks_hidden_disabled_and_replaced_controls():
+    """Cached chrome references must still honor the live Textual focus chain."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(120, 45)) as pilot:
+        screen = await _settled_library(host, pilot)
+        selector = "#library-search-input"
+        control = screen.query_one(selector, Input)
+        assert screen._library_focusable(selector)
+        control.display = False
+        await pilot.pause()
+        assert not screen._library_focusable(selector)
+        control.display = True
+        control.disabled = True
+        await pilot.pause()
+        assert not screen._library_focusable(selector)
+        control.disabled = False
+        await pilot.pause()
+        assert screen._library_focusable(selector)
+        parent = control.parent
+        await control.remove()
+        assert not screen._library_focusable(selector)
+        replacement = Input(id="library-search-input")
+        await parent.mount(replacement)
+        await pilot.pause()
+        assert screen._library_focusable(selector)
+        assert replacement in screen.focus_chain
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved_width", [24, 48])
+async def test_cached_ordinary_rail_restores_after_reader_return(saved_width):
+    """A fresh ordinary rail owns widths after leaving an adaptive reader."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {})["reader"] = {
+        "custom_widths_enabled": True,
+        "library_width": saved_width,
+    }
+    _seed_conversations(app, _two_conversations())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _settled_library(host, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+        await _wait_for_selector(screen, pilot, "#library-browse-reader-shell")
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        rail = screen.query_one("#library-rail", LibraryRail)
+        grid = screen.query_one("#library-shell-grid")
+        generation = screen._library_compose_generation
+        for width in (120, 80, 120):
+            await pilot.resize_terminal(width, 45)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    rail.region.width
+                    == max(24, min(saved_width, grid.content_region.width - 40))
+                ),
+                message="Ordinary rail failed to restore its canvas-safe width.",
+            )
+            await pilot.pause()
+            assert screen._active_library_rail() is rail
+            assert screen._library_compose_generation == generation
+            assert (
+                screen._library_reader_shared_preferences.library_width == saved_width
+            )
+        assert rail.region.width == saved_width

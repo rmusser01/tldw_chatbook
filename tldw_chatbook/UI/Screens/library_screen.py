@@ -4902,10 +4902,8 @@ class LibraryScreen(BaseAppScreen):
             rail = shell.library if shell is not None else None
             if isinstance(rail, LibraryRail) and rail.is_attached:
                 return rail
-        try:
-            return self.query_one("#library-rail", LibraryRail)
-        except (NoMatches, QueryError):
-            return None
+        rail = self._library_layout_ref("#library-rail")
+        return rail if isinstance(rail, LibraryRail) else None
 
     def _remember_library_notes_authority_focus(self, focused: Widget | None) -> None:
         return self._notes_controller._remember_library_notes_authority_focus(focused)
@@ -6428,19 +6426,12 @@ class LibraryScreen(BaseAppScreen):
 
     def _sync_library_ordinary_rail_width_contract(self) -> None:
         """Apply the settled ordinary rail contract at the existing UI seams."""
-        if self.query(
-            "#library-browse-reader-shell, "
-            "#library-collections-reader-shell, "
-            "#library-conversations-reader-shell, "
-            "#library-prompts-reader-shell, "
-            "#library-skills-reader-shell"
-        ):
+        if self._library_adaptive_reader_shell_active():
             return
-        try:
-            shell = self.query_one("#library-shell-grid", Widget)
-            rail = self.query_one("#library-rail", LibraryRail)
-            canvas = self.query_one("#library-canvas", Widget)
-        except (NoMatches, QueryError):
+        shell = self._library_layout_ref("#library-shell-grid")
+        rail = self._library_layout_ref("#library-rail")
+        canvas = self._library_layout_ref("#library-canvas")
+        if shell is None or not isinstance(rail, LibraryRail) or canvas is None:
             return
         width = shell.content_region.width
         if width < LIBRARY_EMERGENCY_WIDTH:
@@ -7170,10 +7161,8 @@ class LibraryScreen(BaseAppScreen):
         """Whether ``selector`` names a control that can take focus now."""
         if not selector:
             return False
-        controls = self.query(selector)
-        if not controls:
-            return False
-        return controls.first(Widget) in self.focus_chain
+        control = self._library_layout_ref(selector)
+        return control is not None and control in self.focus_chain
 
     def _library_narrow_stage_return_active(self) -> bool:
         """Whether the Library pane is closed on the live adaptive route.
@@ -8067,10 +8056,10 @@ class LibraryScreen(BaseAppScreen):
                 self._notes_state.pre_resize_focus = None
                 return
             self._library_resize_applied_signature = signature
-        try:
-            width = self.query_one("#library-shell-grid").region.width
-        except (NoMatches, QueryError):
+        shell = self._library_layout_ref("#library-shell-grid")
+        if shell is None:
             return
+        width = shell.region.width
         if width <= 0:
             return
         self._sync_library_ingest_rail_for_width(width)

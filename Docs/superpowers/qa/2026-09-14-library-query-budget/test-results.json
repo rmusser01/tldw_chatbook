@@ -1,0 +1,43 @@
+{
+  "red-gates": {
+    "summary": "2 failed, 15 deselected, 2 warnings in 5.81s",
+    "failures": [
+      "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_resize_gate_skips_library_query_work_on_non_crossing_frames",
+      "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_tab_focus_path_library_query_volume_is_bounded"
+    ]
+  },
+  "red-expanded": {
+    "summary": "4 failed, 1 passed, 15 deselected, 2 warnings in 9.10s",
+    "failures": [
+      "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_resize_gate_skips_library_query_work_on_non_crossing_frames[LibraryHarness]",
+      "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_resize_gate_skips_library_query_work_on_non_crossing_frames[LibraryProductionCSSHarness]",
+      "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_tab_focus_path_library_query_volume_is_bounded[LibraryHarness]",
+      "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_tab_focus_path_library_query_volume_is_bounded[LibraryProductionCSSHarness]"
+    ]
+  },
+  "final-gates": {
+    "summary": "22 passed, 2 warnings in 29.37s",
+    "failures": []
+  },
+  "neighbor-checks": {
+    "summary": "5 failed, 10 passed, 2 warnings in 150.46s (0:02:30)",
+    "failures": [
+      "FAILED Tests/UI/test_library_shell.py::test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_route[24]",
+      "FAILED Tests/UI/test_library_shell.py::test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_route[34]",
+      "FAILED Tests/UI/test_library_shell.py::test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_route[35]",
+      "FAILED Tests/UI/test_library_shell.py::test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_route[48]",
+      "FAILED Tests/UI/test_library_file_notes_workspace.py::test_notes_authority_round_trip_retains_both_workspaces"
+    ]
+  },
+  "neighbor-head-control-final": {
+    "summary": "2 failed, 2 warnings in 31.73s",
+    "failures": [
+      "FAILED Tests/UI/_query_budget_control.py::test_width_control - AssertionError...",
+      "FAILED Tests/UI/_query_budget_control.py::test_notes_control - AssertionError..."
+    ]
+  },
+  "probe-after": {
+    "summary": "3 passed, 2 warnings in 8.03s",
+    "failures": []
+  }
+}

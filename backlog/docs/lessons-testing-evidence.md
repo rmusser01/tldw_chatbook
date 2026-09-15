@@ -9,6 +9,18 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A same-band resize can still change an exact cell-width contract
+
+**TASK-32599, 2026-09-14.** A zero-query gate called 168/167/166-column
+resizes “non-crossing,” yet the signature trace showed the last frame legitimately
+changing the ADR-086 rail contract from 36 to 35 cells. Skipping that frame would
+have passed the query count while breaking geometry. Reusing existing validated
+references preserved the width change and reduced the measured 23 lookups to zero.
+The complete focusability helper dropped from 349 to 121 µs by avoiding a selector
+scan, while a cached rail accessor was slightly slower than Textual's already-cheap
+ID lookup (0.26 versus 0.18 µs). Count gates and timing answer different questions;
+pin rendered geometry alongside the count, and time the full lazy-query consumer.
+
 ## Retained controls need both fresh state and settled-layout evidence
 
 **TASK-32462.1, 2026-09-14.** Library's source projection correctly reported
