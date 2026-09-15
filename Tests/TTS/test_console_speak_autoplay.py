@@ -713,7 +713,13 @@ def _accept_owned_stop(message: object) -> bool:
 async def test_console_markdown_reaches_adapter_through_speech_controls(
     mode, monkeypatch, tmp_path
 ) -> None:
-    """Exercise controller, consent/destination resolution and real TTS admission."""
+    """Exercise controller, consent/destination resolution and real TTS admission.
+
+    Args:
+        mode: Manual, automatic, retry or empty-output speech path to exercise.
+        monkeypatch: Fixture isolating provider and audio-output boundaries.
+        tmp_path: Fixture providing storage for the test conversation.
+    """
     captured = []
     audio = io.BytesIO()
     with wave.open(audio, "wb") as writer:
@@ -815,7 +821,7 @@ async def test_console_markdown_reaches_adapter_through_speech_controls(
         schedule=schedule,
     )
     coordinator.mount()
-    content = "## Summary\n\nRead **this** [guide](https://example.test/private).\n\n```python\nsecret_code()\n```"
+    content = "## Summary\n\nRead **this** [guide](https://example.test/private).\n\n```python\nsecret_code()\n```\n\n<div>Visible<br>details</div>\n\n- [x] Reviewed"
     if mode == "empty":
         content = "---\n\n<!-- formatting only -->"
     try:
@@ -838,7 +844,7 @@ async def test_console_markdown_reaches_adapter_through_speech_controls(
             assert len(errors) == 1
             coordinator.request_retry()
             await settle()
-        expected = "Summary. Read this guide. Code block omitted."
+        expected = "Summary. Read this guide. Code block omitted. Visible. details. Checked: Reviewed"
         assert captured == (
             [] if mode == "empty" else [expected] * (2 if mode == "retry" else 1)
         )

@@ -20,6 +20,9 @@ into spoken text:
 
 - Headings, emphasis, lists, and quotations keep their words, with pauses
   between blocks. Links use their labels; images use their alternative text.
+- Checklist items announce **“Checked”** or **“Unchecked”** before their words.
+- HTML formatting keeps visible words and pauses at line breaks and block
+  boundaries. Comments and script/style bodies are skipped.
 - Inline code is read without backticks, including commands and identifiers.
 - Each fenced or indented code block is replaced by **“Code block omitted.”**
   The code remains available in the onscreen response.

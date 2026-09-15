@@ -84,7 +84,6 @@ from ...Chat.local_reasoning import (
     supports_local_reasoning,
 )
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
-from ...Widgets.select_values import assign_select_value
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
     first_configured_endpoint,
@@ -12848,6 +12847,8 @@ class SettingsScreen(BaseAppScreen):
                 ).strip()
 
     def _sync_provider_manual_widget(self, provider: str) -> None:
+        from ...Widgets.select_values import assign_select_value
+
         try:
             provider_select = self.query_one("#settings-provider-value", Select)
             manual_row = self.query_one("#settings-provider-manual-row", Horizontal)
@@ -21416,6 +21417,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _apply_speech_tts_navigation_context(self) -> None:
         """Restore a bounded Speech provider/intent without invoking work."""
+        from ...Widgets.select_values import assign_select_value
 
         target = self._speech_tts_navigation_target
         if (
@@ -26368,6 +26370,8 @@ class SettingsScreen(BaseAppScreen):
 
     @on(OptionList.OptionSelected, "#settings-provider-picker")
     def handle_provider_picker_selected(self, event: OptionList.OptionSelected) -> None:
+        from ...Widgets.select_values import assign_select_value
+
         event.stop()
         option = event.option
         action = getattr(option, "action", None)
@@ -28809,6 +28813,8 @@ class SettingsScreen(BaseAppScreen):
             self._sync_raw_cli_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
+            from ...Widgets.select_values import assign_select_value
+
             self.run_worker(
                 self._revert_snapshot_preferences(),
                 group="settings-snapshot-revert",

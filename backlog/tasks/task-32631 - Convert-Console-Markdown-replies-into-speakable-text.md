@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-15 15:45'
-updated_date: '2026-09-15 15:55'
+updated_date: '2026-09-15 19:31'
 labels:
   - console
   - tts
@@ -27,6 +27,8 @@ Users hear Markdown delimiters mixed with assistant prose when Console replies a
 - [x] #2 Headings, emphasis, lists, quotes, link labels, inline code and table rows retain their content and meaningful punctuation; each fenced or indented code block announces Code block omitted.
 - [x] #3 Original message validation and length limits apply before conversion; empty spoken output finishes without provider work or stuck playback ownership.
 - [x] #4 Targeted speech regressions, static checks and Console voice documentation cover the new behavior.
+- [x] #5 HTML block and inline formatting preserve visible words and structural separators without speaking comments or script/style bodies; checklist items convey checked state while ordinary bracket text remains literal.
+- [x] #6 The UI readiness census passes at the existing module limit after deferring Notes import parsing and selection-value helpers until first use.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -34,26 +36,26 @@ Users hear Markdown delimiters mixed with assistant prose when Console replies a
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
 ADR path: backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md
-Reason: Routine text preparation under the existing validated Console speech ownership boundary; no schema, provider contract or UI structure changes.
+Reason: Routine text preparation under the existing validated Console speech ownership boundary and first-use import deferral; no schema, dependency, provider contract or UI structure changes.
 
 1. Add failing speech-admission regressions for formatting, omissions, original validation, empty output and fallback.
 2. Add a pure Markdown-to-speech helper and wire it into trusted completed-response and fallback preparation.
 3. Verify manual and automatic request paths, retry behavior, original snapshot authority and meaningful punctuation with targeted tests.
 4. Update Console voice documentation, run scoped lint/format checks and self-review the final diff.
+5. Address Qodo HTML and checklist findings with admission and adapter regressions, and complete test docstrings.
+6. Defer selection and Notes import parsing helpers until feature use to restore the existing UI readiness limit; verify census and affected behavior.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented a pure Markdown-to-speech projection in Chat/console_speech_text.py, invoked lazily from trusted Console and global-override speech preparation. Headings, emphasis, lists, quotes, link/image labels and inline code retain words; table rows repeat column labels; each fenced/indented code block announces Code block omitted. Original snapshots remain authoritative, raw and expanded text both retain the 5,000-character limit, and formatting-only replies settle successfully without synthesis, cooldown or paused automatic speech.
+Implemented a pure Markdown-to-speech projection, invoked lazily from trusted Console and global-override speech preparation. It retains prose, link/image labels, inline code and labelled table rows; announces each fenced/indented code block as Code block omitted; and verbalizes checklist state. HTML keeps visible words and structural pauses while suppressing comments and script/style bodies across Markdown blocks. Image captions retain their literal content. Original snapshots remain authoritative; raw and expanded text retain the 5,000-character limit, and empty output settles without provider work or stuck playback ownership.
 
-Verification: baseline admission suite passed 20 tests; new behavior produced 21 expected failures before implementation. Final targeted union passed 239 tests across snapshot admission, Console playback, auto-speak wiring, TTS improvements, format adaptation and hands-free utterance entry. Four integration cases exercise the real Console controller, auto-speak coordinator, consent/destination resolution and TTS service admission, replacing only the TTS adapter and audio-output boundary; manual, automatic, retry and empty cases all pass and all fail with conversion disabled in an isolated mutation test. No physical listening test was performed. Existing requests dependency and unrelated pytest temporary-directory cleanup warnings remain.
+Addressed all three Qodo findings, including Google-style test docstrings. Admission regressions reproduced 15 additional review failures before their fixes. The six-file targeted speech union passed 256 tests; after the final image-caption fix, admission/autoplay passed 149 tests with only the previously verified bounded-ownership test deselected. Adapter integration exercises manual, automatic, retry and empty paths through the real controller, coordinator and TTS admission. No physical listening test was performed.
 
-Independent read-only review found no actionable issues in the approved scope. The new helper passes Ruff; existing touched files introduce zero diagnostics against HEAD (58/2/1 pre-existing diagnostics in handler/admission tests/autoplay tests). New/helper and changed-range formatting plus diff whitespace checks pass. Updated Docs/User_Guide/console/voice-and-hands-free.md. Existing speech authority ADR-037 applies; no new ADR or schema, dependency, provider or UI structure change.
+Plan deviation: the PR's UI census failure reproduced identically on exact dev base 48d40df8ce (977 modules against 975). Deferred selection-value helpers and Notes import parsing at their four importers, preserving behavior and the existing limit. The census now passes at 975; both helpers are explicitly forbidden at UI readiness. Verification: 4 census tests, 57 affected Settings/Notes tests and 26 remaining performance guards passed. No new dependencies or limit increases.
 
-Modified files: tldw_chatbook/Chat/console_speech_text.py; tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py; Tests/TTS/test_console_speech_snapshot_admission.py; Tests/TTS/test_console_speak_autoplay.py; Docs/User_Guide/console/voice-and-hands-free.md. No implementation-plan deviations. No new generalizable lesson beyond existing test-boundary guidance.
+All seven derived-artifact checks pass. Scoped formatting and whitespace checks pass; touched files introduce zero Ruff diagnostics compared with dev. Existing dependency, pytest temporary-directory cleanup and budget-headroom warnings remain. Self-review and independent reviews completed; concrete findings have regression coverage. Console voice documentation updated. ADR required: no; existing ADR-037 applies to speech authority, and import deferral preserves module contracts. No new generalizable lesson beyond the repository's existing baseline-failure evidence and import-deferral guidance.
 
-
-PR preparation: isolated branch codex/console-speech-markdown starts at origin/dev 48d40df8ce. Fresh targeted verification passed 239 tests against this worktree. All seven derived-artifact checks passed; the Mermaid input download required a network-enabled retry. Scoped format and diff checks pass, and touched legacy files introduce zero lint diagnostics against this dev baseline.
-
+Modified speech helper and TTS event preparation, two TTS test files, Console voice guide, four Settings/Notes importers, the UI census test and this task. PR: https://github.com/rmusser01/tldw_chatbook/pull/2696.
 <!-- SECTION:NOTES:END -->
