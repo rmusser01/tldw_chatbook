@@ -3,10 +3,10 @@ id: TASK-32606
 title: >-
   Library Notes: the Choose File Notes Folder dialog opens with no keyboard
   focus, so Folder files is mouse-only
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-15 06:37'
-updated_date: '2026-09-15 15:41'
+updated_date: '2026-09-15 16:36'
 labels:
   - library
   - notes
