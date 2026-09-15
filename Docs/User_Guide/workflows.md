@@ -19,7 +19,9 @@ Press **Ctrl+8**, select **Workflows** in the navigation bar, or use **Ctrl+P** 
    not close another. Previous/next step controls change the selected step.
    **Expand** gives a large text field more room; Escape returns to the same field.
 4. **Validate** checks local structure and can take you to an issue. Edits update
-   validation without rebuilding the active field or moving your typing cursor.
+   validation, step labels and section summaries without rebuilding the active
+   field or moving your typing cursor. Validation success appears separately
+   from saved/draft status; it does not mean the draft was saved or executed.
 5. **Save revision** creates an immutable saved definition. Autosaved drafts are
    separate: unfinished or invalid JSON can survive navigation and restart without
    becoming a valid saved revision. **More…** exposes history, duplication,
@@ -38,6 +40,10 @@ the draft matches that revision. If a write fails, the in-memory buffer remains
 available, navigation/quit are refused when needed, and **Retry** attempts
 persistence again. Do not force-close the process while a draft says it is not
 saved.
+
+**Retry** appears for failed loading or draft persistence, not validation success
+or malformed imports. Successful workflow/revision navigation clears transient
+operation errors and shows the destination's saved, draft or read-only status.
 
 Invalid field JSON remains repairable while forms show the last valid document.
 **Advanced JSON** exposes the whole definition, including fields the form does

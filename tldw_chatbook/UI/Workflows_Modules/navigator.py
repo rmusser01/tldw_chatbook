@@ -22,9 +22,8 @@ class WorkflowNavigator(Vertical):
         yield OptionList(id="workflow-navigation-list")
         yield compact_button("Add step", "workflow-add-step")
 
-    def show_document(self, document: dict, selected: str, issues=()):
+    def show_document(self, document: dict, selected: str, issues=(), *, rebuild=True):
         listing = self.query_one(OptionList)
-        listing.clear_options()
         options = [
             ("Overview", "overview"),
             ("Run inputs", "inputs"),
@@ -44,10 +43,17 @@ class WorkflowNavigator(Vertical):
             options.append(
                 (f"{index + 1:02} {step_label(step)}{mark}", "step:" + step["id"])
             )
-        listing.add_options(
+        prompts = [
             Option(Text(("> " if key == selected else "  ") + label), id=key)
             for label, key in options
-        )
+        ]
+        if not rebuild:
+            for option in prompts:
+                if listing.get_option(option.id).prompt != option.prompt:
+                    listing.replace_option_prompt(option.id, option.prompt)
+            return
+        listing.clear_options()
+        listing.add_options(prompts)
         listing.highlighted = next(
             (i for i, (_, key) in enumerate(options) if key == selected), 0
         )

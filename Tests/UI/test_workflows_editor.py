@@ -157,7 +157,9 @@ def field_for(editor, pointer):
 
 async def choose_option(harness, pilot, option_id):
     # A completed control worker may have only queued the modal's mount.
-    await pilot.pause()
+    async with asyncio.timeout(5):
+        while not harness.screen.query("#workflow-dialog-choices"):
+            await pilot.pause()
     options = harness.screen.query_one("#workflow-dialog-choices", OptionList)
     options.highlighted = options.get_option_index(option_id)
     options.focus()
@@ -896,12 +898,156 @@ async def test_typing_keeps_widget_cursor_and_lossless_durable_value(tmp_path):
         await pilot.press("d", "r", "s")
         await pilot.pause()
         assert name.value == "drs"
+        assert "drs" in str(editor.query_one("#workflow-editor-heading").renderable)
+        nav = harness.screen.query_one("#workflow-navigation-list", OptionList)
+        assert "drs" in str(nav.get_option("step:prepare").prompt)
         assert (
             harness.workflow_documents.project(
                 harness.workflow_drafts.current.raw_text
             )["steps"][1]["id"]
             == "prepare"
         )
+
+
+@pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
+async def test_field_summaries_refresh_without_resetting_view_state(tmp_path, size):
+    harness = WorkflowEditorHarness(tmp_path)
+    async with harness.run_test(size=size) as pilot:
+        await pilot.pause()
+        editor = await select_step(harness, pilot, "summarize")
+        nav = harness.screen.query_one("#workflow-navigation-list", OptionList)
+        nav.highlighted = 0  # Keyboard exploration is not the selected step.
+        option = nav.get_option("step:summarize")
+        inputs = editor.query_one("#workflow-section-inputs", Collapsible)
+        inputs.collapsed = False
+        provider = field_for(editor, "/steps/2/config/provider")
+        provider.focus()
+        provider.scroll_visible(animate=False)
+        await pilot.pause()
+        provider.value = ""
+        await pilot.pause()
+        assert "missing required value" in inputs.title
+        assert str(nav.get_option("step:summarize").prompt).endswith(" !")
+        await pilot.wait_for_scheduled_animations()
+        scroll = editor.query_one("#workflow-form").scroll_offset
+        generation = harness.workflow_drafts.current.generation
+        await pilot.press("l")
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        assert "missing required value" not in inputs.title
+        assert not str(nav.get_option("step:summarize").prompt).endswith(" !")
+        assert field_for(editor, "/steps/2/config/provider") is provider
+        assert harness.focused is provider and provider.cursor_position == 1
+        assert not inputs.collapsed
+        assert editor.query_one("#workflow-form").scroll_offset == scroll
+        assert nav.highlighted == 0 and nav.get_option("step:summarize") is option
+        assert harness.workflow_drafts.current.generation == generation + 1
+
+        action = editor.query_one("#workflow-section-action", Collapsible)
+        prompt = field_for(editor, "/steps/2/config/prompt")
+        prompt.load_text("")
+        await pilot.pause()
+        assert "missing required value" in action.title
+        prompt.load_text("Summarize this")
+        await pilot.pause()
+        assert "missing required value" not in action.title
+        execution = editor.query_one("#workflow-section-execution", Collapsible)
+        field_for(editor, "/steps/2/retry").value = "2"
+        await pilot.pause()
+        assert "retry 2" in execution.title and execution.collapsed
+
+
+@pytest.mark.parametrize("transition", ["workflow", "inspect", "return", "create"])
+async def test_operation_error_clears_after_successful_context_change(
+    tmp_path, transition
+):
+    harness = WorkflowEditorHarness(tmp_path)
+    async with harness.run_test(size=(160, 48)) as pilot:
+        await pilot.pause()
+        screen = harness.screen
+        base = harness.workflow_drafts.base
+        if transition == "return":
+            await screen._inspect(base.revision_id)
+
+        async def malformed_import():
+            harness.workflow_documents.create('{"name":\n')
+
+        screen._start(malformed_import())
+        await harness.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Invalid JSON" in painted_text(screen)
+        retry_was_visible = screen.query_one("#workflow-retry-save").display
+        if transition == "workflow":
+            other = harness.workflow_documents.create(
+                '{"name":"Other workflow","version":1,"steps":[]}'
+            )
+            await screen._select_workflow(other.workflow_id, other.revision_id)
+        elif transition == "inspect":
+            await screen._inspect(base.revision_id)
+        elif transition == "return":
+            screen._more_selected("return")
+            await harness.workers.wait_for_complete()
+        else:
+            await screen._create("Fresh context")
+        await pilot.pause()
+        assert "Invalid JSON" not in painted_text(screen)
+        assert not screen.query_one("#workflow-retry-save").display
+        status = str(screen.query_one("#workflow-draft-status").renderable)
+        assert ("read-only" if transition == "inspect" else "Saved revision") in status
+        assert not retry_was_visible
+
+
+async def test_deleted_raw_step_returns_to_overview_and_can_edit_name(tmp_path):
+    import json
+
+    harness = WorkflowEditorHarness(tmp_path)
+    async with harness.run_test(size=(160, 48)) as pilot:
+        await pilot.pause()
+        editor = await select_step(harness, pilot, "save")
+        owner = harness.workflow_drafts
+        document = harness.workflow_documents.project(owner.current.raw_text)
+        document["steps"].pop()
+        editor.query_one("#workflow-raw-json", TextArea).load_text(json.dumps(document))
+        await pilot.pause()
+        name = field_for(editor, "/name")
+        name.value = "Name after deleting selected step"
+        await pilot.pause()
+        assert not harness.screen._error
+        assert harness.screen.controller.section == editor.section == "overview"
+        assert field_for(editor, "/name") is name
+        nav = harness.screen.query_one("#workflow-navigation-list", OptionList)
+        assert str(nav.get_option("overview").prompt).startswith("> ")
+        await owner.flush()
+        assert (
+            harness.workflow_documents.project(owner.current.raw_text)["name"]
+            == name.value
+        )
+
+
+async def test_validate_preserves_unrelated_operation_error(tmp_path):
+    import json
+
+    from Tests.Workflows.helpers import prompt_definition
+
+    harness = WorkflowEditorHarness(tmp_path, seed=False)
+    harness.workflow_documents.create(json.dumps(prompt_definition()))
+    async with harness.run_test(size=(160, 48)) as pilot:
+        await pilot.pause()
+        screen = harness.screen
+
+        async def malformed_import():
+            harness.workflow_documents.create('{"name":\n')
+
+        screen._start(malformed_import())
+        await harness.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Invalid JSON" in painted_text(screen)
+        assert await pilot.click("#workflow-validate")
+        await pilot.pause()
+        await harness.workers.wait_for_complete()
+        assert "Invalid JSON" in painted_text(screen)
+        assert "Structure valid" in painted_text(screen)
+        assert not screen.query_one("#workflow-retry-save").display
 
 
 async def test_failed_flush_vetoes_real_screen_navigation_without_losing_text(
@@ -1219,7 +1365,12 @@ async def test_validate_uses_authoring_issues_and_cannot_enable_execution(tmp_pa
     async with harness.run_test(size=(110, 36)) as pilot:
         await pilot.pause()
         await harness.screen._activate_issue()
+        await pilot.pause()
         assert "Structure valid" in painted_text(harness.screen)
+        assert not harness.screen.query_one("#workflow-retry-save").display
+        assert "Saved revision" in str(
+            harness.screen.query_one("#workflow-draft-status").renderable
+        )
         run = harness.screen.query_one("#workflow-run", Button)
         assert run.disabled
         run.press()
@@ -1233,6 +1384,13 @@ async def test_validate_uses_authoring_issues_and_cannot_enable_execution(tmp_pa
                 "tldw_chatbook.Workflows.run_service",
             )
         )
+        editor = await select_step(harness, pilot)
+        assert "Structure valid" not in painted_text(harness.screen)
+        await harness.screen._activate_issue()
+        field_for(editor, "/steps/0/config/template").load_text("")
+        await pilot.pause()
+        assert "Structure valid" not in painted_text(harness.screen)
+        assert "authoring issue" in painted_text(harness.screen)
     assert not list(tmp_path.glob("*.lock"))
 
 

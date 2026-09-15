@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-15 04:09'
-updated_date: '2026-09-15 15:02'
+updated_date: '2026-09-15 16:47'
 labels: []
 dependencies: []
 ---
@@ -23,6 +23,7 @@ Deliver the approved portable workflow editor on current dev while keeping unfin
 - [x] #3 Drafts survive navigation and restart, failed persistence stays recoverable, and opaque server fields survive round trips.
 - [x] #4 Only existing SQLite safety utilities are used; new execution and process-ownership infrastructure remain absent.
 - [x] #5 The authoring slice meets the user-approved no-new-static-debt gate: introduced findings are fixed and retained baseline failures are source-attributed and documented.
+- [x] #6 Validation notices and retry actions reflect the selected workflow and actual retryable failures; step labels and issue summaries update during editing without replacing focused controls or resetting view state.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -40,6 +41,17 @@ Reason: record the user-approved stable-file exchange contract (2026-09-15) for 
 6. Record exact verification and independent review. Do not mark Done with unresolved failures or unwaived static debt.
 7. Apply the separately user-approved TASK-32601 no-new-static-debt gate in ADR-138: compare source spans against base77eb2601a6, correct changed import blocks as needed, verify scoped tests/static checks, and obtain the existing reviewer's scoped gate disposition. No broad cleanup, suppression or merge.
 
+### Approved UAT correction (2026-09-15)
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md; ADR-150 also applies.
+Reason: bounded feedback/reconciliation fixes in the existing authoring UI; no storage, runtime, or architectural changes.
+
+1. Reproduce stale step labels/section summaries, misleading Retry on validation, and stale errors after successful context changes with failing regression tests. Preserve real load/write retry coverage.
+2. Correct feedback state and update derived labels in place, preserving focused controls, cursor, collapse state and scrolling.
+3. Run targeted editor/lifecycle tests and scoped static checks; repeat the original live-app reproductions in the disposable UAT profile.
+4. Record fresh evidence and review; complete AC2 and AC6 only after the corrections pass.
+
 ## ID provenance
 
 The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans already contained IDs through 32600. Only this newly created file/header was moved to the checked-free TASK-32601 before implementation. No existing task was renumbered.
@@ -48,7 +60,32 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Current qualification:** all ACs and the approved scoped DoD are satisfied.
+**Current qualification:** the approved UAT corrections are verified. Ordinary
+validation notices no longer hide draft/revision status or imply Retry. Successful
+context transitions clear operation errors; Validate preserves unrelated errors.
+Step headings, navigator prompts and required/execution summaries update in place,
+preserving controls and view state. Review additionally caught a deleted raw-step
+selection; it now normalizes to Overview before the next edit. No SQLite, runtime,
+provider or dependency changes. ADR-138/ADR-150 remain applicable; no new ADR.
+
+Final verification: 93 targeted editor/authoring/lifecycle/destination tests passed
+(128 deselected), four changed Python files pass Ruff/format, and diff-check passes.
+The independent reviewer closed both correction findings, passed 18 scoped tests
+and repeated the timing-sensitive recovery case 3/3. Tests now await scheduled
+scrolling and actual modal mounting instead of assuming one pause drains events.
+The live app passed the original feedback scenarios, all three layouts, raw
+selected-step removal followed by editing, and real foreign-writer refusal/Retry.
+Ten checks of those captures and the saved SQLite content passed; quick_check is
+ok. Both app processes exited 0, temporary writers were released and UAT sessions
+closed. Existing startup/dependency warnings are disclosed, not suppressed.
+
+Evidence and limits: `Docs/UAT/2026-09-15-workflows-feedback-corrections.md`.
+Original UAT evidence remains in `.uat-workflows-9NUT5t/UAT-REPORT.md`; final raw
+captures/profile are also retained there locally. Updated the user guide and the
+testing-evidence lesson for structural fallback followed by incremental editing.
+No full sweep, current-dev merge, commit or push in this correction turn.
+
+**Prior qualification:** all then-existing ACs and the approved scoped DoD were satisfied.
 The separately user-approved no-new-static-debt gate in ADR-138 passes:711
 remaining lint findings and64formatter edits across5files map exactly to baseline;
 zero unmatched. All25newPythonfiles and the rewritten screen are clean. Two changed

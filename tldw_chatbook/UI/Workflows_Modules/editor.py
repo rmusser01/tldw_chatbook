@@ -255,6 +255,25 @@ class WorkflowEditor(Vertical):
                     button.disabled = self.query_one("#" + button.id[:-10]).disabled
                 elif not (button.id or "").endswith("-expand"):
                     button.disabled = read_only or bool(draft.error)
+            if self.section.startswith("step:"):
+                index = next(
+                    (
+                        i
+                        for i, step in enumerate(self.document["steps"])
+                        if step["id"] == self.section[5:]
+                    ),
+                    None,
+                )
+                if index is None:
+                    self.section = "overview"
+                    return
+                self._update_step_heading(index)
+                for section_name in ("inputs", "action", "outputs", "execution"):
+                    self.query_one(
+                        "#workflow-section-" + section_name, Collapsible
+                    ).title = section_name.capitalize() + self._step_summary(
+                        index, section_name
+                    )
             return
         self._building = True
         self.app.capture_mouse(None)
@@ -348,12 +367,33 @@ class WorkflowEditor(Vertical):
             self.draft.last_valid_json, pointer, as_json=spec.value_type != "string"
         )
 
-    async def _mount_step(self, target, index):
-        steps = self.document["steps"]
-        step = steps[index]
+    def _update_step_heading(self, index):
+        step = self.document["steps"][index]
         self.query_one("#workflow-editor-heading", Static).update(
             f"{index + 1:02} · {step_label(step)} · {step['id']} ({step['type']})"
         )
+
+    def _step_summary(self, index, section):
+        raw = self.draft.last_valid_json
+        if section == "execution":
+            retry = self.documents.field_text(raw, f"/steps/{index}/retry") or "unset"
+            timeout = (
+                self.documents.field_text(raw, f"/steps/{index}/timeout_seconds")
+                or "unset"
+            )
+            return f" · retry {retry} / timeout {timeout}s"
+        missing = any(
+            self.documents.field_text(raw, f"/steps/{index}/" + field.path)
+            in ('""', "", "null")
+            for field in FIELDS.get(self.document["steps"][index]["type"], ())
+            if field.section == section and field.required
+        )
+        return " · missing required value" if missing else ""
+
+    async def _mount_step(self, target, index):
+        steps = self.document["steps"]
+        step = steps[index]
+        self._update_step_heading(index)
         neighbors = []
         for direction, neighbor_index in (("Previous", index - 1), ("Next", index + 1)):
             if 0 <= neighbor_index < len(steps):
@@ -449,22 +489,13 @@ class WorkflowEditor(Vertical):
                         markup=False,
                     )
                 )
-            missing = any(
-                self.documents.field_text(
-                    self.draft.last_valid_json, f"/steps/{index}/" + field.path
-                )
-                in ('""', "", "null")
-                for field in fields
-            )
-            summary = " · missing required value" if missing else ""
-            if section == "execution":
-                summary = f" · retry {self.documents.field_text(self.draft.last_valid_json, f'/steps/{index}/retry') or 'unset'} / timeout {self.documents.field_text(self.draft.last_valid_json, f'/steps/{index}/timeout_seconds') or 'unset'}s"
+            summary = self._step_summary(index, section)
             await target.mount(
                 Collapsible(
                     *content,
                     title=title + summary,
                     collapsed=section != "action"
-                    and not (section == "inputs" and missing),
+                    and not (section == "inputs" and summary),
                     id="workflow-section-" + section,
                 )
             )

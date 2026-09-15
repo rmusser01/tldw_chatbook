@@ -53,6 +53,7 @@ class WorkflowsScreen(BaseAppScreen):
         self._busy = False
         self._loaded = False
         self._error = ""
+        self._notice = ""
         self._run_reason = "Run unavailable in this authoring release. Sequential v1; branching v2; parallel v3."
         self._issue_index = 0
         self._workflow_views = {}
@@ -239,10 +240,10 @@ class WorkflowsScreen(BaseAppScreen):
         ):
             self.query_one("#" + identifier).disabled = locked
         self.query_one("#workflow-run", Button).disabled = True
-        self.query_one("#workflow-retry-save", Button).display = bool(
-            self._error
-        ) or controller.drafts.status.startswith("Not saved")
-        readiness = self._run_reason
+        self.query_one("#workflow-retry-save", Button).display = (
+            not self._loaded or controller.drafts.status.startswith("Not saved")
+        )
+        readiness = self._notice or self._run_reason
         if controller.issues:
             readiness = (
                 f"{len(controller.issues)} authoring issue(s) · Validate to inspect. "
@@ -260,6 +261,7 @@ class WorkflowsScreen(BaseAppScreen):
         controller = self.controller
         if controller is None or not self.is_mounted:
             return
+        self._notice = ""
         if rebuild:
             self.query_one(WorkflowLibrary).show_rows(
                 (
@@ -276,15 +278,18 @@ class WorkflowsScreen(BaseAppScreen):
         draft = controller.draft
         if draft:
             document = controller.documents.project(draft.last_valid_json)
+            if controller.section.startswith("step:") and not any(
+                step["id"] == controller.section[5:] for step in document["steps"]
+            ):
+                controller.section = "overview"
             self.query_one("#workflows-title", Static).update(
                 "Workflows / "
                 + str(document.get("name", "Untitled workflow"))
                 + " · Local"
             )
-            if rebuild:
-                self.query_one(WorkflowNavigator).show_document(
-                    document, controller.section, controller.issues
-                )
+            self.query_one(WorkflowNavigator).show_document(
+                document, controller.section, controller.issues, rebuild=rebuild
+            )
             await self.query_one(WorkflowEditor).render_draft(
                 draft,
                 section=controller.section,
@@ -365,6 +370,7 @@ class WorkflowsScreen(BaseAppScreen):
             operation.close()
             return
         self._busy = True
+        self._notice = ""
         self._show_status()
 
         async def run():
@@ -374,7 +380,7 @@ class WorkflowsScreen(BaseAppScreen):
                 self._error = str(error)
             except Exception:  # noqa: BLE001 -- preserve draft and show a content-free owner failure
                 self._error = (
-                    "Workflows operation failed. The current draft is retained; Retry."
+                    "Workflows operation failed. The current draft is retained."
                 )
             finally:
                 self._busy = False
@@ -422,6 +428,7 @@ class WorkflowsScreen(BaseAppScreen):
 
     async def _select_section(self, section):
         await self.controller.select_section(section)
+        self._error = ""
         await self._refresh_authoring(focus=True)
 
     @on(WorkflowNavigator.Selected)
@@ -439,6 +446,7 @@ class WorkflowsScreen(BaseAppScreen):
                 "views": editor.views,
             }
         await self.controller.select_workflow(workflow_id, revision_id)
+        self._error = ""
         previous = self._workflow_views.get(workflow_id, {})
         self.controller.section = previous.get("section", "overview")
         editor.views = previous.get("views", {})
@@ -571,6 +579,7 @@ class WorkflowsScreen(BaseAppScreen):
             await self.controller.load((revision.workflow_id, revision.revision_id))
         else:
             await self.controller.create(name)
+        self._error = ""
         await self._refresh_authoring(focus=True)
 
     async def _import_file(self):
@@ -810,6 +819,8 @@ class WorkflowsScreen(BaseAppScreen):
             )
         elif action == "return":
             self.controller.inspection = None
+            self._error = ""
+            self.controller.validate()
             self._start(self._refresh_authoring(focus=True))
         elif action == "edit-history":
             self._start(self._edit_history())
@@ -912,10 +923,14 @@ class WorkflowsScreen(BaseAppScreen):
         await self.controller.inspect_revision(
             self.controller.draft.workflow_id, revision_id
         )
+        self._error = ""
+        self.controller.validate()
         await self._refresh_authoring(focus=True)
 
     async def _edit_history(self):
         await self.controller.edit_inspected_revision()
+        self._error = ""
+        self.controller.validate()
         await self._refresh_authoring(focus=True)
 
     def _repair_raw_dialog(self):
@@ -934,8 +949,9 @@ class WorkflowsScreen(BaseAppScreen):
 
     async def _activate_issue(self, direction=0):
         issues = self.controller.validate()
+        self._notice = ""
         if not issues:
-            self._error = (
+            self._notice = (
                 "Structure valid locally. Run is unavailable in this authoring release."
             )
             self._show_status()

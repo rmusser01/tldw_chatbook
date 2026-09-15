@@ -14631,3 +14631,13 @@ ancestor hierarchy. Assert the label, expected value, focus and nonzero content
 area together; mounted widgets and hit tests alone miss clipped interior text.
 Keep raw compositor output alongside converted screenshots to distinguish layout
 failures from capture/font failures.
+
+## Test incremental edits after structural fallback (TASK-32601, 2026-09-15)
+
+The Workflows UAT label fix initially added an unguarded selected-step lookup to
+the incremental form refresh. Ordinary typing tests passed, but review removed
+the selected step through Advanced JSON and then edited the Overview name. The
+editor had fallen back to Overview while the controller retained the deleted ID;
+the next field edit raised `RuntimeError: coroutine raised StopIteration`.
+Normalize selection before rendering both regions and test the next edit after
+structural fallback, preserving identity metadata in the raw-edit fixture.
