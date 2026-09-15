@@ -1439,7 +1439,12 @@ class LibraryNotesController:
             raise RuntimeError("A note presentation requires an active session.")
         base_meta = self._library_note_meta_base_line()
         word_count = self._note_word_count(snapshot.body)
-        word_copy = f"{word_count} words" if word_count != 1 else "1 word"
+        # task-32623: match `library_note_chrome_facts`'s thousands
+        # separator -- Info and the editor footer share this exact int
+        # (see the `word_count=word_count` comment below), so a note over
+        # 999 words used to read two different numbers-as-text for the one
+        # count ("5,453" in the footer, "5453" in Info).
+        word_copy = f"{word_count:,} words" if word_count != 1 else "1 word"
         status_line = self._library_note_status_line()
         metadata_line = " · ".join(part for part in (base_meta, word_copy) if part)
         operation = self._library_notes_operation_for_active_region()

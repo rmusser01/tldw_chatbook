@@ -13,6 +13,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
@@ -257,6 +258,27 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
 
     def on_mount(self) -> None:
         self.call_after_refresh(self._schedule_conflict_focus_request)
+        self.call_after_refresh(self.sync_fold_hint)
+
+    def on_resize(self, _event: object) -> None:
+        """A viewport change can (un)cover the fold -- re-derive the hint."""
+        self.sync_fold_hint()
+
+    def sync_fold_hint(self) -> None:
+        """Show the fold indicator only while the body actually overflows.
+
+        (task-32610) Mirrors ``LibraryIngestCanvas.sync_fold_hint`` (task-3304,
+        MI-08): sizes are read from the laid-out scroll body, so this is a
+        no-op until first layout. The old heuristic named "configure" as
+        always-overflowing regardless of terminal height, printing the hint
+        above 21 blank rows on a tall pane.
+        """
+        try:
+            body = self.query_one("#notes-sync-body")
+            hint = self.query_one("#notes-sync-fold-hint", Static)
+        except NoMatches:
+            return
+        hint.display = body.virtual_size.height > body.container_size.height
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -276,8 +298,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         )
         with VerticalScroll(id="notes-sync-body"):
             yield from self._compose_phase()
-        history_reason = self._history_disabled_reason()
-        if history_reason:
+        if self.snapshot.phase in {"review", "receipt"} and self._root_id():
             # task-32549: "○ Resolution history" said that history was off
             # and nothing about why -- the reason was on a tooltip, which
             # does not render in a TUI. The shared `.library-disabled-reason`
@@ -286,19 +307,32 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             # sentence is 33 cells wider than the label it would have to fit
             # in a 50-column work pane at 60x24. Same treatment "○ Server
             # notes" has carried in this canvas since task-32257.
-            yield Static(
-                history_reason,
+            #
+            # task-32610: always mounted (never conditionally composed) once
+            # a root exists, display-managed by ``_sync_history_reason`` --
+            # the in-place review update (below) recomputes it on
+            # activation instead of leaving the compose-time text stuck.
+            history_reason_static = Static(
+                self._history_disabled_reason(),
                 id="notes-sync-history-disabled-reason",
                 classes="library-disabled-reason",
                 markup=False,
             )
-        if self._expects_body_overflow():
-            yield Static(
-                "More below — scroll.",
-                id="notes-sync-fold-hint",
-                classes="library-disabled-reason",
-                markup=False,
-            )
+            history_reason_static.display = bool(self._history_disabled_reason())
+            yield history_reason_static
+        # (task-32610) Fold indicator, task-3304/MI-08 convention: always
+        # mounted, display-managed by ``sync_fold_hint`` from the laid-out
+        # scroll body's real overflow -- never conditionally composed from a
+        # phase heuristic, which used to print the hint above 21 blank rows
+        # in "configure" regardless of whether the body actually overflowed.
+        fold_hint = Static(
+            "More below — scroll.",
+            id="notes-sync-fold-hint",
+            classes="library-disabled-reason",
+            markup=False,
+        )
+        fold_hint.display = False
+        yield fold_hint
         with Horizontal(id="notes-sync-pinned-actions", classes="ds-toolbar"):
             yield from self._compose_pinned_actions()
 
@@ -315,20 +349,6 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             return ""
         return library_disabled_reason_line(
             "Resolution history", "it starts after this root is activated"
-        )
-
-    def _expects_body_overflow(self) -> bool:
-        """Name scrollability only for phases whose bounded body can overflow."""
-
-        if self.snapshot.phase == "configure":
-            return True
-        if self.snapshot.phase != "review":
-            return False
-        review = self.snapshot.review
-        return (
-            review.page_count > 1
-            or len(review.rows) > 1
-            or any(row.choices for row in review.rows)
         )
 
     def _compose_phase(self) -> ComposeResult:
@@ -990,7 +1010,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 tooltip=setup.validation_message or None,
             )
             yield Button(
-                "Back",
+                # task-32624: was a bare "Back" -- the one spelling left
+                # unconverted when task-32553 unified every other back
+                # control on this canvas (and the app) to back_cue_label().
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1061,7 +1084,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     ),
                 )
             yield Button(
-                "Back",
+                # task-32624: was a bare "Back" -- the one spelling left
+                # unconverted when task-32553 unified every other back
+                # control on this canvas (and the app) to back_cue_label().
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1176,6 +1202,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     controls.first(Button).label = (
                         f"✓ {label}" if snapshot.setup.direction == value else label
                     )
+            self.call_after_refresh(self.sync_fold_hint)
             return
         if (
             previous_phase == snapshot.phase == "review"
@@ -1227,6 +1254,22 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 if history_reachable
                 else "Resolution history starts after this root is activated."
             )
+        # task-32610: the in-place review update above already recomputed
+        # the button's own label/tooltip -- it never touched the visible
+        # `.library-disabled-reason` line, which then stuck on its
+        # pre-activation text (a disabled control with a stale reason on
+        # screen). This fast path only runs when root_id is unchanged
+        # from the previous snapshot (the guard above in sync_state), so
+        # the Static was already composed at whatever full recompose
+        # first gave this root a non-empty root_id; it is never absent
+        # here.
+        reason_line = self.query("#notes-sync-history-disabled-reason")
+        if reason_line:
+            reason_widget = reason_line.first(Static)
+            new_reason = self._history_disabled_reason()
+            reason_widget.update(new_reason)
+            reason_widget.display = bool(new_reason)
+        self.call_after_refresh(self.sync_fold_hint)
 
         comparison = snapshot.comparison
         for index, row in enumerate(snapshot.review.rows):

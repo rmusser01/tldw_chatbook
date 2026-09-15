@@ -544,3 +544,57 @@ async def test_footer_genuine_reserved_key_duplicate_still_collapses_to_one():
         assert rendered.count("Ctrl+Q") == 1, rendered
         assert rendered.count("quit") == 1, rendered
         assert "s save" in rendered, rendered
+
+
+def test_a_key_less_hint_renders_without_a_leading_or_doubled_space():
+    """task-32623: ``ShortcutAction.render()`` used to unconditionally
+    prefix ``f"{key} {label}"`` -- a "" key (Library's "typing in field"
+    state word, and its "after esc: ..." swallowed-keys summary) put a
+    literal leading space in front of the label, and a second space
+    wherever ``ShortcutContext``/``AppFooterStatus`` then joined it with
+    `` | `` after another chip -- the exact garbled Folder-files/Database
+    Notes footer critique #4 captured ("esc notes |  after esc: ...").
+    """
+    from tldw_chatbook.UI.Navigation.shortcut_context import (
+        ShortcutAction,
+        ShortcutContext,
+    )
+
+    leading = ShortcutAction("", "typing in field")
+    assert leading.render() == "typing in field"
+
+    context = ShortcutContext(
+        source="notes",
+        actions=(
+            ShortcutAction("esc", "notes"),
+            ShortcutAction("", "after esc: / focus search"),
+        ),
+    )
+    rendered = context.render()
+    assert rendered == "esc notes | after esc: / focus search", rendered
+    assert "  " not in rendered, rendered
+    assert not rendered.startswith(" "), rendered
+
+
+@pytest.mark.asyncio
+async def test_footer_workbench_shortcuts_join_a_key_less_hint_cleanly():
+    """Same fix, through the real footer widget's own join (`` | ``) --
+    ``set_workbench_shortcuts`` is Library's own path (``ShortcutContext``
+    above covers the Personas-style ``set_shortcut_context`` path)."""
+
+    class TestApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(170, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(
+            source="notes",
+            shortcuts=(("esc", "notes"), ("", "after esc: / focus search")),
+        )
+        await pilot.pause()
+        rendered = _rendered_footer_text(footer)
+
+        assert "esc notes | after esc: / focus search" in rendered, rendered
+        assert "  " not in rendered, rendered

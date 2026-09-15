@@ -11666,6 +11666,27 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
+/* task-32623: at a wide (non-compact) terminal, Discard new note is
+ * display-toggled (LibraryNotesCanvas.apply_session_state /
+ * discard_new.display), and #library-note-primary-actions is width:auto --
+ * hiding Discard shrank #library-note-task-actions, which shrank the auto
+ * width and shifted Edit/Preview/Info in #library-note-mode-controls
+ * (its left sibling in the same row) left under the pointer whenever the
+ * button appeared or disappeared. 61 is the row's own measured width with
+ * Save + Use in Console + Discard new note all painted (the widest state);
+ * reserving it keeps the mode-controls row's position independent of
+ * whether Discard is currently shown. The compact override just below
+ * restores 0: compact already forces one fixed-height row via the block
+ * above and never exhibited this shift.
+ */
+#library-note-task-actions {
+    min-width: 61;
+}
+
+#library-shell-grid.library-notes-compact #library-note-task-actions {
+    min-width: 0;
+}
+
 #library-shell-grid.library-notes-compact .library-canvas-action {
     width: auto;
     min-width: 0;
