@@ -621,7 +621,7 @@ because Enter there goes back rather than creating anything.
 the header names neither relationship — one heading, "Add files to Library
 notes.", over a status line that says nothing has been chosen yet, and its
 next action is to pick one. (Was three near-identical sentences stacked over
-the two buttons — superseded by task-32612 below. Was "reads **Add from
+the two buttons — superseded by task-32616 below. Was "reads **Add from
 files**" — superseded by task-32271: that was the toolbar button's label,
 never the heading's.)
 

@@ -41,6 +41,38 @@ Cause PROVEN by capture.
 
 ## Implementation Notes
 
+**Re-measured after merging dev @f2c635c899 (G6 density + the P0 + the picker).**
+G6's task-32614 re-budgets the same Folder-files navigator this task adds a
+legend to, which no merge check can see. The numbers, through the production
+Library screen and through a standalone mount of the same pane:
+
+| size | context | navigator | tree rows | legend | of max-height 3 |
+|---|---|---|---|---|---|
+| 100x30 | production Library | **closed** | 0 | not on screen | -- |
+| 100x30 | standalone, no rail | 46 wide | 22 | 2 rows | 1 spare |
+| 60x20 | production Library | 32 wide | 5 | 3 rows | 0 spare |
+| 60x20 | standalone, no rail | 32 wide | 11 | 3 rows | 0 spare |
+
+The finding worth carrying: **at 100x30 the production shell CLOSES the
+navigator.** The width resolver spends 29 on the Library rail, 61 on the
+reader and 10 on the two grips, and the items pane needs 32 it has not got
+(`AdaptiveReaderEffectiveLayout(library_open=True, items_open=False,
+items_width=0, reader_width=61)`). So neither G6's recovered rows nor this
+task's legend is visible there, and the two changes can only collide where
+the navigator is open -- where the legend costs 2 rows at 46 cells and 3 at
+30. Nothing to reconcile between the branches; the direction is favourable.
+
+**AC#2/AC#3 are now pinned on the RENDERED pane, not on `inspect.getsource`.**
+A source substring cannot see a pane that never composes, a `display: none`,
+or copy clipped by the legend's own `max-height: 3`. Both pins now assert the
+painted text equals the Static's full text and that the line sits where the
+guide says it does. Proven by reverting: a legend long enough to need a
+fourth row goes red at 60x20 with the clipped text in the message, moving the
+scope line above the review summary goes red on placement, and renaming the
+Static's id goes red on `NoMatches`. Measured at 30 cells the sentence fills
+3 rows (30/26/5), so it has about 25 characters of slack, not "one word" --
+the pin is what makes any actual overflow red.
+
 **Seven tests pinned the defect.** `test_library_file_notes_workspace.py` had
 fourteen failing cases across seven functions asserting "Saved" as the content
 channel with NO file open -- including one that asserted it on the line before

@@ -11,6 +11,7 @@ below names the task and the AC it pins.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import ClassVar
 
@@ -92,6 +93,106 @@ def _frame(app: App) -> str:
     return "\n".join(
         "".join(segment.text for segment in strip).rstrip()
         for strip in app.screen._compositor.render_strips()
+    )
+
+
+def _static_plain(widget: Static) -> str:
+    """The full text the Static holds, clipped or not."""
+    return getattr(widget.renderable, "plain", str(widget.renderable))
+
+
+def _flat(text: str) -> str:
+    """Collapse wrapping so painted rows can be compared with source text."""
+    return " ".join(text.split())
+
+
+def _painted(app: App, region) -> str:
+    """Only the compositor cells inside ``region``, flattened.
+
+    Equality against ``_flat(_static_plain(widget))`` is a clipping check:
+    a row lost to ``max-height`` or a pane that never composed both make the
+    painted side short, and neither is visible to a source-substring test.
+    """
+    strips = list(app.screen._compositor.render_strips())
+    return _flat(
+        " ".join(
+            strips[y].crop(region.x, region.right).text
+            for y in range(region.y, region.bottom)
+        )
+    )
+
+
+@asynccontextmanager
+async def _folder_files_workspace(root, *, size):
+    """Mount Folder files with the two stylesheets the app parses.
+
+    Standalone rather than through ``LibraryScreen`` on purpose: at 100x30 the
+    production shell spends its width on the Library rail (29) and the reader
+    (61) and CLOSES the navigator, so the pane under test is not on screen
+    there at all. See the task notes for that measurement.
+    """
+    from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        LibraryFileNotesWorkspace,
+    )
+
+    class _FolderFilesHost(App[None]):
+        CSS_PATH: ClassVar[list[str]] = [*TldwCli.CSS_PATH, *LibraryScreen.CSS_PATH]
+
+        def __init__(self, workspace) -> None:
+            super().__init__()
+            self._workspace = workspace
+
+        def compose(self) -> ComposeResult:
+            yield self._workspace
+
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=10, autosave_delay=10
+    )
+    try:
+        async with _FolderFilesHost(workspace).run_test(size=size) as pilot:
+            for _ in range(200):
+                await pilot.pause()
+                if workspace.initialized and workspace.query_one(
+                    "#file-notes-navigator"
+                ).region.height:
+                    break
+            else:  # pragma: no cover - the pane never laid out
+                raise AssertionError("Folder files navigator never laid out")
+            yield pilot, workspace
+    finally:
+        await workspace.shutdown()
+        replica.close()
+
+
+def _review_phase_snapshot():
+    """A lasting-sync snapshot parked on the review page."""
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        LastingSyncApplyBlocker,
+        LastingSyncReview,
+        LastingSyncReviewRow,
+    )
+
+    row = LastingSyncReviewRow(
+        "bind-1",
+        "safe",
+        "Create a Library note",
+        action_id="act-1",
+        relative_path="Daily/2026-09-15.md",
+        destination="Vault",
+    )
+    return replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=LastingSyncReview(
+            root_id="root-1",
+            observation_token="a" * 64,
+            rows=(row,),
+            can_apply=True,
+            apply_blocker=LastingSyncApplyBlocker.NONE,
+            safe_count=1,
+        ),
     )
 
 
@@ -279,7 +380,14 @@ async def test_the_chooser_asks_its_question_once():
 async def test_each_relationship_names_what_happens_to_the_folder_structure():
     """AC#2: the largest consequence of this choice -- Import once reproduced
     the vault tree (A cap 23) while lasting sync put all 54 notes flat under
-    one managed folder (A cap 51) -- was named by neither option."""
+    one managed folder (A cap 51) -- was named by neither option.
+
+    COUPLED TO TASK-32586 (AC#5 there). The lasting-sync half is true only
+    because ``create_folder`` refuses a manual child of a subtree holding a
+    managed placement, so every synced note sits flat in the managed root.
+    When 32586 gives lasting sync its own folder-creation path, this sentence
+    becomes false and BOTH it and this assertion change with it.
+    """
     app = _ChooserHost(initial_lasting_sync_snapshot(lasting_available=True))
     async with app.run_test(size=(190, 40)) as pilot:
         await pilot.pause()
@@ -368,16 +476,74 @@ async def test_a_rename_repaints_the_open_notes_row_without_losing_the_title():
         assert title_input.value == "My first note"
 
 
-def test_a_body_only_save_does_not_ask_the_items_pane_to_repaint():
-    """AC#2's cost control: the repaint above is gated on a genuine rename,
-    so a body-only autosave -- one per debounce tick while typing -- costs
-    the tree nothing. Pinned at the producer: the patch reports whether the
-    label the list caches were rendering actually changed."""
-    import inspect
+@pytest.mark.asyncio
+async def test_a_body_only_save_does_not_ask_the_items_pane_to_repaint():
+    """AC#2's cost control, COUNTED rather than read out of the source.
 
-    source = inspect.getsource(LibraryScreen._patch_library_note_list_from_session)
-    assert "return title_changed" in source
-    assert "return False" in source
+    The repaint is gated on a genuine rename. Both a body edit and a title
+    edit arm the same autosave debounce (``handle_library_note_title_changed``
+    calls ``_schedule_library_note_autosave`` exactly as the body handler
+    does), so the question is not which path saves but which SAVE repaints:
+
+    * body-only saves -> 0 Items-pane syncs, however many of them there are;
+    * a save that changes the title -> exactly 1.
+
+    That asymmetry is the whole cost argument, and it is the thing an
+    ``inspect.getsource`` check for "return title_changed" cannot show.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot, "n-1")
+
+        # Counted where the repaint is actually issued: the notes controller
+        # calls the module-level ``_sync_library_canvas`` by name.
+        from tldw_chatbook.UI.Library_Modules import library_notes_controller
+
+        syncs: list[str] = []
+        original = library_notes_controller._sync_library_canvas
+
+        def counting_sync(target, canvas_name, *args, **kwargs):
+            if canvas_name == "notes":
+                syncs.append(canvas_name)
+            return original(target, canvas_name, *args, **kwargs)
+
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(
+            library_notes_controller, "_sync_library_canvas", counting_sync
+        )
+
+        body = screen.query_one("#library-note-body", TextArea)
+        save = screen.query_one("#library-note-save", Button)
+        for word in ("one", "two", "three"):
+            body.text = f"{body.text} {word}".strip()
+            await pilot.pause()
+            save.press()
+            await pilot.pause()
+        body_only_syncs = len(syncs)
+
+        title_input = screen.query_one("#library-note-title", Input)
+        title_input.focus()
+        await pilot.pause()
+        title_input.value = "Renamed once"
+        await pilot.pause()
+        save.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: any(
+                "Renamed once" in str(row.label)
+                for row in screen.query(".library-notes-row")
+            ),
+            message="The open note's row never caught up with its saved title.",
+        )
+        rename_syncs = len(syncs) - body_only_syncs
+        monkey.undo()
+
+    assert body_only_syncs == 0, (
+        f"three body-only saves cost {body_only_syncs} Items-pane repaints"
+    )
+    assert rename_syncs == 1, f"one rename cost {rename_syncs} Items-pane repaints"
 
 
 def _next_instructions(screen) -> list[tuple[str, str]]:
@@ -545,41 +711,82 @@ def test_no_file_selected_asserts_no_save_state():
     assert opened.content_recovery == "Saved"
 
 
-def test_the_folder_files_tree_states_what_it_lists():
+@pytest.mark.parametrize("size", ((100, 30), (60, 20)))
+@pytest.mark.asyncio
+async def test_the_folder_files_tree_states_what_it_lists(tmp_path, size):
     """AC#2: the tree silently omitted notes.csv, meta.yaml, a Canvas folder
     and an attachments folder (A cap 29, B cap 35). The extensions named here
     are ``file_notes_service.SUPPORTED_EXTENSIONS``; if that set changes, this
-    sentence is what has to change with it."""
-    import inspect
+    sentence is what has to change with it.
 
+    Rendered, not read out of the source. ``inspect.getsource`` proves a
+    string exists in a function; it cannot see a pane that never composes,
+    a ``display: none``, or -- the live risk here -- copy clipped by the
+    legend's own ``max-height: 3``.
+
+    Measured: at 60x20 the navigator is 32 cells wide, the legend 30, and the
+    sentence fills all 3 of its 3 permitted rows (30/26/5 cells). Clipping is
+    silent, so the pin compares PAINTED text with the Static's full text; it
+    goes red the moment the wrap needs a fourth row, which is roughly 25 more
+    characters at this width. At 100x30 the navigator is 46 and it takes two.
+    """
     from tldw_chatbook.Notes.file_notes_service import SUPPORTED_EXTENSIONS
-    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
-        LibraryFileNotesWorkspace,
-    )
 
-    source = inspect.getsource(LibraryFileNotesWorkspace._build_reader_items_pane)
-    assert 'id="file-notes-tree-scope"' in source
-    for extension in SUPPORTED_EXTENSIONS:
-        assert extension in source, f"{extension} missing from the tree's legend"
+    root = tmp_path / "vault"
+    root.mkdir()
+    (root / "note.md").write_text("body", encoding="utf-8")
+    (root / "notes.csv").write_text("a,b", encoding="utf-8")
+
+    async with _folder_files_workspace(root, size=size) as (pilot, workspace):
+        scope = workspace.query_one("#file-notes-tree-scope", Static)
+        header = workspace.query_one("#file-notes-tree-header")
+        full = _static_plain(scope)
+
+        assert scope in pilot.app.screen._compositor.visible_widgets
+        assert workspace.query_one(
+            "#file-notes-navigator"
+        ).content_region.contains_region(scope.region)
+        # documented placement: "Directly under the pane's heading"
+        assert scope.region.y == header.region.y + header.region.height
+        # the ceiling, pinned: nothing of the sentence is lost to max-height
+        assert scope.region.height <= 3, scope.region.height
+        assert _painted(pilot.app, scope.region) == _flat(full), (
+            f"the tree legend is clipped at {size}: "
+            f"{_painted(pilot.app, scope.region)!r} != {_flat(full)!r}"
+        )
+        for extension in SUPPORTED_EXTENSIONS:
+            assert extension in full, f"{extension} missing from the tree's legend"
 
 
-def test_the_lasting_sync_review_says_which_sources_it_reads():
+@pytest.mark.parametrize("size", ((190, 40), (60, 20)))
+@pytest.mark.asyncio
+async def test_the_lasting_sync_review_says_which_sources_it_reads(size):
     """AC#3: lasting sync silently ignores the same .csv and .yaml sources
     Import once reports under Failed and Skipped, and "0 need attention" hid
     it. Neither path changes what it does; each now says which it does. The
-    extensions are ``notes_sync_runtime._SYNC_FILE_EXTENSIONS``."""
-    import inspect
+    extensions are ``notes_sync_runtime._SYNC_FILE_EXTENSIONS``.
 
+    Rendered for the same reason as the pin above: the guide asserts a
+    PLACEMENT ("the summary line is followed by the pass's own scope"), which
+    no source-substring check can see.
+    """
     from tldw_chatbook.Notes.notes_sync_runtime import _SYNC_FILE_EXTENSIONS
-    from tldw_chatbook.Widgets.Library import library_notes_add_from_files_canvas
 
-    source = inspect.getsource(
-        library_notes_add_from_files_canvas.LibraryNotesAddFromFilesCanvas
-        ._compose_phase
-    )
-    assert 'id="notes-sync-review-scope"' in source
-    for extension in _SYNC_FILE_EXTENSIONS:
-        assert extension in source, f"{extension} missing from the review's scope line"
+    app = _ChooserHost(_review_phase_snapshot())
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        scope = app.query_one("#notes-sync-review-scope", Static)
+        summary = app.query_one("#notes-sync-review-summary", Static)
+        full = _static_plain(scope)
+
+        assert scope in app.screen._compositor.visible_widgets
+        assert scope.region.y == summary.region.y + summary.region.height
+        assert _painted(app, scope.region) == _flat(full), (
+            f"the review's scope line is clipped at {size}: "
+            f"{_painted(app, scope.region)!r} != {_flat(full)!r}"
+        )
+        for extension in _SYNC_FILE_EXTENSIONS:
+            assert extension in full, f"{extension} missing from the review's scope line"
 
 
 # --- task-32622: the receipt and picker nits ------------------------------
@@ -597,6 +804,24 @@ def test_the_links_figure_says_what_it_counted():
     assert "1 link to an imported note rewritten" in _receipt_outcome(
         _receipt(imported=2), resolved_links=1
     )
+
+
+@pytest.mark.parametrize("budget", range(0, 12))
+def test_the_name_elider_never_returns_more_than_its_budget(budget):
+    """The helper behind AC#4's row label, at every budget it can be given.
+
+    At budget 2 it used to compute ``name[head - keep:]`` as ``name[0:]`` and
+    return the whole name after the ellipsis -- longer than the input budget,
+    and longer than the name itself. Unreachable from ``bounded_row_name``
+    today (its budget is at least 36), which is exactly why it would have sat
+    there until someone reused the helper.
+    """
+    from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+        _elide_name_middle,
+    )
+
+    out = _elide_name_middle("a-very-long-meeting-note-about-review.md", budget)
+    assert len(out) <= budget, f"budget {budget} produced {out!r}"
 
 
 def test_a_long_row_label_keeps_its_folder_prefix():

@@ -82,6 +82,22 @@ Gated on a genuine rename rather than on every save, so a body-only autosave
   unpinned, since it also partly undoes a deliberately documented ceiling
   (the skip's own "Known ceiling" comment).
 
+**The repaint cost, COUNTED (review round 1).** The earlier note said only
+that a body-only autosave changes no row label, which is true but left the
+title path unstated -- and `handle_library_note_title_changed` arms the same
+`_schedule_library_note_autosave` debounce the body handler does, so a title
+edit also saves once per tick. The question is not which path saves but which
+SAVE repaints. Counted at `_sync_library_canvas(self, "notes")` in
+`library_notes_controller`, driving the real screen:
+
+* three body-only saves -> **0** Items-pane syncs;
+* one save that changes the title -> **exactly 1**.
+
+Reverting the `if renamed` gate turns the first number into 3, which is what
+wires the count to the fix. Replaces the `inspect.getsource` check for
+`"return title_changed"`, which could not show the asymmetry that IS the cost
+argument.
+
 **AC#4 -- the decision, recorded.** The focus guard stays, narrowed to what it
 was actually for. The reasoning: the guard exists so a refresh never rebuilds
 the field under the reader's hands. It was never about the ROW, and applying

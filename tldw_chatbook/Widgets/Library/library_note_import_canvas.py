@@ -117,7 +117,12 @@ def _elide_name_middle(name: str, budget: int) -> str:
         return "…"[:budget]
     keep = budget - 1
     head = (keep + 1) // 2
-    return f"{name[:head]}…{name[head - keep:]}"
+    tail = keep - head
+    # ``name[head - keep:]`` read as ``name[0:]`` whenever head == keep (a
+    # budget of 2), returning the WHOLE name after the ellipsis and busting
+    # the budget it was given. Take the last ``tail`` characters explicitly;
+    # a tail of 0 is the empty string, not the whole string.
+    return f"{name[:head]}…{name[len(name) - tail:] if tail else ''}"
 
 
 def bounded_row_name(name: str) -> str:

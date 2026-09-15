@@ -103,3 +103,9 @@ with it; a comment at the compose site says so.
 `Tests/UI/test_library_notes_wave_import_ux.py` (task-32256's completeness pin
 re-pointed at the new sentences -- the assertion is unchanged in substance),
 `Docs/User_Guide/library/notes.md`.
+
+**The task-32586 coupling is now recorded where a 32586 reader will look**
+(review round 1): it is **AC#5 on task-32586** itself, naming this sentence,
+its compose site and the pin that guards it. It was previously flagged only
+in a code comment and in these notes, so discovery was red test -> read test
+-> read source comment.
