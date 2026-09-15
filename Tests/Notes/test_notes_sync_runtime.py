@@ -3986,3 +3986,33 @@ async def test_keeping_an_already_imported_vault_synced_plans_no_duplicate_notes
     ]
     await owner.abandon_setup(recovered.root_id)
     await owner.shutdown()
+
+
+def test_importing_the_runtime_leaves_the_receipt_ledger_off_the_boot_path() -> None:
+    """task-32605 / ADR-097: reading Import once's receipts must stay deferred.
+
+    ``notes_sync_runtime`` is resident at ``_ui_ready``, so a module-level
+    import of ``note_import_receipts`` drags it and ``note_import_execution
+    _models`` onto the boot path -- which is what the first cut of this task
+    did, taking the ui-ready census from 977 to 980 against a 975 ratchet.
+    A subprocess, because sys.modules is shared across this file's tests.
+    """
+
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys;"
+        "import tldw_chatbook.Notes.notes_sync_runtime;"
+        "print(','.join(n for n in ("
+        "'tldw_chatbook.Notes.note_import_receipts',"
+        "'tldw_chatbook.Notes.note_import_execution_models',"
+        ") if n in sys.modules))"
+    )
+    resident = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert resident == "", f"pulled onto the boot path: {resident}"

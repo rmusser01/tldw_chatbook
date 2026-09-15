@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from uuid import uuid4
 
 from tldw_chatbook.Notes.note_import_discovery import (
@@ -26,8 +26,6 @@ from tldw_chatbook.Notes.note_import_parsers import (
     _split_frontmatter,
 )
 from tldw_chatbook.Notes.note_import_plan_models import ImportBounds, ImportSource
-from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
-from tldw_chatbook.Notes.note_import_receipts import NoteImportReceiptRepository
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
     NotesSyncBindingRecord,
@@ -104,6 +102,9 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     plan_reconciliation,
 )
 from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
+
+if TYPE_CHECKING:  # ADR-097: annotation-only, never on the boot path.
+    from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
 
 
 CUTOVER_MARKER = "notes-sync-cutover-v1"
@@ -3595,6 +3596,38 @@ class NotesSyncRuntimeOwner:
         self._next_action = "none"
 
 
+def _receipt_ledger_reader(
+    ledger_path: Path,
+) -> Callable[[tuple[ImportSource, ...]], Mapping[str, "PriorImportObservation"]]:
+    """Read Import once's receipt ledger, importing it only on first use.
+
+    ADR-097: this module is resident at ``_ui_ready``, so a module-level
+    import of ``note_import_receipts`` would drag it -- and the execution
+    models it pulls in -- onto the boot path for a read that only ever
+    happens during a sync pass.
+
+    Args:
+        ledger_path: Database file holding Import once's receipts.
+
+    Returns:
+        A callable mapping discovered sources to their prior-import
+        observations.
+    """
+
+    def _read(
+        sources: tuple[ImportSource, ...],
+    ) -> Mapping[str, "PriorImportObservation"]:
+        from tldw_chatbook.Notes.note_import_receipts import (
+            NoteImportReceiptRepository,
+        )
+
+        return NoteImportReceiptRepository(
+            ledger_path
+        ).prior_imported_notes_read_only(sources)
+
+    return _read
+
+
 def build_notes_sync_runtime_owner(
     *,
     notes_scope_service: object,
@@ -3640,11 +3673,7 @@ def build_notes_sync_runtime_owner(
             local_user_id=local_user_id,
             recovery_capacity_bytes=recovery_capacity_bytes,
             # task-32605: Import once's receipt ledger is in this same file.
-            prior_imports=lambda sources, ledger_path=path: (
-                NoteImportReceiptRepository(
-                    ledger_path
-                ).prior_imported_notes_read_only(sources)
-            ),
+            prior_imports=_receipt_ledger_reader(path),
         )
     selected_coordinator = coordinator or (
         lambda: NotesSyncRootCoordinator(path.parent / "notes_sync_locks")
