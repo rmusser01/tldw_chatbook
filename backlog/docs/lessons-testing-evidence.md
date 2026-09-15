@@ -14319,3 +14319,22 @@ so asking the shared dismissal to focus the opener again did not scroll it.
 A guarded post-dismiss `scroll_visible` on the unchanged opener repaired the
 actual keyboard return. The four size/theme journeys assert both focus identity
 and painted label; the native compact capture verifies the button is in view.
+
+
+## A ready list result can still expose outgoing rows (TASK-32646, 2026-09-15)
+
+The Skills editor review intermittently lost focus after Back despite a painted
+row. A gated list service and gated canvas recompose reproduced the sequence:
+the shared handoff focused an old mounted row, its removal moved focus to the
+scroll canvas, and the foreign-focus guard cancelled the pending handoff.
+The actual result arrived well inside the two-second window; extending a test
+wait could not recover ownership. Blocking only while the model said loading
+fixed the compact probe but still failed the forced wide journey. Waiting for
+the canvas's public pending post-recompose callback as well covered the gap
+between the ready result and replacement children. The four size/theme journeys
+now gate this sequence explicitly and require focus on a currently painted row.
+
+Use `threading.Event` for a gate crossed by the service worker and UI loops.
+An initial `asyncio.Event` gate in the held-save probe did not release across
+those loops and stalled the test process; the thread-safe gate reproduced the
+actual save race without changing production scheduling.

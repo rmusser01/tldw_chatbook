@@ -365,3 +365,33 @@ No provider request, full-suite or durable System restart qualification is claim
 
 Next: Skills and the remaining Library destinations. Integration into `dev`
 remains pending.
+
+
+## Skills browsing and editor — TASK-32646
+
+The [Skills editor review](../qa/2026-09-15-skills-editor/README.md) repairs
+Save focus, collapsed-list returns, and Cancel's rail/content mismatch. Back
+waits for both the list result and its canvas rebuild before focusing a row.
+A completed write preserves edits made during I/O as an unsaved draft with
+the committed version and trust metadata, so the next Save persists them.
+Name-collision warnings now cover twenty newer runtime and Console names.
+
+**277 targeted checks pass**, including four size/theme keyboard journeys,
+a held-write second-save case, forced Back/Cancel refresh races, neighboring
+Skills behavior, shared list focus, token/bundle/wiring governance and the
+Skills controller size checks. Nine stale canvas expectations were updated to
+current grip, layout, token and footer contracts. No new Ruff diagnostics.
+The inherited screen-size check still fails: 35,203 lines against 33,204,
+one line smaller than HEAD. Its budget was not raised; no full suite was run.
+
+The final private native run passes at 170×48 dark and 80×24 light. Six rendered
+captures show reachable actions and returned row focus. Normal Ctrl+Q returned
+exit 0 and the owned shell was closed. Read-only checks confirm both edited
+SKILL.md files, exact duplicate/unavailable allowlists, no cancelled draft,
+ten SQLite integrity results and zero messages. An existing dirty-veto toast
+can linger over the lower pane without hiding the focused action or row.
+Import, trust setup/approval, execution and restart qualification remain outside
+this native journey.
+
+Next: Skills import and trust journeys, then the remaining Library destinations.
+Integration into `dev` remains pending.

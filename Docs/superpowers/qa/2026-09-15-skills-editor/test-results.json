@@ -1,0 +1,74 @@
+{
+  "base_commit": "a662cfb0a2056f45ee1cf12b3919f29c034bb0fb",
+  "unique_targeted_passes": 277,
+  "full_repository_suite_run": false,
+  "runs": [
+    {
+      "selection": [
+        "Tests/UI/test_library_skill_editor_journeys.py",
+        "Tests/UI/test_library_skills_reader.py",
+        "Tests/UI/test_library_skills_canvas.py",
+        "Tests/Architecture/test_library_skills_wiring.py",
+        "Tests/Library/test_library_skills_state.py",
+        "Tests/Skills/test_local_skills_service.py",
+        "Tests/UI/test_design_token_governance.py",
+        "Tests/UI/test_css_bundle_sync_guard.py"
+      ],
+      "passed": 273,
+      "failed": 0,
+      "seconds": 220.04
+    },
+    {
+      "selection": [
+        "Tests/UI/test_library_shell.py"
+      ],
+      "filter": "entry_focus or tab_away",
+      "passed": 2,
+      "failed": 0,
+      "deselected": 841
+    },
+    {
+      "selection": [
+        "Tests/Architecture/test_library_modules_size_ratchet.py"
+      ],
+      "filter": "library_skills_controller",
+      "passed": 2,
+      "failed": 0,
+      "deselected": 41
+    },
+    {
+      "selection": [
+        "Tests/Architecture/test_library_skills_wiring.py",
+        "Tests/Architecture/test_screen_size_ratchet.py"
+      ],
+      "filter": "not chat_screen and not task_22507",
+      "passed": 9,
+      "failed": 1,
+      "note": "Eight wiring cases repeat the main selection after a comment-only edit. Screen size failure is inherited; screen slack check passes."
+    }
+  ],
+  "known_baseline_failure": {
+    "test": "Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/library_screen.py]",
+    "baseline_lines": 35204,
+    "current_lines": 35203,
+    "budget": 33204,
+    "budget_changed": false
+  },
+  "regressions_reproduced": [
+    "Hidden Save focus after success",
+    "Manually collapsed list stays hidden after editor exit",
+    "New edits during held write incorrectly cleared dirty",
+    "Cancel left the rail on New skill",
+    "Loading and ready-result recomposition races cancelled row focus",
+    "Reserved command/tool name warning drift"
+  ],
+  "sha256": {
+    "Tests/UI/test_library_skill_editor_journeys.py": "1c15b5be70ed732bb5682e8f793fea81c91a729c5bea482e395ffc4f412f0e95",
+    "Tests/UI/test_library_skills_reader.py": "c8781ff7ed59321bf10ec9eae517a76e0ed02ac8a64a85001eb115bd09b71031",
+    "Tests/UI/test_library_skills_canvas.py": "b1f54f99456253bfdc377c48d8e6cbee1fd6a6f6f49cb2a061fb5709faa60b7b",
+    "tldw_chatbook/UI/Screens/library_screen.py": "f79bdf3ad97dca61c4b30665ba531b531bd3033640477fb7b06bf2bc55f835ce",
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": "27484612d36cc268869329c85ca65557f98d08a6983af92c33496de8cebacbfd",
+    "tldw_chatbook/Widgets/Library/library_skills_canvas.py": "67f469b45747de7ff75f39c159d0bf9587f28b14bc82e5d104162a85af3d99ce",
+    "tldw_chatbook/Library/library_skills_state.py": "a610c8137366d7922db99d9f8ced0feb73df226978ad0db9f4af7022c26ed25e"
+  }
+}

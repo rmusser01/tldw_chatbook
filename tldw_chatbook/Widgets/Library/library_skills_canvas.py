@@ -828,6 +828,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
         self.tool_filter = tool_filter
         self.mutation_in_flight = mutation_in_flight
+        self._save_focus_pending = False
         self.more_actions_open = more_actions_open
         self.trust_details_open = trust_details_open
         self.script_access_granted = script_access_granted
@@ -1082,6 +1083,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         is_create: bool | None = None,
     ) -> None:
         """Patch lifecycle-valid actions without replacing editor fields."""
+        was_busy = self.mutation_in_flight
+        save = self.query_one("#library-skill-save", Button)
+        if mutation_in_flight and not was_busy:
+            self._save_focus_pending = self.screen.focused is save
         if dirty is not None:
             self.dirty = bool(dirty)
         if conflict is not None:
@@ -1136,9 +1141,21 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         }
         for selector, visible in visibility.items():
             self.query_one(selector).display = visible
-        self.query_one("#library-skill-save", Button).label = (
-            "Save skill" if self.is_create else "Save changes"
-        )
+        save.label = "Save skill" if self.is_create else "Save changes"
+        # Hiding Save may retain its focus or clear it at the next layout.
+        # Only repair that outgoing focus; a newer field/pane keeps focus.
+        if not busy and self._save_focus_pending:
+            self._save_focus_pending = False
+            if self.screen.focused in (None, save):
+                target = (
+                    "#library-skill-conflict-reload"
+                    if conflict_active
+                    else "#library-skill-save"
+                    if create or dirty_active
+                    else "#library-skill-back"
+                )
+                if visibility[target]:
+                    self.query_one(target, Button).focus()
 
     def _tool_picker_selections(self, filter_value: str = "") -> list[Selection]:
         """Build unique chooser rows while retaining raw content separately."""

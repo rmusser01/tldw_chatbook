@@ -126,6 +126,28 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # cannot see them.
         "glob_files",
         "grep_files",
+        # TASK-32646: current runtime and Console names reported by the
+        # four-source drift guard; keep the editor's collision warning honest.
+        "discard_agent_worktree",
+        "fork_chat",
+        "merge_agent_worktree",
+        "new_chat",
+        "prepare_managed_skill_promotion",
+        "read_agent_messages",
+        "report_to_supervisor",
+        "context",
+        "doctor",
+        "emergency-stop",
+        "endpoint",
+        "help",
+        "model",
+        "new",
+        "redirect",
+        "sessions",
+        "settings",
+        "steer",
+        "temp",
+        "workspace",
     )
 )
 

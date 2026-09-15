@@ -2710,6 +2710,10 @@ class LibraryScreen(BaseAppScreen):
             restore_library_entry_focus=(
                 lambda *a, **k: self._restore_library_entry_focus(*a, **k)
             ),
+            arm_library_list_entry_focus=(
+                lambda *a, **k: self._arm_library_list_entry_focus(*a, **k)
+            ),
+            select_library_rail_row=lambda row_id: self._select_library_rail_row(row_id),
             library_selected_row_id_accessor=lambda: self._library_selected_row_id,
             set_library_selected_row_id=(
                 lambda value: setattr(self, "_library_selected_row_id", value)
@@ -10547,33 +10551,38 @@ class LibraryScreen(BaseAppScreen):
         return None
 
     def _focus_library_list_entry(self) -> None:
-        """Focus the primary list's first row -- see ``_arm_library_list_entry_focus``.
+        """Focus the first available row, retrying while a list is loading.
 
-        A no-op when the canvas isn't one of the four list canvases
-        (nothing to focus), the list is empty, or the query can't resolve
-        (e.g. a recompose still in flight).
-
-        task-3020 AC3: while the Media canvas is in Select mode with a
-        non-empty selection (a partial, or total, bulk-delete failure
-        leaves the failed id(s) still checked, waiting for a retry), the
-        first STILL-CHECKED row is preferred over the literal first row --
-        landing keyboard focus on a row the user never selected would be
-        a worse regression than the original "nothing focused" bug this
-        method exists to fix. Every other caller is unaffected: the
-        preference requires BOTH the Media row class and a non-empty
-        selection, so notes/prompts/skills (no row_selection concept
-        here) and Media outside an active selection (e.g. the bulk
-        delete's own full-success path, which clears the selection before
-        arming this) fall straight through to the plain first-row
-        behavior, unchanged from before.
+        Empty settled lists use their filter. Media select mode prefers a
+        still-checked row; a retained Media return prefers its exact item.
+        The shared arm owns retry timing and revokes it on user navigation.
         """
         if self._library_emergency_stage == "rail-only":
             return
         row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         if row_class is None:
             return
+        if (
+            row_class == "library-skill-row"
+            and (
+                self._library_skills_browse_controller.result.status == "loading"
+                or any(
+                    canvas.has_pending_recompose_callback
+                    for canvas in self.query("#library-skills-canvas")
+                )
+            )
+        ):
+            # Loading and ready results can both precede replacement of old rows.
+            self._retry_library_list_entry_focus_while_armed()
+            return
         rows = list(self.query(f".{row_class}"))
         if not rows:
+            if (
+                row_class == "library-skill-row"
+                and self._library_skills_browse_controller.visible_result.items
+            ):
+                self._retry_library_list_entry_focus_while_armed()
+                return
             fallback_selector = {
                 "library-prompt-row": "#library-prompts-filter",
                 "library-skill-row": f"#{LIBRARY_SKILLS_FILTER_ID}",
@@ -10643,19 +10652,9 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_programmatic_focus_target = target
         self.set_focus(target, scroll_visible=False)
         if self.focused is not target:
-            # task-32302: a MOUNTED row is not necessarily a FOCUSABLE one --
-            # ``Widget.focusable`` is also false while it is disabled, hidden or
-            # loading, and ``set_focus`` on such a widget is a silent no-op. The
-            # Conversations regression was exactly that: dev's archive-scope
-            # recovery hop fires a second page request during route entry, and
-            # ``LibraryConversationRecovery.project`` folds ``loading`` into
-            # ``actions_disabled``, which the canvas paints onto every row
-            # (``button.disabled = actions_disabled``). The first load's rows
-            # were up, the arm's one attempt spent itself on a disabled row, and
-            # returning here made that indistinguishable from success -- the
-            # same rule the empty-list fallback above already applies to its
-            # controls. Keep the arm owed a landing instead; the retry chain is
-            # bounded by the arm's own window either way (task-32301 owns that).
+            # TASK-32302: mounted rows can still be disabled or hidden, making
+            # set_focus a no-op. Retry within the existing bounded arm until
+            # a row actually receives focus (Conversations recovery does this).
             self._retry_library_list_entry_focus_while_armed()
             return
         if row_class == "library-media-row" and media_return is not None:
@@ -25296,13 +25295,13 @@ class LibraryScreen(BaseAppScreen):
             self._notify_skill_dirty_veto()
             return False
         self._reset_library_skill_editor_state()
+        self._replace_library_reader_preference("skills", "items_open", True)
+        self._sync_library_skills_reader_layout_from_shell(priority="items")
         self._refresh_local_source_snapshot()
         self._request_library_skills_browse(
             self._library_skills_browse_controller.mutation_refresh_scope,
         )
-        # task-2856 AC1: every "back to list" exit re-focuses the list's
-        # first row so Up/Down/Enter work immediately, without a separate
-        # Tab traversal back to it.
+        # TASK-2856: Back restores row navigation without a separate Tab traversal.
         self._arm_library_list_entry_focus()
         return True
 
@@ -25380,8 +25379,8 @@ class LibraryScreen(BaseAppScreen):
         return await self._skills_controller.handle_library_skill_back(event)
 
     @on(Button.Pressed, "#library-skill-cancel")
-    def handle_library_skill_cancel(self, event: Button.Pressed) -> None:
-        return self._skills_controller.handle_library_skill_cancel(event)
+    async def handle_library_skill_cancel(self, event: Button.Pressed) -> None:
+        return await self._skills_controller.handle_library_skill_cancel(event)
 
     @on(Button.Pressed, "#library-skill-more-actions")
     def handle_library_skill_more_actions(self, event: Button.Pressed) -> None:
