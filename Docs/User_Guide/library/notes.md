@@ -1094,6 +1094,11 @@ ordinary Library notes with no connection to the folder, and Chatbook will
 not carry your edits either way for them. To put an already-imported vault
 under lasting sync, delete the notes Import once made from it first and then
 run **Check changes** again — each file is then created once and kept synced.
+**Know the cost before you start:** Chatbook has no bulk delete for notes, so
+that is one note at a time, each with its own confirmation — select mode
+offers Export selected and nothing else. For a vault of any size it is worth
+setting the sync up on a folder you have not imported, rather than undoing an
+import of fifty notes by hand.
 
 **The other order is not protected yet.** Running **Import once** on a folder
 you are *already* keeping synced still copies every file into a second set of
@@ -1128,7 +1133,10 @@ keeping the SAME folder synced then read "0 safe · 0 need attention · 58
 skipped · 0 folder moves" with every imported file "Already imported by
 Import once — left as it is", and activating applied 0 — the database still
 holds 64 notes. The other order is untested and unprotected, as this section
-now says).*
+now says. The "no bulk delete" clause is read from source, not driven: select
+mode yields Done / Select all / Clear / Export selected and nothing else
+(`Widgets/Library/library_notes_canvas.py:1636-1683`), and no bulk-delete
+handler exists — deletion is per note through the editor's confirm).*
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
