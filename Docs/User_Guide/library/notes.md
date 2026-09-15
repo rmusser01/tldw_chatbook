@@ -2057,3 +2057,14 @@ pager's "Previous page unavailable — this is the first page".
 
 The profile logs hold no `unhandled_exception` for either walk; each holds
 one `app_stopping`, the INFO record of a deliberate Ctrl+Q.)*
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32617, at
+235x52 and 100x30): the notes list's folder-tree actions now sit under a
+"Folders & placement" heading — everything above it acts on the list,
+everything under it on the folder tree and on the row selected in it. With no
+row selected, "Add to folder", "Move note" and "Remove placement" render
+disabled with the "○" marker and the line "Note actions unavailable — select a
+note in the list" instead of disappearing; selecting a note enables them and
+the line goes. (A filter is the usual way to end up with no selection, which
+is why they seemed to vanish when filtering.) The compact shell omits the
+heading, where its row is worth more than the label.*
