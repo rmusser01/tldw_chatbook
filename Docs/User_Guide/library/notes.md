@@ -2187,7 +2187,7 @@ named on the review row and repeated on the receipt. task-32620: a rendered
 heading is left-aligned, and a callout's type sits on its own line above its
 body. task-32621: Folder files states what its tree lists and claims no save
 state over nothing; the lasting-sync review states which extensions it reads.
-task-32622: the receipt offers **View N imported notes**, the links figure says
+task-32622: the receipt offers a named way to the notes it created, the links figure says
 what it counted, the picker's count matches what it displays, and a long review
 row keeps its folder prefix. Extensions in all three scope sentences are read
 from their own constants (`file_notes_service.SUPPORTED_EXTENSIONS`,
