@@ -23,12 +23,19 @@ selector.write_text('[general]\nusers_name="test"\ndefault_tab="settings"\n'
     '[chat_defaults]\nprovider="openai"\nmodel="gpt-4o"\n'
     '[api_settings.openai]\napi_key=""\n')
 selector.chmod(0o600)
-print('guidance_phase=import_begin', flush=True)
+def phase(label):
+    print('guidance_phase=' + label, flush=True)
+    try:
+        with (Path.home() / 'guidance-phases.log').open('a', encoding='utf-8') as output:
+            output.write(label + '\n')
+    except OSError:
+        return  # Observation must not change the native operation's outcome.
+phase('import_begin')
 from tldw_chatbook import config
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Screens import chat_screen
-print('guidance_phase=import_complete', flush=True)
+phase('import_complete')
 
 def check_display_pairs(screen):
     derives, actions, observed = [], [], []
@@ -121,17 +128,17 @@ def check_display_pairs(screen):
                         (1, 0), (2, 0), (2, 0)], observed
 
 async def main():
-    print('guidance_phase=construct_begin', flush=True)
+    phase('construct_begin')
     app = TldwCli()
-    print('guidance_phase=construct_complete', flush=True)
+    phase('construct_complete')
     async with app.run_test(size=(100, 36)):
-        print('guidance_phase=mounted', flush=True)
+        phase('mounted')
         screen = chat_screen.ChatScreen(app)
         store = screen._ensure_console_chat_store()
         assert store.active_session_id is None
         if sys.argv[2] == 'display_pairs':
             check_display_pairs(screen)
-            print('guidance_phase=assertions_complete', flush=True)
+            phase('assertions_complete')
             return
         derives, events, projections, loads = [], [], [], []
         original = screen._active_console_settings_readiness_uncached
@@ -250,9 +257,9 @@ async def main():
                 assert counts[-1] == 1
         finally:
             chat_screen.load_settings = original_load
-        print('guidance_phase=assertions_complete', flush=True)
+        phase('assertions_complete')
 asyncio.run(main())
-print('guidance_phase=shutdown_complete', flush=True)
+phase('shutdown_complete')
 assert not blocked_attempts(), blocked_attempts()
 print('retired and reopened')
 '''

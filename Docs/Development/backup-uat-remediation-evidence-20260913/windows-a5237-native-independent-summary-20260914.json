@@ -1,0 +1,1330 @@
+{
+  "revision": "a5237449584d5b6d0090c15adabb4b12846a4aaa",
+  "verified_artifact_hashes": 31,
+  "native": {
+    "collected": 59,
+    "counts": {
+      "passed": 59
+    },
+    "seconds": 1.968,
+    "failures": [],
+    "skips": []
+  },
+  "product": {
+    "collected": 50,
+    "passed": 47,
+    "failed": 3,
+    "skipped": 0,
+    "unfinished": 0,
+    "seconds": 955.865,
+    "cases": [
+      {
+        "name": "test_native_guidance_is_coherent_and_refreshes_after_real_settings_save",
+        "seconds": 50.453,
+        "status": "failed"
+      },
+      {
+        "name": "test_native_display_pairs_preserve_outputs_and_later_fresh_send_guard",
+        "seconds": 45.027,
+        "status": "failed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[covered]",
+        "seconds": 6.738,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[transparent]",
+        "seconds": 6.556,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[hidden]",
+        "seconds": 6.564,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[visible]",
+        "seconds": 6.293,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[unmount]",
+        "seconds": 6.402,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_repository_close_preserves_proven_state_and_exclusion[success]",
+        "seconds": 4.298,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_repository_close_preserves_proven_state_and_exclusion[live_before]",
+        "seconds": 4.711,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_repository_close_preserves_proven_state_and_exclusion[live_after]",
+        "seconds": 5.078,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_repository_close_preserves_proven_state_and_exclusion[evidence]",
+        "seconds": 3.853,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[late]",
+        "seconds": 5.082,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[complete]",
+        "seconds": 5.523,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[cancel]",
+        "seconds": 5.525,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[error]",
+        "seconds": 5.695,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[cancel_error]",
+        "seconds": 5.754,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[cancel_drain]",
+        "seconds": 5.573,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[original_hook]",
+        "seconds": 5.154,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_telemetry_intake_and_worker_lifetime[open_drain]",
+        "seconds": 5.33,
+        "status": "passed"
+      },
+      {
+        "name": "test_canvas_policy_preserves_enabled_state_across_native_backup_pause[resume]",
+        "seconds": 5.451,
+        "status": "passed"
+      },
+      {
+        "name": "test_canvas_policy_preserves_enabled_state_across_native_backup_pause[explicit]",
+        "seconds": 5.91,
+        "status": "passed"
+      },
+      {
+        "name": "test_canvas_policy_preserves_enabled_state_across_native_backup_pause[external]",
+        "seconds": 6.543,
+        "status": "passed"
+      },
+      {
+        "name": "test_canvas_policy_preserves_enabled_state_across_native_backup_pause[dispose]",
+        "seconds": 5.533,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_retains_canvas_policy_cleanup_until_it_finishes[accepted]",
+        "seconds": 5.941,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_retains_canvas_policy_cleanup_until_it_finishes[watcher]",
+        "seconds": 6.037,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_retains_canvas_policy_cleanup_until_it_finishes[cancel]",
+        "seconds": 5.369,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_retains_canvas_policy_cleanup_until_it_finishes[cancel_drain]",
+        "seconds": 5.295,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_policy_read_crossing_backup_pause_cannot_latch_disable[closed]",
+        "seconds": 4.796,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_policy_read_crossing_backup_pause_cannot_latch_disable[resumed]",
+        "seconds": 5.129,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_backup_preserves_existing_canvas_consumers[coordinated]",
+        "seconds": 7.934,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_backup_preserves_existing_canvas_consumers[before_hook]",
+        "seconds": 7.185,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_policy_poll_does_not_block_ui_while_config_writer_is_active",
+        "seconds": 5.633,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_and_disposal_retain_accepted_native_policy_read[maintenance]",
+        "seconds": 5.222,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_and_disposal_retain_accepted_native_policy_read[watcher_cancel]",
+        "seconds": 5.042,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_and_disposal_retain_accepted_native_policy_read[drain_cancel]",
+        "seconds": 5.246,
+        "status": "passed"
+      },
+      {
+        "name": "test_backup_and_disposal_retain_accepted_native_policy_read[dispose_cancel]",
+        "seconds": 4.94,
+        "status": "passed"
+      },
+      {
+        "name": "test_cancelled_watcher_reuses_pending_native_read_when_restarted",
+        "seconds": 5.207,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[same]",
+        "seconds": 8.242,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[direct]",
+        "seconds": 7.729,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[successor]",
+        "seconds": 7.662,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[callbacks]",
+        "seconds": 8.417,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[controller]",
+        "seconds": 8.237,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[reclaim]",
+        "seconds": 9.063,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[cleared]",
+        "seconds": 8.399,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[initial_pause]",
+        "seconds": 8.196,
+        "status": "passed"
+      },
+      {
+        "name": "test_store_lookup_preserves_only_its_current_canvas_view_binding[pause]",
+        "seconds": 7.984,
+        "status": "passed"
+      },
+      {
+        "name": "test_pending_canvas_import_survives_only_same_view_store_observation[same]",
+        "seconds": 7.671,
+        "status": "passed"
+      },
+      {
+        "name": "test_pending_canvas_import_survives_only_same_view_store_observation[successor]",
+        "seconds": 7.902,
+        "status": "passed"
+      },
+      {
+        "name": "test_mounted_console_complete_capture_and_resumed_writes[settings]",
+        "seconds": 152.734,
+        "status": "passed"
+      },
+      {
+        "name": "test_mounted_console_complete_capture_and_resumed_writes[library]",
+        "seconds": 420.298,
+        "status": "failed"
+      }
+    ]
+  },
+  "source_files": 16686,
+  "selected_source_matches": {
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_bound_config_companions.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_mounted_console_backup.py": "windows_crlf",
+    "Tests/Backup_Recovery/thread_diagnostics.py": "windows_crlf",
+    "Tests/Backup_Recovery/run_platform_product.py": "windows_crlf",
+    "Tests/Backup_Recovery/admission_diagnostics.py": "windows_crlf",
+    "Tests/network_guard.py": "windows_crlf"
+  },
+  "installed": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "6ad677e543b14f9ba696423496849af5cf7ead64455c622dd19978941f1a9458",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "git_verification": {
+    "revision": "a5237449584d5b6d0090c15adabb4b12846a4aaa",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "flows": {
+    "settings": {
+      "phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.015
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 22.75
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 22.75
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 43.109
+        },
+        {
+          "phase": "service_close_begin",
+          "elapsed": 112.593
+        },
+        {
+          "phase": "service_close_complete",
+          "elapsed": 112.593
+        }
+      ],
+      "capture_observation": [
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "capture_service.py",
+              "function": "preview_capture",
+              "line": 77
+            },
+            {
+              "file": "recovery_service.py",
+              "function": "preview_backup",
+              "line": 1044
+            },
+            {
+              "file": "thread.py",
+              "function": "run",
+              "line": 59
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        },
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "capture_service.py",
+              "function": "capture",
+              "line": 180
+            },
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed_capture",
+              "line": 507
+            },
+            {
+              "file": "recovery_service.py",
+              "function": "backup",
+              "line": 1164
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        },
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_discover_capture_inventory",
+              "line": 1640
+            },
+            {
+              "file": "capture_service.py",
+              "function": "capture",
+              "line": 221
+            },
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed_capture",
+              "line": 507
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        },
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "capture.py",
+              "function": "_capture_under_maintenance",
+              "line": 342
+            },
+            {
+              "file": "capture_service.py",
+              "function": "capture",
+              "line": 225
+            },
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed_capture",
+              "line": 507
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        },
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "capture.py",
+              "function": "_capture_under_maintenance",
+              "line": 510
+            },
+            {
+              "file": "capture_service.py",
+              "function": "capture",
+              "line": 225
+            },
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed_capture",
+              "line": 507
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        }
+      ],
+      "loop_profile": {
+        "thread_id": 3148,
+        "elapsed_s": 4.999111399999947,
+        "thread_cpu_s": 0.03125,
+        "calls": [
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1922,
+            "calls": 99,
+            "recursive_calls": 0,
+            "total_s": 0.03125,
+            "inline_s": 0.0
+          },
+          {
+            "file": "windows_events.py",
+            "function": "select",
+            "line": 443,
+            "calls": 99,
+            "recursive_calls": 0,
+            "total_s": 0.015625,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "events.py",
+            "function": "_run",
+            "line": 86,
+            "calls": 159,
+            "recursive_calls": 0,
+            "total_s": 0.015625,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "run",
+            "line": 0,
+            "calls": 159,
+            "recursive_calls": 0,
+            "total_s": 0.015625,
+            "inline_s": 0.0
+          },
+          {
+            "file": "_win_sleep.py",
+            "function": "wait",
+            "line": 110,
+            "calls": 34,
+            "recursive_calls": 0,
+            "total_s": 0.015625,
+            "inline_s": 0.0
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_in_executor",
+            "line": 853,
+            "calls": 23,
+            "recursive_calls": 0,
+            "total_s": 0.015625,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "",
+            "function": "builtins.len",
+            "line": 0,
+            "calls": 249,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "base_events.py",
+            "function": "time",
+            "line": 738,
+            "calls": 132,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "time.monotonic",
+            "line": 0,
+            "calls": 179,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "builtins.max",
+            "line": 0,
+            "calls": 69,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "builtins.min",
+            "line": 0,
+            "calls": 27,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "windows_events.py",
+            "function": "_poll",
+            "line": 761,
+            "calls": 99,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "math.ceil",
+            "line": 0,
+            "calls": 99,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "_overlapped.GetQueuedCompletionStatus",
+            "line": 0,
+            "calls": 122,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "pop",
+            "line": 0,
+            "calls": 39,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "_weakrefset.py",
+            "function": "__contains__",
+            "line": 75,
+            "calls": 46,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "done",
+            "line": 0,
+            "calls": 62,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "windows_events.py",
+            "function": "finish_socket_func",
+            "line": 459,
+            "calls": 23,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "getresult",
+            "line": 0,
+            "calls": 23,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "windows_events.py",
+            "function": "set_result",
+            "line": 92,
+            "calls": 23,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "set_result",
+            "line": 0,
+            "calls": 57,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "base_events.py",
+            "function": "call_soon",
+            "line": 789,
+            "calls": 129,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "base_events.py",
+            "function": "_check_closed",
+            "line": 543,
+            "calls": 180,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "base_events.py",
+            "function": "_call_soon",
+            "line": 818,
+            "calls": 129,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "events.py",
+            "function": "__init__",
+            "line": 36,
+            "calls": 135,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "base_events.py",
+            "function": "get_debug",
+            "line": 2017,
+            "calls": 222,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "append",
+            "line": 0,
+            "calls": 350,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "clear",
+            "line": 0,
+            "calls": 99,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "proactor_events.py",
+            "function": "_process_events",
+            "line": 883,
+            "calls": 99,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "popleft",
+            "line": 0,
+            "calls": 159,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "futures.py",
+            "function": "_set_state",
+            "line": 383,
+            "calls": 23,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          },
+          {
+            "file": "base_futures.py",
+            "function": "isfuture",
+            "line": 13,
+            "calls": 143,
+            "recursive_calls": 0,
+            "total_s": 0.0,
+            "inline_s": 0.0
+          }
+        ],
+        "dropped_calls": 0
+      },
+      "slowest_group": {
+        "namespaces": 21,
+        "total_roots": 21,
+        "unique_roots": 21,
+        "total_depth": 298,
+        "max_depth": 15,
+        "unique_ancestors": 23,
+        "thread_id": 1792,
+        "caller": {
+          "file": "admission.py",
+          "function": "pause_requested",
+          "line": 702
+        },
+        "completed": 1,
+        "errors": 0,
+        "wall_ns": 305429300,
+        "thread_cpu_ns": 78125000,
+        "process_cpu_ns": 390625000,
+        "calls": {
+          "_tokens": {
+            "started": 21,
+            "completed": 21,
+            "errors": 0,
+            "wall_ns": 303458000
+          }
+        },
+        "started_wall_ns": 2154417340400
+      },
+      "last_cpu_window": {
+        "seconds": 52.359,
+        "main_cpu_seconds": 9.671875,
+        "process_cpu_seconds": 39.640625
+      },
+      "runtime_stages": [
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_before",
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_after",
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 1,
+            "startups": 1
+          }
+        },
+        {
+          "event": "runtime_resume",
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 0,
+            "startups": 0
+          }
+        }
+      ]
+    },
+    "library": {
+      "phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.016
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 26.203
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 26.203
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 46.578
+        }
+      ],
+      "capture_observation": [
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "capture_service.py",
+              "function": "preview_capture",
+              "line": 77
+            },
+            {
+              "file": "recovery_service.py",
+              "function": "preview_backup",
+              "line": 1044
+            },
+            {
+              "file": "thread.py",
+              "function": "run",
+              "line": 59
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        },
+        {
+          "event": "preview_sqlite_failure",
+          "error": {
+            "error_class": "ValueError",
+            "frames": [
+              {
+                "file": "thread_diagnostics.py",
+                "function": "observed_snapshot",
+                "line": 514
+              },
+              {
+                "file": "storage_admission.py",
+                "function": "sqlite_target",
+                "line": 1534
+              }
+            ],
+            "errno": null,
+            "winerror": null
+          },
+          "reason": "preview_sqlite_changed",
+          "source_change": null
+        }
+      ],
+      "loop_profile": {
+        "thread_id": 3256,
+        "elapsed_s": 5.007948399999805,
+        "thread_cpu_s": 5.0,
+        "calls": [
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 62,
+            "calls": 3849,
+            "recursive_calls": 961,
+            "total_s": 6.109375,
+            "inline_s": 0.0625
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 45,
+            "calls": 3849,
+            "recursive_calls": 961,
+            "total_s": 6.03125,
+            "inline_s": 0.125
+          },
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1922,
+            "calls": 1923,
+            "recursive_calls": 0,
+            "total_s": 4.96875,
+            "inline_s": 0.125
+          },
+          {
+            "file": "events.py",
+            "function": "_run",
+            "line": 86,
+            "calls": 1952,
+            "recursive_calls": 0,
+            "total_s": 4.765625,
+            "inline_s": 0.0
+          },
+          {
+            "file": "",
+            "function": "run",
+            "line": 0,
+            "calls": 1952,
+            "recursive_calls": 0,
+            "total_s": 4.765625,
+            "inline_s": 0.046875
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages",
+            "line": 562,
+            "calls": 1923,
+            "recursive_calls": 0,
+            "total_s": 4.703125,
+            "inline_s": 0.03125
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages_loop",
+            "line": 634,
+            "calls": 1923,
+            "recursive_calls": 0,
+            "total_s": 4.671875,
+            "inline_s": 0.234375
+          },
+          {
+            "file": "screen.py",
+            "function": "_on_idle",
+            "line": 1172,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 2.84375,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "screen.py",
+            "function": "_invoke_and_clear_callbacks",
+            "line": 1264,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 2.75,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "left_rail.py",
+            "function": "_run_scheduled_reconcile",
+            "line": 211,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 2.015625,
+            "inline_s": 0.0
+          },
+          {
+            "file": "console_bounded_section.py",
+            "function": "_run_scheduled_reconcile",
+            "line": 289,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 2.015625,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "console_bounded_section.py",
+            "function": "_reconcile",
+            "line": 294,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 2.0,
+            "inline_s": 0.125
+          },
+          {
+            "file": "inspect.py",
+            "function": "_signature_from_callable",
+            "line": 2501,
+            "calls": 1922,
+            "recursive_calls": 961,
+            "total_s": 0.8125,
+            "inline_s": 0.078125
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_dispatch_message",
+            "line": 707,
+            "calls": 1923,
+            "recursive_calls": 0,
+            "total_s": 0.734375,
+            "inline_s": 0.0625
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_on_message",
+            "line": 810,
+            "calls": 962,
+            "recursive_calls": 0,
+            "total_s": 0.65625,
+            "inline_s": 0.078125
+          },
+          {
+            "file": "_callback.py",
+            "function": "count_parameters",
+            "line": 17,
+            "calls": 3849,
+            "recursive_calls": 0,
+            "total_s": 0.546875,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "widget.py",
+            "function": "post_message",
+            "line": 4486,
+            "calls": 1923,
+            "recursive_calls": 0,
+            "total_s": 0.53125,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "_callback.py",
+            "function": "_count_parameters",
+            "line": 40,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 0.53125,
+            "inline_s": 0.03125
+          },
+          {
+            "file": "message_pump.py",
+            "function": "post_message",
+            "line": 860,
+            "calls": 1923,
+            "recursive_calls": 0,
+            "total_s": 0.515625,
+            "inline_s": 0.078125
+          },
+          {
+            "file": "inspect.py",
+            "function": "signature",
+            "line": 3346,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 0.484375,
+            "inline_s": 0.0
+          },
+          {
+            "file": "inspect.py",
+            "function": "from_callable",
+            "line": 3081,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 0.484375,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "dom.py",
+            "function": "screen",
+            "line": 783,
+            "calls": 2886,
+            "recursive_calls": 0,
+            "total_s": 0.453125,
+            "inline_s": 0.40625
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_get_dispatch_methods",
+            "line": 743,
+            "calls": 5770,
+            "recursive_calls": 0,
+            "total_s": 0.4375,
+            "inline_s": 0.3125
+          },
+          {
+            "file": "console_bounded_section.py",
+            "function": "request_reconcile",
+            "line": 258,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 0.4375,
+            "inline_s": 0.03125
+          },
+          {
+            "file": "message_pump.py",
+            "function": "call_after_refresh",
+            "line": 451,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 0.40625,
+            "inline_s": 0.03125
+          },
+          {
+            "file": "",
+            "function": "builtins.any",
+            "line": 0,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 0.375,
+            "inline_s": 0.125
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_on_invoke_later",
+            "line": 521,
+            "calls": 962,
+            "recursive_calls": 0,
+            "total_s": 0.359375,
+            "inline_s": 0.03125
+          },
+          {
+            "file": "console_bounded_section.py",
+            "function": "_measure_content_lines",
+            "line": 422,
+            "calls": 961,
+            "recursive_calls": 0,
+            "total_s": 0.34375,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "screen.py",
+            "function": "_invoke_later",
+            "line": 1274,
+            "calls": 962,
+            "recursive_calls": 0,
+            "total_s": 0.3125,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "message_pump.py",
+            "function": "check_idle",
+            "line": 841,
+            "calls": 962,
+            "recursive_calls": 0,
+            "total_s": 0.296875,
+            "inline_s": 0.0625
+          },
+          {
+            "file": "",
+            "function": "builtins.max",
+            "line": 0,
+            "calls": 2889,
+            "recursive_calls": 0,
+            "total_s": 0.296875,
+            "inline_s": 0.015625
+          },
+          {
+            "file": "console_bounded_section.py",
+            "function": "<genexpr>",
+            "line": 427,
+            "calls": 1922,
+            "recursive_calls": 0,
+            "total_s": 0.28125,
+            "inline_s": 0.015625
+          }
+        ],
+        "dropped_calls": 28
+      },
+      "slowest_group": {
+        "namespaces": 1,
+        "total_roots": 1,
+        "unique_roots": 1,
+        "total_depth": 14,
+        "max_depth": 14,
+        "unique_ancestors": 13,
+        "thread_id": 196,
+        "caller": {
+          "file": "admission.py",
+          "function": "pause_requested",
+          "line": 702
+        },
+        "completed": 1,
+        "errors": 0,
+        "wall_ns": 3111465800,
+        "thread_cpu_ns": 31250000,
+        "process_cpu_ns": 3156250000,
+        "calls": {
+          "_tokens": {
+            "started": 1,
+            "completed": 1,
+            "errors": 0,
+            "wall_ns": 3111404600
+          }
+        },
+        "started_wall_ns": 2462876348900
+      },
+      "last_cpu_window": {
+        "seconds": 56.532,
+        "main_cpu_seconds": 56.453125,
+        "process_cpu_seconds": 57.625,
+        "capture_worker_cpu_seconds": 0.296875
+      },
+      "wait_failure": {
+        "event": "exception",
+        "error": {
+          "error_class": "TimeoutError",
+          "frames": [
+            {
+              "file": "<string>",
+              "function": "main",
+              "line": 76
+            },
+            {
+              "file": "threads.py",
+              "function": "to_thread",
+              "line": 25
+            }
+          ],
+          "errno": null,
+          "winerror": null
+        }
+      }
+    }
+  },
+  "evidence_sha256": {
+    "/private/tmp/uat-windows-a5237-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-a5237449584d5b6d0090c15adabb4b12846a4aaa/artifact-sha256.json": "75b678149da29234f0764721bc82a5efa503da2da361dd32319218d42a76d4ac",
+    "/private/tmp/uat-a5237-windows-native-job.log": "f5e456303f27da936da10f51fd8c22daebaa25d32584192f660e469b3be335de"
+  }
+}

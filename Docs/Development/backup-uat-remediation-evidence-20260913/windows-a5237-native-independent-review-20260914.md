@@ -1,0 +1,29 @@
+# Exact a5237 native-close independent audit
+
+Revision `a5237449584d5b6d0090c15adabb4b12846a4aaa`, run34936466840. Read-only local artifact/source review; no app/test runs, remote operations, or repository edits.
+
+**59 native tests passed; product50 collected,47 passed and3 failed.** No skips, errors or missing terminal outcomes. Failures: guidance coherence50.453s JUnit, display pairs45.027s JUnit (both existing45s subprocess timeout), and installed Library420.298s (existing420s parent timeout). Settings passes152.734s. Fixture/setup costs can exceed the actual subprocess deadline; the first guidance duration does not indicate a50s deadline.
+
+All31 indexed artifact hashes match. Source receipt reports clean exact revision/private tracked-head copy and16,686 source files. Seven selected driver/helper/test digests independently match exact Git with only Git Windows CRLF conversion. Installed receipt:2,867 files; all2,475 package Python files match source and Git (2,443CRLF/32exact), zero mismatches. Wheel `6ad677e543b14f9ba696423496849af5cf7ead64455c622dd19978941f1a9458`. This verifies retained run receipts, not a new remote filesystem inspection.
+
+## Guidance evidence limit
+
+Both failures are `subprocess.TimeoutExpired` from Windows communication with `orig_timeout=45`, installed_package=None. Neither traceback exposes stdout_seq/stderr_seq. Regex matches for guidance_phase occur inside the embedded `-c` command source; **they do not prove checkpoint execution**. No emitted JSON checkpoint lines were found in retained logs. The first fixture has an empty faulthandler file and an app log, but no useful phase receipt; the second has no retained execution checkpoint. Startup versus tested assertions versus teardown remains unlocalized. No count/output assertion failed in the available evidence, and no guidance success can be claimed.
+
+## Settings actual installed capture passes
+
+Construct complete22.750s, mounted yield43.109s; service close begins/completes112.593s. All five inventories report unchanged scope and no unavailable dependencies. Eight runtime observations show five settlement starts, then native leases8→1 after cache retirement and0 at resume, with pending/operations/raw operations0. The executed test asserts complete archive success, coherent archived pre-capture note, excluded post-capture note, resumed native note writes/readback, and Canvas enabled before capture/after resume. No skipped assertion branch is indicated. Loop observation4.999111s used0.03125threadCPU and dropped0calls; slowest recorded pause_requested group was0.305429s for21roots.
+
+## Library boundary and sustained UI activity
+
+Construct complete26.203s; mounted yield46.578s. The preview inventory completes unchanged/available. Recapture emits a genuine `preview_sqlite_failure`: ValueError with closed reason `preview_sqlite_changed`, at `_PreviewScope.sqlite_target:1534` (final source-state comparison). This proves the source-state proof changed while making its private SQLite preview; it does not identify the source file/sidecar or writer. No second completed inventory or runtime-settlement observation is retained.
+
+The exact service.wait exception is separately recorded as TimeoutError at child main76→asyncio.to_thread25. The awaited service wait has240s timeout; the overall parent later expires at420s. No service_close_begin/complete or outer body-error receipt is present. Therefore the child did not reach the outer post-Textual-cleanup handler; do not attribute this directly to service.close. The last retained native worker6540 remains in recovery_core.validate→discover→inventory→capture_service.capture180, the initial pre-maintenance rediscovery. Other samples show fresh native SQLite/path validation. No held-inventory/runtime-drain failure is demonstrated.
+
+The five-second loop observation is concrete:5.007948s elapsed/5.0s main-threadCPU. It records961 calls each to `left_rail._run_scheduled_reconcile`, `console_bounded_section._run_scheduled_reconcile`, and `_reconcile`;1923 message loops/dispatches. `_reconcile` consumes2.0s inclusive within that instrumented window, not an additive exclusive timing. Exact source delegates the section to bounded reconciliation; its mismatching viewport-height branch writes desired height and requests another reconcile. This observed repeated **section reconciliation** is a different callback from the previously corrected tray-fit callback. It does not establish which section/geometry branch ran, because those private state values are not recorded.
+
+Across the last56.532s CPU sample window, main3256 consumes56.453125CPU seconds; capture worker6540 consumes0.296875s and the process57.625s. The last snapshots show main-thread Textual callback/dispatch/layout work and worker progress through native validation. The slowest recorded one-root pause probe is3.111466s wall/0.03125ownCPU/3.15625processCPU. These establish a sustained busy main thread alongside slowly progressing discovery, not a blocked-worker deadlock or proof that the section loop alone causes the entire timeout. They also do not prove the UI loop caused preview_sqlite_changed; preserve those as separate observations.
+
+A smallest next causal check would reproduce the actual covered Library/bounded-section geometry and observe whether reconciliation schedules itself despite no valid new layout. No admission relaxation, timeout increase, cache, or native-owner optimization follows from this audit. Root owns separate reproduction.
+
+The a523 startup failures are separately reviewed in `/private/tmp/uat-a5237-startup-independent-review.md`. Current artifact success cannot be extrapolated to failed Library or guidance workflows. Machine-readable counts, exact source/Git matches, selected phase/CPU records, and log/index hashes are in `/private/tmp/uat-a5237-native-independent-summary.json`.

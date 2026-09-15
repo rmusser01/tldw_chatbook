@@ -73,6 +73,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
     "Tests/Backup_Recovery/test_console_guidance_readiness.py",
     "Tests/Backup_Recovery/test_console_tray_layout.py",
+    "Tests/Backup_Recovery/test_console_bounded_layout.py",
     "Tests/Backup_Recovery/test_sqlite_inside_config_scope.py",
     "Tests/Backup_Recovery/test_persona_observation_budget.py",
     "Tests/Backup_Recovery/test_db_status_maintenance.py",
@@ -188,6 +189,7 @@ _PRODUCT_SELECTIONS = {
         *_RESTORE_DIAGNOSTIC_TESTS,
         "Tests/Backup_Recovery/test_console_guidance_readiness.py",
         "Tests/Backup_Recovery/test_console_tray_layout.py",
+        "Tests/Backup_Recovery/test_console_bounded_layout.py",
     ),
     "plain": _RESTORE_DIAGNOSTIC_TESTS,
     "encrypted": (_PRODUCT_TESTS[1] + "[encrypted]",),
@@ -215,6 +217,7 @@ _PRODUCT_SELECTIONS = {
     "native-close-diagnostic": (
         "Tests/Backup_Recovery/test_console_guidance_readiness.py",
         "Tests/Backup_Recovery/test_console_tray_layout.py",
+        "Tests/Backup_Recovery/test_console_bounded_layout.py",
         "Tests/TTS/test_profile_native_close_contract.py::test_native_repository_close_preserves_proven_state_and_exclusion",
         "Tests/Backup_Recovery/test_db_status_maintenance.py",
         "Tests/Backup_Recovery/test_canvas_policy_maintenance.py",
