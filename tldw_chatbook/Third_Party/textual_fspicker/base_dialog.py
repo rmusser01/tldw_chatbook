@@ -442,15 +442,20 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     """
 
     BINDINGS = [
+        # Order is the footer's order (task-32606): `Footer` lays its chips
+        # out left to right in binding order and scrolls the overflow off
+        # the right edge, so at 100 columns only the first few are read.
+        # The way out and the two path actions lead; the conveniences
+        # (hidden files, refresh, bookmarks, recents) follow.
+        Binding("escape", "request_safe_cancel", "Cancel"),
+        Binding("ctrl+s", "select_current_folder", "Select this folder"),
+        Binding("ctrl+l", "focus_path_input", "Edit path directly"),
+        Binding("ctrl+f", "focus_search", "Search in directory"),
         Binding("full_stop", "hidden", "Toggle hidden"),
         Binding("ctrl+h", "hidden", "Toggle hidden files"),
-        Binding("ctrl+l", "focus_path_input", "Edit path directly"),
         Binding("f5", "refresh", "Refresh directory"),
         Binding("ctrl+d", "bookmark_current", "Bookmark directory"),
         Binding("ctrl+r", "show_recent", "Show recent locations"),
-        Binding("ctrl+f", "focus_search", "Search in directory"),
-        Binding("escape", "request_safe_cancel", "Cancel"),
-        Binding("ctrl+s", "select_current_folder", "Select this folder"),
     ]
     """The bindings for the dialog."""
 
@@ -636,13 +641,18 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             error_line.display = False
             yield error_line
 
-            # task-32606 AC#2: a ModalScreen is translucent, so the host
-            # screen's own footer shows straight through it -- critique #4
-            # pressed Tab three times inside this dialog and kept reading
-            # Library's "/ focus search | F6 next pane | esc notes", with
-            # nothing on screen saying which controls were inside the
-            # dialog. The dialog's own bindings belong on the dialog.
-            yield Footer()
+        # task-32606 AC#2: a ModalScreen is translucent, so the host
+        # screen's own footer shows straight through it -- critique #4
+        # pressed Tab three times inside this dialog and kept reading
+        # Library's "/ focus search | F6 next pane | esc notes", with
+        # nothing on screen naming a single control inside the dialog.
+        #
+        # Docked at SCREEN level, not inside `Dialog`: an opaque footer on
+        # the bottom row REPLACES the host screen's chips for as long as
+        # the modal is up. Inside the dialog it would merely add a second
+        # key row eight lines above a contradicting one -- the "two
+        # instructions at once" defect the same critique flags elsewhere.
+        yield Footer()
 
     def on_mount(self) -> None:
         """Focus the initial widget on mount and set the initial path."""
