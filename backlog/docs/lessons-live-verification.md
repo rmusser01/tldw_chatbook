@@ -3094,3 +3094,20 @@ So:
   below") — do not write them at all. State the relationship that is checkable
   instead: "all three true strings are inside that same captured frame" is both
   stronger and unfalsifiable-by-drift.
+
+**Refinement (task-32605, 2026-09-15): "another file" is not far enough — it
+has to be a file your branch does not touch.** A review round on task-32605
+whose entire purpose was citation accuracy — its two findings were a wrong
+mechanism and an off-by-one — corrected an AC to cite
+`notes_sync_runtime.py:2154-2157`, `:3283-3284` and `:2692`. All three were
+exact when written. The *next commit in the same round* added two import lines
+and a three-line annotation above them, and shipped the AC two-to-three lines
+stale. The citation pointed into another file, which the rule above permits,
+but that file was one this branch was itself editing. So the decay mechanism is
+not "the artefact you are editing" — it is **any file your own commits move**,
+and a line number written mid-branch is a prediction about your own future
+diff. Cite those by symbol with the file and no line number
+(`_blocked_plan_status` in `notes_sync_runtime.py`, not `:2154-2157`); grep
+finds a symbol after any rewrite, and a reader who greps never learns the
+number was wrong. Line numbers stay right for files outside the branch's diff
+and best of all for frozen captures.
