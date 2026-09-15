@@ -53,7 +53,7 @@ Three findings, one cause each, all measured through the production Library harn
 
 **The blank rows are a default.** `#file-notes-tree-header` is a `Horizontal`, and Textual's `Horizontal` defaults to `height: 1fr` -- so the navigator's title row and the tree split the pane's spare rows between them. Measured before the fix: 19 rows at 235x52, 9 at 100x30, 6 at 60x24, all but one blank. That is the capture's 'rows 6 through 26 are entirely blank, the Search box sits at row 27 and the tree begins at row 30' to the row (search row measured at y=27, tree at y=30). One CSS rule (`height: auto; min-height: 1`) gives those rows to the tree: 20 -> 38 visible tree rows at 235x52, 10 -> 18 at 100x30.
 
-**The 100x30 split was an outlier profile, not a missing breakpoint.** `LIBRARY_FILE_NOTES_READER_PROFILE` carried `work_min_width=30` -- the lowest floor of any Library destination (every other is 44-48) -- which is what let the resolver divide 100 columns 56/34. Dropping the override for the shared default (44) makes it 46/44. Checked across widths with the pure resolver before changing anything: 235x52 and 60x24 are byte-identical either way; the only other change is that 80-89 columns now drops the list pane, which is what Notes, Prompts, Skills and Collections already do at that width. AC#3 is answered by applying that floor -- the same rule that collapses 60x24 -- rather than by making 100x30 narrow: the resolver, not a second breakpoint, is where this destination disagreed with its peers.
+**The 100x30 split was an outlier profile, not a missing breakpoint.** `LIBRARY_FILE_NOTES_READER_PROFILE` carried `work_min_width=30` -- the lowest floor of any Library destination (every other is 44-48) -- which is what let the resolver divide 100 columns 56/34. Dropping the override for the shared default (44) makes it 46/44. Checked across widths with the pure resolver before changing anything: 235x52 and 60x24 are byte-identical either way. AC#3 is answered by applying that floor -- the same rule that collapses 60x24 -- rather than by making 100x30 narrow: the resolver, not a second breakpoint, is where this destination disagreed with its peers.
 
 **Neither identity line survived a real path.** `#file-notes-breadcrumb` and `#file-notes-exact-path` both had `height: auto` with default wrapping, and a path is one long token, so Textual folded them wherever the column ran out: measured 6 rows for the absolute path at 100x30 broken at '...m80n2j152t'/'9gw3w8qwk...', and 4 rows for the breadcrumb broken at '2026'/'-09-14'. Both are now one row, nowrap, and fitted by `_fit_path_surfaces` through the existing `elide_path_middle` (basename kept -- a tail cut spends the row on '/private/var/folders/...' and hides the name).
 
@@ -64,4 +64,27 @@ Two things that cost a round and are worth knowing:
 **Modified:** `Widgets/Library/library_file_notes_workspace.py` (tree-header + path-line CSS, `_breadcrumb_copy`/`_exact_path_copy`/`_fit_path_surfaces`/`_refit_path_surfaces`, five raw writers routed through it, standalone-harness profile), `UI/Library_Modules/screen_constants.py`, `Tests/UI/test_library_notes_w5_folder_files_layout.py` (new).
 
 **Red first:** 'the title row took 19 rows at (235, 52)'; '#file-notes-exact-path took 2 rows at (235, 52)'; '#file-notes-breadcrumb took 4 rows at (100, 30)'; `work_min_width == 44` assert failed at 30.
+**Fix round 1 — the recorded blast radius was too small (review F2).** I wrote
+"the only other change is that 80-89 columns now drops the list pane". That is
+wrong, and the truth is a better result than the one I claimed. Re-derived over
+every width 60-240 with the live preference shape (`reader_has_item=True`, which
+is what `library_notes_controller` passes):
+
+| width | was (30) | now (44) |
+| --- | --- | --- |
+| ≤79 | — | unchanged |
+| 80 | 0/40/30 | 0/0/70 (list drops) |
+| 95 | 0/55/30 | 0/41/44 |
+| 100 | 0/56/34 | 0/46/44 |
+| 110 | **29**/41/30 | **0**/56/44 (the Library rail closes) |
+| 120 | 29/50/31 | 26/40/44 |
+| 130 | 29/50/41 | 29/47/44 |
+| ≥134 | — | unchanged |
+
+**54 widths change, the whole band 80-133** -- not two narrow bands. And the
+reason to want it: at every one of the 181 widths sampled from 60 to 240,
+Folder files' allocation is now **byte-identical to Conversations'**, with zero
+mismatches. It was the only Library destination under a 44-cell work pane; it
+now resolves exactly as its peers do at every width, which is the consistency
+this change is for and is worth more than the two sizes I originally named.
 <!-- SECTION:NOTES:END -->
