@@ -1,0 +1,72 @@
+{
+  "revision": "92f8f9224bc3cadfc22ba9fe997597b1ce89a05a",
+  "product_tests_packaging_native_pyproject_identical_2031d": true,
+  "voice": {
+    "run": 34941051470,
+    "job": 104289676625,
+    "outcome": "success",
+    "longpaths_before_checkout": true,
+    "merge_checkout": "cab693520f7be6b24b3292111a1f69618f65da72",
+    "merge_message_base": "4e4558bff21a6c158432df4e08dad73b832eea79",
+    "merge_message_head": "92f8f9224bc3cadfc22ba9fe997597b1ce89a05a",
+    "merge_object_locally_available": false,
+    "vendor_verification": "passed",
+    "wheels": [
+      {
+        "python": "cp311",
+        "binding_passed": 4,
+        "binding_deselected": 31,
+        "binding_seconds": 0.11,
+        "installed_native_corpus_smoke": "passed",
+        "sha256": "eb4208bd3c4ca3c567a9a62ded51428ec74c36a593e14f7a7e6afc57173f92da"
+      },
+      {
+        "python": "cp312",
+        "binding_passed": 4,
+        "binding_deselected": 31,
+        "binding_seconds": 0.11,
+        "installed_native_corpus_smoke": "passed",
+        "sha256": "6f55891474bfb8d690e68418555dd35d4b5a7a0f506669714df6bb0c71cfcb4f"
+      },
+      {
+        "python": "cp313",
+        "binding_passed": 4,
+        "binding_deselected": 31,
+        "binding_seconds": 0.1,
+        "installed_native_corpus_smoke": "passed",
+        "sha256": "260bf7a683216dcbf4150800fa9f0551c8135a4b4235b39d08e6634fa2a0fa76"
+      }
+    ],
+    "artifact_id": 10385627514,
+    "artifact_bytes": 1287646,
+    "wheel_hashes_evidence": "CI log, not independent downloaded wheel rehash"
+  },
+  "startup": {
+    "run": 34941051473,
+    "job": 104289594769,
+    "outcome": "failure",
+    "non_ui_passed": 31,
+    "non_ui_seconds": 9.7,
+    "primary_ui_timeouts": 4,
+    "limit_seconds": 60,
+    "dev_revision": "4631b60f8dd9623fc55bf16f4a37e29fcb1240c7",
+    "dev_passed": 2,
+    "dev_session_seconds": [
+      58.51,
+      43.63
+    ],
+    "dev_call_seconds": [
+      49.92,
+      37.85
+    ],
+    "candidate_timeouts": 2,
+    "records": 23,
+    "all_source_matched": true,
+    "observer_error_count": 0,
+    "cprofile_enabled": false
+  },
+  "logs_sha256": {
+    "uat-92f8-windows-voice-job.log": "5561ecbba667b2e5499718c8bacb6ca1b5daa95c3bfe462727cc9b404bf3b9e7",
+    "uat-92f8-windows-startup-job.log": "a8f0de2802214178b4cfaa6f613fc74ff17268bb53585ca5745ae9330e52494a"
+  }
+}

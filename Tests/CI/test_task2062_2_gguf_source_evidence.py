@@ -61,7 +61,7 @@ EXPECTED_STEP_NAMES = (
     "Install bounded test dependencies",
     "Run exact GGUF source evidence nodes",
     "Run each full-app GGUF case with its profile selected before imports",
-    "Diagnose Windows backup startup against the dev source baseline",
+    "Compare Windows keyboard waits with the dev source baseline",
 )
 
 
@@ -169,13 +169,12 @@ def test_windows_failure_diagnostic_keeps_exact_read_only_commands() -> None:
         "git", "fetch", "--depth=1", "origin", baseline,
         "git", "worktree", "add", "--detach", "$RUNNER_TEMP/backup-startup-dev", baseline,
         "diagnostic=$GITHUB_WORKSPACE/Tests/Backup_Recovery/startup_timing_diagnostic.py",
-        f"node={REQUIRED_UI_NODES[0]}",
-        "failed=0",
+        "failed=0", "for", "node", "in", *REQUIRED_UI_NODES[2:], "do",
         "python", "$diagnostic", "--source", "$RUNNER_TEMP/backup-startup-dev",
-        "--node", "$node", "--label", "dev", "||", "failed=1",
+        "--node", "$node", "--label", "dev", "--no-profile", "||", "failed=1",
         "python", "$diagnostic", "--source", "$GITHUB_WORKSPACE",
-        "--node", "$node", "--label", "candidate", "||", "failed=1",
-        "exit", "$failed",
+        "--node", "$node", "--label", "candidate", "--no-profile", "||", "failed=1",
+        "done", "exit", "$failed",
     )
 
 

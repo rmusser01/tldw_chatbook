@@ -1052,3 +1052,33 @@ been invoked. `call_after_refresh` works too where a layout pass is wanted.
   first, or the pointer-derived half of your logic is untested.
 - `Input.select_on_focus` defaults to `True` already; the reason click-to-
   focus behaved differently from Tab-to-focus is entirely this ordering.
+
+---
+
+## Covered screens retain old geometry, and a fixed number of Pilot pauses does not prove quiescence
+
+**TASK-32562 backup UAT, 2026-09-14–15.** Recomposition below stacked backup
+screens left the retained Console tray's old positive region in place while its
+new children had no layout. A native reproduction on `63756` counted 3,839
+height-fit callbacks in 0.25 seconds: requesting another refresh could not lay
+out a screen hidden beneath an opaque screen. The reviewed correction waits
+once for the owning screen's layout signal and releases the subscription on
+delivery or unmount. The analogous bounded-section correction in `2031d` keeps
+ordinary scheduling for current/background-visible screens; an initial broader
+wait broke an existing visible resize test and was narrowed before publication.
+
+The Windows returned-layout test then passed its geometry, scroll, focus, hint
+and allocator assertions but still had a pending callback after three
+`Pilot.pause()` calls. The last pause can itself enqueue reconciliation. The
+`dc96b` test correction observes completion with a finite two-second wait,
+retaining both the earlier covered-screen callback stability checks and the
+final callback-count stability assertion. It does not permit an infinite loop.
+The exact Windows repeat passed all eight bounded-layout cases, both guidance
+cases and the installed plaintext backup/restore/Open journey (59 native and
+16 selected product passes overall). See the
+[artifact and source audit](../../Docs/Development/backup-uat-remediation-evidence-20260913/windows-dc96b-restore-independent-review-20260915.md)
+and [remediation record](../../Docs/Development/backup-uat-remediation-2026-09-13.md).
+
+Use actual screen visibility/layout events to resume deferred geometry work,
+and test quiescence as a bounded condition with a separate callback-stability
+check. A positive old region or a fixed count of Pilot turns establishes neither.
