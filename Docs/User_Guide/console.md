@@ -271,10 +271,15 @@ they are, the empty transcript reads "Ready — type a message to begin."
 A second action, **Write a note in Library**, stays available beside it for
 as long as the card is showing — it needs no provider, and opens Library's
 New note view directly. A local-first user who came for notes is not stuck
-behind a provider-only card. Both actions are drawn as buttons with a
-rounded edge, one under the other; Tab moves between them and the focused
-one grows heavy side rails, so which one Enter will press is visible
-without reading the text.
+behind a provider-only card. A third action joins them when a loopback
+server is found on this machine — "Use detected \<provider\> (\<host:port\>)",
+naming what it found and where (only `127.0.0.1` and `localhost` are ever
+offered, and the endpoint is shown without credentials or scheme). Every
+action on the card is drawn as a button with a rounded edge, one under the
+other; Tab moves between them and the focused one grows heavy side rails, so
+which one Enter will press is visible without reading the text. *(Was "Both
+actions" — superseded by task-32558 below: the count contradicted this page's
+own task-32555 stamp, which names three.)*
 
 If you land here with a handoff already staged — e.g. from Library's
 **Use in Console** on a Search/RAG result or on an open note while a
@@ -751,3 +756,13 @@ state. With no provider configured, **Alt+M** is refused by the setup gate
 ("Typing is locked until setup finishes — press Enter to continue setup"); with
 one configured, the draft always names a provider the picker lists. The evidence
 is the three headless pins, not a capture.
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep). The Get started card's body said "Both actions" while
+this page's own task-32555 stamp, in this same "Verified against" section,
+named three: a
+detected loopback server adds "Use detected \<provider\> (\<host:port\>)"
+(`Chat/console_onboarding_state.py:101-153`, loopback-only, scheme and
+credentials stripped). Corrected from the source, not from a capture — this
+sweep drove no Console profile with a local server running, and does not
+claim to have seen the third button.)*

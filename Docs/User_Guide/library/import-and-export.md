@@ -21,8 +21,9 @@ then either:
   **"Export"**.
 
 Scoped exports also arrive here on their own: use **"Export…"** in the Media,
-Notes, Conversations, or Prompts panels (or **"Export selected"** where a list
-offers it). Each opens the same Export bundle (.zip) form, pre-limited to that
+Conversations, or Prompts panels — or **"Export"**, bare, in Notes, which is
+the one canvas spelled without the ellipsis — (or **"Export selected"** where
+a list offers it). Each opens the same Export bundle (.zip) form, pre-limited to that
 content (see [Media & Conversations](media-and-conversations.md)).
 
 In server mode the **Export** rail row is disabled, with the tooltip
@@ -321,7 +322,9 @@ destination, or leaving the Import canvas cancels pending consent.
    same source and options come back staged, the pre-check re-runs against
    the fixed environment, and the warning is gone.
 5. **Export your notes as a bundle** — In the rail click Browse ▸ Notes,
-   press "Export…" above the list. On the "Export bundle (.zip)" form
+   press "Export" above the list — **no ellipsis on this one**; Notes is the
+   only browse canvas whose export action is spelled bare, where Media,
+   Conversations and Prompts all use "Export…". On the "Export bundle (.zip)" form
    confirm the scope line says "Notes · N items", adjust the name, press
    "Choose destination…", pick where the `.zip` goes, then press "Export
    bundle (.zip)".
@@ -1022,3 +1025,71 @@ button, "Can't save there: The folder /nonexistent/dir does not exist.", and
 accepts nothing; the ingest **Browse…** opens at the folder `[notes]
 sync_directory` names when nothing is remembered. Nothing on this page needed
 correcting.)*
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep; corrected in fix round 2 after this stamp's first version
+certified a claim it had not checked).*
+
+***Two claims on this page were wrong, both about the Notes export control.***
+The "Scoped exports also arrive here on their own" paragraph near the top of
+this page, and step 5 of "Common tasks" ("Export your notes as a bundle"),
+both told you to press **"Export…"** in Notes. (Named, not numbered: a line
+citation inside the page it cites is wrong on the next edit — which is how
+this stamp's first version already went wrong once.) The Notes
+list toolbar ships it **bare** — `("Export", "library-notes-export")` at
+`Widgets/Library/library_notes_canvas.py:1842` — and six of this sweep's own
+captures paint `Add from files…     Export` (`docs-03`, `docs-04`, `docs-05`,
+`docs-06`, `docs-08`, `docs-09`). Notes is the **only** browse canvas spelled
+without the ellipsis: Media (`library_media_canvas.py:1178`), Conversations
+(`library_conversations_canvas.py:150`) and Prompts
+(`library_prompts_canvas.py:890`) all ship `Export…`, which is why step 6
+("Export all Prompts and Recipes") was right and the Notes step was not.
+(Source line numbers are kept — they point at another file, which a reader
+can check and which this page's edits cannot move.) Both sentences
+now name the bare label and say it is the odd one out; the label
+inconsistency itself is filed as task-32590.
+
+*Checked and correct, so left alone:* the export scope lines this page quotes
+are exact — `"Notes · N items"`, `"Selected notes · 1 item"`, the
+`"Everything: …"` form and `"Prompts · N items"` all come from
+`Library/library_export_scope.py:395-417` — and the rail ▸ Browse ▸ Notes
+route, the `"Export bundle (.zip)"` form name and `"Choose destination…"` are
+as written. *Caveat carried over from* [Library notes](notes.md): on a
+brand-new profile there is no Browse section to click, which that page's
+"Getting there" now explains.
+
+*How the first version of this stamp went wrong, since it is the whole
+subject of this sweep:* it asserted "none needed correcting" for a page whose
+Notes claims had been read but not grepped.
+`scripts/check_guide_claim_strings.py` did not catch it either, and this
+stamp has now given the reason wrongly **twice** — first "the string lives
+only in comments" (it does not; `Export…` is a live **Button** label on six
+other surfaces), then "the checker probes the whole tree" (true, but only
+half the cause). Measured, with every figure labelled by the probe that
+produced it — "scoped" being the twelve `library_notes*` modules, "AST"
+being non-docstring string literals — and by its **match semantics**, which
+here are **containment** (a literal counts when it *contains* the fragment,
+the `grep -F` the script runs):
+
+| probe (containment match) | `"Export…"` | `"Export"` |
+|---|---|---|
+| repo-wide + raw | 35 | 1431 |
+| repo-wide + AST | 9 | 373 |
+| scoped + raw | 1 | 31 |
+| **scoped + AST** | **0** | **13** |
+
+**A figure without its match semantics is not reproducible.** An independent
+re-derivation of the `"Export"` column matching **exact equality** (the
+literal *is* `Export`) read **21** repo-wide + AST and **4** scoped + AST,
+not 373 and 13 — two readers, two answers, neither wrong, because the
+question differed. Quote both halves of the label, always. What decides this
+incident is the same under either: 0 for the false spelling, non-zero for the
+true one.
+
+**Both conditions are necessary and neither alone is sufficient.** Literals
+alone still find 9. Scoping alone still finds 1 — a stale docstring on
+`handle_library_notes_export`, the handler for the very button that ships
+bare, so prose *about* the Notes export action, inside a Notes module,
+satisfies it. Only the pair reaches 0 for the false spelling while leaving
+13 for the true one, which is what lets the corrected sentence above still
+pass its own check. Recorded on the script and as task-32589 AC#7-8.)*
