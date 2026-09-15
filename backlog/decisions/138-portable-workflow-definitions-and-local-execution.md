@@ -43,6 +43,24 @@ schema or runtime is authorized. Deferring picker exchange and introducing an
 isolated JSON-I/O boundary were considered; the user chose the bounded existing
 implementation. Static-analysis debt, review and integration gates are not waived.
 
+### Task-specific static qualification (user approved, 2026-09-15)
+
+After the final authoring review, the user separately approved a no-new-static-debt
+gate for TASK-32601: fix findings introduced by this slice and retain documented
+baseline failures. Compare against the clean dev base `77eb2601a6` with the same
+Ruff version/configuration. Match diagnostics to unchanged source spans, not only
+net counts; inspect unmatched or changed-block findings and correct introduced
+issues. New/rewritten files must pass scoped lint and formatting. Attribute
+remaining formatter edits to baseline code rather than declaring whole files clean.
+
+This replaces the whole-file-clean prerequisite for this task only. Existing
+713 Ruff findings and five formatter failures were reported before qualification;
+report actual remaining counts afterward, without suppressions, broad reformatting,
+CI/config changes or removing runtime checks to satisfy lint. Other behavioral,
+visual, privacy and review requirements remain. The stable-file limitation above
+is unchanged. This is not permission to merge, push, execute workflows or change
+shared SQLite infrastructure, nor an inherited exception for other tasks.
+
 ## Context
 
 The user approved a Workflows redesign with a workflow library, step navigator, and overview/focused-card canvas. Forms are continuous and collapsible. V1 must execute workflows locally without tldw_server; branching follows in v2 and parallelism in v3. Definitions should be shareable and synchronized across Chatbook and tldw_server where reasonably possible.

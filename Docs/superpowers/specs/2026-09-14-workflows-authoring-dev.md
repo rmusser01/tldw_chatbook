@@ -95,6 +95,11 @@ reference. Generated CSS is rebuilt, never edited manually.
 
 ## Verification boundary
 
+For TASK-32601 only, the user approved a no-new-static-debt gate on 2026-09-15,
+recorded in ADR-138. Require clean new/rewritten files and fix introduced findings
+in incumbent files; retain source-attributed baseline lint/format failures with
+their real nonzero results. Unchanged counts alone do not establish no new debt.
+
 Targeted tests only. Real SQLite persistence and foreign-writer regressions;
 document/draft and mounted keyboard behavior; import/export round trip including
 unknown fields; real-app composition and quit; token/bundle/navigation checks.

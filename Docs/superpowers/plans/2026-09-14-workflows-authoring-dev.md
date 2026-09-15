@@ -27,7 +27,7 @@ Reason: record the user-approved stable-file exchange contract (2026-09-15); ADR
 - Follow backlog/docs/design-language.md. Edit source CSS and rebuild; no direct generated CSS edits or new visual language.
 - Targeted tests only; no dependency installs, live-profile access, network/model calls, full sweep, push or merge.
 - Use /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python and /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff with PYTHONPATH=. from this worktree.
-- Preserve and report baseline failures/debt; do not waive them or mark Done automatically.
+- Apply the user-approved TASK-32601 no-new-static-debt gate in ADR-138: source-attribute retained baseline failures, correct introduced findings, and require clean new/rewritten files. No blanket waiver or automatic Done transition.
 
 ### Task 1: Restore usable local workflow authoring
 
@@ -85,7 +85,7 @@ Reason: record the user-approved stable-file exchange contract (2026-09-15); ADR
 
 - [x] **Step 5: Verify and report the complete authoring slice.**
   Run one final targeted selection of Workflows, new DB authoring tests, private-owner inventory, relevant app/navigation/quit tests, and token/bundle checks. No whole Tests/UI or whole repository sweep.
-  Check Ruff/format on changed files. Report existing-file baseline debt separately; do not suppress or waive it. Run git diff --check.
+  Check Ruff/format on changed files. Apply the approved no-new-static-debt gate; report retained baseline failures separately without suppressions. Run git diff --check.
   Document source reuse, actual initialized files, no-execution boundary, size/privacy handling for exchange, test commands/results and any remaining failures. Coordinator performs actual capture/review handoff.
   Commit only explicit task-owned paths after checking the staged diff; do not push, merge, reset, stash or change either preserved branch.
 
@@ -119,3 +119,18 @@ One nonblocking capture-cleanup minor is recorded separately. Fresh coordinator
 authoring/storage verification: 35 passed in 21.53s; 26 dedicated Python files
 pass Ruff/format. Implementation checkboxes do not mark Backlog Done. Keep the
 branch isolated until the static-analysis gate is explicitly resolved.
+
+## Approved static qualification follow-through (2026-09-15)
+
+The user has now approved the recommended task-specific no-new-static-debt gate;
+the preceding review records the earlier, unwaived state. No new ADR number:
+ADR-138 records this narrow acceptance amendment.
+
+1. Compare all changed Python files to base77eb2601a6 using the same Ruff settings;
+   map diagnostics to unchanged source and inspect unmatched spans/formatter edits.
+2. Correct changed import blocks in the two affected destination/Console tests
+   if they remain unsorted; no unrelated whole-file formatting or suppressions.
+3. Verify the affected Workflows tests and static attribution, record exact results,
+   and request a scoped follow-up from the existing reviewer on this gate only.
+4. Mark the Backlog task Done only if the approved gate and all other scoped DoD
+   requirements are met. Preserve the branch; no merge, push or infrastructure work.

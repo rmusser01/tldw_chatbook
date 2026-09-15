@@ -21,6 +21,7 @@ Deliver the approved portable workflow editor on current dev while keeping unfin
 - [x] #2 The library, step navigator, overview and collapsed continuous form remain usable with keyboard and at supported terminal sizes.
 - [x] #3 Drafts survive navigation and restart, failed persistence stays recoverable, and opaque server fields survive round trips.
 - [x] #4 Only existing SQLite safety utilities are used; new execution and process-ownership infrastructure remain absent.
+- [ ] #5 The authoring slice meets the user-approved no-new-static-debt gate: introduced findings are fixed and retained baseline failures are source-attributed and documented.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -35,6 +36,7 @@ Reason: record the user-approved stable-file exchange contract (2026-09-15) for 
 4. Wire the editor into the real app, including durable draft flushing before navigation/quit and explicit local JSON import/export. Preserve current Console follow behavior.
 5. Check the current tldw_server dev definition contract; verify targeted storage, authoring, lifecycle, keyboard and production-CSS behavior. Review actual captures at 160x48, 110x36 and 60x20.
 6. Record exact verification and independent review. Do not mark Done with unresolved failures or unwaived static debt.
+7. Apply the separately user-approved TASK-32601 no-new-static-debt gate in ADR-138: compare source spans against base77eb2601a6, correct changed import blocks as needed, verify scoped tests/static checks, and obtain the existing reviewer's scoped gate disposition. No broad cleanup, suppression or merge.
 
 ## ID provenance
 
@@ -42,7 +44,12 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 
 ## Implementation Notes
 
-**Current review gate:** In Progress. On 2026-09-15 the user approved retaining
+**Current review gate:** In Progress for static qualification. The user has now
+separately approved the no-new-static-debt gate in ADR-138; source attribution,
+necessary scoped corrections and gate review are in progress. The earlier
+unwaived findings below remain historical evidence, not the current acceptance rule.
+
+On 2026-09-15 the user approved retaining
 file-picker exchange under the stable-file assumption now recorded in ADR-138,
 the spec, plan and user guide. Existing metadata-only alias rejection remains;
 post-validation substitution or a detached live inode can still disrupt SQLite
