@@ -5432,10 +5432,10 @@ def test_a_document_mixing_notes_with_other_records_is_not_called_config(
         (
             "records.csv",
             "title,content\nOne,body\nTwo,\nThree,body\n",
-            # task-32619: names rows parsed so far, the failing row, and the
-            # exact (as-typed) column, plus what to do about it -- not just
-            # "could not be read as a note".
-            '1 row(s) imported so far. Row 3: fix the "content" cell, '
+            # task-32619 fix round 1 (F1): CSV is atomic (AC#2) -- nothing is
+            # ever actually imported on this path, so the message names rows
+            # READ before the failure, not "imported", and says so plainly.
+            'Read 1 row, imported none. Row 3: fix the "content" cell, '
             "then import again.",
         ),
     ],

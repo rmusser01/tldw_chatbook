@@ -849,9 +849,18 @@ def _csv_payloads(text: str, bounds: ImportBounds) -> tuple[ParsedNotePayload, .
                 if field in column_labels
                 else "that row"
             )
+            count = len(payloads)
+            # task-32619 fix round 1 (F1): the CSV path is atomic -- a failed
+            # row rejects the whole file, so no row is ever actually
+            # imported. "N row(s) imported so far" said otherwise. Names how
+            # many rows READ cleanly before the bad one, and says plainly
+            # that none of them were imported -- both halves have to fit
+            # inside bounds.max_reason_length (as low as 120 in this test
+            # suite), hence the terse "Read N, imported none" shape.
+            read = "no rows" if count == 0 else "1 row" if count == 1 else f"{count} rows"
             return _ParseFailure(
                 "invalid_content",
-                f"{len(payloads)} row(s) imported so far. Row {reader.line_num}: "
+                f"Read {read}, imported none. Row {reader.line_num}: "
                 f"fix {where}, then import again.",
             )
 
