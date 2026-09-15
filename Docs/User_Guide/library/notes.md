@@ -768,7 +768,10 @@ Saving a note in Chatbook is enough to produce that "Wrote note to file" row:
 a note inside an active root that you save in the editor is written to its
 file on its own, on the same terms a file you edit on disk is read into its
 note — you do not have to run **Check changes**, and the row goes on saying
-"✓ Up to date" because by then it is (task-32604). Until this the note side
+"✓ Up to date" because by then it is (task-32604). This depends on lasting
+sync still running: if it has stopped, nothing is carrying changes either way
+and the root's row says so — "⚠ Sync stopped · Next: Check changes" — instead
+of claiming to be up to date. Until this the note side
 produced no signal at all: Chatbook watches the folder, not the notes
 database, so a note you saved stayed in Notes only and its file kept its old
 bytes until something else touched the disk — with the row reading
@@ -781,14 +784,17 @@ anything. These do not, and their files stay as they are until you run
 while the row goes on reading "✓ Up to date":
 
 - **New note**, including a new note created straight into a synced folder.
-- **Save as note** from Console, and the note actions on a message span.
-- A note written by Research, by an ingest job, by an MCP tool, by
-  **Import notes from files** over a note that already exists, by a generated
-  document, or by a chatbook import.
+- **Save as note** in Console, and the same action on text you select inside a
+  Console message.
+- A note written by Research, by an ingest job, by an MCP tool, by the
+  assistant's own `update_note` tool, by **Import notes from files** over a
+  note that already exists, by **Save as document** from a chat, or by a
+  chatbook import.
 - Deleting or restoring a note.
 
-None of that is new — before task-32604 the editor behaved the same way — but
-none of it is fixed either, so if you need one of those on disk now, run
+None of those is new — none of them ever told lasting sync anything, and
+task-32604 changed only the editor — but none is fixed either, so if you need
+one of them on disk now, run
 **Check changes** on the root and apply the review. Chatbook also watches only
 while it is running: a root whose notes changed outside a session reconciles
 at the next startup check.
@@ -2086,4 +2092,9 @@ production controller in
 `Tests/UI/test_library_notes_files_sync_journey.py` rather than walked: the
 automatic pass applies a pending change within a second or two, so the state
 is real but too short-lived to capture. The profile log holds no
-`unhandled_exception` and no ERROR record across the whole walk.)*
+`unhandled_exception` and no ERROR record across the whole walk. Fix round 2
+added the "⚠ Sync stopped" row label for a runtime that is no longer
+watching; that one is pinned in
+`Tests/UI/Library_Modules/test_library_notes_sync_controller.py`, with a
+negative control, and was NOT walked — reaching it live means killing the
+watcher task of a running app.)*

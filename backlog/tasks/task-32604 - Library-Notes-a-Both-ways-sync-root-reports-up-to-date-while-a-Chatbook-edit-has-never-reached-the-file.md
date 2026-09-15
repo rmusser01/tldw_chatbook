@@ -32,11 +32,11 @@ Docs contradicted: notes.md promises Receipts shows 'Wrote note to file' for a n
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 After a check, a root holding note-side changes that are not on disk never renders '✓ Up to date': the row renders an explicit pending state with the next action ('◌ Changes available · Next: Review changes') and the status line beside it names the count. SHIPPED SCOPE, narrowed in fix round 1: 'never' holds after a check and for an editor save of an already-bound note (written within seconds, so the label is honest by the time it is read). It does NOT hold for the note-write paths that still produce no signal -- see the ceiling list in the Implementation Notes; those keep showing '✓ Up to date' over a stale file until a check or a disk-side change, unchanged by this task and pre-existing
+- [x] #1 After a check, a root holding note-side changes that are not on disk never renders '✓ Up to date': the row renders an explicit pending state with the next action ('◌ Changes available · Next: Review changes') and the status line beside it names the count. SHIPPED SCOPE, narrowed in fix round 1: 'never' holds after a check, and for an editor save of an already-bound note while lasting sync is running (written within seconds, so the label is honest by the time it is read). A runtime that has stopped watching writes nothing, so the row wears '⚠ Sync stopped' rather than '✓ Up to date' (fix round 2). It does NOT hold for the note-write paths that still produce no signal -- see the ceiling list in the Implementation Notes; those keep showing '✓ Up to date' over a stale file until a check or a disk-side change, unchanged by this task and pre-existing
 - [x] #2 A Chatbook-side save inside an active root either writes to disk on the same terms a disk-side edit is picked up, or the editor's own status line says the note is saved in Notes and not yet written to the named file
 - [x] #3 Check changes from Manage sync folders reaches the review it builds: when the plan has actions the user lands on them, and when it has none the status line says 'Nothing to review', not 'Review exact effects'
 - [x] #4 Every note-to-file write leaves the Receipts row the guide already promises, and notes.md's Receipts paragraph matches what ships
-- [x] #5 Regression test on the production runtime: note edit -> check -> the plan's update_file is reachable and applied; after a check, a row is never projected as up to date while an update_file action is pending. SHIPPED SCOPE, narrowed in fix round 1: the 'never' is scoped to after a check, for the same reason as AC#1
+- [x] #5 Regression test on the production runtime: note edit -> check -> the plan's update_file is reachable and applied; after a check, a row is never projected as up to date while an update_file action is pending. SHIPPED SCOPE, narrowed in fix round 1 and round 2: the 'never' is scoped to after a check, and the editor-save limb to while lasting sync is running, for the same reasons as AC#1
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,16 +63,17 @@ Three links, fixed at three seams; the machinery underneath was already correct.
 
 Status-line copy: "Manual check finished. N change(s) to review." (count from the plan, filtered by `NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS` so a `no_change` action is not counted) / "Nothing to review." / for offline/unsupported/paused the existing `_restate_root` restates the row.
 
-**Trade-off / ceiling (enumerated in fix round 1; the first wording said "deletion, a future Chat-side write" and badly understated this).** Exactly ONE write path into a local note is covered: `UI/Library_Modules/note_session_port.py:140`, the Library editor's save of an **already-bound** note. Every other path still produces no signal and waits for a disk-side change or the next startup check. They split in two, and the split matters because only the first half is cheap:
+**Trade-off / ceiling (enumerated in fix round 1, corrected in round 2; the original wording said "deletion, a future Chat-side write" and badly understated this).** Counting: 14 write sites into a local note, of which **1 is covered and 13 are not** (5 updates + 8 creates). A fifteenth line in the round-1 list, `message.py:1933`, was a capability probe miscounted as a write. The covered one is: `UI/Library_Modules/note_session_port.py:140`, the Library editor's save of an **already-bound** note. Every other path still produces no signal and waits for a disk-side change or the next startup check. They split in two, and the split matters because only the first half is cheap:
 
-*Updates to an already-bound note - one `note_changed` call away each:*
+*Updates to an already-bound note - one `note_changed` call away each (5):*
 - `Research_Workspace/local_adapter.py:389` (quick-note save of an existing note)
 - `Notes/note_import_executor.py:302` `replace_note` (Import notes from files updates existing notes in place)
 - `Notes/notes_scope_service.py:1638` `delete_note` / `:1672` `restore_note`
+- `Tools/note_management_tools.py:377` - the built-in `update_note` LLM tool (added in fix round 2; the round-1 list missed it)
 
 *Creates - these would NOT be covered even if wired, because `note_changed` keys on an existing binding (`notes_sync_runtime.py:3031`, `if note_id in bound`) and a new note has none. They need a folder-membership predicate (is this note in a root's managed folder?), not a binding predicate:*
 - `UI/Screens/library_screen.py:30039` - **the Library's own New note, on the same screen as this P0**, which bypasses the port entirely with `note_id=None`
-- `UI/Console_Modules/message.py:1933/2207/2286` - Console Save-as-Note and the span actions. These are an EXISTING Chat-side write, not a future one
+- `UI/Console_Modules/message.py:2227` (`_save_console_message_as_note`) and `:2294` (`_write_console_note`), both `note_id=None` - Console Save-as-Note and the message-span note actions. These are an EXISTING Chat-side write, not a future one. (Fix round 2: the round-1 list also carried `message.py:1933`, which is a CAPABILITY PROBE -- `if callable(getattr(notes_scope_service, "save_note", None)): available_destinations.add("Note")` -- and writes nothing. It is not a write path and is excluded from the count.)
 - `Research_Workspace/local_adapter.py:419`, `Event_Handlers/note_ingest_events.py:557`, `MCP/local_runtime_delegate.py:602`, `Chat/document_generator.py:596`, `Chatbooks/chatbook_importer.py:2393`
 
 None of these are regressions - all pre-existing, all unchanged by this task - but "New note inside a synced folder never reaches disk until something touches the disk" is the same defect class as this P0, reachable from the same screen. Follow-up requested from the coordinator; not built here.
