@@ -98,6 +98,9 @@ async def test_the_sync_review_spends_one_row_per_file() -> None:
         canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
         rows = list(canvas.query(".library-notes-sync-review-row"))
         assert len(rows) == _SAFE_FILES
+        # Every one of them is classified body-less, which is what
+        # drops the margin.
+        assert all("-plain" in row.classes for row in rows)
         heights = {row.outer_size.height for row in rows}
         assert heights == {1}, sorted(heights)
         # The margin is what the outer size does NOT include, and it was the
