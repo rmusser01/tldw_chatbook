@@ -51,6 +51,10 @@ class GlyphCheckbox(Checkbox):
     widget, its id and its ``Changed`` messages untouched.
     """
 
+    def render(self) -> Content:
+        """Paint only the glyph; the full label lives beside this narrow control."""
+        return self._button
+
     @property
     def _button(self) -> Content:
         """Return the state glyph in place of Textual's colour-only button."""

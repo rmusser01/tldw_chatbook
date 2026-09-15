@@ -1,0 +1,32 @@
+{
+  "Tests/UI/test_console_prompts_controller.py": {
+    "baseline": 2,
+    "current": 2,
+    "new": []
+  },
+  "Tests/UI/test_prompt_variables_dialog.py": {
+    "baseline": 1,
+    "current": 1,
+    "new": []
+  },
+  "tldw_chatbook/UI/Console_Modules/prompts.py": {
+    "baseline": 28,
+    "current": 28,
+    "new": []
+  },
+  "tldw_chatbook/UI/Console_Modules/wiring.py": {
+    "baseline": 4,
+    "current": 4,
+    "new": []
+  },
+  "tldw_chatbook/UI/Screens/library_screen.py": {
+    "baseline": 205,
+    "current": 205,
+    "new": []
+  },
+  "tldw_chatbook/Widgets/Console/prompt_variables_dialog.py": {
+    "baseline": 2,
+    "current": 2,
+    "new": []
+  }
+}

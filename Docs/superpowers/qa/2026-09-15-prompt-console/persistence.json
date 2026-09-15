@@ -1,0 +1,39 @@
+{
+  "read_only_sqlite": true,
+  "prompts": [
+    {
+      "id": 1,
+      "name": "Native direct 64411 170",
+      "system_prompt": "",
+      "user_prompt": "Keep {{literal}}.",
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": 2,
+      "name": "Native variables 64411 170",
+      "system_prompt": "Use {tone}.",
+      "user_prompt": "Hello {name}; literal {{name}}.",
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": 3,
+      "name": "Native direct 64411 80",
+      "system_prompt": "",
+      "user_prompt": "Keep {{literal}}.",
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": 4,
+      "name": "Native variables 64411 80",
+      "system_prompt": "Use {tone}.",
+      "user_prompt": "Hello {name}; literal {{name}}.",
+      "version": 1,
+      "deleted": 0
+    }
+  ],
+  "all_source_prompts_unchanged_at_version_1": true,
+  "message_count": 0
+}

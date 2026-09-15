@@ -26329,7 +26329,7 @@ class LibraryScreen(BaseAppScreen):
             stage(
                 PromptVariableApplication(
                     system_text=None,
-                    user_text=user_text,
+                    user_text=plan.render({}).user_text,
                     apply_system=False,
                     apply_user=True,
                     destination="append_active",

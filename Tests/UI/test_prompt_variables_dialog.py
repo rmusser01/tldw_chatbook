@@ -603,6 +603,7 @@ async def test_real_bundle_keeps_one_scroll_owner_and_fixed_actions_reachable(
         checkbox = dialog.query_one(f"#{SYSTEM_CHECKBOX_ID}", Checkbox)
         off_control = _painted_region_text(checkbox)
         assert off_control
+        assert not any(char.isalpha() for char in off_control)
         assert "…" not in off_control
         assert str(state.renderable) == "Off"
         assert _painted_region_text(state) == "Off"
@@ -612,6 +613,7 @@ async def test_real_bundle_keeps_one_scroll_owner_and_fixed_actions_reachable(
         state = dialog.query_one(f"#{SYSTEM_STATE_ID}", Static)
         on_control = _painted_region_text(checkbox)
         assert on_control
+        assert not any(char.isalpha() for char in on_control)
         assert "…" not in on_control
         assert str(state.renderable) == "On"
         assert _painted_region_text(state) == "On"

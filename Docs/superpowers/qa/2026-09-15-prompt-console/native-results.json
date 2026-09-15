@@ -1,0 +1,56 @@
+{
+  "pid": 64411,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "direct_prompt_id": 1,
+      "direct_prompt_name": "Native direct 64411 170",
+      "variable_prompt_id": 2,
+      "variable_prompt_name": "Native variables 64411 170",
+      "direct_escaped_text_appended": true,
+      "cancel_changes_nothing": true,
+      "values_reset_on_reopen": true,
+      "system_requires_opt_in": true,
+      "checkbox_has_no_clipped_label": true,
+      "system_status_chip_set": true,
+      "rendered_user_text_appended": true,
+      "original_source_appended": true,
+      "navigation_does_not_duplicate_handoff": true,
+      "final_draft": "Existing native draft\nKeep {literal}.\nHello Zo\u00eb {other}; literal {name}.\nHello {name}; literal {{name}}.",
+      "final_system": "Use calm."
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "direct_prompt_id": 3,
+      "direct_prompt_name": "Native direct 64411 80",
+      "variable_prompt_id": 4,
+      "variable_prompt_name": "Native variables 64411 80",
+      "direct_escaped_text_appended": true,
+      "cancel_changes_nothing": true,
+      "values_reset_on_reopen": true,
+      "system_requires_opt_in": true,
+      "checkbox_has_no_clipped_label": true,
+      "system_status_chip_set": true,
+      "rendered_user_text_appended": true,
+      "original_source_appended": true,
+      "navigation_does_not_duplicate_handoff": true,
+      "final_draft": "Existing native draft\nKeep {literal}.\nHello Zo\u00eb {other}; literal {name}.\nHello {name}; literal {{name}}.",
+      "final_system": "Use calm."
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "passed": true,
+  "normal_quit_requested": true,
+  "app_run_returned": true,
+  "exit_code": 0,
+  "observed_shell": "zsh"
+}

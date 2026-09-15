@@ -403,7 +403,9 @@ variable.
 
 Use `{{` for a literal `{` and `}}` for a literal `}`. Thus
 `{{customer}}` inserts `{customer}`, while `{{{customer}}}` inserts the value
-inside literal braces. Invalid and unmatched forms such as `{first-name}`,
+inside literal braces. Escapes also decode when a User-only Prompt has no
+variables and inserts directly without a dialog, both from Library and from
+Console’s `/prompt` command or picker. Invalid and unmatched forms such as `{first-name}`,
 `{ name }`, `{name`, and ordinary JSON object braces remain literal. Names are
 limited to 64 characters and one insertion to 64 unique variables. If a limit
 is exceeded, **Apply** is disabled and the dialog shows the specific bounded

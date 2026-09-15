@@ -1591,7 +1591,7 @@ class ConsolePromptsController:
         if system_text is None and plan.is_valid and not plan.variables:
             application = PromptVariableApplication(
                 system_text=None,
-                user_text=user_text,
+                user_text=plan.render({}).user_text,
                 apply_system=False,
                 apply_user=True,
                 destination="replace_snapshot",

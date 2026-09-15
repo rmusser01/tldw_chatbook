@@ -337,3 +337,31 @@ and large-catalog qualification remain covered by automated tests only.
 
 Next: Use in Console, followed by Skills and the other Library destinations.
 Integration into `dev` remains pending.
+
+
+## Prompt Use in Console — TASK-32638
+
+The [handoff review](../qa/2026-09-15-prompt-console/README.md) repairs escaped
+brace decoding when User-only Prompts insert directly from Library or Console.
+It also removes the System checkbox's clipped duplicate label and refreshes the
+Console System status chip after authorized replacement. Existing append,
+snapshot replacement, explicit System authority, original-source and one-shot
+handoff contracts remain intact.
+
+**369 distinct targeted checks pass**, covering production-CSS keyboard
+journeys, shared dialog/Console application, parser, claims, Recipe detachment,
+missing/stale targets, recovery, wiring and governance. Four escape cases and
+four paint cases reproduced the defects before repair. There are no new Ruff
+diagnostics, token changes or outstanding independent review findings.
+
+The native TldwCli journey passes at 170×48 dark and 80×24 light through direct
+insertion, Cancel, System opt-in, Apply, original placeholders and repeated
+navigation without duplicate insertion. Rendered confirmation shows the fixed
+checkbox and wide System chip; compact variable inputs scroll above fixed
+actions. The compact System chip lies beyond the initial horizontal status
+viewport. Ctrl+Q returned exit 0 to the observed shell, which was then closed.
+Read-only SQLite confirms all four original v1 Prompt records and zero messages.
+No provider request, full-suite or durable System restart qualification is claimed.
+
+Next: Skills and the remaining Library destinations. Integration into `dev`
+remains pending.

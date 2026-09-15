@@ -1962,17 +1962,18 @@ def build_console_controllers(
     #: for the per-parameter rationale.
 
     def _sync_console_system_prompt_surfaces() -> None:
-        """Re-sync the three surfaces that display the System prompt.
+        """Re-sync the surfaces that display the System prompt.
 
-        One dependency rather than three because the prompt cluster only
-        ever needs the trio, in this order, at the two moments the store
-        accepted a new System prompt (task 2766). Each name is still
+        One dependency because the prompt cluster updates these together,
+        in this order, when the store accepts a new System prompt (task 2766).
+        Each name is still
         resolved on the screen at CALL time, so the instance-level
         replacements the suite makes are observed exactly as before.
         """
         screen._sync_console_chat_core_state()
         screen._sync_console_rail_system_line()
         screen._sync_console_settings_summary()
+        screen._sync_console_control_bar()
 
     screen._prompts = ConsolePromptsController(
         screen,

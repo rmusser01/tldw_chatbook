@@ -1,6 +1,21 @@
 # Lessons: what counts as evidence a change works
 
 
+## A no-variable fast path still has grammar work to do (TASK-32638)
+
+**2026-09-15.** Library and Console direct Prompt insertion both compiled a
+valid no-variable plan, then inserted raw source instead of rendering it.
+`{{name}}` therefore stayed doubled even though the shared dialog correctly
+produced `{name}`. Four regression cases failed across the two entry points;
+rendering the compiled plan once fixed them. Test escaped literals through
+fast paths as well as dialogs, and preserve the explicit original-source bypass.
+
+The native screenshots also showed a clipped duplicate checkbox label and a
+System chip still reading off after the store had accepted replacement. Add
+rendered-control assertions alongside domain-state checks; correct state alone
+does not prove the user received truthful feedback.
+
+
 ## Retained History needs both focus identity and painted labels (TASK-32630)
 
 **2026-09-15.** The Prompt History keyboard walk retained the correct selected
