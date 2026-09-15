@@ -25,11 +25,6 @@ from tldw_chatbook.Notes.note_import_discovery import (
     ImportSelectionError,
     discover_import_sources,
 )
-from tldw_chatbook.Notes.note_import_parsers import (
-    _frontmatter_keywords,
-    _frontmatter_title,
-    _split_frontmatter,
-)
 from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
@@ -383,6 +378,12 @@ def _lifted_note_metadata(
     text = getattr(file, "text", None)
     if not obsidian or type(text) is not str:
         return stem, ()
+    from tldw_chatbook.Notes.note_import_parsers import (
+        _frontmatter_keywords,
+        _frontmatter_title,
+        _split_frontmatter,
+    )
+
     metadata, _body = _split_frontmatter(text)
     # Import once bounds a keyword at 512; an execution request refuses one
     # over MAX_SYNC_KEYWORD_LENGTH, and the request is built inside a loop over

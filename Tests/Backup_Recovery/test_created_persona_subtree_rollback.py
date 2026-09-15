@@ -1,6 +1,7 @@
 """Native rollback retires only a committed incoming nested Persona pack."""
 
 import sys
+import time
 
 import pytest
 
@@ -299,10 +300,16 @@ def _prepare_native(tmp_path):
 # The enclosing bounds exceed all seed/capture/recovery/reopen child ceilings.
 @pytest.mark.timeout(4200 if sys.platform == "win32" else 900)
 def test_native_nested_persona_pack_survives_reopen_and_later_rollback(tmp_path):
+    started = time.monotonic()
     home = _prepare_native(tmp_path)
-    output = _child(
-        home, _LATER, "persona-later", timeout=900 if sys.platform == "win32" else 150
-    )
+    later_timeout = 900 if sys.platform == "win32" else 150
+    if sys.platform == "linux":
+        # Reuse unspent setup allowance within the original 860s child budget;
+        # reserve the final 90s reopen and 120s capture observations.
+        later_timeout = started + 860 - time.monotonic() - (90 + 120)
+        if later_timeout <= 0:
+            raise TimeoutError("persona_rollback_test_budget_exhausted")
+    output = _child(home, _LATER, "persona-later", timeout=later_timeout)
     assert "NATIVE_NESTED_PERSONA_LATER_COMPLETE" in output
     output = _child(
         home,
