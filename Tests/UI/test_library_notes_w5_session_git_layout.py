@@ -25,8 +25,8 @@ from textual.widgets import Button, Static
 # application imports below would otherwise probe.
 import Tests.UI._optional_module_stubs  # noqa: F401
 from Tests.UI.test_library_file_notes_git import (
-    _PanelHarness,
     _commit_draft_projection,
+    _PanelHarness,
 )
 from Tests.UI.test_library_file_notes_workspace import (
     _production_workspace_context,

@@ -13,6 +13,7 @@ failing; the RED text is on the task.
 from __future__ import annotations
 
 from dataclasses import replace
+from itertools import pairwise
 
 import pytest
 from textual.widgets import Static
@@ -107,9 +108,8 @@ async def test_the_sync_review_spends_one_row_per_file() -> None:
         # third of the three rows: measure the screen distance between
         # consecutive rows, which is the number the reader pays.
         tops = sorted(row.region.y for row in rows)
-        assert {later - earlier for earlier, later in zip(tops, tops[1:])} == {1}, (
-            sorted({later - earlier for earlier, later in zip(tops, tops[1:])})
-        )
+        gaps = {later - earlier for earlier, later in pairwise(tops)}
+        assert gaps == {1}, sorted(gaps)
 
 
 async def test_both_reviews_report_a_skip_at_folder_granularity() -> None:
