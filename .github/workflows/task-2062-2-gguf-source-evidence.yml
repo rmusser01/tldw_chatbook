@@ -88,15 +88,19 @@ jobs:
           done
           exit "$failed"
 
-      - name: Diagnose Windows backup startup against the dev source baseline
+      - name: Compare Windows keyboard waits with the dev source baseline
         if: failure() && runner.os == 'Windows'
         continue-on-error: true
         run: |
           git fetch --depth=1 origin 4631b60f8dd9623fc55bf16f4a37e29fcb1240c7
           git worktree add --detach "$RUNNER_TEMP/backup-startup-dev" 4631b60f8dd9623fc55bf16f4a37e29fcb1240c7
           diagnostic="$GITHUB_WORKSPACE/Tests/Backup_Recovery/startup_timing_diagnostic.py"
-          node="Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection"
           failed=0
-          python "$diagnostic" --source "$RUNNER_TEMP/backup-startup-dev" --node "$node" --label dev || failed=1
-          python "$diagnostic" --source "$GITHUB_WORKSPACE" --node "$node" --label candidate || failed=1
+          for node in \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]" \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]"
+          do
+            python "$diagnostic" --source "$RUNNER_TEMP/backup-startup-dev" --node "$node" --label dev --no-profile || failed=1
+            python "$diagnostic" --source "$GITHUB_WORKSPACE" --node "$node" --label candidate --no-profile || failed=1
+          done
           exit "$failed"

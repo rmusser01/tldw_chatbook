@@ -11,6 +11,98 @@ import pytest
 from Tests.Backup_Recovery import startup_timing_diagnostic as diagnostic
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_test_progress_tracks_suspended_code_without_retaining_values(cancelled):
+    import asyncio
+
+    release = asyncio.Event()
+    marker = "private-await-value-must-not-appear"
+
+    async def selected_test(value):
+        await release.wait()
+        assert observer.snapshot()["active"][0].get("suspended_at") is None
+        return value
+
+    observer = diagnostic.ConfigTimings({selected_test.__code__: "test_case"})
+    observer.start()
+    task = asyncio.create_task(selected_test(marker))
+    try:
+        await asyncio.sleep(0)
+        record = observer.snapshot()
+        coordinate = record["active"][0]["suspended_at"]
+        assert set(coordinate) == {"file", "function", "line"}
+        assert coordinate["function"] == "selected_test"
+        assert coordinate["line"] == selected_test.__code__.co_firstlineno + 1
+        assert marker not in json.dumps(record)
+        if cancelled:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            release.set()
+            assert await task == marker
+        assert not observer.snapshot()["active"]
+    finally:
+        release.set()
+        if not task.done():
+            await task
+        observer.close()
+    assert sys.monitoring.get_local_events(observer.tool_id, selected_test.__code__) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_handled_await_exception_clears_suspension_before_handler_runs(cancelled):
+    import asyncio
+
+    future = asyncio.get_running_loop().create_future()
+    marker = object()
+    async def selected_test():
+        try:
+            await future
+        except (ValueError, asyncio.CancelledError):
+            assert observer.snapshot()["active"][0].get("suspended_at") is None
+        return marker
+    observer = diagnostic.ConfigTimings({selected_test.__code__: "test_case"})
+    observer.start()
+    task = asyncio.create_task(selected_test())
+    try:
+        await asyncio.sleep(0)
+        assert "suspended_at" in observer.snapshot()["active"][0]
+        if cancelled:
+            task.cancel()
+        else:
+            future.set_exception(ValueError("private-awaited-error"))
+        assert await task is marker
+        assert not observer.snapshot()["active"]
+    finally:
+        if not task.done():
+            task.cancel()
+            await task
+        observer.close()
+
+
+def test_progress_selection_only_observes_exact_collected_test_and_fixed_helpers(tmp_path):
+    source = tmp_path.resolve()
+    expected = source / "Tests/UI/test_llm_gguf_source_modes.py"
+    def located(name, path):
+        return FunctionType((lambda: None).__code__.replace(co_name=name, co_filename=str(path)), {})
+    selected = located("test_keyboard", expected)
+    selected.__globals__.update({
+        "_mount_models": located("_mount_models", expected),
+        "_settle_pilot_until": located("_settle_pilot_until", expected),
+        "_close_context": located("_close_context", expected),
+        "not_selected": located("not_selected", expected),
+    })
+    plugin = diagnostic.ConfigTimingPlugin(source)
+    plugin.pytest_collection_modifyitems([SimpleNamespace(obj=selected)])
+    assert set(plugin.timings.codes.values()) == {"test_case", "test_mount", "test_settle", "test_close"}
+    foreign = located("foreign_test", source / "another_test.py")
+    plugin.pytest_collection_modifyitems([SimpleNamespace(obj=foreign)])
+    assert len(plugin.timings.codes) == 4
+
+
 @pytest.mark.parametrize("label", ["config_lock", "config_operation"])
 def test_config_timing_records_lock_wait_body_and_retirement(label):
     lock = threading.RLock()

@@ -61,6 +61,13 @@ class ConfigTimings:
                     if event == "yielded":
                         if row["function"] in {"config_lock", "config_operation"} and row["acquired"] is None:
                             row["acquired"] = now
+                        if row["function"].startswith("test_"):
+                            row["suspended_at"] = {
+                                "file": Path(code.co_filename).name[:128],
+                                "function": code.co_name[:128], "line": frame.f_lineno,
+                            }
+                    elif event == "resumed":
+                        row.pop("suspended_at", None)
                     else:
                         self.active.pop(key)
                         done = {
@@ -97,6 +104,12 @@ class ConfigTimings:
         def yielded(code, _offset, _value):
             self._event(code, "yielded", sys._getframe(1))
 
+        def resumed(code, _offset):
+            self._event(code, "resumed", sys._getframe(1))
+
+        def thrown(code, _offset, _error):
+            self._event(code, "resumed", sys._getframe(1))
+
         def raised(code, _offset, _error):
             self._event(code, "raised", sys._getframe(1))
 
@@ -105,16 +118,19 @@ class ConfigTimings:
             self.owned = True
             for event, callback in (
                 (events.PY_START, started), (events.PY_RETURN, returned),
-                (events.PY_YIELD, yielded), (events.PY_UNWIND, raised),
+                (events.PY_YIELD, yielded), (events.PY_RESUME, resumed),
+                (events.PY_THROW, thrown),
+                (events.PY_UNWIND, raised),
             ):
                 monitoring.register_callback(self.tool_id, event, callback)
             for code in self.codes:
                 monitoring.set_local_events(
-                    self.tool_id, code, events.PY_START | events.PY_RETURN | events.PY_YIELD
+                    self.tool_id, code, events.PY_START | events.PY_RETURN
+                    | events.PY_YIELD | events.PY_RESUME
                 )
-            # Python 3.12 exposes unwind only globally; the callback immediately
-            # ignores code outside the finite selection and never reads its error.
-            monitoring.set_events(self.tool_id, events.PY_UNWIND)
+            # Python 3.12 exposes throw/unwind only globally; callbacks immediately
+            # ignore code outside the finite selection and never read the error.
+            monitoring.set_events(self.tool_id, events.PY_UNWIND | events.PY_THROW)
         except Exception as error:  # noqa: BLE001 - test results remain authoritative.
             self._error(error)
             self.close()
@@ -131,6 +147,7 @@ class ConfigTimings:
                         "thread": row["thread"],
                         "phase": "body_and_release" if row["acquired"] is not None else "running",
                         "elapsed_seconds": round(now - row["started"], 6),
+                        **({"suspended_at": dict(row["suspended_at"])} if "suspended_at" in row else {}),
                     }
                     for row in active
                 ],
@@ -175,7 +192,7 @@ class ConfigTimings:
         monitoring.set_events(self.tool_id, 0)
         for code in self.codes:
             monitoring.set_local_events(self.tool_id, code, 0)
-        for event in (events.PY_START, events.PY_RETURN, events.PY_YIELD, events.PY_UNWIND):
+        for event in (events.PY_START, events.PY_RETURN, events.PY_YIELD, events.PY_RESUME, events.PY_THROW, events.PY_UNWIND):
             monitoring.register_callback(self.tool_id, event, None)
         monitoring.free_tool_id(self.tool_id)
         self.owned = False
@@ -187,6 +204,29 @@ class ConfigTimingPlugin:
     def __init__(self, source):
         self.source = source
         self.timings = ConfigTimings({})
+
+    def pytest_collection_modifyitems(self, items):
+        """Observe only the collected GGUF test and its three fixed async helpers."""
+        import inspect
+
+        expected = self.source / "Tests/UI/test_llm_gguf_source_modes.py"
+        try:
+            for item in items:
+                function = inspect.unwrap(item.obj)
+                if Path(function.__code__.co_filename).resolve() != expected:
+                    continue
+                self.timings.codes[function.__code__] = "test_case"
+                for name, label in (
+                    ("_mount_models", "test_mount"),
+                    ("_settle_pilot_until", "test_settle"),
+                    ("_close_context", "test_close"),
+                ):
+                    code = function.__globals__[name].__code__
+                    if Path(code.co_filename).resolve() != expected:
+                        raise ValueError("test_progress_source_mismatch")
+                    self.timings.codes[code] = label
+        except Exception as error:  # noqa: BLE001 - observation cannot replace collection.
+            self.timings._error(error)
 
     def pytest_collection_finish(self):
         import inspect
@@ -263,6 +303,7 @@ def main() -> int:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--node", required=True)
     parser.add_argument("--label", choices=("dev", "candidate"), required=True)
+    parser.add_argument("--no-profile", action="store_true", help="Observe finite code events without cProfile overhead.")
     args = parser.parse_args()
     source = args.source.resolve(strict=True)
     os.chdir(source)
@@ -279,6 +320,7 @@ def main() -> int:
     def emit():
         try:
             record = snapshot(profile, source, args.label)
+            record["cprofile_enabled"] = not args.no_profile
             record["elapsed_seconds"] = round(time.monotonic() - started, 3)
             record["observer_errors"] = list(failures)
             record["config_operations"] = config_timing.timings.snapshot()
@@ -294,7 +336,8 @@ def main() -> int:
     observer = threading.Thread(
         target=sample, name="backup-startup-profile", daemon=True
     )
-    profile.enable()
+    if not args.no_profile:
+        profile.enable()
     try:
         try:
             observer.start()

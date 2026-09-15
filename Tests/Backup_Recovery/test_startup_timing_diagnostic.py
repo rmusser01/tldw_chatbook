@@ -11,6 +11,25 @@ from Tests.Backup_Recovery import startup_timing_diagnostic as diagnostic
 from Tests.Backup_Recovery.startup_timing_diagnostic import snapshot
 
 
+def test_unprofiled_diagnostic_preserves_original_case_limit_and_exit(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setenv("TLDW_TEST_PRIVATE_PROFILE_NODE", "before")
+    monkeypatch.setattr(sys, "argv", [
+        "diagnostic", "--source", str(tmp_path), "--node", "fixture-node",
+        "--label", "candidate", "--no-profile",
+    ])
+    def run(args, *, plugins):
+        assert sys.getprofile() is None
+        assert args == ["fixture-node", "--timeout=60", "-q", "--capture=no"]
+        return 7
+    monkeypatch.setattr(pytest, "main", run)
+    assert diagnostic.main() == 7
+    record = json.loads(capsys.readouterr().err)
+    assert record["cprofile_enabled"] is False
+    assert record["largest_total"] == record["largest_self"] == []
+
+
 def test_profile_snapshot_is_bounded_and_excludes_call_values(tmp_path):
     def observed(value):
         return value
