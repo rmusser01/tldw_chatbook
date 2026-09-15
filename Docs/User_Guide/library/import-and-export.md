@@ -1061,7 +1061,14 @@ brand-new profile there is no Browse section to click, which that page's
 *How the first version of this stamp went wrong, since it is the whole
 subject of this sweep:* it asserted "none needed correcting" for a page whose
 Notes claims had been read but not grepped.
-`scripts/check_guide_claim_strings.py` did not catch it either — `"Export…"`
-appears in a dozen source **comments and docstrings** and the checker greps
-raw source text, so the string looked emitted. That ceiling is recorded on
-the script and on task-32589.)*
+`scripts/check_guide_claim_strings.py` did not catch it either, and **the
+reason is not the one this stamp first gave.** It is not that `"Export…"`
+lives only in comments: it is a live **Button** label in seven places
+(Media, Conversations, Prompts, Meetings, Artifacts, the Console inspector).
+The hole is that the checker probes the **whole tree** while the claim names
+a **surface** — "press Export… *in Notes*" — so a string that exists
+somewhere else satisfies a claim that is false where it was made. Closing it
+needs the claim to resolve against the modules that own the named surface:
+probed against the twelve `library_notes*` modules, `Export…` returns
+nothing and this claim fails, while `Export` returns thirteen and the
+corrected sentence stands. Recorded on the script and as task-32589 AC#7-8.)*

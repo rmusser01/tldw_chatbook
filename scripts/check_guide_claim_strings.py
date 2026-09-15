@@ -85,18 +85,32 @@ def normalise(fragment: str) -> str:
 def emitted_somewhere(fragment: str, source_root: Path = SOURCE_ROOT) -> bool:
     """True when some source file contains ``fragment`` literally.
 
-    ponytail: greps raw source text, so a comment or docstring counts as
-    "emitted" and the checker stays silent on a label that does not exist.
-    That is not hypothetical -- it is how this very sweep's own stamp
-    certified `import-and-export.md`'s "press Export… in Notes" claim: the
-    Notes toolbar ships a bare ``"Export"``, and ``"Export…"`` lives in a
-    dozen comments and docstrings across `UI/Library_Modules/` (including a
-    stale one at ``library_notes_controller.py:5406`` describing that very
-    action). Upgrade path: parse each module with ``ast`` and probe
-    ``ast.Constant`` string values only, which drops comments outright and
-    lets a docstring be excluded by position. Deliberately not done here --
-    a raw grep is what makes this runnable over the whole tree in seconds,
-    and the AST pass belongs with the allowlist in task-32589.
+    ponytail: the probe is REPO-WIDE, so it cannot falsify a claim that
+    names a surface. A guide says "press Export… **in Notes**"; this asks
+    only "does ``Export…`` exist anywhere under ``tldw_chatbook/``". It
+    does -- as a live ``Button`` label on Media, Conversations, Prompts,
+    Meetings, Artifacts and the Console inspector -- so the claim survives
+    while being false for the surface it names. That is exactly how this
+    sweep's own stamp certified `import-and-export.md`'s "press Export… in
+    Notes" while the Notes toolbar ships a bare ``"Export"``
+    (``library_notes_canvas.py:1842``).
+
+    Measured, because the obvious fix is the wrong one: ``Export…`` has 35
+    raw lines in the tree -- 12 pure ``#`` comments, 13 docstring nodes, and
+    **9 non-docstring string literals, 7 of them Button labels**. So an
+    ``ast.Constant`` pass that drops comments and docstrings still finds 9
+    hits and would NOT have caught this. Excluding prose is a precision
+    improvement; it is not the hole.
+
+    Upgrade path: bind a page (or a page section) to the modules that own
+    the surface it documents, and probe only those. Verified against this
+    incident both ways -- ``Export…`` scoped to the 12 ``library_notes*``
+    modules returns 0 hits, so the false claim fails; ``Export`` scoped the
+    same way returns 13, so the corrected sentence still passes. That
+    binding is the real work and belongs with the allowlist in task-32589;
+    a raw tree-wide grep is what makes this script runnable in seconds
+    today, and it still catches the larger class -- a string no source file
+    contains anywhere.
     """
     command = ["grep", "-rqF"]
     command += [f"--include={glob}" for glob in SOURCE_GLOBS]
