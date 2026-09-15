@@ -416,24 +416,22 @@ carries a one-line gloss: "Agent_Lessons — where Console agents file
 reusable lessons (empty)".
 
 On a terminal narrower than 64 columns the list pane is narrow enough that
-two things used to be cut off mid-word: the status line lost its last word
-("…or add from", without "files."), and the toolbar's third action painted
-as "Sel". At that width — and only there; at 64 columns and up the line
+the status line and the toolbar's third action would otherwise paint
+mid-word ("…or add from" instead of "files.", "Sel" instead of the full
+action name). At that width — and only there; at 64 columns and up the line
 keeps its full wording — the status line drops its "Library notes ·"
 prefix, since the source strip above it already says which notes these
 are, and the toolbar moves the action that does not fit onto a row of its
 own. Nothing is ever painted as half a word.
 
-That rule now holds for every toolbar row at every width, not only for the
-browse actions on a narrow terminal (task-32544, task-32557). Any group of
+This rule holds for every toolbar row at every width, not only the browse
+actions on a narrow terminal (task-32544, task-32557). Any group of
 actions wider than the pane it is in wraps onto as many rows as it needs,
 in reading order — which is what the folder actions do beside an open note
 on a wide terminal, where "New folder  Add to folder  Move note  Remove
-placement" needs one more cell than the list pane has and used to paint as
-"Remove pl". And a pane that narrows re-shapes its
-toolbar at once: making the terminal smaller no longer leaves the row in
-the shape the previous, wider size chose, which is what painted "Add from
-files…" as "Add from" against the grip after a resize down to 60 columns. A
+placement" needs one more cell than the list pane has. A pane that
+narrows re-shapes its toolbar at once, reading the pane's actual resolved
+width rather than the one its last compose had. A
 pane that *widens* keeps its shape until the next time the list refreshes —
 a row with room to spare costs nothing, and re-shaping on every resize would
 undo the in-place updates that keep a terminal drag cheap.
@@ -448,7 +446,7 @@ undo the in-place updates that keep a terminal drag cheap.
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
 | **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Right after a save completes in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when that save happened; leaving the note and reopening it later in the same session goes back to the bare "Saved". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). In Info, "Saved" appears once. |
-| Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. The count is the whole open note's, at any length: a 37 KB, 5,427-word note reads "5,427 words · 1:1" the moment it opens, whatever you had open before it, and the thousands separator is part of the number. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. The editor's Created/Modified/version line lives in one place, Info → Properties; the editor pane no longer builds a second, never-shown copy of it. |
+| Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. The count is the whole open note's, at any length: a 37 KB, 5,427-word note reads "5,427 words · 1:1" the moment it opens, whatever you had open before it, and the thousands separator is part of the number. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. The editor's Created/Modified/version line lives in one place, Info → Properties. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
@@ -485,7 +483,7 @@ handle ordinary typing.
 
 | Key | What it does |
 |---|---|
-| **Tab** / **Shift+Tab** | Move between the editor's own controls and stay there: "‹ Notes", Edit, Preview, Info, Save, Use in Console, Title, Body, and back round to "‹ Notes". Tab out of the body no longer wraps round to the "Library notes / Folder files" switch above the pane, where typed characters went nowhere. The move lands before the next keystroke, so typing straight through a Tab puts the rest where you meant it. |
+| **Tab** / **Shift+Tab** | Move between the editor's own controls and stay there: "‹ Notes", Edit, Preview, Info, Save, Use in Console, Title, Body, and back round to "‹ Notes". Tab out of the body stays inside that cycle, never wrapping round to the "Library notes / Folder files" switch above the pane. The move lands before the next keystroke, so typing straight through a Tab puts the rest where you meant it. |
 | **F6** / **Shift+F6** | Leave the editor for the Notes list or the Library rail. This is the way out of the editor's Tab cycle; **Escape** is the other (it returns to the list). |
 | **Ctrl+End** / **Ctrl+Home** | Jump the caret to the end or the start of the note body. `End` and `Home` still move within the current line. |
 | **Escape** | Returns to the list — one press, from Edit, Preview, or Info. From Info it goes back to the editor first. |
@@ -732,11 +730,10 @@ each row's controls act on the root they belong to.
 
 **Receipts**, under the root list, is where the writes lasting sync performs
 on its own show up: the newest 20 across every listed root, newest first, as
-"when · what happened · file · note" — for example "2026-09-14 07:34 ·
-Wrote note to file · People/Sam.md · Sam". "Wrote note to file" names a
-notes-to-folder write and "Updated note from file" a folder-to-notes one
-(task-32534). Before this a completed write left no trace anywhere in the
-app.
+"when · what happened · file · note" — "2026-09-14 07:34 · Wrote note to file ·
+People/Sam.md · Sam" for a note you edited in Chatbook, "Updated note from
+file" for a file you edited on disk (task-32534). Before this a completed
+write left no trace anywhere in the app.
 
 Tab moves through the root controls; the footer names the one you are on
 ("enter check changes", "enter pause") instead of a generic "run action", and
@@ -791,9 +788,9 @@ clicked if you clicked one, otherwise the folder being browsed.
 Once a folder is picked, the confirmation line shows its full path
 (elided in the middle only when the path is longer than the pane is wide,
 keeping the folder name itself visible), not just its name — and it is the
-only line that states the selection: the status line above it now says what to
-do next ("Check the selection to see what will be imported.") instead of
-repeating the same count (task-32554).
+only line that states the selection: the status line above it says what to
+do next ("Check the selection to see what will be imported.") rather than
+repeating the count (task-32554).
 
 Picking the folder puts focus back inside Import once, on the confirmation
 itself. From there **Tab** walks **Change selection** → **Clear** → **Check
@@ -809,9 +806,7 @@ import.") before you approve anything.
 Each source is one line — path · what will happen · where it lands — with its
 **Skip** and **Create new** controls beside the path. The middle clause names
 the outcome directly ("Create 1 new note: Monday · keywords daily, focus · 2
-links"); it used to open with a "Content:" label that named the column rather
-than the outcome, and those nine columns came off the end of the line that was
-already being clipped (task-32554). The path gives way
+links") rather than the column it came from (task-32554). The path gives way
 first if the line is too long (elided in the middle), because the half that
 decides anything is the outcome: the resulting title, its keywords and its
 link count.
@@ -1037,7 +1032,7 @@ The receipt is then on screen. Tab stays inside Import once throughout —
 
 #### Import once vs Keep a folder synced on the same folder
 
-Run over the same Obsidian vault, the two paths now skip the same files for
+Run over the same Obsidian vault, the two paths skip the same files for
 the same reasons: `.obsidian/`, `.trash/` and `Templates/` while the
 **Obsidian vault** toggle is on, and an empty or whitespace-only file
 whatever the toggle says. (Keep a folder synced does not remember the toggle
@@ -1227,10 +1222,9 @@ evidence directory remains for inspection.
   only the title and age; they still open on click.
 - **Notes cap at 2,000,000 characters** — longer content is rejected
   rather than truncated.
-- **"Use in Console" now actually delivers the note.** It used to stage
-  the note so it displayed as attached while sending nothing to the
-  model — that's fixed: your next send now carries a real excerpt of the
-  note body, not just its title.
+- **"Use in Console" delivers the note's real content, not just its
+  title** — your next send in Console carries an excerpt of the note
+  body itself.
 
 ## Verified against
 
@@ -2034,26 +2028,4 @@ About a dozen inline "(Was … — superseded by task-NNNNN)" clauses
 embedded in feature-description prose (not inside a "Verified against"
 stamp, where that framing belongs) are rewritten into the present tense
 of what the page already says, or dropped outright where they carried no
-fact beyond the sentence in front of them.
-
-Checked and NOT changed, because the evidence conflicts and neither side
-was walked live here: the Receipts paragraph's "Wrote note to file" for a
-note edited in Chatbook is disputed by this critique (no capture cited)
-against both this file's own immediately-adjacent wave-4 stamp (which
-cites `roots-11-disk-edit-review`/`roots-12-note-version` for exactly
-that receipt) and the reconciler's own `note_changed` -> `UPDATE_FILE`
-branch (`notes_sync_reconciler.py`), which structurally supports it —
-softened to state the vocabulary without asserting the specific pathway,
-rather than guessing which side is right. **task-32604 (merged to
-origin/dev after this branch forked, not yet on it) fixes the underlying
-gap this finding names and rewrites the Receipts/Check-changes prose
-comprehensively; that version should win over this stamp's narrower
-hedge once this branch is on top of it.** The chooser's pinned bar
-"holds only ‹ Notes" is also disputed (no capture cited) against
-`test_one_back_cue_grammar_across_the_notes_surfaces`, a passing pin
-this session extended (task-32624) that renders the same button with
-that exact text — left alone.
-
-Also not touched: `Docs/User_Guide/library/file-notes.md` is out of this
-page's scope; task-32606 (merged to origin/dev after this branch forked)
-fixes a false "last key on the row" claim there independently.)*
+fact beyond the sentence in front of them.)*
