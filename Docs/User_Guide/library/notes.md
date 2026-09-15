@@ -1001,7 +1001,8 @@ reason. The links figure counts every `[[link]]` that found a note the same
 batch created, across all of them, which is why it can be larger than the
 number of notes that carry one. When the batch imported notes containing
 Obsidian embeds, the receipt says so too ("3 embedded files left as text").
-**View N imported notes** takes you to the Notes list holding them. A file the app skipped for you — an unchanged repeat, an empty or
+The receipt's own action then takes you to the Notes list holding what it
+created, with the count on its label. A file the app skipped for you — an unchanged repeat, an empty or
 unsupported source — keeps its own reason there; only a row you set to Skip
 yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
 **Retry N failures**; a cancelled batch with unfinished items shows **Retry

@@ -216,7 +216,10 @@ def resolve_file_note_status_channels(
     elif dirty:
         content, safe = "Unsaved changes", None
     elif not file_open:
-        content, safe = "No file open.", "Choose a file in the tree"
+        # No "Next:" clause: this pane's safe actions name CONTROLS ("Save
+        # Copy", "Choose folder"), the tree is already the only thing to act
+        # on, and at 60x20 a sentence here is three rows of a two-row box.
+        content, safe = "No file open.", None
     else:
         content, safe = "Saved", None
 

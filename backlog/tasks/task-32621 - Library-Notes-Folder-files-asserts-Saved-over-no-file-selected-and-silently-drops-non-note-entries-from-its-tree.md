@@ -41,6 +41,26 @@ Cause PROVEN by capture.
 
 ## Implementation Notes
 
+**Seven tests pinned the defect.** `test_library_file_notes_workspace.py` had
+fourteen failing cases across seven functions asserting "Saved" as the content
+channel with NO file open -- including one that asserted it on the line before
+it opened its first file. Their subject is the Git channel and the
+"no cross-channel masking" contract, which is preserved; only the false content
+claim moved. Baseline established first: dev @3b26c66ce0 is **8 failed, 154
+passed** on that file, and every one of those eight (three
+`test_notes_authority_switch_*`, `test_notes_authority_round_trip_*` x2,
+`test_wide_files_task_return_*`, `test_high_stakes_..._legible_in_shipped_
+themes` x2) is red without this branch. The fourteen new ones are the copy
+change and nothing else -- checked by disabling the editor-visibility half
+alone, which changed none of them.
+
+**Copy, second pass.** The first version was "No file open. Next: Choose a file
+in the tree." Two things argued it down to "No file open.": at 60x20 the
+sentence is three rows of a two-row box, and every other safe action on this
+pane names a CONTROL ("Save Copy", "Choose folder", "Open Manage") where this
+one named a gesture. The tree is the only thing to act on and it is already on
+screen.
+
 **AC#1 -- the producer.** `resolve_file_note_status_channels` is a chain of
 `elif`s ending in `else: content = "Saved"`, and with no file open every
 save-state input is False -- so the fallback asserted a save for a file that

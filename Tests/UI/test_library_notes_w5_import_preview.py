@@ -537,7 +537,9 @@ def test_no_file_selected_asserts_no_save_state():
 
     empty = resolve_file_note_status_channels(root="/notes/vault", file_open=False)
     assert empty.content_recovery == "No file open."
-    assert empty.safe_next_action == "Choose a file in the tree"
+    # No "Next:" clause: this pane's safe actions name controls, and at 60x20
+    # a sentence here is three rows of a two-row box.
+    assert empty.safe_next_action is None
 
     opened = resolve_file_note_status_channels(root="/notes/vault", file_open=True)
     assert opened.content_recovery == "Saved"

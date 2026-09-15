@@ -111,9 +111,8 @@ goes.)
   **Manage** modes. Edit gives the file body nearly all available space;
   Manage groups path details, file actions, Session Git, and Danger. With no
   file open there is no save state and no body box: the status line reads
-  "No file open." — with "Choose a file in the tree" as its next action —
-  rather than claiming a save, and the editor appears when there is a file
-  to put in it.
+  "No file open." rather than claiming a save, and the editor appears when
+  there is a file to put in it.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **‹ Files** returns to the files.
