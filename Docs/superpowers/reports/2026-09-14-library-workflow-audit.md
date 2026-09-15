@@ -73,7 +73,7 @@ Native shutdown returned to the shell with exit status **0**; its exit status an
 
 ## Next work
 
-Repair hidden rail focus first, then resolve the Workspace refresh and query-budget findings. Fix the compact Notes assertion and existing modal inventory so later changes have trustworthy verification. The broader feature review still includes Library Prompts/Skills/Collections/ingestion details and the other application destinations; this report does not mark those reviewed.
+The initial product findings are repaired locally: [rail focus](../qa/2026-09-14-library-rail-focus/README.md), [Workspace refresh](../qa/2026-09-14-workspace-handoff/README.md), and [focus/resize query budgets](../qa/2026-09-14-library-query-budget/README.md). The compact Notes and modal inventory gaps are closed below. The broader feature review still includes Library Prompts/Skills/Collections/ingestion details and the other application destinations; this report does not mark those reviewed. TASK-32462 still tracks remaining footer, entry-compose and Prompts failures, plus integration into dev.
 
 The [evidence directory](../qa/2026-09-14-library-workflow-audit/README.md) contains selected SVG/ANSI captures, measured state, test summaries and the disposable probes. Full raw logs, the complete capture matrix and private databases remain in ignored audit scratch. This change commits audit documentation and task records only.
 
@@ -111,3 +111,36 @@ directories. These are mounted Textual checks with production stylesheets and
 disposable databases; the picker response and cancellation timing are controlled
 fixtures. This follow-up makes no new native file-picker or real-server claim.
 No new ADR is required: the existing ADR-086/150/161 contracts remain unchanged.
+
+## Modal inventory follow-up — TASK-31815
+
+Commit `b3109ba5cf` repairs the blocked inventory without production changes.
+The skill import chooser was absent from the concrete modal contract table,
+rather than an unsupported AST construction shape. Discovery then exposed an
+unregistered review-set picker, a moved Export presenter and a renamed File Notes
+root-picker presenter, in addition to the three stale Skills/Ingest entries
+already described by the task.
+
+The guard now compares **35 launch edges, 21 concrete types, and ten supported
+owner scopes** in both directions. Skills, Ingest and Export controller scopes
+are included. Both added dialog types run through the existing production-styled
+gesture, exact-result, opener-focus and lifecycle checks. Five source-mutation
+controls replace each repaired presenter's modal constructor with another known
+dialog type and confirm that keeping the owner/presenter name does not conceal
+the mismatch. Unknown constructors still fail discovery.
+
+Baseline: **1 failed, 169 passed**, with discovery aborted at the skill chooser.
+The first repaired discovery reached the comparison and exposed the Export/root
+picker drift. Final command:
+
+```sh
+.venv/bin/python -m pytest Tests/UI/test_library_modal_dismissal.py Tests/Skills/test_skill_import_choice_modal.py Tests/UI/test_review_set_picker_dialog.py -q --tb=short
+```
+
+Result: **198 passed**. The complete modal file passes Ruff formatting and retains
+exactly its two baseline Ruff diagnostics, with none added; diff whitespace
+checks pass. The two warnings are the same old Kokoro-directory cleanup warnings
+seen in the Notes run. The decomposition recipe's standing-failure entries are
+removed and the repair commit is named. This covers the inventory's explicitly
+supported owners and mounted dialog contracts, not every Library feature journey
+or live external service. ADR-161 applies; no new ADR is required.
