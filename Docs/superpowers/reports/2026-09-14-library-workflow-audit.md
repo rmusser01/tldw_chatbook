@@ -315,3 +315,25 @@ run; targeted tests cover those branches.
 
 Next: Prompt Collections and Use in Console, followed by Skills and the other
 Library destinations. Integration into `dev` remains pending.
+
+## Prompt Collections — TASK-32632
+
+The [Collections review](../qa/2026-09-15-prompt-collections/README.md) repairs
+the Basic More actions entry, erased manager input drafts, offscreen modal-return
+focus and lost Apply retry focus. Done stages memberships; Apply persists them
+without saving or replacing the Prompt draft. Cancel preserves the prior set.
+Existing local ownership, atomic membership and stale-result contracts remain.
+
+**180 distinct targeted checks pass**, including six new keyboard journeys,
+catalog and membership regressions, neighboring History/actions, and governance.
+No new Ruff diagnostics or token changes; no full repository sweep. The final
+native run passes at 170×48 dark and 80×24 light through creation, name collision,
+rename, staging, Apply and Cancel. Six rendered captures show the final controls.
+Normal Ctrl+Q returned exit 0; read-only SQLite confirms original v1 Prompt
+content and the exact renamed collections and memberships. The owned session
+was closed. The existing staged summary may use `Collection #ID` until Apply,
+and compact status text below Apply may require scrolling. Native fault injection
+and large-catalog qualification remain covered by automated tests only.
+
+Next: Use in Console, followed by Skills and the other Library destinations.
+Integration into `dev` remains pending.

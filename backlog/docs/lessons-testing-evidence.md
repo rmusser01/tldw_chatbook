@@ -14293,3 +14293,14 @@ for the animator alone guaranteed the resulting frame had painted. A bounded
 focus-and-paint predicate observes the eventual UI without forcing a scroll or
 weakening the content assertion. The gated mount case and all eight continuity
 cases pass with these readiness changes.
+
+## Returned focus can stay outside the viewport (TASK-32632, 2026-09-15)
+
+The Prompt Collections journey returned from its manager with Manage collections
+correctly focused at 80×24, but its region started at y=27 and painted nothing.
+Revealing Info from Basic had changed the layout before opening the modal.
+Textual's `Screen.set_focus` immediately returns for the already-focused widget,
+so asking the shared dismissal to focus the opener again did not scroll it.
+A guarded post-dismiss `scroll_visible` on the unchanged opener repaired the
+actual keyboard return. The four size/theme journeys assert both focus identity
+and painted label; the native compact capture verifies the button is in view.

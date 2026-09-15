@@ -127,6 +127,15 @@ current organization workflow.
 
 ### Local Prompt collections
 
+On a saved Prompt, **More actions → Collections** opens the manager and reveals
+**Info** when entered from Basic. Advanced and Info keep their current view.
+**Done** and **Cancel** return to the visible **Manage collections** control.
+In the membership manager, Done stages the selected set; **Apply memberships**
+saves it separately from Prompt Save. Cancel keeps the previous staged set.
+You can use the Info controls while the Prompt has unsaved content changes;
+applying memberships preserves that draft. A failed Apply keeps the selection
+and returns keyboard focus to Apply for retry.
+
 The list selector and the editor's **Manage collections** action open the same
 **Manage Prompt collections** surface. It is explicitly **Local only**: there is
 no source or server selector. Collection rows are ordered by the local catalog's
@@ -142,6 +151,8 @@ shown literally, including Unicode and text such as `[bold]`. If two names diffe
 only in a way that would otherwise look identical, their rows retain literal
 ID-qualified labels such as `Planning · #17`. A deterministic name collision says
 **Name already exists — choose another.** and does not offer a misleading Retry.
+Entered names and unsubmitted search text survive selection and catalog updates,
+so a collision can be corrected in place.
 Other failures use bounded create/rename copy and may be retried without exposing
 service details. The Prompt collection manager deliberately has no **Delete**
 action.

@@ -1525,10 +1525,34 @@ class LibraryPromptsController:
         event.stop()
         if self._library_prompts_mutation_in_flight:
             return
-        self.run_worker(
-            self._await_library_prompt_durable_call(
+        opener = event.button
+        restore_focus = opener.has_focus
+
+        def restore_membership_focus() -> None:
+            if (
+                not restore_focus
+                or not opener.is_attached
+                or self.app.screen is not opener.screen
+                or opener.screen.focused is not None
+            ):
+                return
+            target = (
+                opener
+                if not opener.disabled
+                else self.query_one("#library-prompt-memberships-manage", Button)
+            )
+            target.focus()
+
+        async def apply_and_restore_focus() -> None:
+            await self._await_library_prompt_durable_call(
                 self._library_prompt_collections_controller.apply_memberships()
-            ),
+            )
+            # Applying temporarily disables the keyboard opener. Return to
+            # retry (or Manage after success) only if no newer focus owns it.
+            self.call_after_refresh(restore_membership_focus)
+
+        self.run_worker(
+            apply_and_restore_focus(),
             exclusive=True,
             group="library_prompt_memberships_apply",
         )
@@ -2491,6 +2515,7 @@ class LibraryPromptsController:
     @on(Button.Pressed, "#library-prompt-mode-advanced")
     @on(Button.Pressed, "#library-prompt-mode-info")
     @on(Button.Pressed, "#library-prompt-more-history")
+    @on(Button.Pressed, "#library-prompt-more-collections")
     async def handle_library_prompt_editor_mode(self, event: Button.Pressed) -> None:
         """Switch the three mounted Prompt projections without replacing the draft."""
         event.stop()
@@ -2500,7 +2525,8 @@ class LibraryPromptsController:
             "library-prompt-mode-info": "info",
         }.get(event.button.id, "basic")
         open_history = event.button.id == "library-prompt-more-history"
-        if open_history:
+        open_collections = event.button.id == "library-prompt-more-collections"
+        if open_history or open_collections:
             requested = (
                 self._library_prompt_editor_mode
                 if self._library_prompt_editor_mode in {"advanced", "info"}
@@ -2532,12 +2558,17 @@ class LibraryPromptsController:
         except NoMatches:
             return
         await canvas.set_editor_mode(requested)
-        if open_history:
+        if open_history or open_collections:
             canvas.more_actions_open = False
             canvas.query_one("#library-prompt-more-actions-region").display = False
+        if open_history:
             history = canvas.query_one("#library-prompt-history-collapsible", Collapsible)
             history.collapsed = False
             history.screen.set_focus(history.query_one("CollapsibleTitle"))
+        elif open_collections:
+            manage = canvas.query_one("#library-prompt-memberships-manage", Button)
+            manage.screen.set_focus(manage)
+            self.call_after_refresh(manage.press)
         self._library_prompt_editor_mode = requested
         library_config = self.app_instance.app_config.setdefault("library", {})
         if isinstance(library_config, dict):

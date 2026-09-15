@@ -552,14 +552,6 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             self.more_actions_open
         )
 
-    @on(Button.Pressed, "#library-prompt-more-collections")
-    def _open_more_collections(self, event: Button.Pressed) -> None:
-        event.stop()
-        try:
-            self.query_one("#library-prompt-memberships-manage", Button).press()
-        except NoMatches:
-            return
-
     def on_key(self, event: events.Key) -> None:
         if event.key != "escape" or not self.more_actions_open:
             return

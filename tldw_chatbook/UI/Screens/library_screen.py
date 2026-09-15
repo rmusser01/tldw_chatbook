@@ -26157,6 +26157,7 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-prompt-mode-advanced")
     @on(Button.Pressed, "#library-prompt-mode-info")
     @on(Button.Pressed, "#library-prompt-more-history")
+    @on(Button.Pressed, "#library-prompt-more-collections")
     async def handle_library_prompt_editor_mode(self, event: Button.Pressed) -> None:
         return await self._prompts_controller.handle_library_prompt_editor_mode(event)
 

@@ -1,0 +1,54 @@
+{
+  "pid": 37223,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "prompt_id": 16,
+      "prompt_name": "Native collections 37223 170",
+      "prompt_version": 1,
+      "collection_id": 1,
+      "collection_name": "[bold] caf\u00e9 renamed 170",
+      "basic_menu_reveals_info": true,
+      "create_collision_retains_name": true,
+      "rename_literal_name": true,
+      "done_stages_cancel_retains_applied": true,
+      "apply_preserves_dirty_draft_and_fields": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "prompt_id": 17,
+      "prompt_name": "Native collections 37223 80",
+      "prompt_version": 1,
+      "collection_id": 2,
+      "collection_name": "[bold] caf\u00e9 renamed 80",
+      "basic_menu_reveals_info": true,
+      "create_collision_retains_name": true,
+      "rename_literal_name": true,
+      "done_stages_cancel_retains_applied": true,
+      "apply_preserves_dirty_draft_and_fields": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "passed": true,
+  "normal_quit_requested": true,
+  "app_run_returned": true,
+  "exit_code": 0,
+  "observed_shell": "zsh",
+  "final_terminal_size": [
+    80,
+    24
+  ],
+  "storage_isolation": {
+    "configured_storage_roots": 12,
+    "all_within_private_profile": true
+  }
+}

@@ -2334,6 +2334,12 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
             lambda: host.screen is not screen,
             message="collection manager did not reopen",
         )
+        await _wait_for_condition(
+            pilot,
+            lambda: host.screen._catalog.status in {"ready", "empty"}
+            and host.screen.query_one("#prompt-collection-manager-search", Input).has_focus,
+            message="reopened manager catalog did not finish mounting",
+        )
         search = host.screen.query_one("#prompt-collection-manager-search", Input)
         search.value = "does-not-match"
         search.focus()
@@ -2467,6 +2473,9 @@ async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_
         )
         assert before_apply["collection_ids"] == (first["collection_id"],)
 
+        # Returning from a modal refreshes Library counts independently of
+        # Apply. Measure the mutation's refresh after that return has settled.
+        refreshes.clear()
         screen.query_one("#library-prompt-memberships-apply", Button).press()
         await _wait_for_condition(
             pilot,
