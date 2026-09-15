@@ -10,6 +10,36 @@ decays into folklore, and folklore gets ignored. If you add one, bring the incid
 
 ---
 
+## Covered screens retain old geometry, and a fixed number of Pilot pauses does not prove quiescence
+
+**TASK-32562 backup UAT, 2026-09-14–15.** Recomposition below stacked backup
+screens left the retained Console tray's old positive region in place while its
+new children had no layout. A native reproduction on `63756` counted 3,839
+height-fit callbacks in 0.25 seconds: requesting another refresh could not lay
+out a screen hidden beneath an opaque screen. The reviewed correction waits
+once for the owning screen's layout signal and releases the subscription on
+delivery or unmount. The analogous bounded-section correction in `2031d` keeps
+ordinary scheduling for current/background-visible screens; an initial broader
+wait broke an existing visible resize test and was narrowed before publication.
+
+The Windows returned-layout test then passed its geometry, scroll, focus, hint
+and allocator assertions but still had a pending callback after three
+`Pilot.pause()` calls. The last pause can itself enqueue reconciliation. The
+`dc96b` test correction observes completion with a finite two-second wait,
+retaining both the earlier covered-screen callback stability checks and the
+final callback-count stability assertion. It does not permit an infinite loop.
+The exact Windows repeat passed all eight bounded-layout cases, both guidance
+cases and the installed plaintext backup/restore/Open journey (59 native and
+16 selected product passes overall). See the
+[artifact and source audit](../../Docs/Development/backup-uat-remediation-evidence-20260913/windows-dc96b-restore-independent-review-20260915.md)
+and [remediation record](../../Docs/Development/backup-uat-remediation-2026-09-13.md).
+
+Use actual screen visibility/layout events to resume deferred geometry work,
+and test quiescence as a bounded condition with a separate callback-stability
+check. A positive old region or a fixed count of Pilot turns establishes neither.
+
+---
+
 ## `run_worker` does not forward positional arguments to the callable
 
 **TASK-16314 review round, 2026-08-14 (commit `14373a7ac`).** The trajectory screen's
@@ -1053,32 +1083,55 @@ been invoked. `call_after_refresh` works too where a layout pass is wanted.
 - `Input.select_on_focus` defaults to `True` already; the reason click-to-
   focus behaved differently from Tab-to-focus is entirely this ordering.
 
----
+## A recomposed child has no width yet — measure the container that SURVIVES the recompose (task-32554, 2026-09-14)
 
-## Covered screens retain old geometry, and a fixed number of Pilot pauses does not prove quiescence
+The Import once confirmation had to render a selected folder's path whole when
+the pane could hold it and middle-elide only when it could not, so the canvas
+composed the line at a compact floor and widened it afterwards from the
+mounted width, scheduled with `call_after_refresh` from `on_mount`,
+`_after_recompose` and `on_resize`.
 
-**TASK-32562 backup UAT, 2026-09-14–15.** Recomposition below stacked backup
-screens left the retained Console tray's old positive region in place while its
-new children had no layout. A native reproduction on `63756` counted 3,839
-height-fit callbacks in 0.25 seconds: requesting another refresh could not lay
-out a screen hidden beneath an opaque screen. The reviewed correction waits
-once for the owning screen's layout signal and releases the subscription on
-delivery or unmount. The analogous bounded-section correction in `2031d` keeps
-ordinary scheduling for current/background-visible screens; an initial broader
-wait broke an existing visible resize test and was narrowed before publication.
+A widget-level pin at 190 columns went green. The live app at 235x52 still
+showed `/Users/…/w4-imp…vault` — the 48-character floor — and only snapped to
+the full path when the terminal was resized.
 
-The Windows returned-layout test then passed its geometry, scroll, focus, hint
-and allocator assertions but still had a pending callback after three
-`Pilot.pause()` calls. The last pause can itself enqueue reconciliation. The
-`dc96b` test correction observes completion with a finite two-second wait,
-retaining both the earlier covered-screen callback stability checks and the
-final callback-count stability assertion. It does not permit an infinite loop.
-The exact Windows repeat passed all eight bounded-layout cases, both guidance
-cases and the installed plaintext backup/restore/Open journey (59 native and
-16 selected product passes overall). See the
-[artifact and source audit](../../Docs/Development/backup-uat-remediation-evidence-20260913/windows-dc96b-restore-independent-review-20260915.md)
-and [remediation record](../../Docs/Development/backup-uat-remediation-2026-09-13.md).
+- **`refresh(recompose=True)` remounts the CHILDREN.** The `Static` the fit
+  measured was a brand-new widget on every recompose, and inside the
+  `call_after_refresh` that the recompose itself scheduled it was still
+  unmeasured: `content_size.width == 0`. The guard for "not laid out yet"
+  then returned, and nothing re-armed until a `Resize` arrived — which is why
+  a manual terminal resize "fixed" it and no code path did.
+- **The canvas that OWNS the child keeps its width across the child's
+  recompose.** Measuring `self.content_size.width` (less the scrolling body's
+  own chrome) and falling back to it whenever the child reads 0 makes the
+  first pass correct.
+- **A bare single-widget host cannot show this.** There the widget mounts
+  once, is laid out once, and the child is measured by the time the callback
+  runs. The defect only exists where the widget is remounted by a parent's
+  sync — so the pin has to run on the real screen route, not only on a host
+  app. Both pins are kept: the host for the copy rule, the screen for the
+  measurement.
 
-Use actual screen visibility/layout events to resume deferred geometry work,
-and test quiescence as a bounded condition with a separate callback-stability
-check. A positive old region or a fixed count of Pilot turns establishes neither.
+## Library Notes replays a captured focus after every canvas sync — fix the ROLE, not the timing (task-32540, 2026-09-14)
+
+After "Select folder", Import once's confirmation pane left focus on the
+stepper's back button, several Tab stops past the three actions the pane had
+just offered. The obvious fix — focus the pane from the picker's dismiss
+callback — did not hold, and neither did doing it from `call_after_refresh`,
+nor doing it *before* the snapshot landed.
+
+- **Every canvas-scoped Notes sync captures a portable focus IDENTITY before
+  recomposing and replays it after** (`_capture_library_notes_focus_identity`
+  → `_restore_library_notes_after_targeted_sync`). Whatever you set
+  imperatively is overwritten by that replay, which runs last. Tracing it
+  needs a `set_focus` wrapper that prints a stack — the symptom alone
+  ("focus is on the back button") names neither the writer nor the ordering.
+- **The replay resolves a semantic ROLE, and an unresolvable role falls back
+  per phase.** Here the SELECT-phase fallback named `#note-import-add-source`
+  — a button the FOLDER branch of that phase never composes — so the chain
+  fell through to the back button. Registering the pane's own scroll owner as
+  a role (both halves: widget id → role, role → selector) and inserting it in
+  that fallback chain fixed it at the seam, with no timing to lose.
+- **Corollary:** a focus fallback that names one branch's control is a latent
+  defect for every other branch of the same phase. Prefer a target the phase
+  always composes.
