@@ -51,7 +51,17 @@ SORT_OPTIONS = [
 ]
 
 NOTE_SUFFIXES = frozenset({".md", ".markdown", ".txt"})
-"""Extensions the Notes importer/sync treat as a note, for the folder badge."""
+"""What the folder badge counts as a note (task-32643 AC#2).
+
+Deliberately a local set rather than a reused one, because the three doors
+this badge serves do not agree on the question: Folder files reads
+``file_notes_service.SUPPORTED_EXTENSIONS`` (adds ``.text``), Keep a folder
+synced reads ``notes_sync_runtime._SYNC_FILE_EXTENSIONS`` (exactly this set),
+and Import once reads ``note_import_parsers``' wider set (adds ``.rst``,
+``.json``, ``.yaml``, ``.yml``, ``.csv``). These three are the INTERSECTION,
+so the badge never over-promises on any door. It is an advisory count for
+choosing between folders, not a prediction of what an import will take.
+"""
 
 NOTE_COUNT_CEILING = 500
 """Hard bound on one folder's badge count (task-32643 AC#2).
