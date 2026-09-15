@@ -1,0 +1,29 @@
+{
+  "run": "run-002",
+  "process_id": 1573,
+  "fresh_log_start": "2026-09-15 00:53:26",
+  "fresh_log_end": "2026-09-15 00:53:49",
+  "historical_copied_profile_log_entries_excluded": true,
+  "notices": [
+    "2026-09-15 00:53:26 [ERROR   ] tldw_chatbook.UI.Screens.chat_screen:463 - Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'",
+    "2026-09-15 00:53:27 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.",
+    "2026-09-15 00:53:27 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-15 00:53:27 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-15 00:53:27 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-15 00:53:30 [WARNING ] textual_image._terminal:115 - Failed to probe terminal capabilities",
+    "2026-09-15 00:53:49 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)",
+    "2026-09-15 00:53:49 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)",
+    "2026-09-15 00:53:49 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)"
+  ],
+  "interpretation": "Existing Console startup, optional audio, terminal capability, and worker status notices remain. This run qualifies the local Prompt journey, not clean application startup or a provider interaction.",
+  "fresh_exit_code": 0,
+  "observed_post_exit_pane": "1205 zsh 80x24",
+  "owned_tmux_session_closed_after_shell_return": true,
+  "visual_review": [
+    "failure-170.svg",
+    "failure-80.svg",
+    "receipt-170.svg",
+    "receipt-80.svg"
+  ],
+  "visual_result": "Deletion error and retry control are readable; Undo and Dismiss are readable at both sizes. Prompt title truncation in the compact receipt does not obscure the recovery controls."
+}

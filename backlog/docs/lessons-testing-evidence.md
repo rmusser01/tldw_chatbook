@@ -14247,3 +14247,33 @@ and that worker never ran in tests at all.
    their tests. Only the tmux walk distinguished them, and only a patched
    `queue_after_recompose`/`recompose` pair printing what was queued and what
    ran located the eviction.
+
+## Saved identity does not imply the Browse route (TASK-32628, 2026-09-15)
+
+The Prompt action review passed deletion journeys that opened an existing item
+from Browse. The native New prompt → Save → Duplicate → Save → Delete journey
+then displayed confirmation but silently ignored it: the saved editor still
+belonged to `create-prompt`, while both confirmation admission and mutation
+settlement required `browse-prompts`. Reusing the existing active-editor
+predicate in both single-item guards repaired the flow; bulk selection keeps
+its Browse-only gate. A separate real-SQLite Create-route regression failed
+before the fix at both terminal sizes. Cover each entry route that can retain
+a saved editor; a saved ID alone does not establish route equivalence.
+
+The same review's committed-delete/failed-refresh recovery test exposed a
+pending resize callback on the replaced Prompt pane. Textual's `is_mounted`
+remained true after removal, so reading `self.screen` raised `NoScreen`.
+The regression removes a real mounted pane and invokes its captured callback;
+checking `is_attached` as well prevents access to a screen it no longer owns.
+
+Two neighboring checks also needed explicit UI completion. Delaying the reader's
+replacement save-menu Select compose by 200 ms reproduced `SelectOverlay`
+missing after test shutdown had already started: the test's Input-value
+predicate had returned before its sibling Select mounted. Wait for the actual
+replacement control's mount before ending that journey. In the compact
+Advanced editor, the focused field was outside the viewport while its ancestor
+scroll was at 4.1 and 12.3 on the way to 27. Neither one idle pause nor waiting
+for the animator alone guaranteed the resulting frame had painted. A bounded
+focus-and-paint predicate observes the eventual UI without forcing a scroll or
+weakening the content assertion. The gated mount case and all eight continuity
+cases pass with these readiness changes.

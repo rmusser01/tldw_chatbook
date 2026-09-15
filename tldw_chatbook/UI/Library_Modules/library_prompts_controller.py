@@ -2743,11 +2743,14 @@ class LibraryPromptsController:
             state.keywords_csv,
         )
 
-    def _update_library_prompt_status_static(self, text: str) -> None:
+    def _update_library_prompt_status_static(
+        self, text: str, *, reveal: bool = False
+    ) -> None:
         """Targeted update of ``#library-prompt-save-status``, no recompose.
 
         Args:
             text: The status copy to show (``""`` clears it).
+            reveal: Scroll the status into view without moving focus.
         """
         self._library_prompt_status = text
         try:
@@ -2755,6 +2758,8 @@ class LibraryPromptsController:
         except (NoMatches, QueryError):
             return
         status_static.update(text)
+        if reveal:
+            status_static.scroll_visible(animate=False)
 
     async def _sync_library_prompt_open_existing_button(self, *, show: bool) -> None:
         """Targeted mount/removal of ``#library-prompt-open-existing`` (Task
@@ -4072,7 +4077,8 @@ class LibraryPromptsController:
                     )
                 else:
                     self._update_library_prompt_status_static(
-                        "Could not delete this prompt. Nothing was deleted."
+                        "Could not delete this prompt. Nothing was deleted.",
+                        reveal=True,
                     )
                 return
             try:
@@ -4092,7 +4098,8 @@ class LibraryPromptsController:
                     )
                 else:
                     self._update_library_prompt_status_static(
-                        "This prompt changed elsewhere — refresh and try again."
+                        "This prompt changed elsewhere — refresh and try again.",
+                        reveal=True,
                     )
                 return
             except Exception:
@@ -4102,7 +4109,8 @@ class LibraryPromptsController:
                     )
                 else:
                     self._update_library_prompt_status_static(
-                        "Could not delete this prompt. Nothing was deleted."
+                        "Could not delete this prompt. Nothing was deleted.",
+                        reveal=True,
                     )
                 return
 
@@ -4119,7 +4127,8 @@ class LibraryPromptsController:
                     )
                 else:
                     self._update_library_prompt_status_static(
-                        "Could not delete this prompt. Nothing was deleted."
+                        "Could not delete this prompt. Nothing was deleted.",
+                        reveal=True,
                     )
                 return
 
@@ -4323,16 +4332,15 @@ class LibraryPromptsController:
             return False
         if not self._library_prompts_mutation_in_flight:
             return False
-        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS:
-            return False
         if selection_generation is not None:
             return (
-                self._library_prompts_view == "list"
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+                and self._library_prompts_view == "list"
                 and self._library_prompt_select_mode
                 and self._library_prompt_selection.generation == selection_generation
             )
         return (
-            self._library_prompts_view == "editor"
+            self._library_prompt_editor_active()
             and self._selected_prompt_id == editor_prompt_id
         )
 

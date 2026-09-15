@@ -26801,8 +26801,7 @@ class LibraryScreen(BaseAppScreen):
                 return
         elif (
             editor_prompt_id is None
-            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
-            or self._prompts_state.view != "editor"
+            or not self._library_prompt_editor_active()
             or self._prompts_state.selected_prompt_id != editor_prompt_id
             or self._prompts_state.version != targets[0].expected_version
         ):

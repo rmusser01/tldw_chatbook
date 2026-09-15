@@ -51,7 +51,7 @@ class LibraryPromptWorkPane(LibraryPromptsListCanvas):
 
     def _reveal_editor_focus(self) -> None:
         """Scroll current focus only; a later focus move owns the viewport."""
-        if not self.is_mounted:
+        if not self.is_mounted or not self.is_attached:
             return
         focused = self.screen.focused
         if focused is not None and self in focused.ancestors:

@@ -353,7 +353,9 @@ close it and return focus to More actions.
 - **Copy Markdown** copies the exact live working copy.
 - **Duplicate** opens a new unsaved copy named `<name> (copy)`.
 - **Delete** confirms before soft-deleting the saved item and leaves an
-  Undo/Dismiss receipt after success.
+  Undo/Dismiss receipt after success, including immediately after saving a
+  **New prompt**. If deletion fails, the error scrolls into view while your
+  fields remain intact and Delete stays available for retry.
 
 For a Prompt, **Use in Console** works differently from the notes and media
 actions: instead of staging a source for retrieval, it appends selected User

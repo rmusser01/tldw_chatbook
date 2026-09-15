@@ -1,0 +1,58 @@
+TASK-32628 — local Prompt actions and recovery verification
+Base commit: 38d06155a1
+Worktree: .worktrees/component-pattern-library
+No full repository sweep was run.
+
+1. .venv/bin/python -m pytest Tests/UI/test_library_prompt_action_journeys.py Tests/UI/test_library_prompts_canvas.py::test_library_prompt_delete_refresh_failure_keeps_reconciled_page_read_only -q --tb=short
+Result: 12 passed, 2 warnings in 62.60s.
+Includes 11 new cases and one existing case also included in command 2.
+
+2. .venv/bin/python -m pytest Tests/UI/test_library_prompts_canvas.py -k 'delete or undo or more_actions or duplicate' -q --tb=short
+Result: 49 passed, 293 deselected, 2 warnings in 112.96s.
+
+3. .venv/bin/python -m pytest Tests/UI/test_library_prompt_resize_focus.py Tests/UI/test_library_prompt_save_continuity.py Tests/UI/test_library_prompts_reader.py -q --tb=short
+Initial result: 35 passed, 1 failed, 2 warnings in 101.09s.
+Failure: test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selection
+raised NoMatches for SelectOverlay while mounting Select(id='prompt-editor-save-menu').
+No production edits followed this result. The isolated test passed ordinarily,
+with a lifecycle tracing wrapper, and with a diagnostic 50ms mount delay.
+A compose-delay diagnostic then reproduced the failure with shutdown already
+started. Adding actual Select mount readiness passes the same diagnostic (1 passed).
+An intermediate 36-case rerun and an animator-idle attempt each had 35 passed
+and one compact Advanced paint failure. Scroll observations showed focus was
+correct while the ancestor was still moving toward its target. The final test
+waits for focused content to paint, without forcing any UI change.
+
+Final uninstrumented command (same three files, with -x):
+Result: 36 passed, 2 warnings in 99.22s.
+The separate instrumented continuity file also passed all 8 cases in 29.81s.
+
+4. .venv/bin/python -m pytest Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py Tests/UI/test_component_pattern_governance.py -q --tb=short
+Result: 31 passed, 5 warnings in 42.90s.
+Run after the status reveal repair; later route/attachment guards did not change
+stylesheets, tokens or the properties covered by this selection.
+
+5. Ruff check and format --check on the new journey file, work pane and native probe:
+All checks passed; 5 files already formatted (including the repaired continuity file and compose diagnostic).
+Controller: baseline/current 16/16 diagnostics. LibraryScreen: 205/205.
+Reader test file: baseline/current 1/1 diagnostics. No diagnostics added; all four changed production methods and the changed reader test pass formatting independently.
+See static.json. Full legacy files were not reformatted.
+
+6. Native TldwCli / LinuxDriver, private run-002:
+170x48 textual-dark and 80x24 textual-light action/recovery journeys passed.
+Normal Ctrl+Q at 80x24 returned from app.run; fresh exit code 0;
+post-exit pane observed as 1205 zsh 80x24, then the owned session was closed.
+Post-exit read-only SQLite assertions passed (see persistence.json).
+Four exported screens rendered and visually reviewed (see README.md).
+
+Diagnostic failures before their respective repairs:
+- Two wide/compact failed-delete paint assertions.
+- Two saved Create-route confirmed-delete settlement assertions.
+- Removed-pane resize callback raised NoScreen.
+The existing committed-delete/failed-refresh recovery case independently raised
+the same NoScreen before the attachment guard. All now pass in commands 1/2.
+
+Warnings include existing old Kokoro-directory cleanup and governance marker
+notices. Native startup/quit notices are recorded in native-log-review.json.
+
+Final distinct coverage: 11 new action journeys + 49 existing action/recovery cases + 36 neighboring cases + 31 governance cases = 127. Reruns and overlapping cases are not counted twice.

@@ -124,7 +124,14 @@ async def test_first_prompt_save_settles_items_without_leaving_editor(
             screen.query_one("#library-prompt-info-provenance", Static).renderable
         )
         block.focus()
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen.focused is block
+                and "Retain this" in _painted_text(host, block.region)
+            ),
+            message="Focused Advanced content did not become readable",
+        )
         assert "Retain this" in _painted_text(host, block.region)
         basic = screen.query_one("#library-prompt-mode-basic", Button)
         basic.focus()

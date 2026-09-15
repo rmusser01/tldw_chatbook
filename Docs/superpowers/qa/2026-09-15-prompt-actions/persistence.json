@@ -1,0 +1,27 @@
+{
+  "read_only_post_exit_check": true,
+  "rows": [
+    {
+      "id": 7,
+      "name": "Native actions audit 1573",
+      "user_prompt": "Keep this reusable message.",
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": 8,
+      "name": "Native actions audit 1573 (copy) 170",
+      "user_prompt": "Keep this reusable message.",
+      "version": 4,
+      "deleted": 1
+    },
+    {
+      "id": 9,
+      "name": "Native actions audit 1573 (copy) 80",
+      "user_prompt": "Keep this reusable message.",
+      "version": 4,
+      "deleted": 1
+    }
+  ],
+  "live_count": 7
+}

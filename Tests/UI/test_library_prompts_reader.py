@@ -8,7 +8,7 @@ import json
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from Tests.UI.test_library_prompts_canvas import (
     _build_test_app,
@@ -770,9 +770,12 @@ async def test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selectio
         assert screen._prompts_state.loaded_id == first_id
         assert screen.query_one("#library-prompt-name", Input).value == "First prompt"
         assert screen.query_one("#library-prompt-name", Input).disabled is True
-        assert "showing “first prompt”" in str(
-            screen.query_one("#library-prompt-detail-status", Static).renderable
-        ).lower()
+        assert (
+            "showing “first prompt”"
+            in str(
+                screen.query_one("#library-prompt-detail-status", Static).renderable
+            ).lower()
+        )
 
         monkeypatch.setattr(service, "get_prompt", original_get_prompt)
         screen.query_one("#library-prompt-detail-retry", Button).press()
@@ -782,6 +785,7 @@ async def test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selectio
                 screen._prompts_state.loaded_id == second_id
                 and screen.query_one("#library-prompt-name", Input).value
                 == "Second prompt"
+                and screen.query_one("#prompt-editor-save-menu", Select).is_mounted
             ),
             message="Prompt detail retry did not load the selected identity",
         )

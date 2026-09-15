@@ -230,3 +230,35 @@ shutdown qualification for this run. Existing startup warnings remain recorded.
 Next in the feature review: remaining Prompt actions and recovery paths, then
 Skills, Collections, ingestion and other destinations. Integration into `dev`
 remains pending.
+
+## Prompt More actions and deletion recovery — TASK-32628
+
+The [action and recovery evidence](../qa/2026-09-15-prompt-actions/README.md)
+records three repairs: deletion failures reveal their existing error status;
+saved New prompt editors accept confirmed deletion and its recovery result;
+and a removed work pane ignores a pending resize callback. The existing
+identity/version and mutation ownership checks remain, and bulk selection
+continues to require the Browse route.
+
+The new real-SQLite journeys cover all six menu controls with keyboard focus
+and painted labels at both sizes and themes, detached Duplicate, Cancel,
+storage failure and retry, Undo, Dismiss, and the saved Create route. Neighboring
+checks also exposed two readiness gaps: a reader test ended before its
+replacement dropdown mounted, and a compact focus test sampled an unfinished
+scroll. A controlled compose delay reproduced the first; scroll position
+observations explained the second. Their assertions remain intact with explicit
+mount and focus/paint waits. The final selections pass **127 distinct targeted
+checks**: 11 new journeys, 49 existing action/recovery cases, 36 neighboring
+cases, and 31 governance checks. No new Ruff diagnostics were introduced.
+
+The private native journey passes at measured 170×48 dark and 80×24 light.
+Read-only post-exit SQLite checks confirm the original stays at version 1 and
+the two copies remain deleted at version 4 after Undo and a second deletion.
+Normal compact Ctrl+Q returns exit 0 and the shell. Existing startup/quit notices
+are retained in the evidence; no provider interaction was qualified.
+
+Next: complete the actual Export, Copy Markdown, History, Collections and
+Use in Console flows, then continue through Skills and the other Library
+destinations. This pass qualifies those menu controls' reachability only where
+their full action is outside the recovery journey. Integration into `dev`
+remains pending.
