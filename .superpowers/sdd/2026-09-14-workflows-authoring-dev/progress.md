@@ -2,6 +2,17 @@
 
 ## Reopened PR integration — 2026-09-15
 
+Latest checkpoint: all 14 patches replayed identically onto newer dev94cc1200d5;
+code head e1e4223745. Domain/storage271, editor/paging/projection102, CSS11,
+new-base editor/destination77 passed, and complete preflight passed again.
+Mounted500-step same-layout raw edit measured55.84ms with controls preserved.
+Independent reviewer Averroes confirmed the rebase and found two boundary
+lineage/node-budget bugs. Five rejecting cases reproduced RED (one accepted
+boundary case passed). Main added serialization complexity checking and invalid
+copy rejection; latest domain/UI subset and scoped re-review pending. Full
+details: Docs/UAT/2026-09-15-workflows-qodo-remediation.md. Earlier checkpoints
+below are historical, not instructions to repeat work.
+
 User explicitly requests rebase PR2690 on current dev, address Qodo, then merge.
 Task32601 reopened with AC7 and integration plan. Prior completed tasks below are
 historical and must not be replayed. Backup branch codex/workflows-authoring-pre-rebase-20260915

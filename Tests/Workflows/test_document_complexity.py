@@ -97,6 +97,67 @@ def test_generated_identity_also_counts_toward_node_limit():
         DocumentService.project(raw)
 
 
+@pytest.mark.parametrize("count", [99999, 100000])
+def test_save_rechecks_node_budget_after_adding_parent(count, tmp_path):
+    db = WorkflowsDB(tmp_path / "workflows.sqlite3")
+    try:
+        documents = DocumentService(db)
+        base = documents.create(node_raw(count))
+        draft = documents.put_draft(
+            base.workflow_id, base.revision_id, base.raw_json, 1
+        )
+        if count == 100000:
+            with pytest.raises(InvalidDraft, match="100000"):
+                documents.save_revision(base.workflow_id, base.revision_id, 1)
+            assert documents.get_head(base.workflow_id) == base
+            assert documents.list_revisions(base.workflow_id) == (base,)
+        else:
+            saved = documents.save_revision(base.workflow_id, base.revision_id, 1)
+            assert documents.project(saved.raw_json)["metadata"]["tldw_workflow"][
+                "parent_revision_ids"
+            ] == [base.revision_id]
+        assert documents.get_draft(base.workflow_id, base.revision_id) == draft
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("source_kind", ["revision", "draft"])
+@pytest.mark.parametrize("existing_target", [False, True])
+def test_copy_rejects_over_budget_lineage_without_changing_target(
+    source_kind, existing_target, tmp_path
+):
+    db = WorkflowsDB(tmp_path / "workflows.sqlite3")
+    try:
+        documents = DocumentService(db)
+        source = documents.create(node_raw(100000))
+        documents.put_draft(
+            source.workflow_id,
+            source.revision_id,
+            documents.edit_field(
+                source.raw_json, "/metadata/opaque", "[]", as_json=True
+            ),
+            1,
+        )
+        head = documents.save_revision(source.workflow_id, source.revision_id, 1)
+        if existing_target:
+            documents.put_draft(head.workflow_id, head.revision_id, head.raw_json, 1)
+        previous = documents.get_draft(head.workflow_id, head.revision_id)
+        if source_kind == "draft":
+            source = documents.put_draft(
+                source.workflow_id, source.revision_id, source.raw_json, 2
+            )
+        with pytest.raises(InvalidDraft, match="100000"):
+            if source_kind == "draft":
+                documents.copy_draft_to_head(source, head)
+            else:
+                documents.copy_revision_to_head(source, head)
+        assert documents.get_head(head.workflow_id) == head
+        assert documents.get_draft(head.workflow_id, head.revision_id) == previous
+        assert documents.project(head.raw_json)["metadata"]["opaque"] == []
+    finally:
+        db.close()
+
+
 @pytest.mark.parametrize(
     "raw",
     [

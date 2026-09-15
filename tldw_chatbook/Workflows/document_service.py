@@ -190,6 +190,7 @@ def _encode(value: Any, *, display: bool = False) -> str:
 
 
 def _serialize(document: dict) -> str:
+    _check_complexity(document)
     try:
         raw = _encode(document)
     except RecursionError:
@@ -1087,6 +1088,8 @@ class DocumentService:
         raw = self.revision_content(source, head)
         generation = previous.generation + 1 if previous else 0
         draft = self.validate_draft(head, raw, generation)
+        if draft.error is not None:
+            raise InvalidDraft(draft.error)
         cursor.execute(
             """INSERT INTO workflow_drafts
                    (workflow_id, base_revision_id, generation, raw_text, last_valid_json, error)
