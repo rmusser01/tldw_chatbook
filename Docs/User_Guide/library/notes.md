@@ -771,7 +771,10 @@ note — you do not have to run **Check changes**, and the row goes on saying
 "✓ Up to date" because by then it is (task-32604). This depends on lasting
 sync still running: if it has stopped, nothing is carrying changes either way
 and the root's row says so — "⚠ Sync stopped · Next: Check changes" — instead
-of claiming to be up to date. Until this the note side
+of claiming to be up to date. (The row says it the next time the list is
+drawn: on opening **Manage sync folders**, or on returning to the Library. A
+list you are already sitting on does not repaint itself.) Until this the note
+side
 produced no signal at all: Chatbook watches the folder, not the notes
 database, so a note you saved stayed in Notes only and its file kept its old
 bytes until something else touched the disk — with the row reading
@@ -784,12 +787,12 @@ anything. These do not, and their files stay as they are until you run
 while the row goes on reading "✓ Up to date":
 
 - **New note**, including a new note created straight into a synced folder.
-- **Save as note** in Console, and the same action on text you select inside a
+- **Save as Note** in Console, and the same action on text you select inside a
   Console message.
 - A note written by Research, by an ingest job, by an MCP tool, by the
-  assistant's own `update_note` tool, by **Import notes from files** over a
-  note that already exists, by **Save as document** from a chat, or by a
-  chatbook import.
+  assistant's own `create_note` or `update_note` tool, by the Library
+  `library_save_note` tool, by **Import once** over a note that already
+  exists, or by a chatbook import.
 - Deleting or restoring a note.
 
 None of those is new — none of them ever told lasting sync anything, and
