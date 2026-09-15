@@ -8,24 +8,21 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
+from textual.widgets import Button, Checkbox, Collapsible, DataTable, Static
+
+from Tests.UI.app_factory import _build_test_app
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
-from textual.css.query import NoMatches
-from textual.widgets import Button
-from textual.widgets import Checkbox
-from textual.widgets import Collapsible
-from textual.widgets import DataTable
-from textual.widgets import Static
-
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticHomeActiveWorkAdapter,
-    StaticWatchlistsScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
+    StaticWatchlistsScopeService,
     _active_destination_screen,
     _wait_for_selector,
 )
@@ -38,21 +35,25 @@ from Tests.UI.test_library_shell import (
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem
 from tldw_chatbook.UI.Navigation.main_navigation import (
     MainNavigationBar,
     NavigateToScreen,
 )
-from tldw_chatbook.UI.Workflows_Modules.console_context import WorkflowConsoleContext
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
+)
+from tldw_chatbook.UI.Screens import (
     library_screen as library_screen_module,
+)
+from tldw_chatbook.UI.Screens import (
     skills_screen as skills_screen_module,
+)
+from tldw_chatbook.UI.Screens import (
     watchlists_collections_screen as wc_screen_module,
 )
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
@@ -64,6 +65,7 @@ from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_tab_strip import SECTIONS
+from tldw_chatbook.UI.Workflows_Modules.console_context import WorkflowConsoleContext
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,

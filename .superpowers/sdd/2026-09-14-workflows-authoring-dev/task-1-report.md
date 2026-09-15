@@ -657,3 +657,99 @@ clarification. Parent commit remains the coordinator's `b0ce08a093b49b7abb9652d9
 no shared helpers or coordinator-owned documents are staged. Backlog remains
 In Progress pending coordinator review of the fix and the existing unwaived DoD
 concerns. No push/merge/stash/reset.
+
+## Final static-gate fix — introduced import ordering only (2026-09-15)
+
+Resumed from `3fd794c376b98f2dc3172ad9e18dfe24202ff5ea` on
+`codex/workflows-authoring-dev`, in the designated authoring worktree only.
+Read the current task, plan qualification section and ADR138 qualification,
+plus the receiving-code-review and verification-before-completion skills.
+The user-approved TASK-32601 gate now requires no new static debt, retaining
+source-attributed baseline findings instead of requiring unrelated whole-file
+cleanup. Coordinator attribution maps 711 diagnostics to immutable base
+`77eb2601a63ba473318b8ec1e4edb53f8ac5899e`; the two unmatched findings were I001
+in import blocks changed by this slice. That attribution is coordinator
+evidence, not a new broad scan in this fix. Earlier 713/unwaived descriptions
+above are historical; this qualification does not claim the full files are clean.
+
+### Change and self-review
+
+- Ruff's I001-only fixer sorted the imports in
+  `Tests/UI/test_console_live_work_handoffs.py` and
+  `Tests/UI/test_destination_visual_parity_correction.py`.
+- Inspected the complete two-file diff: all changes are confined to imports;
+  existing CSS comments remain. No test logic, new tests, suppression, broad
+  formatter write, production code, runtime/storage/UI behavior or infrastructure
+  changed. An ordering-only change did not require an invented test regression.
+- This appendix is the only other owned edit. Coordinator plan/spec/ADR/task
+  edits remain untouched and excluded from staging. Task status and final scoped
+  gate disposition remain with the coordinator; this fix does not mark Done.
+
+### Exact RED and GREEN static commands/results
+
+All commands ran from
+`/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev`.
+
+```text
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check --select I001 Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_visual_parity_correction.py
+I001 Import block is un-sorted or un-formatted
+  Tests/UI/test_console_live_work_handoffs.py:3:1 (block through line 41)
+I001 Import block is un-sorted or un-formatted
+  Tests/UI/test_destination_visual_parity_correction.py:3:1 (block through line 70)
+Found 2 errors.
+[*] 2 fixable with the --fix option.
+(exit 1; before the fix)
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check --select I001 --fix Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_visual_parity_correction.py
+Found 2 errors (2 fixed, 0 remaining).
+(exit 0)
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check --select I001 Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_visual_parity_correction.py
+All checks passed!
+(exit 0; also repeated before report/staging)
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_visual_parity_correction.py
+Found 10 errors.
+[*] 2 fixable with the --fix option (2 hidden fixes can be enabled with the --unsafe-fixes option).
+(exit 1)
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff format --check Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_visual_parity_correction.py
+unformatted: File would be reformatted
+  Tests/UI/test_destination_visual_parity_correction.py:1467:23
+1 file would be reformatted, 1 file already formatted
+(exit 1; check only, no formatting applied)
+```
+
+The full Ruff result is zero findings in Console and ten retained baseline
+findings in visual parity. Current locations: RUF012 at 85; RUF007 at 210 and
+1210; S110 and BLE001 at 419; B009 at 715 and 740; ASYNC251 at 818, 823 and
+828. The formatter leaves Console clean and reports two unrelated baseline
+hunks in visual parity: wrapping the label tuple at 1467 and adding two blank
+lines before the parametrization after current line 1516. Neither was changed.
+Retaining these is the explicitly approved source-attributed qualification,
+not a suppression or a claim that the full Ruff/formatter commands pass.
+
+### Exact targeted interaction verification
+
+```text
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_visual_parity_correction.py -k workflows -q --timeout=60 --tb=short --show-capture=no -p no:randomly
+...............                                                          [100%]
+15 passed, 164 deselected, 1 warning in 16.44s
+(exit 0)
+
+git diff --check -- Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_visual_parity_correction.py
+(no output; exit 0)
+```
+
+The test warning is the existing RequestsDependencyWarning for
+urllib3/chardet/charset_normalizer versions. After the test summary, pytest also
+reported two cleanup PytestWarnings for a pre-existing Kokoro garbage directory
+(`test_kokoro_constructor_direct3` and its parent: `Errno 66 Directory not empty`).
+No manual cleanup or unrelated tests were run. No capture, full suite, model or
+network calls, dependencies or subagents were used.
+
+Commit subject: `test(workflows): sort authoring handoff imports`. The full SHA
+is supplied in the final handoff rather than self-referenced here. The commit is
+limited to the two named test files and this appended report. Remaining concerns
+are the explicitly retained baseline static debt and recorded test-environment
+warnings, pending the coordinator's final qualification review.

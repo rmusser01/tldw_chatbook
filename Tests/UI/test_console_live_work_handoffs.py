@@ -9,14 +9,14 @@ from unittest.mock import Mock
 
 import pytest
 from textual.css.query import NoMatches
+from textual.widgets import Static
+
+from Tests.UI.app_factory import _build_test_app
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Static
-
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
-from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
@@ -28,11 +28,11 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     capture_console_staged_evidence_for_chat,
 )
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
-from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
