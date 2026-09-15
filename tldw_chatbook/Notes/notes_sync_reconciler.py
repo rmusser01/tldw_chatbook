@@ -70,6 +70,14 @@ class BindingObservation:
     serialization: NotesSyncSerializationProfile | None = None
     file_blank: bool = False
     """Whether the file on disk holds nothing but whitespace (task-32535)."""
+    prior_import_note: bool = False
+    """Whether Import once already made a still-present note from this file.
+
+    task-32605: the two Obsidian paths mint different note identities, so a
+    vault imported once and then kept synced planned a fresh create for every
+    file it had already imported. The runtime resolves this from the
+    importer's own receipt ledger; the planner only decides what to do with it.
+    """
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.binding_id, field_name="binding_id")
@@ -113,7 +121,12 @@ class BindingObservation:
             )
         if any(
             type(value) is not bool
-            for value in (self.duplicate_authority, self.bound, self.file_blank)
+            for value in (
+                self.duplicate_authority,
+                self.bound,
+                self.file_blank,
+                self.prior_import_note,
+            )
         ):
             raise TypeError("binding flags must be booleans.")
 
@@ -342,6 +355,7 @@ def _observation_token(request: ReconciliationInput) -> str:
                 "duplicate_authority": binding.duplicate_authority,
                 "bound": binding.bound,
                 "file_blank": binding.file_blank,
+                "prior_import_note": binding.prior_import_note,
                 "baseline_serialization": (
                     None
                     if binding.baseline_serialization is None
@@ -421,6 +435,11 @@ def _item_skip(
     and a folder the user later named ``Templates`` keeps its synced notes.
     The vault folders need the toggle; an empty file does not, because Import
     once refuses one whatever folder it came from (``empty_source``).
+
+    task-32605: a file Import once already turned into a note is left alone
+    for the same reason. Creating a second note from it is the duplication
+    the critique reported, and it needs no toggle -- the recognition is a
+    receipt the importer wrote, not a guess about the folder.
     """
 
     if binding.bound or binding.file_digest is None:
@@ -430,6 +449,8 @@ def _item_skip(
         reason = OBSIDIAN_SKIPPED_ROOT_FOLDERS.get(parts[0].casefold())
         if reason is not None:
             return ReconciliationItemSkip(binding.relative_path, reason)
+    if binding.prior_import_note:
+        return ReconciliationItemSkip(binding.relative_path, "already_imported")
     if binding.file_blank:
         return ReconciliationItemSkip(binding.relative_path, "empty_file")
     return None

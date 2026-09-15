@@ -710,7 +710,15 @@ configured sync folder.
 
 **Manage sync folders** lists active, paused, passive, offline, attention,
 recovery, stopped, and migrated-candidate states. Use **Check changes** to scan
-an available root. **Review** appears when its changes need attention;
+an available root. A check that finds effects takes you straight to them: the
+status line reads "Manual check finished. N change(s) to review." and the
+review it just built opens, while the row behind it becomes "◌ Changes
+available · Next: Review changes" so **Review** reaches the same review again
+without re-checking. A check that finds nothing says "Nothing to review." and
+leaves you on the list. (Was "Manual check finished. Review exact effects."
+printed over a root the check had left untouched, with no Review control
+anywhere — superseded by task-32604 below.) **Review** also appears on its own
+when a root's changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
 active root. **Resume** re-activates the root and runs the same check as
 **Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
@@ -764,6 +772,44 @@ on its own show up: the newest 20 across every listed root, newest first, as
 People/Sam.md · Sam" for a note you edited in Chatbook, "Updated note from
 file" for a file you edited on disk (task-32534). Before this a completed
 write left no trace anywhere in the app.
+
+Saving a note in Chatbook is enough to produce that "Wrote note to file" row:
+a note inside an active root that you save in the editor is written to its
+file on its own, on the same terms a file you edit on disk is read into its
+note — you do not have to run **Check changes**, and the row goes on saying
+"✓ Up to date" because by then it is (task-32604). This depends on lasting
+sync still running: if it has stopped, nothing is carrying changes either way
+and the root's row says so — "⚠ Sync stopped · Next: Check changes" — instead
+of claiming to be up to date. (The row says it the next time the list is
+drawn: on opening **Manage sync folders**, or on returning to the Library. A
+list you are already sitting on does not repaint itself.) Until this the note
+side
+produced no signal at all: Chatbook watches the folder, not the notes
+database, so a note you saved stayed in Notes only and its file kept its old
+bytes until something else touched the disk — with the row reading
+"✓ Up to date" the whole time.
+
+**What this covers, exactly: editing an existing synced note in the Library
+note editor.** That is the one write into a note that tells lasting sync
+anything. These do not, and their files stay as they are until you run
+**Check changes**, until something changes on disk, or until the next start —
+while the row goes on reading "✓ Up to date":
+
+- **New note**, including a new note created straight into a synced folder.
+- **Save as Note** in Console, and the same action on text you select inside a
+  Console message.
+- A note written by Research, by an ingest job, by an MCP tool, by the
+  assistant's own `create_note` or `update_note` tool, by the Library
+  `library_save_note` tool, by **Import once** over a note that already
+  exists, or by a chatbook import.
+- Deleting or restoring a note.
+
+None of those is new — none of them ever told lasting sync anything, and
+task-32604 changed only the editor — but none is fixed either, so if you need
+one of them on disk now, run
+**Check changes** on the root and apply the review. Chatbook also watches only
+while it is running: a root whose notes changed outside a session reconciles
+at the next startup check.
 
 Tab moves through the root controls; the footer names the one you are on
 ("enter check changes", "enter pause") instead of a generic "run action", and
@@ -1089,6 +1135,31 @@ the note's only name, so cutting it keeps the note findable where dropping it
 would silently rename the note to its file name). Neither costs you the note,
 and neither stops the rest of the folder from syncing.
 
+**Running both on the same folder does not import it twice.** If you have
+already used **Import once** on a folder, keeping that same folder synced
+leaves those files alone rather than making a second note for each one: the
+review lists them as skipped, reading "Already imported by Import once — left
+as it is", and the counts line says `0 safe`. Only the files the import never
+turned into a note — added since, or skipped at the time — are created and
+synced. A note you have since deleted stops counting, so the file is created
+and synced on the next check.
+
+The consequence worth knowing: **those files are not synced.** They are
+ordinary Library notes with no connection to the folder, and Chatbook will
+not carry your edits either way for them. To put an already-imported vault
+under lasting sync, delete the notes Import once made from it first and then
+run **Check changes** again — each file is then created once and kept synced.
+**Know the cost before you start:** Chatbook has no bulk delete for notes, so
+that is one note at a time, each with its own confirmation — select mode
+offers Export selected and nothing else. For a vault of any size it is worth
+setting the sync up on a folder you have not imported, rather than undoing an
+import of fifty notes by hand.
+
+**The other order is not protected yet.** Running **Import once** on a folder
+you are *already* keeping synced still copies every file into a second set of
+notes — Import once recognises its own earlier imports, not sync's notes. Set
+the sync up first and leave Import once alone for that folder.
+
 Two things still differ:
 
 - **The frontmatter block stays in a synced note's body**, byte for byte,
@@ -1110,6 +1181,17 @@ title and keywords are lifted while the block stays in the note body.
 Keeping the vault's folder tree — AC#4 — is NOT delivered: the folder layer
 refuses a manual child of a sync-managed subtree, so every synced note sits
 in the root folder, as this section now says).*
+
+*Verified against fix/library-notes-w5-vault-dup — 2026-09-15 at 235x52
+(task-32605: Import once on the 65-file vault created 54 notes, 10 → 64;
+keeping the SAME folder synced then read "0 safe · 0 need attention · 58
+skipped · 0 folder moves" with every imported file "Already imported by
+Import once — left as it is", and activating applied 0 — the database still
+holds 64 notes. The other order is untested and unprotected, as this section
+now says. The "no bulk delete" clause is read from source, not driven: select
+mode yields Done / Select all / Clear / Export selected and nothing else
+(`Widgets/Library/library_notes_canvas.py:1636-1683`), and no bulk-delete
+handler exists — deletion is per note through the editor's confirm).*
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -1714,7 +1796,9 @@ editor.)*
 *Verified against fix/library-notes-w3-sync-tail — 2026-09-12 (task-32519, at
 235x52 and 100x30, scratch profile with a 58-file vault): **Pause** →
 "Ⅱ Paused · Next: Resume" → **Resume** → "✓ Up to date · Next: Check changes"
-→ **Check changes** → "Manual check finished. Review exact effects."
+→ **Check changes** → "Manual check finished. Review exact effects." (that
+line now reads "Nothing to review." on a root with nothing pending —
+superseded by task-32604 below)
 (`wave3-caps/sync-tail/09-paused`, `10-resumed`, `11-check-after-resume`).
 With the same note edited in Chatbook and on disk while paused, **Resume** →
 "⚠ Needs attention · Next: Review changes" → **Review** → "59 safe · 1 need
@@ -2037,6 +2121,60 @@ pager's "Previous page unavailable — this is the first page".
 The profile logs hold no `unhandled_exception` for either walk; each holds
 one `app_stopping`, the INFO record of a deliberate Ctrl+Q.)*
 
+*Verified against fix/library-notes-w5-p0 — 2026-09-15 (task-32604, at 235x52,
+scratch profile with the 10 seeded notes plus a 65-file git vault under
+`$HOME/.cache/tldw-crit/w5-p0`): **Keep a folder synced** → PowerVault,
+⇄ Both ways → **Check changes** → "54 safe · 0 need attention · 4 skipped ·
+0 folder moves" → **Activate reviewed root** → "54 applied · listed under
+Receipts". `md5 vault/People/Sam.md` was `1d209615…` at activation. Opening
+**Sam** in the Notes editor, appending one line and pressing **Save** —
+"Saved 08:06" — left the file at `4cd06840…` within four seconds with
+nothing touching the disk, carrying the appended line
+(`wave5-caps/p0/01-note-saved-in-chatbook`); **Manage sync folders** then
+listed "2026-09-15 08:06 · Wrote note to file · People/Sam.md · Sam" at the
+top of **Receipts** (`02-receipts-wrote-note-to-file`). Before this the file
+never changed at all and no such receipt existed on any user-reachable path.
+**Check changes** on that root now reads "Nothing to review." beside
+"✓ Up to date · Next: Check changes" (`03-nothing-to-review`), and with one
+line appended to `Daily/2026-09-08.md` on disk it reads "Manual check
+finished. 1 change to review." and opens the review it built —
+"54 safe · 0 need attention · 4 skipped · 0 folder moves", "No change (53)"
+(`04-check-lands-on-review`), where it used to print "Review exact effects."
+and stay on the root list with no Review control. The row's own
+"◌ Changes available · Next: Review changes" projection is pinned on the
+production controller in
+`Tests/UI/test_library_notes_files_sync_journey.py` rather than walked: the
+automatic pass applies a pending change within a second or two, so the state
+is real but too short-lived to capture. The profile log holds no
+`unhandled_exception` and no ERROR record across the whole walk. Fix round 2
+added the "⚠ Sync stopped" row label for a runtime that is no longer
+watching; that one is pinned in
+`Tests/UI/Library_Modules/test_library_notes_sync_controller.py`, with a
+negative control, and was NOT walked — reaching it live means killing the
+watcher task of a running app.)*
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32617, at
+235x52 and 100x30): the notes list's folder-tree actions now sit under a
+"Folders & placement" heading — everything above it acts on the list,
+everything under it on the folder tree and on the row selected in it. With no
+row selected, "Add to folder", "Move note" and "Remove placement" render
+disabled with the "○" marker and the line "Note actions unavailable — select a
+note in the list" instead of disappearing; selecting a note enables them and
+the line goes. (A filter is the usual way to end up with no selection, which
+is why they seemed to vanish when filtering.) The compact shell omits the heading, and there keeps the
+unselected state as it was — three blocked actions wrap its 50-cell
+toolbar onto two more rows and take a third for their reason, which is
+three rows of notes.*
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32625, at
+100 columns): a lasting-sync review row that needs no decision now costs one
+screen row rather than three, so a 54-file vault fits 54 rows. Skipped content
+reads the same way here as it does in Import once, and by the same rule: up to
+seven skipped files from one folder are listed one per row, and eight or more
+collapse into a single openable summary row naming the folder, the count and
+the reason. Both screens use that threshold, so the same vault never reads one
+way in Import once and another in lasting sync.*
+
 *Verified against fix/library-notes-w5-kbd-focus — 2026-09-15 (tasks 32607,
 32608, 32609, 32613, critique #4). Measured headlessly against the real
 screen rather than walked in a terminal: every tab stop of the note pane was
@@ -2045,9 +2183,13 @@ compared focused vs blurred — the pair a monochrome capture keeps. Two stops
 changed nothing, `#library-note-preview-region` and
 `#library-note-context-region` (an accent-coloured `solid` border over a
 `solid` border, with the reset's `*:focus` outline repainting the same
-glyphs); both now take a `heavy` border on focus. `#library-note-context-
-keywords` had no field styling at all — the rule was being spent on
-`#library-note-keywords`, a twin the canvas keeps permanently undisplayed.
+glyphs); both now take a `heavy` border on focus. The live keywords field
+`#library-note-context-keywords` already passed that test on its own — the
+generic `Input:focus` changes its border type `tall` → `solid` — but the
+Notes-specific field rules named only `#library-note-keywords`, a twin the
+canvas keeps permanently undisplayed, so the live field was styled unlike
+the title field beside it; the selector now names both. That is a
+consistency change, not a fix for a missing cue.
 Info's footer now names the focused control instead of "run action"; Info's
 Delete takes the readable error role instead of the muted one. Tab out of a
 reading region was confirmed to land on "‹ Notes" before the change and on

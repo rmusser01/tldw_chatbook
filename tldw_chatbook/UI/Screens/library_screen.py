@@ -3922,6 +3922,12 @@ class LibraryScreen(BaseAppScreen):
             notes_service=getattr(app_instance, "notes_service", None),
             user_id=getattr(app_instance, "notes_user_id", None) or "default_user",
             clock=lambda: datetime.now(timezone.utc),
+            # task-32604: the note side's change producer for lasting sync.
+            # Read late, like every other app-owned service here -- the
+            # runtime is built during a detached startup step.
+            notes_sync_runtime=lambda: getattr(
+                app_instance, "notes_sync_runtime_owner", None
+            ),
         )
         self._library_note_session = DatabaseNoteSessionCoordinator(
             note_session_port,
