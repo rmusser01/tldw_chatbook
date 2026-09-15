@@ -136,6 +136,22 @@ def test_the_trust_dialog_fold_width_is_the_width_the_dialog_paints() -> None:
         assert len(line) <= _TRUST_DIALOG_MESSAGE_WIDTH, line
 
 
+def test_the_fold_keeps_every_character_and_leaves_short_paths_alone() -> None:
+    """The three cases the helper has to get right to be safe here."""
+    # Nothing to do.
+    assert fold_path_lines("/short/path", 54) == "/short/path"
+    assert fold_path_lines("/anything", 0) == "/anything"
+    # Windows separators break too -- `str(Path(...))` produces whichever the
+    # host uses, the same reason `elide_path_middle` handles both.
+    folded = fold_path_lines("C:\\Users\\rob\\Documents\\vault\\notes", 12)
+    assert folded.replace("\n", "") == "C:\\Users\\rob\\Documents\\vault\\notes"
+    assert all(line.endswith("\\") for line in folded.split("\n")[:-1]), folded
+    # A single component longer than the width has nowhere to break: it takes
+    # its own line rather than being cut.
+    single = fold_path_lines("/" + "x" * 80, 20)
+    assert single.replace("\n", "") == "/" + "x" * 80
+
+
 @pytest.mark.parametrize("size", CRITIQUE_SIZES)
 async def test_an_action_receipt_never_paints_under_the_danger_heading(
     tmp_path: Path, size: tuple[int, int]
