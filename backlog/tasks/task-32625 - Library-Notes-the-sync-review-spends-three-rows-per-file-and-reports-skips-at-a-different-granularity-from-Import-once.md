@@ -59,4 +59,27 @@ The margin is dropped INLINE rather than via a `-plain` CSS rule: the base rule'
 **Modified:** `Widgets/Library/library_notes_add_from_files_canvas.py`, `Widgets/Library/library_note_import_canvas.py` (`review_row_line`, used by both surfaces), `Tests/Widgets/Library/test_library_notes_w5_review_density.py` (new), `Docs/User_Guide/library/notes.md`.
 
 **Red first:** row heights {2} against {1} (the outer height; the margin makes three on screen), and the folder-level skip rows absent entirely ([] against the two expected lines).
+**Fix round 1 — AC#3 was ticked on half the evidence (review F1).** My round-0
+change collapsed EVERY skipped run on the sync side to one folder line whatever
+its length. Import once keeps `if len(run) < _UNIFORM_RUN_MIN` (8) and names the
+files under that, so the two still disagreed -- **inverted** below eight rather
+than closed. Worse, `test_both_reviews_report_a_skip_at_folder_granularity`
+never composed an Import review at all despite its name: it asserted one side
+twice and bought the claim.
+
+Both paths now use the ONE rule they were always meant to share -- the same
+`UNIFORM_RUN_MIN`, the same folder-keyed run -- so a skip reads identically on
+both screens at every length: named files under eight, one collapsed folder
+summary at eight and over. The sync-side special case is deleted, not extended;
+this is the reviewer's own cheapest fix and it is a smaller diff than round 0's.
+
+The pin is rewritten to earn its name: it composes BOTH canvases from one
+fixture at 1, 4, 8 and 11 skipped files and asserts they name the same files and
+collapse together. Reverting to round 0 it reports
+`1 skipped files: sync names [], Import once names ['.trash/Old idea 0.md']`
+and the same at 4 -- the inversion, in the test's own words. At 8 and 11 it
+passed even unfixed, which is exactly why the old one-sided test missed this.
+
+Density (AC#2) is unaffected: it is a claim about SAFE rows, and its pin now
+scopes to them rather than counting the skipped ones too.
 <!-- SECTION:NOTES:END -->

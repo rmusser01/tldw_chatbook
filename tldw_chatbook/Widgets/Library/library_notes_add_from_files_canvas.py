@@ -569,24 +569,15 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 markup=False,
             )
             for run in uniform_runs(tuple(members), key=self._run_key):
-                if category == "skipped":
-                    # task-32625 AC#3: Import once reports a skip at FOLDER
-                    # level ("vault/.trash"); wave 4's per-file `item_skips`
-                    # made this review report the same vault file by file, so
-                    # one screen carried two mental models of the same fact.
-                    # A run is one folder with one reason, which is exactly
-                    # Import once's unit -- rendered as one plain line, not a
-                    # disclosure, because there is nothing under a skip to
-                    # open and a Collapsible costs the page more rows than
-                    # the run saves.
-                    yield Static(
-                        self._run_summary(run),
-                        id=f"notes-sync-review-skip-{run[0][0]}",
-                        classes="notes-sync-review-line",
-                        markup=False,
-                    )
-                    continue
-                if len(run) < UNIFORM_RUN_MIN or category != "safe":
+                # task-32625 AC#3, fix round 1: this branch briefly collapsed
+                # EVERY skipped run to one folder line whatever its length,
+                # which did not close the granularity disagreement -- it
+                # inverted it under eight files, where Import once still names
+                # them (review F1, proven by composing both canvases from the
+                # same four-file `.trash` fixture). Both paths use one rule
+                # now: same `UNIFORM_RUN_MIN`, same folder-keyed run, so a
+                # skip reads the same way on both screens at every length.
+                if len(run) < UNIFORM_RUN_MIN or category not in {"safe", "skipped"}:
                     for index, row in run:
                         yield from self._compose_review_row(index, row)
                     continue
