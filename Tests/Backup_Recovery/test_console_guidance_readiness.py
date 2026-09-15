@@ -23,10 +23,12 @@ selector.write_text('[general]\nusers_name="test"\ndefault_tab="settings"\n'
     '[chat_defaults]\nprovider="openai"\nmodel="gpt-4o"\n'
     '[api_settings.openai]\napi_key=""\n')
 selector.chmod(0o600)
+print('guidance_phase=import_begin', flush=True)
 from tldw_chatbook import config
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Screens import chat_screen
+print('guidance_phase=import_complete', flush=True)
 
 def check_display_pairs(screen):
     derives, actions, observed = [], [], []
@@ -119,13 +121,17 @@ def check_display_pairs(screen):
                         (1, 0), (2, 0), (2, 0)], observed
 
 async def main():
+    print('guidance_phase=construct_begin', flush=True)
     app = TldwCli()
+    print('guidance_phase=construct_complete', flush=True)
     async with app.run_test(size=(100, 36)):
+        print('guidance_phase=mounted', flush=True)
         screen = chat_screen.ChatScreen(app)
         store = screen._ensure_console_chat_store()
         assert store.active_session_id is None
         if sys.argv[2] == 'display_pairs':
             check_display_pairs(screen)
+            print('guidance_phase=assertions_complete', flush=True)
             return
         derives, events, projections, loads = [], [], [], []
         original = screen._active_console_settings_readiness_uncached
@@ -244,7 +250,9 @@ async def main():
                 assert counts[-1] == 1
         finally:
             chat_screen.load_settings = original_load
+        print('guidance_phase=assertions_complete', flush=True)
 asyncio.run(main())
+print('guidance_phase=shutdown_complete', flush=True)
 assert not blocked_attempts(), blocked_attempts()
 print('retired and reopened')
 '''

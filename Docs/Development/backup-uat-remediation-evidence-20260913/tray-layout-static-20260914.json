@@ -1,0 +1,35 @@
+{
+  "parent": {
+    "ruff": {
+      "I001": 1,
+      "RUF023": 1
+    },
+    "bandit": {},
+    "bandit_errors": []
+  },
+  "product": {
+    "ruff": {
+      "I001": 1,
+      "RUF023": 1
+    },
+    "bandit": {},
+    "bandit_errors": []
+  },
+  "test": {
+    "ruff": {},
+    "bandit": {},
+    "bandit_errors": []
+  },
+  "native": {
+    "ruff": {},
+    "bandit": {
+      "B101": 13
+    },
+    "bandit_errors": []
+  },
+  "runner": {
+    "ruff": {},
+    "bandit": {},
+    "bandit_errors": []
+  }
+}

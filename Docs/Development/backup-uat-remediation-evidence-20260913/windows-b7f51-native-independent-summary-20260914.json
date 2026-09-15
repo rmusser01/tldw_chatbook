@@ -1,0 +1,1103 @@
+{
+  "revision": "b7f51bdc20e0355dce8ac630e0c1ddbe4fcdb8f3",
+  "run": 34932756260,
+  "job": 104264244610,
+  "artifact": "/private/tmp/uat-windows-b7f51-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-b7f51bdc20e0355dce8ac630e0c1ddbe4fcdb8f3",
+  "verified_artifact_files": 22,
+  "source_clean": true,
+  "source_execution": "private_tracked_head_copy",
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "529c64c6aa86bf1dddac478a9ad1a7afc17507d16e418739005c9f67d5454195",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "git_python": {
+    "revision": "b7f51bdc20e0355dce8ac630e0c1ddbe4fcdb8f3",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "phases": {
+    "native": {
+      "collected": 59,
+      "counts": {
+        "passed": 59
+      },
+      "seconds": 1.922,
+      "failures": [],
+      "skips": [],
+      "summed_case_seconds": 1.5050000000000001
+    },
+    "product": {
+      "collected": 44,
+      "counts": {
+        "failed": 3,
+        "passed": 41
+      },
+      "seconds": 1250.693,
+      "failures": [
+        {
+          "id": "Tests.Backup_Recovery.test_console_guidance_readiness::test_native_guidance_is_coherent_and_refreshes_after_real_settings_save",
+          "status": "failed",
+          "seconds": 50.181,
+          "full_traceback_path": "/private/tmp/uat-windows-b7f51-native-close/junit-failures/279a340ad9bef672.txt",
+          "failure_evidence": [
+            "a TimeoutExpired exception will be raised.",
+            ">               raise TimeoutExpired(self.args, orig_timeout)",
+            "E               subprocess.TimeoutExpired: Command '['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio\\nimport os\\nfrom pathlib import Path\\nimport sys\\nfrom types import SimpleNamespace\\nfrom Tests.network_guard import install, blocked_attempts\\ninstall()\\nfor name in (\\'soundde",
+            "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\subprocess.py:1630: TimeoutExpired"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+          "status": "failed",
+          "seconds": 462.575,
+          "full_traceback_path": "/private/tmp/uat-windows-b7f51-native-close/junit-failures/fba1b81bd111b8be.txt",
+          "failure_evidence": [
+            "a TimeoutExpired exception will be raised.",
+            ">               raise TimeoutExpired(self.args, orig_timeout)",
+            "E               subprocess.TimeoutExpired: Command '['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyri",
+            "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\subprocess.py:1630: TimeoutExpired"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+          "status": "failed",
+          "seconds": 420.295,
+          "full_traceback_path": "/private/tmp/uat-windows-b7f51-native-close/junit-failures/344f17c907ca7f60.txt",
+          "failure_evidence": [
+            "a TimeoutExpired exception will be raised.",
+            ">               raise TimeoutExpired(self.args, orig_timeout)",
+            "E               subprocess.TimeoutExpired: Command '['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyri",
+            "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\subprocess.py:1630: TimeoutExpired"
+          ]
+        }
+      ],
+      "skips": [],
+      "summed_case_seconds": 1248.985
+    }
+  },
+  "routes": {
+    "settings": {
+      "entry_phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.015
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 36.062
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 36.062
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 68.047
+        }
+      ],
+      "preview": [
+        {
+          "event": "preview_sqlite_failure",
+          "reason": "preview_sqlite_changed",
+          "source_change": {
+            "member": "wal",
+            "phase": "opened_state",
+            "changed_fields": [
+              "mtime_ns",
+              "ctime_ns"
+            ]
+          },
+          "error": {
+            "error_class": "ValueError",
+            "frames": [
+              {
+                "file": "thread_diagnostics.py",
+                "function": "observed_snapshot",
+                "line": 514
+              },
+              {
+                "file": "storage_admission.py",
+                "function": "sqlite_target",
+                "line": 1504
+              }
+            ],
+            "errno": null,
+            "winerror": null
+          }
+        },
+        {
+          "event": "preview_sqlite_failure",
+          "reason": "preview_sqlite_changed",
+          "source_change": {
+            "member": "wal",
+            "phase": "opened_state",
+            "changed_fields": [
+              "mtime_ns",
+              "ctime_ns"
+            ]
+          },
+          "error": {
+            "error_class": "ValueError",
+            "frames": [
+              {
+                "file": "thread_diagnostics.py",
+                "function": "observed_snapshot",
+                "line": 514
+              },
+              {
+                "file": "storage_admission.py",
+                "function": "sqlite_target",
+                "line": 1504
+              }
+            ],
+            "errno": null,
+            "winerror": null
+          }
+        },
+        {
+          "event": "inventory",
+          "scope_changed": false,
+          "delta_count": 0,
+          "unavailable_dependencies": [
+            {
+              "owner": "chat.attachments",
+              "target_owner": "db.chachanotes.primary",
+              "target_status": "unavailable"
+            },
+            {
+              "owner": "db.agent_runs",
+              "target_owner": "db.chachanotes.primary",
+              "target_status": "unavailable"
+            },
+            {
+              "owner": "db.evals",
+              "target_owner": "db.chachanotes.primary",
+              "target_status": "unavailable"
+            },
+            {
+              "owner": "notes.sync_bindings",
+              "target_owner": "db.chachanotes.primary",
+              "target_status": "unavailable"
+            },
+            {
+              "owner": "persona.visual_identity_builtin",
+              "target_owner": "db.chachanotes.primary",
+              "target_status": "unavailable"
+            },
+            {
+              "owner": "quiz.local",
+              "target_owner": "db.chachanotes.primary",
+              "target_status": "unavailable"
+            },
+            {
+              "owner": "study.local",
+              "target_owner": "db.chachanotes.primary",
+              "target_status": "unavailable"
+            }
+          ]
+        }
+      ],
+      "runtime_settlement_present": false,
+      "wait_failure_present": false,
+      "admission_calls": {
+        "_groups": {
+          "started": 1121,
+          "completed": 1120,
+          "errors": 0,
+          "wall_ns": 19906916600,
+          "max_ns": 3517541200
+        },
+        "_tokens": {
+          "started": 2496,
+          "completed": 2495,
+          "errors": 0,
+          "wall_ns": 43148836100,
+          "max_ns": 3517491800
+        }
+      },
+      "slowest_group": {
+        "namespaces": 1,
+        "total_roots": 1,
+        "unique_roots": 1,
+        "total_depth": 14,
+        "max_depth": 14,
+        "unique_ancestors": 13,
+        "thread_id": 5128,
+        "caller": {
+          "file": "admission.py",
+          "function": "pause_requested",
+          "line": 702
+        },
+        "completed": 1,
+        "errors": 0,
+        "wall_ns": 3517541200,
+        "thread_cpu_ns": 0,
+        "process_cpu_ns": 3562500000,
+        "calls": {
+          "_tokens": {
+            "started": 1,
+            "completed": 1,
+            "errors": 0,
+            "wall_ns": 3517491800
+          }
+        },
+        "started_wall_ns": 4360930196300
+      },
+      "cpu_window_seconds": 56.765,
+      "main_cpu_delta_seconds": 56.453125,
+      "main_total_cpu_seconds": 375.859375,
+      "process_cpu_delta_seconds": 57.203125,
+      "main_snapshots": [
+        [
+          {
+            "file": "windows_events.py",
+            "function": "_poll",
+            "line": 774
+          },
+          {
+            "file": "windows_events.py",
+            "function": "select",
+            "line": 445
+          },
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1961
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_forever",
+            "line": 645
+          },
+          {
+            "file": "windows_events.py",
+            "function": "run_forever",
+            "line": 322
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_until_complete",
+            "line": 678
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 118
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 195
+          },
+          {
+            "file": "<string>",
+            "function": "<module>",
+            "line": 108
+          }
+        ],
+        [
+          {
+            "file": "message_pump.py",
+            "function": "_parent",
+            "line": 146
+          },
+          {
+            "file": "dom.py",
+            "function": "screen",
+            "line": 800
+          },
+          {
+            "file": "widget.py",
+            "function": "virtual_region",
+            "line": 2330
+          },
+          {
+            "file": "console_workspace_context.py",
+            "function": "_fit_height_to_content",
+            "line": 1094
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 56
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "screen.py",
+            "function": "_invoke_and_clear_callbacks",
+            "line": 1272
+          },
+          {
+            "file": "screen.py",
+            "function": "_on_idle",
+            "line": 1186
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 58
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages_loop",
+            "line": 689
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages",
+            "line": 571
+          },
+          {
+            "file": "events.py",
+            "function": "_run",
+            "line": 88
+          },
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1999
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_forever",
+            "line": 645
+          },
+          {
+            "file": "windows_events.py",
+            "function": "run_forever",
+            "line": 322
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_until_complete",
+            "line": 678
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 118
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 195
+          },
+          {
+            "file": "<string>",
+            "function": "<module>",
+            "line": 108
+          }
+        ],
+        [
+          {
+            "file": "locks.py",
+            "function": "set",
+            "line": 191
+          },
+          {
+            "file": "_queue.py",
+            "function": "put_nowait",
+            "line": 24
+          },
+          {
+            "file": "message_pump.py",
+            "function": "post_message",
+            "line": 887
+          },
+          {
+            "file": "widget.py",
+            "function": "post_message",
+            "line": 4508
+          },
+          {
+            "file": "message_pump.py",
+            "function": "check_idle",
+            "line": 844
+          },
+          {
+            "file": "screen.py",
+            "function": "_invoke_later",
+            "line": 1283
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_on_invoke_later",
+            "line": 524
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 56
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_on_message",
+            "line": 829
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_dispatch_message",
+            "line": 739
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages_loop",
+            "line": 663
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages",
+            "line": 571
+          },
+          {
+            "file": "events.py",
+            "function": "_run",
+            "line": 88
+          },
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1999
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_forever",
+            "line": 645
+          },
+          {
+            "file": "windows_events.py",
+            "function": "run_forever",
+            "line": 322
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_until_complete",
+            "line": 678
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 118
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 195
+          },
+          {
+            "file": "<string>",
+            "function": "<module>",
+            "line": 108
+          }
+        ],
+        [
+          {
+            "file": "inspect.py",
+            "function": "get_annotations",
+            "line": 176
+          },
+          {
+            "file": "inspect.py",
+            "function": "_signature_from_function",
+            "line": 2424
+          },
+          {
+            "file": "inspect.py",
+            "function": "_signature_from_callable",
+            "line": 2597
+          },
+          {
+            "file": "inspect.py",
+            "function": "_signature_from_callable",
+            "line": 2527
+          },
+          {
+            "file": "inspect.py",
+            "function": "from_callable",
+            "line": 3085
+          },
+          {
+            "file": "inspect.py",
+            "function": "signature",
+            "line": 3348
+          },
+          {
+            "file": "_callback.py",
+            "function": "_count_parameters",
+            "line": 42
+          },
+          {
+            "file": "_callback.py",
+            "function": "count_parameters",
+            "line": 24
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 55
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "screen.py",
+            "function": "_invoke_and_clear_callbacks",
+            "line": 1272
+          },
+          {
+            "file": "screen.py",
+            "function": "_on_idle",
+            "line": 1186
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 58
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages_loop",
+            "line": 689
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages",
+            "line": 571
+          },
+          {
+            "file": "events.py",
+            "function": "_run",
+            "line": 88
+          },
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1999
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_forever",
+            "line": 645
+          },
+          {
+            "file": "windows_events.py",
+            "function": "run_forever",
+            "line": 322
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_until_complete",
+            "line": 678
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 118
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 195
+          },
+          {
+            "file": "<string>",
+            "function": "<module>",
+            "line": 108
+          }
+        ]
+      ]
+    },
+    "library": {
+      "entry_phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.016
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 35.938
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 35.938
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 68.11
+        }
+      ],
+      "preview": [],
+      "runtime_settlement_present": false,
+      "wait_failure_present": false,
+      "admission_calls": {
+        "_groups": {
+          "started": 1264,
+          "completed": 1263,
+          "errors": 0,
+          "wall_ns": 30411036200,
+          "max_ns": 4081215800
+        },
+        "_tokens": {
+          "started": 2823,
+          "completed": 2822,
+          "errors": 0,
+          "wall_ns": 49567463700,
+          "max_ns": 4081159300
+        }
+      },
+      "slowest_group": {
+        "namespaces": 1,
+        "total_roots": 1,
+        "unique_roots": 1,
+        "total_depth": 14,
+        "max_depth": 14,
+        "unique_ancestors": 13,
+        "thread_id": 7152,
+        "caller": {
+          "file": "admission.py",
+          "function": "pause_requested",
+          "line": 702
+        },
+        "completed": 1,
+        "errors": 0,
+        "wall_ns": 4081215800,
+        "thread_cpu_ns": 15625000,
+        "process_cpu_ns": 4078125000,
+        "calls": {
+          "_tokens": {
+            "started": 1,
+            "completed": 1,
+            "errors": 0,
+            "wall_ns": 4081159300
+          }
+        },
+        "started_wall_ns": 4916839969500
+      },
+      "cpu_window_seconds": 56.703,
+      "main_cpu_delta_seconds": 56.40625,
+      "main_total_cpu_seconds": 368.65625,
+      "process_cpu_delta_seconds": 56.953125,
+      "main_snapshots": [
+        [
+          {
+            "file": "console_workspace_context.py",
+            "function": "_fit_height_to_content",
+            "line": 1094
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 56
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "screen.py",
+            "function": "_invoke_and_clear_callbacks",
+            "line": 1272
+          },
+          {
+            "file": "screen.py",
+            "function": "_on_idle",
+            "line": 1186
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 58
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages_loop",
+            "line": 689
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages",
+            "line": 571
+          },
+          {
+            "file": "events.py",
+            "function": "_run",
+            "line": 88
+          },
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1999
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_forever",
+            "line": 645
+          },
+          {
+            "file": "windows_events.py",
+            "function": "run_forever",
+            "line": 322
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_until_complete",
+            "line": 678
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 118
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 195
+          },
+          {
+            "file": "<string>",
+            "function": "<module>",
+            "line": 108
+          }
+        ],
+        [
+          {
+            "file": "dom.py",
+            "function": "ancestors",
+            "line": 1253
+          },
+          {
+            "file": "console_workspace_context.py",
+            "function": "_nearest_scroll_parent",
+            "line": 881
+          },
+          {
+            "file": "console_workspace_context.py",
+            "function": "_maybe_relabel_for_width",
+            "line": 992
+          },
+          {
+            "file": "console_workspace_context.py",
+            "function": "_fit_height_to_content",
+            "line": 1086
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 56
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "screen.py",
+            "function": "_invoke_and_clear_callbacks",
+            "line": 1272
+          },
+          {
+            "file": "screen.py",
+            "function": "_on_idle",
+            "line": 1186
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 58
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages_loop",
+            "line": 689
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages",
+            "line": 571
+          },
+          {
+            "file": "events.py",
+            "function": "_run",
+            "line": 88
+          },
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1999
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_forever",
+            "line": 645
+          },
+          {
+            "file": "windows_events.py",
+            "function": "run_forever",
+            "line": 322
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_until_complete",
+            "line": 678
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 118
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 195
+          },
+          {
+            "file": "<string>",
+            "function": "<module>",
+            "line": 108
+          }
+        ],
+        [
+          {
+            "file": "_compositor.py",
+            "function": "find_widget",
+            "line": 989
+          },
+          {
+            "file": "screen.py",
+            "function": "find_widget",
+            "line": 752
+          },
+          {
+            "file": "widget.py",
+            "function": "virtual_region",
+            "line": 2330
+          },
+          {
+            "file": "console_workspace_context.py",
+            "function": "_fit_height_to_content",
+            "line": 1094
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 56
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "screen.py",
+            "function": "_invoke_and_clear_callbacks",
+            "line": 1272
+          },
+          {
+            "file": "screen.py",
+            "function": "_on_idle",
+            "line": 1186
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 58
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages_loop",
+            "line": 689
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages",
+            "line": 571
+          },
+          {
+            "file": "events.py",
+            "function": "_run",
+            "line": 88
+          },
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1999
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_forever",
+            "line": 645
+          },
+          {
+            "file": "windows_events.py",
+            "function": "run_forever",
+            "line": 322
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_until_complete",
+            "line": 678
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 118
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 195
+          },
+          {
+            "file": "<string>",
+            "function": "<module>",
+            "line": 108
+          }
+        ],
+        [
+          {
+            "file": "dom.py",
+            "function": "display",
+            "line": 902
+          },
+          {
+            "file": "console_workspace_context.py",
+            "function": "_fit_height_to_content",
+            "line": 1092
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 56
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "screen.py",
+            "function": "_invoke_and_clear_callbacks",
+            "line": 1272
+          },
+          {
+            "file": "screen.py",
+            "function": "_on_idle",
+            "line": 1186
+          },
+          {
+            "file": "_callback.py",
+            "function": "_invoke",
+            "line": 58
+          },
+          {
+            "file": "_callback.py",
+            "function": "invoke",
+            "line": 96
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages_loop",
+            "line": 689
+          },
+          {
+            "file": "message_pump.py",
+            "function": "_process_messages",
+            "line": 571
+          },
+          {
+            "file": "events.py",
+            "function": "_run",
+            "line": 88
+          },
+          {
+            "file": "base_events.py",
+            "function": "_run_once",
+            "line": 1999
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_forever",
+            "line": 645
+          },
+          {
+            "file": "windows_events.py",
+            "function": "run_forever",
+            "line": 322
+          },
+          {
+            "file": "base_events.py",
+            "function": "run_until_complete",
+            "line": 678
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 118
+          },
+          {
+            "file": "runners.py",
+            "function": "run",
+            "line": 195
+          },
+          {
+            "file": "<string>",
+            "function": "<module>",
+            "line": 108
+          }
+        ]
+      ]
+    }
+  },
+  "sha256": {
+    "artifact-sha256.json": "5cee4b4c1eaa940e73f957d223dda12ee4d067402b42a999647bb09d92feb651",
+    "uat-b7f51-windows-native-job.log": "f43b54d58c01ef217b7b45e2a8fb9466de76d303402d213d8cef5e8b00c53c06"
+  }
+}
