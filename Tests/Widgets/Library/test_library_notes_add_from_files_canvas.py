@@ -1704,12 +1704,13 @@ async def test_configure_canvas_is_contained_and_initial_focus_is_safe_at_60x20(
         assert region.right <= 60 and region.bottom <= 20
         assert "Keep a folder synced" in _frame(app)
         hint = app.query_one("#notes-sync-fold-hint", Static)
-        # task-32545 AC#3: was "Additional setup content is scrollable."
-        # The Static's text is now the same string regardless of overflow
-        # (task-32610 moved visibility to `.display`), so this no longer
-        # asserts the body overflows here -- see the two tests below for
-        # that, at sizes measured to actually cross the fold.
-        assert "More below — scroll." in str(hint.renderable)
+        # task-32610 review round 1, F8: the Static's text is the same
+        # string regardless of overflow (visibility moved to `.display`),
+        # so a text-presence check here is vacuous -- assert what the
+        # user actually sees instead. Measured: the configure body fits
+        # at 60x20 (virtual == container height), so the hint is hidden;
+        # see the two tests below for a size that genuinely overflows.
+        assert hint.display is False
         assert "above" not in str(hint.renderable).casefold()
 
 
