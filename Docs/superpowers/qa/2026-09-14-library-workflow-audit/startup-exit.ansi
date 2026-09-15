@@ -1,0 +1,16 @@
+[1m[32m➜  [36mcomponent-pattern-library[0m [1m[34mgit:([31mfeat/component-pattern-library[34m) [33m✗[0m TLDW_CONFIG_PATH=/Users/macbook-dev/Documents/GitHub
+/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-14-library-ui-audit/live/config.toml PYTHON
+_KEYRING_BACKEND=keyring.backends.null.Keyring .venv/bin/python -m tldw_chatbook.app
+[32m2026-09-14 19:28:59.289[39m | [1m[33mWARNING [0m | [36mtldw_chatbook.Utils.custom_tokenizers[39m:[36m<module>[39m:[36m24[39m - [1m[33mtokenizers library not availabl
+e. Install with: pip install tokenizers[0m
+[32m2026-09-14 19:28:59.484[39m | [1m[33mWARNING [0m | [36mtldw_chatbook.Prompt_Management.Prompts_Interop[39m:[36m<module>[39m:[36m53[39m - [1m[33mpython-frontmatter no
+t installed. Markdown import will not be available.[0m
+2026-09-14 19:29:01 [WARNING ] tldw_chatbook.Evals.eval_orchestrator:463 - No Evals database found for the current profi
+le at /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-14
+-library-ui-audit/live/data/db/evals.db. Older versions of this app ignored the configured profile and always wrote Eval
+s data under the 'default_user' profile -- your existing benches, datasets and runs are still there: /Users/macbook-dev/
+.local/share/tldw_cli/default_user/evals.db. Nothing has been moved or copied automatically; if you want that data under
+ this profile, copy the file there yourself.
+[1m[32m➜  [36mcomponent-pattern-library[0m [1m[34mgit:([31mfeat/component-pattern-library[34m) [33m✗[0m echo AUDIT_EXIT_CODE=$?
+AUDIT_EXIT_CODE=0
+[1m[32m➜  [36mcomponent-pattern-library[0m [1m[34mgit:([31mfeat/component-pattern-library[34m) [33m✗[0m

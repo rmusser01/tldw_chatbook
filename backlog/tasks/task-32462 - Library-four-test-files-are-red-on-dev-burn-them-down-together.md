@@ -4,6 +4,7 @@ title: 'Library: four test files are red on dev — burn them down together'
 status: To Do
 assignee: []
 created_date: '2026-09-12 00:12'
+updated_date: '2026-09-15 02:48'
 labels:
   - library
   - tests
@@ -60,6 +61,8 @@ Measured while verifying the task-32302/32393/32306/32303 branch: four Library t
   - test_library_prompt_history_geometry_uses_only_the_outer_editor_scroll[dirty-size2]
   - test_library_prompt_history_geometry_uses_only_the_outer_editor_scroll[dirty-size3]
   - test_library_shell_create_prompt_save_creates_and_increments_count
+
+2026-09-14 Library audit at 2939afda63: the two Handoff failures persist with production CSS. A settled-screen differential probe shows four registered source rows and both cached and refreshed workspace projections reporting 2 eligible, 2 blocked, while the mounted Handoff row still says unavailable until sources exist. Thus the source projection is correct in this reproduction; the mounted receipt/action state is stale. Separately, test_library_workspaces_create_local_workspace_mouse_clicks and test_create_workspace_preserves_rail_scroll pass when only DestinationHarness.CSS_PATH is changed to TldwCli.CSS_PATH: those two additional failures are unstyled-harness geometry. Preserve this product-versus-test distinction during repair. Evidence: Docs/superpowers/reports/2026-09-14-library-workflow-audit.md
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

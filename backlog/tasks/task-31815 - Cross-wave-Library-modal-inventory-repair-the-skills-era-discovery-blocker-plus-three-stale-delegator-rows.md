@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-06 04:42'
+updated_date: '2026-09-15 02:49'
 labels:
   - library
   - decomposition
@@ -18,6 +19,8 @@ priority: medium
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Tests/UI/test_library_modal_dismissal.py maintains a hand-declared (file, class, presenter, modal-type) inventory and rediscovers it by AST-parsing only the files named in _SUPPORTED_OWNER_SCOPES, then asserts the two sets match in BOTH directions. The file has been 1-red at every Library decomposition wave tip since the skills series: an unresolved modal constructor for LibraryScreen._present_library_skills_import_choice_if_needed aborts discovery before the comparison ever runs, so the guard currently proves nothing about ANY subsystem's rows -- it is a blocked guard, not a failing assertion. Three further row clusters are equally stale for the same underlying reason (the named owner is now a one-line delegator, or was pruned outright, while the real presenter moved into a Library_Modules controller): the ingest row keyed on handle_library_ingest_browse, and the two skill-trust passphrase presenter rows. Wave-6 task 3 repointed the four prompts rows and proved them by construction against the new _OwnerScope, but could not prove the FILE green end-to-end because of the blocker; that same blocker is why the recipe's documented-reds list carries a standing 1-red entry for this file. This is cross-wave repair work that belongs to no single subsystem series, which is why five consecutive waves each deferred it.
+
+2026-09-14 Library audit at 2939afda63 reproduces the unresolved SkillImportChoiceModal(snapshot.candidates) constructor at LibraryScreen._present_library_skills_import_choice_if_needed. The selected gesture tests pass, but the inventory still aborts before proving bidirectional coverage. This confirms the existing task; no duplicate was filed. Evidence: Docs/superpowers/reports/2026-09-14-library-workflow-audit.md
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
