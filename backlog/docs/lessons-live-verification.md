@@ -3049,3 +3049,48 @@ corrects. The task-32558 wave-4 self-supplied-pin census in
 its first line. Never reorder a block that contains a correction away from
 its subject to satisfy a merge convention; the convention is a tiebreaker for
 independent additions, not a licence to separate the two.
+
+## Cite by name inside the artefact you are editing; cite by number only into another file (task-32558, 2026-09-14)
+
+**Three occurrences in one task, 2026-09-14 — and the third was inside the fix
+for the second.** A pointer that says *where* something is decays the next time
+anything is inserted above it. A pointer that says *what* it is does not.
+
+1. A `console.md` stamp said the task-32555 stamp was "four paragraphs below"
+   the Get started card. It was ~455 lines below, in the page's own "Verified
+   against" section. Caught in review round 1.
+2. A lesson entry said "the false heading is three lines above the control it
+   captured". In the cited capture the real heading is one line *below* — the
+   direction inverted and the count wrong in both. Caught in re-review round 1,
+   after shipping into three committed files.
+3. Fixing (2), the replacement stamp cited the two corrected sentences as
+   `:22-25` and `:323-326` — **already off by one from its own rewrap in the
+   same commit**, and pointing *inside the page that contained them*, so every
+   future edit to that page would move them again. Caught by me, re-reading my
+   own fix.
+
+Each of the three was written by someone who had just looked at the thing. The
+position was true at the moment of writing and false by the time it was read.
+
+**The rule, and the reason it is not "be careful with line numbers".** A
+citation into the artefact you are editing is invalidated *by your own edit* —
+you cannot be careful enough, because the act of writing the citation can move
+what it points at. A citation into a different file, or into a frozen capture
+under `wave4-caps/`, is invalidated only by someone editing that other thing,
+which is a normal staleness problem and a much slower one.
+
+So:
+
+- **Inside the file you are editing** — name the section, the heading, the step
+  ("step 5 of Common tasks", "the Scoped exports paragraph", "this same
+  Verified-against section"). Never a line number, never "N paragraphs
+  above/below".
+- **Into another source file** — line numbers are good and worth keeping
+  (`library_notes_canvas.py:1842`), because the reader can check them and your
+  edit cannot move them.
+- **Into a capture** — line numbers are the *best* form, because the capture is
+  immutable evidence (`import-21-back-cue-files.txt:17`).
+- **Positional adjacency claims** ("three lines above", "four paragraphs
+  below") — do not write them at all. State the relationship that is checkable
+  instead: "all three true strings are inside that same captured frame" is both
+  stronger and unfalsifiable-by-drift.
