@@ -14338,3 +14338,56 @@ read at least as often as a missing write, and the two fixes are a line and a
 subsystem. This also applies to reading a triage you did not write: its
 "cause" for each link is a hypothesis with the same standing as any other
 until the probe prints both sides.
+
+## A truncated FAILED list is indistinguishable from a pass (task-32625, 2026-09-15)
+
+**The incident.** To prove a new pin caught the bug it was written for, an
+implementer reverted the fix and read the resulting FAILED list through
+`head -8`. Four parametrised cases had failed; it saw two, and inferred that the
+other two had passed. It wrote that inference into the task notes as the
+interesting part — "at 8 and 11 it passed even unfixed, which is why the
+one-sided test missed it" — and from there it travelled into a review summary
+and was one round away from hardening into a lesson about threshold blindness.
+The reviewer re-ran the revert and printed the list in full: **4 of 4 failed.**
+The true-at-8-and-11 sentence was about unpatched `dev`, a different tree
+entirely.
+
+**Why it is worth a rule.** `head`, `tail`, `-x`, `--maxfail`, a scrolled
+terminal and a killed run all produce the same artifact: a FAILED list that is
+shorter than the truth, with nothing in it saying so. A short list reads as good
+news — fewer failures — which is exactly the direction that stops you looking.
+The same shape has now bitten this programme three times in one day: a shared
+ratchet red waved through without comparing its NUMBER (977 vs 980), a failure
+count read off `F`/`.` progress marks that Loguru had interleaved, and this.
+
+**The rule.** Evidence that a pin is RED is the **complete** FAILED list, with
+the summary line that says how many there were, from a run you did not truncate.
+If you must page it, page it to a file and count from `grep -c '^FAILED'`, never
+from what fits on screen. And when the interesting claim is that something
+*passed*, say which tree it passed on — "passed unfixed" is meaningless without
+naming whether that was the revert or the base.
+
+## A claim-string checker is blind by construction to composed copy (task-32625, 2026-09-15)
+
+**The incident.** `scripts/check_guide_claim_strings.py` exists because eleven
+false claims were found across three layers of this programme's own
+documentation. It ran green over a guide stanza that promised users a skipped
+folder would read `".trash · 4 files · …"` — a line the product does not produce
+at four files, and never did after the fix. Two more false sentences sat beside
+it, also green.
+
+**Why it could not have caught them.** The checker matches quoted strings in
+prose against string literals in source. That line is **composed at runtime** by
+`review_row_line` out of a folder, a count and a reason; it exists nowhere in
+the tree as a literal, so there is nothing for the checker to match and nothing
+for it to contradict. The gate proves a quoted string is emitted somewhere. It
+cannot prove the sentence around it is true, and it is blind by construction to
+any copy the code assembles rather than stores.
+
+**The rule.** A green claim-checker is not evidence that a guide is honest. For
+any sentence describing composed output — a row, a summary line, a status
+string, anything built from parts — the evidence is a rendered sample at the
+size and state the sentence describes, not a grep. Write the sentence as a rule
+the reader can predict and check ("up to seven listed one per row, eight or more
+collapsed"), not as a specimen output, because a specimen is a claim about a
+literal the checker cannot see.

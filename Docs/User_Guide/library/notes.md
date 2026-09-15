@@ -2137,3 +2137,25 @@ watching; that one is pinned in
 `Tests/UI/Library_Modules/test_library_notes_sync_controller.py`, with a
 negative control, and was NOT walked — reaching it live means killing the
 watcher task of a running app.)*
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32617, at
+235x52 and 100x30): the notes list's folder-tree actions now sit under a
+"Folders & placement" heading — everything above it acts on the list,
+everything under it on the folder tree and on the row selected in it. With no
+row selected, "Add to folder", "Move note" and "Remove placement" render
+disabled with the "○" marker and the line "Note actions unavailable — select a
+note in the list" instead of disappearing; selecting a note enables them and
+the line goes. (A filter is the usual way to end up with no selection, which
+is why they seemed to vanish when filtering.) The compact shell omits the heading, and there keeps the
+unselected state as it was — three blocked actions wrap its 50-cell
+toolbar onto two more rows and take a third for their reason, which is
+three rows of notes.*
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32625, at
+100 columns): a lasting-sync review row that needs no decision now costs one
+screen row rather than three, so a 54-file vault fits 54 rows. Skipped content
+reads the same way here as it does in Import once, and by the same rule: up to
+seven skipped files from one folder are listed one per row, and eight or more
+collapse into a single openable summary row naming the folder, the count and
+the reason. Both screens use that threshold, so the same vault never reads one
+way in Import once and another in lasting sync.*
