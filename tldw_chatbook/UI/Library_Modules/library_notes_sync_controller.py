@@ -757,9 +757,16 @@ class LibraryNotesSyncController:
         # clean when watching stopped goes on rendering "✓ Up to date" over a
         # file that is now stale -- this P0's own lie, one level up. The fact
         # is already in the snapshot this method reads; read it.
-        watching = runtime.status == "active"
+        #
+        # Fix round 3 (re-review 2): pass the STATUS, not a boolean. A
+        # startup publishes each root's ``up_to_date`` inside ``_start_once``'s
+        # loop and only sets the runtime to "active" after it
+        # (notes_sync_runtime.py:1984 vs :1989), so a boolean made a
+        # just-reconciled root read "⚠ Sync stopped" mid-startup. A wrong
+        # ALARMING label is the same defect as a wrong reassuring one.
         self._all_roots = tuple(
-            self._project_root(root, watching=watching) for root in runtime.roots
+            self._project_root(root, runtime_status=runtime.status)
+            for root in runtime.roots
         )
         page_count = max(
             1, (len(self._all_roots) + _ROOT_PAGE_SIZE - 1) // _ROOT_PAGE_SIZE
@@ -780,14 +787,17 @@ class LibraryNotesSyncController:
         self,
         root: NotesSyncRootRuntimeSnapshot,
         *,
-        watching: bool = True,
+        runtime_status: str = "active",
     ) -> LastingSyncRootRow:
         """Project one runtime root, with its last refusal laid over the top.
 
-        ``watching`` is False when the runtime is not active. Only the one
-        reassuring label is rewritten then: every other status already says
-        something is wrong, and rewriting ``status`` itself would change
-        which controls the canvas offers (see the comment below).
+        ``runtime_status`` is the runtime-level status from the same
+        snapshot this root came out of. Only the one reassuring label is
+        rewritten when the runtime is not active -- every other per-root
+        status already says something is wrong, and rewriting ``status``
+        itself would change which controls the canvas offers (see the
+        comment below). A runtime that is still ``starting`` has not
+        finished deciding, so it reads "◌ Starting", not "⚠ Sync stopped".
         """
 
         failure, failed_action = self._root_failures.get(root.root_id, ("", ""))
@@ -799,8 +809,10 @@ class LibraryNotesSyncController:
         action_label = failed_action or next_action
         if failure:
             status_label = _STATUS_LABELS["needs_attention"]
-        elif not watching and status == "up_to_date":
-            status_label = _STATUS_LABELS["not_watching"]
+        elif runtime_status != "active" and status == "up_to_date":
+            status_label = _STATUS_LABELS[
+                "starting" if runtime_status == "starting" else "not_watching"
+            ]
         else:
             status_label = _STATUS_LABELS.get(
                 status, status.replace("_", " ").title()

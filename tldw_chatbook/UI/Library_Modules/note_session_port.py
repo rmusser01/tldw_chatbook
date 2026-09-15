@@ -151,15 +151,22 @@ class _LibraryDatabaseNoteSessionPort:
         already-bound note -- is where the note side hands the runtime its
         hint.
 
-        This is the ONLY covered write path -- 1 of 14 (task-32604's
-        Implementation Notes carry the enumerated list). Every other write
-        into a local note still produces no signal: the 5 update paths
+        This is the ONLY covered write path. At least a dozen others --
+        18 live seams when task-32604 enumerated them on 2026-09-15, of
+        which this is the one -- still produce no signal at all. Do not
+        trust that number from here: it moved three times inside one task
+        as the search method improved. task-32604's Implementation Notes
+        carry the enumerated list AND the derivation method; re-derive
+        before relying on a count.
+
+        The shape is stable even though the count is not. The update paths
         (Research quick notes, note-import's in-place replace, the built-in
-        ``update_note`` tool, delete and restore) are one ``note_changed``
-        call away each, but the 8 CREATE paths -- New note included -- are
-        not, because ``note_changed`` keys on an existing binding and a new
-        note has none. Covering those needs a folder-membership predicate,
-        not a binding one.
+        ``update_note`` tool, the ``library_save_note`` agent tool, delete
+        and restore) are one ``note_changed`` call away each. The CREATE
+        paths -- the Library's own New note included -- are not, because
+        ``note_changed`` keys on an existing binding and a new note has
+        none. Covering those needs a folder-membership predicate, not a
+        binding one. Owned by task-32633.
 
         A refusal is also silent here: ``note_changed`` returns () when the
         runtime is not active. The row no longer lies about it (the roots

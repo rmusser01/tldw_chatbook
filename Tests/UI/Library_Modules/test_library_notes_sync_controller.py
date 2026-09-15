@@ -3614,3 +3614,40 @@ async def test_a_watching_runtime_still_says_up_to_date() -> None:
     )
 
     assert controller.snapshot.roots[0].status_label == "✓ Up to date"
+
+
+@pytest.mark.parametrize(
+    ("runtime_status", "expected_label"),
+    (
+        ("active", "✓ Up to date"),
+        # Round 3: `_start_once` publishes each root's up_to_date INSIDE its
+        # loop and sets "active" only after it, so a just-reconciled root is
+        # seen mid-startup. It has not stopped -- it has not finished.
+        ("starting", "◌ Starting"),
+        ("failed", "⚠ Sync stopped"),
+        ("stopping", "⚠ Sync stopped"),
+        ("stopped", "⚠ Sync stopped"),
+        ("not_configured", "⚠ Sync stopped"),
+    ),
+)
+async def test_every_runtime_status_labels_a_clean_root_honestly(
+    runtime_status: str, expected_label: str
+) -> None:
+    """Round 3 ruling 1: neither a false "up to date" nor a false alarm."""
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        runtime_status,
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot("root-1", "up_to_date", "sync_now"),),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    row = controller.snapshot.roots[0]
+
+    assert row.status_label == expected_label
+    # Whatever the label, the controls the canvas offers are unchanged.
+    assert (row.status, row.next_action) == ("up_to_date", "sync_now")
