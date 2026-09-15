@@ -14338,3 +14338,45 @@ read at least as often as a missing write, and the two fixes are a line and a
 subsystem. This also applies to reading a triage you did not write: its
 "cause" for each link is a hypothesis with the same standing as any other
 until the probe prints both sides.
+
+## The revert-to-RED check also catches a fix that fixes nothing (task-32616, 2026-09-15)
+
+**The incident.** Critique #4 reported that the Notes editor's status line goes
+stale: "after typing, the editor's still reads 'Next: Start typing.'" The
+plausible cause was right there — task-32062's focus guard returns from
+`sync_state` before anything repaints while the title or body has focus. I
+wrote the obvious fix (update the authority `Static` inside the skip, the way
+the import and lasting-sync skips above it already do), wrote the pin, and the
+pin passed.
+
+Then the standing rule — revert the fix, record the RED — was applied. **The
+test passed with the fix reverted.** The line was never stale: after a
+TITLE-only edit the body really is empty, so "Start typing." is the true next
+step, and it becomes "Keep editing" the moment the body has words. Three prints
+against the real screen settled it:
+
+```
+AT OPEN:     'Saved · Next: Start typing.'
+AFTER TITLE: 'Unsaved changes · Next: Start typing.'      <- still true
+AFTER BODY:  'Unsaved changes · Next: Keep editing; …'
+```
+
+The assessor had typed a title, not a body. What was actually wrong was beside
+it: the LIST pane was carrying a second, disagreeing "Next:" at the same time.
+The shipped fix stands that one down; the authority-Static change was deleted
+rather than shipped unpinned, since it also partly undoes a ceiling that skip's
+own comment documents.
+
+**The rule.** The revert-to-RED check is usually read as "prove the test is
+wired to the fix". It is also the cheapest detector of a fix aimed at a cause
+that was never true — and a plausible mechanism sitting in the same function as
+the symptom is exactly when that happens. If the pin passes with the fix
+reverted, do not tighten the pin: go and measure whether the finding reproduces
+at all.
+
+**A trap in the revert harness itself.** If you script the revert/restore with
+a backup directory, do NOT reuse it across runs (`if not bak.exists(): copy`).
+A second run restored a file from a snapshot the FIRST run had taken, silently
+rolling back an edit made in between; it was caught only because a test that
+had been green went red. Delete the backup directory between runs, or key it by
+run.
