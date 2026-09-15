@@ -247,6 +247,7 @@ class RuntimeMaintenance:
                 None if runtime is None else runtime.chat_controller,
                 app.console_image_edit_operations,
                 app.scheduler_loop,
+                getattr(app, "db_status_manager", None),
                 app.evaluation_orchestrator,
                 app.local_audio_services_service,
                 app.file_notes_session_owner,
@@ -321,6 +322,11 @@ class RuntimeMaintenance:
         producers.extend(
             (
                 _app_hook(app, "_ingest_maintenance"),
+                _bind(
+                    getattr(app, "db_status_manager", None),
+                    "Utils.db_status_manager",
+                    "DBStatusManager",
+                ),
                 _bind(app.scheduler_loop, "Scheduling.scheduler.loop", "SchedulerLoop"),
                 _bind(
                     app.evaluation_orchestrator,

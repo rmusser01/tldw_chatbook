@@ -1,0 +1,520 @@
+{
+  "base_revision": "238564276d7efc84e0954ace75f4c6e62493db3c",
+  "changes": [
+    "DBStatusManager skips newly delivered updates while backup closes producer admission, retaining previous telemetry.",
+    "Accepted offload tasks survive canceled awaiters and remain counted until real completion; caller ownership spans cache publication.",
+    "Register exact manager in existing runtime producer level and owner snapshot; reverse resume requires settled work.",
+    "Existing full/support include8native regression cases; existing native-close has4unchangedTTS+8DBstatus+1installedLibrary=13unique cases, no timing changes."
+  ],
+  "causal_proof": {
+    "checks_passed": true,
+    "fixed_profile": true,
+    "test_mode_override": false,
+    "network_attempts": 0,
+    "actual_timer_callback": true,
+    "full_runtime_maintenance_composition": false,
+    "summaries": [
+      {
+        "phase": "after_scheduler_close",
+        "scheduler_closed": true,
+        "collector_submitted": true,
+        "native_new_leases_remaining": 0,
+        "all_error": false,
+        "all_sizes": true
+      },
+      {
+        "phase": "during_local_pause",
+        "scheduler_closed": true,
+        "collector_submitted": true,
+        "native_new_leases_remaining": 0,
+        "all_error": true,
+        "all_sizes": false
+      },
+      {
+        "phase": "after_resume",
+        "scheduler_closed": false,
+        "collector_submitted": true,
+        "native_new_leases_remaining": 0,
+        "all_error": false,
+        "all_sizes": true
+      }
+    ],
+    "collector_events": [
+      {
+        "event": "call",
+        "phase": "after_scheduler_close",
+        "thread": 6137311232
+      },
+      {
+        "event": "return",
+        "phase": "after_scheduler_close",
+        "thread": 6137311232,
+        "all_error": false,
+        "all_sizes": true
+      },
+      {
+        "event": "call",
+        "phase": "during_local_pause",
+        "thread": 6137311232
+      },
+      {
+        "event": "return",
+        "phase": "during_local_pause",
+        "thread": 6137311232,
+        "all_error": true,
+        "all_sizes": false
+      },
+      {
+        "event": "call",
+        "phase": "after_resume",
+        "thread": 6137311232
+      },
+      {
+        "event": "return",
+        "phase": "after_resume",
+        "thread": 6137311232,
+        "all_error": false,
+        "all_sizes": true
+      }
+    ],
+    "origins": {
+      "tldw_chatbook.Backup_Recovery.storage_admission": {
+        "path": "/private/tmp/chatbook-backup-pr-20260912/tldw_chatbook/Backup_Recovery/storage_admission.py",
+        "sha256": "53b8bcb16802334d08589de8a45ef94552bc7ca369deac2209e8d5851eaccb4e"
+      },
+      "tldw_chatbook.config": {
+        "path": "/private/tmp/chatbook-backup-pr-20260912/tldw_chatbook/config.py",
+        "sha256": "99aca34149611ab3a33b142fdf292826d84615ef381a76f873a7c9ac87e2f644"
+      },
+      "tldw_chatbook.Utils.db_status_manager": {
+        "path": "/private/tmp/chatbook-backup-pr-20260912/tldw_chatbook/Utils/db_status_manager.py",
+        "sha256": "41907622f2d17d6143387ab371702a9d03ecf2f96ceda047e08e484c52cbdcc9"
+      },
+      "tldw_chatbook.Scheduling.scheduler.loop": {
+        "path": "/private/tmp/chatbook-backup-pr-20260912/tldw_chatbook/Scheduling/scheduler/loop.py",
+        "sha256": "89c543d0ca388e015fea97de8486b670c566249bb21f955561a4cc70b60c2ccd"
+      }
+    }
+  },
+  "tests": {
+    "red": "5failed4.97s: runtime_owner_maintenance_unavailable",
+    "focused": "19passed7.99s",
+    "independent": "8passed8.30s",
+    "installed_macos": "3passed149.62s;Console,Settings,Library coherent capture/readback/resumedwrites",
+    "module_guards": "2passed16.61s;669/686import,1022/1022UIready",
+    "collection": "13native-close; previous selection retained"
+  },
+  "installed_package": {
+    "base_revision": "238564276d7efc84e0954ace75f4c6e62493db3c",
+    "tested_product_sha256": {
+      "tldw_chatbook/Utils/db_status_manager.py": "27f36304f5259420ed589bc32f44c16f75f8ce0eca94df141b4a6308bdbc1c41",
+      "tldw_chatbook/Backup_Recovery/runtime_maintenance.py": "2ed73475c3c949b5cd29102a7e4e2504d927c5bd038d32589351586115575f6b"
+    },
+    "wheel_sha256": "21cd6beeb50f1f2294da1d99ea3a89b36a061d51ede8ef76aa0983db4ef49a20",
+    "installed_files": 2867,
+    "python_sources": 2475,
+    "mismatches": 0
+  },
+  "static": {
+    "base": "238564276d7efc84e0954ace75f4c6e62493db3c",
+    "root": "/private/tmp/uat-db-status-static-mrqbe9ea",
+    "sha256": {
+      "tldw_chatbook/Utils/db_status_manager.py": "27f36304f5259420ed589bc32f44c16f75f8ce0eca94df141b4a6308bdbc1c41",
+      "tldw_chatbook/Backup_Recovery/runtime_maintenance.py": "2ed73475c3c949b5cd29102a7e4e2504d927c5bd038d32589351586115575f6b",
+      "Tests/Backup_Recovery/test_db_status_maintenance.py": "9743204dcca04f0463186d346b4ba97dbde81250c64df9714938b191eaf7080d",
+      "Tests/Backup_Recovery/run_platform_product.py": "04d9b572b3b12f2671aa6414d997d7f276cfa71809db9625a2efba471dd30b53"
+    },
+    "ruff": {
+      "tldw_chatbook/Utils/db_status_manager.py": {
+        "baseline": 9,
+        "current": 9,
+        "new": []
+      },
+      "tldw_chatbook/Backup_Recovery/runtime_maintenance.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      },
+      "Tests/Backup_Recovery/test_db_status_maintenance.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      },
+      "Tests/Backup_Recovery/run_platform_product.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      }
+    },
+    "bandit": {
+      "tldw_chatbook/Utils/db_status_manager.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      },
+      "tldw_chatbook/Backup_Recovery/runtime_maintenance.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      },
+      "Tests/Backup_Recovery/test_db_status_maintenance.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      },
+      "Tests/Backup_Recovery/run_platform_product.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      }
+    }
+  },
+  "prior_revision_linux_persona": [
+    {
+      "revision": "238564276d7efc84e0954ace75f4c6e62493db3c",
+      "source": "/home/ml-user/Working/chatbook-backup-linux-20260912/source-final-238564276d-p4rwz841",
+      "fixture": "/home/ml-user/Working/chatbook-backup-linux-20260912/native-final-238564276d-67xa_izj"
+    },
+    {
+      "pytest_returncode": 0,
+      "revision": "238564276d7efc84e0954ace75f4c6e62493db3c",
+      "source_tracked_unchanged": true,
+      "status": {
+        "collected": 1,
+        "counts": {
+          "failed": 0,
+          "passed": 1,
+          "skipped": 0
+        },
+        "exitstatus": 0,
+        "failed_ordinals": [],
+        "unfinished": 0
+      }
+    }
+  ],
+  "prior_revision_perf_guard": {
+    "run": 34912728635,
+    "conclusion": "success"
+  },
+  "prior_revision_windows_startup": {
+    "run": 34912728812,
+    "job": 104203594626,
+    "revision": "238564276d7efc84e0954ace75f4c6e62493db3c",
+    "dev_revision": "4631b60f8dd9623fc55bf16f4a37e29fcb1240c7",
+    "log": "/private/tmp/uat-238564-windows-startup-job.log",
+    "log_sha256": "6a1b9c75450bfb15c1b4f4a2000cab3a48bb79f4f3ea3c45abed5f1db12e1f85",
+    "profiles": "/private/tmp/uat-238564-windows-startup-profiles.json",
+    "profiles_sha256": "89894beb1d3d79f12fa7756b23dc3e9125cb8688b0e9ff2e3176dc83a36734ff",
+    "observer_source_sha256": "3b1a8ff0d4b8e55dad9343e8e0d7e43967d738bfc26f0162788f7eb4ee6c4ebc",
+    "non_ui": {
+      "passed": 31,
+      "seconds": 8.17
+    },
+    "primary_full_app": {
+      "passed": 0,
+      "timeouts": 4,
+      "limit_seconds": 60,
+      "constructor_seconds": [
+        6.526,
+        7.599,
+        6.406,
+        6.82
+      ]
+    },
+    "diagnostic": {
+      "dev": {
+        "passed": 1,
+        "pytest_seconds": 43.19,
+        "call_seconds": 33.55,
+        "constructor_seconds": 4.620144
+      },
+      "candidate": {
+        "timeout": true,
+        "limit_seconds": 60,
+        "constructor_seconds": 23.712153
+      }
+    },
+    "samples": [
+      {
+        "label": "dev",
+        "elapsed_seconds": 12.969,
+        "source_matches": true,
+        "observer_errors": [],
+        "log_line": 1661
+      },
+      {
+        "label": "dev",
+        "elapsed_seconds": 28.36,
+        "source_matches": true,
+        "observer_errors": [],
+        "log_line": 1688
+      },
+      {
+        "label": "dev",
+        "elapsed_seconds": 43.266,
+        "source_matches": true,
+        "observer_errors": [],
+        "log_line": 1692
+      },
+      {
+        "label": "dev",
+        "elapsed_seconds": 45.75,
+        "source_matches": true,
+        "observer_errors": [],
+        "log_line": 1693
+      },
+      {
+        "label": "candidate",
+        "elapsed_seconds": 13.078,
+        "source_matches": true,
+        "observer_errors": [],
+        "log_line": 1735
+      },
+      {
+        "label": "candidate",
+        "elapsed_seconds": 26.156,
+        "source_matches": true,
+        "observer_errors": [],
+        "log_line": 1741
+      },
+      {
+        "label": "candidate",
+        "elapsed_seconds": 40.156,
+        "source_matches": true,
+        "observer_errors": [],
+        "log_line": 1766
+      },
+      {
+        "label": "candidate",
+        "elapsed_seconds": 54.375,
+        "source_matches": true,
+        "observer_errors": [],
+        "log_line": 1767
+      },
+      {
+        "label": "candidate",
+        "elapsed_seconds": 68.734,
+        "source_matches": true,
+        "observer_errors": [],
+        "log_line": 1926
+      }
+    ],
+    "final_candidate_largest_total": [
+      {
+        "file": "Backup_Recovery/raw_participants.py",
+        "function": "_scope",
+        "line": 451,
+        "calls": 607,
+        "total_seconds": 37.579476,
+        "self_seconds": 0.025932
+      },
+      {
+        "file": "Backup_Recovery/config_participants.py",
+        "function": "wrapped",
+        "line": 400,
+        "calls": 233,
+        "total_seconds": 34.876809,
+        "self_seconds": 0.002714
+      },
+      {
+        "file": "Backup_Recovery/storage_admission.py",
+        "function": "acquire_storage",
+        "line": 830,
+        "calls": 477,
+        "total_seconds": 34.235184,
+        "self_seconds": 0.004401
+      },
+      {
+        "file": "Backup_Recovery/storage_admission.py",
+        "function": "_acquire_storage",
+        "line": 849,
+        "calls": 477,
+        "total_seconds": 34.225683,
+        "self_seconds": 0.020598
+      },
+      {
+        "file": "Backup_Recovery/config_participants.py",
+        "function": "operation",
+        "line": 294,
+        "calls": 576,
+        "total_seconds": 31.264621,
+        "self_seconds": 0.007521
+      },
+      {
+        "file": "config.py",
+        "function": "load_cli_config_and_ensure_existence",
+        "line": 6253,
+        "calls": 172,
+        "total_seconds": 24.359715,
+        "self_seconds": 0.000613
+      },
+      {
+        "file": "app.py",
+        "function": "__init__",
+        "line": 7785,
+        "calls": 1,
+        "total_seconds": 23.712153,
+        "self_seconds": 0.000643
+      },
+      {
+        "file": "Chat/console_runtime.py",
+        "function": "_read_canvas_enabled",
+        "line": 2770,
+        "calls": 84,
+        "total_seconds": 21.878068,
+        "self_seconds": 0.000348
+      },
+      {
+        "file": "config.py",
+        "function": "get_canvas_execution_enabled",
+        "line": 398,
+        "calls": 84,
+        "total_seconds": 21.764487,
+        "self_seconds": 0.000411
+      },
+      {
+        "file": "Chat/console_runtime.py",
+        "function": "_canvas_enabled",
+        "line": 2778,
+        "calls": 83,
+        "total_seconds": 21.749109,
+        "self_seconds": 0.000281
+      }
+    ],
+    "final_candidate_largest_self": [
+      {
+        "file": "Utils/windows_files.py",
+        "function": "open_handle",
+        "line": 480,
+        "calls": 241907,
+        "total_seconds": 18.084757,
+        "self_seconds": 5.126758
+      },
+      {
+        "file": "Utils/windows_files.py",
+        "function": "security",
+        "line": 450,
+        "calls": 137977,
+        "total_seconds": 8.108046,
+        "self_seconds": 4.248539
+      },
+      {
+        "file": "Utils/windows_files.py",
+        "function": "info",
+        "line": 421,
+        "calls": 381051,
+        "total_seconds": 3.667082,
+        "self_seconds": 3.186483
+      },
+      {
+        "file": "Utils/windows_files.py",
+        "function": "ntfs",
+        "line": 430,
+        "calls": 242954,
+        "total_seconds": 2.615713,
+        "self_seconds": 1.942208
+      },
+      {
+        "file": "Utils/windows_files.py",
+        "function": "sid_string",
+        "line": 378,
+        "calls": 626789,
+        "total_seconds": 2.546563,
+        "self_seconds": 1.747936
+      }
+    ]
+  },
+  "three_role_probe": {
+    "head": "238564276d7efc84e0954ace75f4c6e62493db3c",
+    "probe_sha256": "be47efd1b7f680c5941655e3d7d80901ff5e96948b814630c2899663242c1967",
+    "results": [
+      {
+        "leader": "sizes",
+        "variant": "complete",
+        "returncode": 0,
+        "seconds": 2.787,
+        "log": "/private/tmp/uat-three-role-native-owtlyas2/sizes-complete/run.log",
+        "verified_completion": {
+          "leader": "sizes",
+          "variant": "complete",
+          "actual_notes_getter_edge": true,
+          "initializer_condition_wait": true,
+          "heartbeat_rebuild_lock_wait": true,
+          "distinct_threads": 3,
+          "blocked_scheduler_drain_refused": true,
+          "trace_completed": true,
+          "trace_pause_refusal": false,
+          "all_resumed_calls_complete": true,
+          "network_attempts": 0
+        }
+      },
+      {
+        "leader": "sizes",
+        "variant": "pause",
+        "returncode": 0,
+        "seconds": 2.556,
+        "log": "/private/tmp/uat-three-role-native-owtlyas2/sizes-pause/run.log",
+        "verified_completion": {
+          "leader": "sizes",
+          "variant": "pause",
+          "actual_notes_getter_edge": true,
+          "initializer_condition_wait": true,
+          "heartbeat_rebuild_lock_wait": true,
+          "distinct_threads": 3,
+          "blocked_scheduler_drain_refused": true,
+          "trace_completed": false,
+          "trace_pause_refusal": true,
+          "all_resumed_calls_complete": true,
+          "network_attempts": 0
+        }
+      },
+      {
+        "leader": "trace",
+        "variant": "complete",
+        "returncode": 0,
+        "seconds": 2.642,
+        "log": "/private/tmp/uat-three-role-native-owtlyas2/trace-complete/run.log",
+        "verified_completion": {
+          "leader": "trace",
+          "variant": "complete",
+          "actual_notes_getter_edge": true,
+          "initializer_condition_wait": true,
+          "heartbeat_rebuild_lock_wait": true,
+          "distinct_threads": 3,
+          "blocked_scheduler_drain_refused": true,
+          "trace_completed": true,
+          "trace_pause_refusal": false,
+          "all_resumed_calls_complete": true,
+          "network_attempts": 0
+        }
+      },
+      {
+        "leader": "trace",
+        "variant": "pause",
+        "returncode": 0,
+        "seconds": 2.616,
+        "log": "/private/tmp/uat-three-role-native-owtlyas2/trace-pause/run.log",
+        "verified_completion": {
+          "leader": "trace",
+          "variant": "pause",
+          "actual_notes_getter_edge": true,
+          "initializer_condition_wait": true,
+          "heartbeat_rebuild_lock_wait": true,
+          "distinct_threads": 3,
+          "blocked_scheduler_drain_refused": true,
+          "trace_completed": false,
+          "trace_pause_refusal": true,
+          "all_resumed_calls_complete": true,
+          "network_attempts": 0
+        }
+      }
+    ]
+  },
+  "pending": [
+    "Exactnewrevision nativeLinux telemetry andinstalledLibrary",
+    "Exactnewrevision Windows13case nativeclose+installedLibrary",
+    "Prior238564317case Windows support stillrunning",
+    "ConsoleWAL writer and Windows60s startup remainunresolved"
+  ],
+  "completion": false
+}
