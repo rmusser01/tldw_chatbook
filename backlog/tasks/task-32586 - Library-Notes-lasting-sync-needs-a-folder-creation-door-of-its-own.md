@@ -23,4 +23,5 @@ Proven blocked twice against a live database by wave-4 group 2, which is why tas
 - [ ] #2 A folder it creates passes _verified_folder on the next run rather than reading as folder_authority_changed
 - [ ] #3 A vault with nested directories syncs to a matching Library folder tree and stays nested across a second check
 - [ ] #4 notes.md's 'Synced notes do not keep the vault folder tree' paragraph is updated to what ships
+- [ ] #5 The Add-from-files chooser's lasting-sync sentence is updated with it: task-32612 shipped 'collected in one managed Library folder rather than your folder structure' in LibraryNotesAddFromFilesCanvas._compose_phase, which is true only while this task is open, and Tests/UI/test_library_notes_w5_import_preview.py::test_each_relationship_names_what_happens_to_the_folder_structure pins it
 <!-- AC:END -->

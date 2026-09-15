@@ -124,14 +124,21 @@ editor's own Back control returns to its list.
   room for two panes at all: with nothing open the list is the whole stage
   instead of sharing it with an empty work area, and opening a note gives
   the stage to the note. Its own grip collapses or restores the list without
-  changing the Folder files tree choice. Renaming a note does not repaint its
-  list row live while the note stays open: a Notes refresh that lands while
-  the title field holds focus is skipped rather than queued, so tabbing or
-  clicking to another field does not by itself catch it up. The row shows the
-  new title the next time the canvas refreshes with focus outside the title
-  and body — in practice, that means returning to the list (the note work
-  area's own **‹ Notes** / **‹ Back to list** control, below), which always
-  repaints immediately; no filter re-query is needed once you are back.
+  changing the Folder files tree choice. When a rename SAVES, the note's list
+  row catches up immediately, even while the title field still has focus — the
+  row beside the editor is the only durable receipt on screen, so it is not
+  allowed to contradict the heading and the save status beside it. The refresh
+  the title field is protected from is a different one: a Notes refresh that
+  lands mid-sentence never rebuilds the field under your hands, so the editor
+  is not recomposed while you are typing in it and a body-only autosave costs
+  the list nothing. (Was "Renaming a note does not repaint its list row live
+  while the note stays open … the row shows the new title the next time the
+  canvas refreshes with focus outside the title and body" — superseded by
+  task-32612's group below.)
+
+  Only one pane carries a "Next:" instruction at a time. With a note open, the
+  work pane owns it; the list's own "Next: Create a note or add from files."
+  is advice for a reader with nothing open and stands down until there is.
 
   The folder tree lists notes **newest first by default** — every folder's
   notes, and the automatic **Unfiled** group, in the order they were last
@@ -442,7 +449,7 @@ undo the in-place updates that keep a terminal drag cheap.
 |---|---|
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
-| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. An Obsidian callout renders as a quoted block headed by its type — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Only the header line gets the bold rewrite: a callout's own body, written on the blockquote lines under the header, currently runs on directly after the bold type with no separator of its own. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
+| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. A rendered heading is left-aligned, where the rest of the body begins, rather than centred like a page banner — so a note whose title came from Obsidian frontmatter, which never matches its first heading exactly, shows a title and a heading rather than two titles. An Obsidian callout renders as a quoted block headed by its type, on its own line above the body — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker or running the type into the first line of the callout; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
 | **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Right after a save completes in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when that save happened; leaving the note and reopening it later in the same session goes back to the bare "Saved". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). In Info, "Saved" appears once. |
@@ -609,9 +616,17 @@ because Enter there goes back rather than creating anything.
 ### Add from files and lasting sync
 
 **Add from files…** first asks what relationship you want. Until you choose,
-the header names neither relationship — it reads "Add files to Library notes."
-over "Choose how files should relate to Library notes.", and its next action is
-to pick one.
+the header names neither relationship — one heading, "Add files to Library
+notes.", over a status line that says nothing has been chosen yet, and its
+next action is to pick one.
+
+Each option names the difference that matters most and is easiest to miss:
+**Import once** reproduces your folder structure as Library folders, while
+**Keep a folder synced** collects every note in one managed Library folder.
+Below them, a third line points at the answer that is on neither button —
+**Folder files**, the mode of this same screen that edits the folder where it
+is and imports nothing; the strip above the canvas is where you switch to it.
+The bar below the chooser holds only **‹ Notes**.
 
 - **Import once** copies supported files into Library notes and ends after its
   reviewed receipt. Later changes to the originals are not tracked.
@@ -623,7 +638,11 @@ to pick one.
   does — the file's path, what will happen to it, and the Library folder it
   lands in ("Daily/2026-09-06.md · Create a Library note · PowerVault") —
   under a heading per effect carrying its count ("Create a Library note
-  (56)"). A folder whose files all get the same effect collapses to one
+  (56)"). The summary line is followed by the pass's own scope — "Syncs .md,
+  .markdown and .txt only; other files are left alone" — because a folder's
+  `.csv` and `.yaml` sources are ignored here rather than reported, which is
+  the one place this path and Import once differ on the same folder: Import
+  once lists them under Failed or Skipped with a reason. A folder whose files all get the same effect collapses to one
   summary row you can open ("▶ Archive · 45 files · Create a Library note ·
   PowerVault"). Files the check leaves alone appear under **Skipped (N)**
   with the reason on the row (".trash/Old idea.md · Obsidian trash —
@@ -944,9 +963,15 @@ two-note CSV is two of them; the line says so ("67 of 67 planned changes
 complete").
 
 The receipt states what happened once, in plain words — "59 notes created ·
-8 files skipped · 54 links resolved" — with the two counts reconciled in the
-line beneath it ("67 planned changes from 66 reviewed sources."), and a
-**Skipped (N)** disclosure lists each skipped path with its reason. A file the app skipped for you — an unchanged repeat, an empty or
+8 files skipped · 54 links to imported notes rewritten" — with the two counts
+reconciled in the line beneath it ("67 planned changes from 66 reviewed
+sources."), and a **Skipped (N)** disclosure lists each skipped path with its
+reason. The links figure counts every `[[link]]` that found a note the same
+batch created, across all of them, which is why it can be larger than the
+number of notes that carry one. When the batch imported notes containing
+Obsidian embeds, the receipt says so too ("3 embedded files left as text").
+The receipt's own action then takes you to the Notes list holding what it
+created, with the count on its label. A file the app skipped for you — an unchanged repeat, an empty or
 unsupported source — keeps its own reason there; only a row you set to Skip
 yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
 **Retry N failures**; a cancelled batch with unfinished items shows **Retry
@@ -977,6 +1002,13 @@ With it on:
   keywords from it. Any other property in that block (`mood`, `status`,
   `rating`) is not imported, and the review row says which ones ("… · not
   imported: status"), so nothing disappears silently.
+- An embed — `![[diagram.png]]`, or `![[Another note]]` — is not a link and is
+  never rewritten: Chatbook has nowhere to render the embedded file, so the
+  note keeps the `![[…]]` exactly as you wrote it and Preview prints it as
+  text. The review row says so where it applies ("… · 2 embeds show as
+  `![[…]]` text, not the files"), and the receipt repeats the total, so the
+  "Unsupported · Image — not a note" row and its consequence are on the same
+  screen.
 - `[[wikilinks]]` and `[[link|alias]]` whose target is imported in the same
   batch become note links; a link to anything else stays as plain text, and a
   `[[link]]` written inside a code block or backticks is left alone. A linked
@@ -2167,3 +2199,25 @@ seven skipped files from one folder are listed one per row, and eight or more
 collapse into a single openable summary row naming the folder, the count and
 the reason. Both screens use that threshold, so the same vault never reads one
 way in Import once and another in lasting sync.*
+
+*Verified against fix/library-notes-w5-import-preview — 2026-09-15 (critique
+#4 group 7, at dev 3b26c66ce0). task-32612: the Add-from-files chooser asks its
+question once instead of three times, each relationship names what happens to
+your folder structure, and a third line points at Folder files. Its **‹ Notes**
+control WAS already rendered in the pinned bar at 190x40 — the finding's "no
+back control" half did not reproduce, and is now pinned on the real Library
+screen rather than only on the canvas. task-32616: a rename repaints the open
+note's list row immediately while the title keeps focus; only one pane carries
+a "Next:" at a time. The finding's other half — that the work pane's "Next:
+Start typing." goes stale after typing — did NOT reproduce: after a title-only
+edit the body really is empty, and the line becomes "Keep editing" the moment
+the body has words (measured live, both states). task-32618: an embed's fate is
+named on the review row and repeated on the receipt. task-32620: a rendered
+heading is left-aligned, and a callout's type sits on its own line above its
+body. task-32621: Folder files states what its tree lists and claims no save
+state over nothing; the lasting-sync review states which extensions it reads.
+task-32622: the receipt offers a named way to the notes it created, the links figure says
+what it counted, the picker's count matches what it displays, and a long review
+row keeps its folder prefix. Extensions in all three scope sentences are read
+from their own constants (`file_notes_service.SUPPORTED_EXTENSIONS`,
+`notes_sync_runtime._SYNC_FILE_EXTENSIONS`) and pinned against them.)*

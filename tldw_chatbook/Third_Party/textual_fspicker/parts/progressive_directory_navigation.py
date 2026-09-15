@@ -338,6 +338,13 @@ class ProgressiveDirectoryNavigation(OriginalDirectoryNavigation):
         suffix = (
             " · unavailable creation times last" if self.sort_key == "created" else ""
         )
+        # task-32622 AC#3 (B cap 20): ``count`` is everything the scan FOUND,
+        # so a folder holding three dot-entries reported "17 entries" over a
+        # list of 14 -- the reader counted the rows and found the line wrong.
+        # Say what is shown, and say that something is not.
+        shown = len(self._display_records)
+        if shown < count:
+            return f"Loaded · {shown} of {count} entries shown{suffix}"
         return f"Loaded · {count} entries{suffix}"
 
     def _notify_listing(self):

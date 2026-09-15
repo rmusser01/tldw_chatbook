@@ -14391,3 +14391,77 @@ size and state the sentence describes, not a grep. Write the sentence as a rule
 the reader can predict and check ("up to seven listed one per row, eight or more
 collapsed"), not as a specimen output, because a specimen is a claim about a
 literal the checker cannot see.
+
+## The revert-to-RED check also catches a fix that fixes nothing (task-32616, 2026-09-15)
+
+**The incident.** Critique #4 reported that the Notes editor's status line goes
+stale: "after typing, the editor's still reads 'Next: Start typing.'" The
+plausible cause was right there — task-32062's focus guard returns from
+`sync_state` before anything repaints while the title or body has focus. I
+wrote the obvious fix (update the authority `Static` inside the skip, the way
+the import and lasting-sync skips above it already do), wrote the pin, and the
+pin passed.
+
+Then the standing rule — revert the fix, record the RED — was applied. **The
+test passed with the fix reverted.** The line was never stale: after a
+TITLE-only edit the body really is empty, so "Start typing." is the true next
+step, and it becomes "Keep editing" the moment the body has words. Three prints
+against the real screen settled it:
+
+```
+AT OPEN:     'Saved · Next: Start typing.'
+AFTER TITLE: 'Unsaved changes · Next: Start typing.'      <- still true
+AFTER BODY:  'Unsaved changes · Next: Keep editing; …'
+```
+
+The assessor had typed a title, not a body. What was actually wrong was beside
+it: the LIST pane was carrying a second, disagreeing "Next:" at the same time.
+The shipped fix stands that one down; the authority-Static change was deleted
+rather than shipped unpinned, since it also partly undoes a ceiling that skip's
+own comment documents.
+
+**The rule.** The revert-to-RED check is usually read as "prove the test is
+wired to the fix". It is also the cheapest detector of a fix aimed at a cause
+that was never true — and a plausible mechanism sitting in the same function as
+the symptom is exactly when that happens. If the pin passes with the fix
+reverted, do not tighten the pin: go and measure whether the finding reproduces
+at all.
+
+**A trap in the revert harness itself.** If you script the revert/restore with
+a backup directory, do NOT reuse it across runs (`if not bak.exists(): copy`).
+A second run restored a file from a snapshot the FIRST run had taken, silently
+rolling back an edit made in between; it was caught only because a test that
+had been green went red. Delete the backup directory between runs, or key it by
+run.
+
+## The restore that ends a revert-check can eat the fix you were testing (wave 5, 2026-09-15)
+
+**The incidents, two of them in one day.** Proving a pin RED means putting the
+bug back, running, and putting the fix back. Both halves of that are edits, and
+the "put it back" half is where the work goes missing:
+
+- One implementer ended a revert-check with `git checkout -- <file>`. The fix
+  under test was **uncommitted**, so the checkout restored the file to HEAD and
+  silently deleted it. The script's own "source clean" line printed happily.
+- Another ran a restore in the background while still editing the same file.
+  The restore landed second and clobbered the later edit.
+
+Both were caught, and neither by the restore step reporting a problem — the
+first by grepping for the fix's own expression afterwards instead of trusting
+the script, the second by noticing the file had gone backwards.
+
+**Why it is worth a rule.** A revert-check inverts your usual safety: the state
+you must protect is the *working tree*, not the commit, because the thing you are
+proving is not committed yet. `git checkout -- <file>`, `git restore`, and
+`git stash` all mean "throw away the working tree", which during a revert-check
+means "throw away the fix".
+
+**The rule.** Do revert-checks on a **copy**: `cp file file.bak`, break it, run,
+`cp file.bak file`. Never `git checkout`/`git restore`/`git stash` a file whose
+uncommitted content is the thing under test. Never run a restore in the
+background while editing the same file. And verify the restore by **grepping for
+the fix's own text**, not by reading a script's success line — a restore that
+did the wrong thing succeeds just as loudly as one that did the right thing.
+
+Commit the fix first where you can: a committed fix makes the whole class
+impossible, at the cost of one amend.

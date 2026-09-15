@@ -148,6 +148,7 @@ FileNotesWorkMode = Literal["edit", "manage"]
 def resolve_file_note_status_channels(
     *,
     root: str | Path | None,
+    file_open: bool = True,
     conflict: bool = False,
     unavailable: bool = False,
     read_only: bool = False,
@@ -168,6 +169,12 @@ def resolve_file_note_status_channels(
 
     Args:
         root: Active Folder Files root, or ``None`` when no root is linked.
+        file_open: Whether a file is actually open in the editor. task-32621
+            AC#1 (A cap 29): with nothing selected every save-state input is
+            False, so the final ``else`` asserted "Saved" over an empty
+            editor -- a save state claimed for a file that does not exist,
+            on the one surface whose whole promise is that it edits the real
+            file.
         conflict: Whether disk and editor content conflict.
         unavailable: Whether the linked root cannot currently be reached.
         read_only: Whether the opened document cannot be edited.
@@ -209,6 +216,11 @@ def resolve_file_note_status_channels(
         content, safe = "Saving…", None
     elif dirty:
         content, safe = "Unsaved changes", None
+    elif not file_open:
+        # No "Next:" clause: this pane's safe actions name CONTROLS ("Save
+        # Copy", "Choose folder"), the tree is already the only thing to act
+        # on, and at 60x20 a sentence here is three rows of a two-row box.
+        content, safe = "No file open.", None
     else:
         content, safe = "Saved", None
 
@@ -941,6 +953,14 @@ class LibraryFileNotesWorkspace(Vertical):
         min-height: 3;
     }
 
+    #file-notes-tree-scope {
+        width: 100%;
+        height: auto;
+        max-height: 3;
+        color: $text-muted;
+        text-wrap: wrap;
+    }
+
     #file-notes-path-row {
         height: 4;
         min-height: 4;
@@ -1445,6 +1465,17 @@ class LibraryFileNotesWorkspace(Vertical):
                 Static("Folder files", classes="destination-section", markup=False),
                 Button("New", id="file-notes-new", compact=True),
                 id="file-notes-tree-header",
+            ),
+            # task-32621 AC#2 (A cap 29, B cap 35): the tree silently omitted
+            # notes.csv, meta.yaml, a Canvas folder and an attachments folder.
+            # The behaviour is right -- this workspace only ever edits note
+            # files (``file_notes_service.SUPPORTED_EXTENSIONS``) -- and it
+            # was the only thing on the pane not saying so, which reads as a
+            # folder whose contents went missing.
+            Static(
+                "Lists .md, .markdown, .txt and .text. Other files stay on disk.",
+                id="file-notes-tree-scope",
+                markup=False,
             ),
             Horizontal(
                 Static(
@@ -2212,6 +2243,7 @@ class LibraryFileNotesWorkspace(Vertical):
             authority_running = "Checking folder…"
         return resolve_file_note_status_channels(
             root=self._root,
+            file_open=opened is not None,
             repository_confirmed=self._repository_confirmed_for(binding),
             conflict=self._save_state == "conflict",
             unavailable=self._root is None or self._root_offline is True,
@@ -5519,7 +5551,28 @@ class LibraryFileNotesWorkspace(Vertical):
             transitioning or mutation_active
         )
         self._sync_editor_read_only()
+        self._sync_editor_visibility()
         self._git_panel_widget.set_mutating(mutation_active)
+
+    def _sync_editor_visibility(self) -> None:
+        """Show the editable body only when there is a file to edit.
+
+        task-32621 AC#1 (A cap 29): with nothing selected the right pane drew
+        a full, apparently editable box beside the words "No file selected".
+        Typing into it went nowhere, on the one surface whose promise is that
+        it edits the real file. Hidden rather than unmounted: every caller
+        queries ``#file-notes-editor`` unconditionally, and the editor is a
+        retained widget this workspace constructs once.
+        """
+        editor = self._editor_widget
+        visible = self._opened is not None
+        if editor.display == visible:
+            return
+        if not visible and editor.has_focus:
+            # A hidden widget keeps focus in Textual, which strands the
+            # keyboard on a box that is not on screen.
+            self.screen.set_focus(None)
+        editor.display = visible
 
     def _sync_editor_action_disabled_presentation(self) -> None:
         """Keep every disabled editor action readable and visibly inert."""

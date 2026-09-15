@@ -696,7 +696,11 @@ def initial_lasting_sync_snapshot(
         setup=LastingSyncSetup(),
         review=LastingSyncReview(),
         roots=(),
-        status_line="Choose how files should relate to Library notes.",
+        # task-32612 AC#1: this line and the pane's own "Add files to Library
+        # notes." heading were two thirds of a three-sentence stack that asked
+        # the same question three times. The heading asks; this says where the
+        # chooser stands.
+        status_line="Nothing chosen yet.",
     )
 
 

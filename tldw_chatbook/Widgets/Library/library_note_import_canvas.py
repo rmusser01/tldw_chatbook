@@ -103,9 +103,50 @@ its link count. Those came last and were the first thing the row lost.
 _UNIFORM_RUN_MIN = UNIFORM_RUN_MIN
 
 
+#: Cells the folder prefix may keep when the FILE NAME alone overflows the
+#: row budget. Enough for "vault/Inbox/" and a "…"-headed tail of anything
+#: deeper; the rest of the budget goes to the name.
+_ROW_FOLDER_BUDGET = 20
+
+
+def _elide_name_middle(name: str, budget: int) -> str:
+    """Elide inside one file name, keeping its start and its extension."""
+    if len(name) <= budget:
+        return name
+    if budget <= 1:
+        return "…"[:budget]
+    keep = budget - 1
+    head = (keep + 1) // 2
+    tail = keep - head
+    # ``name[head - keep:]`` read as ``name[0:]`` whenever head == keep (a
+    # budget of 2), returning the WHOLE name after the ellipsis and busting
+    # the budget it was given. Take the last ``tail`` characters explicitly;
+    # a tail of 0 is the empty string, not the whole string.
+    return f"{name[:head]}…{name[len(name) - tail:] if tail else ''}"
+
+
 def bounded_row_name(name: str) -> str:
-    """Keep a review row's path recognizable without spending the whole row."""
-    return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+    """Keep a review row's path recognizable without spending the whole row.
+
+    task-32622 AC#4 (B cap 23): ``elide_path_middle`` keeps the basename
+    whole and truncates the head, which is right until the basename ALONE
+    overflows -- then it falls back to the basename's tail, so one row of a
+    review table read as a fragment ending in ".md" with its "vault/Inbox/"
+    gone, while every sibling row carried its folder. The folder is the one
+    thing that lets a reader find the file in the tree, so keep it and elide
+    inside the name instead, where the information is least: the start of a
+    file name and its extension both survive.
+    """
+    folder, separator, base = name.rpartition("/")
+    if len(name) <= _ROW_NAME_BUDGET or not separator:
+        return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+    if len(base) + len(separator) <= _ROW_NAME_BUDGET - len("…"):
+        # The FOLDER is what overflows; the existing head-truncate is right.
+        return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+    prefix = f"{folder}{separator}"
+    if len(prefix) > _ROW_FOLDER_BUDGET:
+        prefix = f"…{prefix[len(prefix) - _ROW_FOLDER_BUDGET + 1:]}"
+    return f"{prefix}{_elide_name_middle(base, _ROW_NAME_BUDGET - len(prefix))}"
 
 
 def review_row_line(*parts: str) -> str:
@@ -500,6 +541,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     class RetryRequested(Message):
         """Request retry of only receipt-reported retryable failures."""
 
+    class ViewImportedNotesRequested(Message):
+        """Request the Notes list that now holds what this import created."""
+
     class PageRequested(Message):
         """Request a bounded preview-page change."""
 
@@ -762,16 +806,30 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 "Import the exact choices shown in this review."
             )
             yield submit
-        elif state.phase == "receipt" and (
-            state.retry_available or state.retryable_failures
-        ):
-            noun = "failure" if state.retryable_failures == 1 else "failures"
-            yield Button(
-                state.retry_label or f"Retry {state.retryable_failures} {noun}",
-                id="note-import-retry",
-                classes="library-canvas-action note-import-primary",
-                compact=True,
-            )
+        elif state.phase == "receipt":
+            if state.retry_available or state.retryable_failures:
+                noun = "failure" if state.retryable_failures == 1 else "failures"
+                yield Button(
+                    state.retry_label or f"Retry {state.retryable_failures} {noun}",
+                    id="note-import-retry",
+                    classes="library-canvas-action note-import-primary",
+                    compact=True,
+                )
+            if state.notes_written:
+                # task-32622 AC#1 (B cap 25): after a 54-note import the
+                # receipt offered a collapsed Skipped disclosure and "esc
+                # back to notes" -- no way forward from the biggest thing the
+                # user had done all session. The count is on the label so the
+                # control names its own destination.
+                noun = "note" if state.notes_written == 1 else "notes"
+                view = Button(
+                    f"View {state.notes_written} imported {noun}",
+                    id="note-import-view-notes",
+                    classes="library-canvas-action note-import-primary",
+                    compact=True,
+                )
+                view.tooltip = "Go to the Notes list holding these notes."
+                yield view
 
     def _compose_selection(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         count = len(state.selected_names)
@@ -1227,6 +1285,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         classification, separator, action = (event.button.name or "").rpartition(":")
         if separator and classification and action:
             self.post_message(self.GroupActionRequested(classification, action))
+
+    @on(Button.Pressed, "#note-import-view-notes")
+    def _view_imported_notes(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.ViewImportedNotesRequested())
 
     @on(Button.Pressed, "#note-import-check")
     def _check(self, event: Button.Pressed) -> None:

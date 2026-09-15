@@ -223,12 +223,17 @@ def test_a_fenced_example_of_callout_syntax_is_left_alone():
 
 
 def test_a_nested_callout_and_an_acronym_type_survive_the_rewrite():
-    """Review F8: `> > [!note]` matched one `>`, and `[!TODO]` became `Todo`."""
+    """Review F8: `> > [!note]` matched one `>`, and `[!TODO]` became `Todo`.
+
+    The two trailing spaces are task-32620 AC#3's hard break; see
+    ``test_a_callout_header_is_broken_from_its_body`` in
+    Tests/UI/test_library_notes_w5_import_preview.py for why they are there.
+    """
     from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
 
-    assert render_obsidian_callouts("> > [!tip] Nested\n") == "> > **Tip: Nested**\n"
-    assert render_obsidian_callouts("> [!TODO] Ship it\n") == "> **TODO: Ship it**\n"
-    assert render_obsidian_callouts("> [!todo]\n") == "> **Todo**\n"
+    assert render_obsidian_callouts("> > [!tip] Nested\n") == "> > **Tip: Nested**  \n"
+    assert render_obsidian_callouts("> [!TODO] Ship it\n") == "> **TODO: Ship it**  \n"
+    assert render_obsidian_callouts("> [!todo]\n") == "> **Todo**  \n"
 
 
 @pytest.mark.asyncio

@@ -354,13 +354,23 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     def _compose_phase(self) -> ComposeResult:
         phase = self.snapshot.phase
         if phase == "choose":
+            # task-32612 AC#1: this used to open with a THIRD header line --
+            # "Choose the relationship before selecting a file or folder." --
+            # under the pane's own "Add files to Library notes." and the
+            # status line's "Choose how files should relate…": three
+            # near-identical sentences over two buttons. The heading above
+            # asks the question once; each option answers it.
+            #
+            # AC#2: the structural consequence is the largest difference
+            # between the two and neither sentence named it -- Import once
+            # reproduced the vault's tree (A cap 23) while lasting sync put
+            # all 54 notes flat under one managed folder (A cap 51). When
+            # task-32586 gives lasting sync its own folder-creation path,
+            # the second sentence here is what has to change with it.
             yield Static(
-                "Choose the relationship before selecting a file or folder.",
-                classes="destination-purpose",
-                markup=False,
-            )
-            yield Static(
-                "Import once — Copy files into Notes. Later changes to the originals are not tracked.",
+                "Import once — Copy files into Notes, reproducing your folder "
+                "structure as Library folders. Later changes to the originals "
+                "are not tracked.",
                 markup=False,
             )
             # task-32125: both relationships are one choice, so both buttons
@@ -373,7 +383,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 compact=True,
             )
             yield Static(
-                "Keep a folder synced — Create a lasting connection. Changes continue between the folder and Notes.",
+                "Keep a folder synced — Create a lasting connection. Changes "
+                "continue between the folder and Notes, and every note is "
+                "collected in one managed Library folder rather than your "
+                "folder structure.",
                 markup=False,
             )
             lasting = self.snapshot.lasting_available
@@ -398,6 +411,19 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     classes="library-disabled-reason",
                     markup=False,
                 )
+            # task-32612 AC#3: the third world is not on this canvas at all,
+            # and it is the one that matches "edit my vault where it is" --
+            # the reason a vault owner opened this screen. It is a MODE of
+            # Notes, reachable from the source strip directly above the
+            # canvas, so the chooser points at it rather than offering it.
+            yield Static(
+                "Neither? To edit the files where they already are, switch "
+                "the strip above to Folder files — it opens the folder "
+                "directly and imports nothing.",
+                id="notes-add-folder-files-pointer",
+                classes="destination-purpose",
+                markup=False,
+            )
             return
         if phase == "configure":
             setup = self.snapshot.setup
@@ -508,6 +534,18 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 f"{review.safe_count} safe · {review.attention_count} need attention · "
                 f"{review.skip_count} skipped · {review.managed_count} folder moves",
                 id="notes-sync-review-summary",
+                markup=False,
+            )
+            # task-32621 AC#3: this pass reads .md/.markdown/.txt only
+            # (``notes_sync_runtime._SYNC_FILE_EXTENSIONS``) and says nothing
+            # about the rest, so "0 need attention" covered a vault whose
+            # .csv and .yaml sources Import once at least reports under
+            # Failed and Skipped. Neither path has to change what it DOES --
+            # each now says which it does.
+            yield Static(
+                "Syncs .md, .markdown and .txt only; other files are left alone.",
+                id="notes-sync-review-scope",
+                classes="library-disabled-reason",
                 markup=False,
             )
             if review.stale:

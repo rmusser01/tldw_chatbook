@@ -28,6 +28,8 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     REVIEW_CLASSIFICATION_ORDER,
     RootCollisionChoice,
     RootCollisionState,
+    embedded_file_plan_count,
+    item_embedded_file_count,
     planned_plan_change_count,
     resolved_wikilink_count,
 )
@@ -133,6 +135,10 @@ class NoteImportWorkflowSnapshot:
     # Same reason for the links the batch resolved (task-32178): the count is
     # a fact about the approved plan, which the next selection replaces.
     latest_resolved_links: int = 0
+    # task-32618: same reason again -- how many embeds the batch left as
+    # literal text is a fact about the approved plan, and the receipt has to
+    # repeat it for a user who skipped the review.
+    latest_dead_embeds: int = 0
     # task-32258: the receipt's own total counts planned changes (one per
     # note a source creates), while the review counted sources. Keeping the
     # source count is what lets the receipt reconcile the two out loud.
@@ -298,6 +304,10 @@ class LibraryNoteImportSnapshot:
     skipped_count: int = 0
     skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     resolved_links: int = 0
+    #: task-32622 AC#1: how many notes this receipt actually put in the
+    #: Library, so the receipt can offer a way to them instead of ending at
+    #: "esc back to notes" after the biggest thing the user has done.
+    notes_written: int = 0
 
 
 def _review_order(plan: NoteImportPlan | None) -> tuple[ImportPreviewItem, ...]:
@@ -471,6 +481,7 @@ def clear_selection(
         ),
         latest_skipped_items=state.latest_skipped_items,
         latest_resolved_links=state.latest_resolved_links,
+        latest_dead_embeds=state.latest_dead_embeds,
         revision=state.revision + 1,
     )
 
@@ -836,6 +847,7 @@ def settle_import(
             state, min(receipt.skipped, MAX_RECEIPT_SKIPPED_ROWS)
         ),
         latest_resolved_links=resolved_wikilink_count(state.approved_plan.plan),
+        latest_dead_embeds=embedded_file_plan_count(state.approved_plan.plan),
         latest_source_count=len(state.approved_plan.plan.items),
         cancel_requested=False,
     )
@@ -1004,11 +1016,14 @@ def project_library_note_import_snapshot(
         # "Import completed." in the header, a counted line, then the same
         # counts again in other words. The outcome is stated once, here; the
         # quiet line below it reconciles the two denominators instead.
-        receipt_line=_receipt_outcome(receipt, state.latest_resolved_links),
+        receipt_line=_receipt_outcome(
+            receipt, state.latest_resolved_links, state.latest_dead_embeds
+        ),
         receipt_detail=_receipt_detail(receipt, state.latest_source_count),
         skipped_count=receipt.skipped if receipt else 0,
         skipped_items=state.latest_skipped_items if receipt else (),
         resolved_links=state.latest_resolved_links if receipt else 0,
+        notes_written=(receipt.imported + receipt.updated) if receipt else 0,
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
         obsidian_available=state.vault_detected,
@@ -1141,11 +1156,40 @@ def _effect_summary(item: ImportPreviewItem) -> str:
             if len(dropped) > 4:
                 shown = f"{shown}, and {len(dropped) - 4} more"
             parts.append(f"not imported: {shown}")
+        embeds = _embed_clause(item)
+        if embeds:
+            parts.append(embeds)
         return f"{' · '.join(parts)}."
-    return (
+    if not item.replace_content:
+        return "Keep existing content."
+    embeds = _embed_clause(item)
+    return f"Replace existing content · {embeds}." if embeds else (
         "Replace existing content."
-        if item.replace_content
-        else "Keep existing content."
+    )
+
+
+def _embed_clause(item: ImportPreviewItem) -> str:
+    """Say what an Obsidian embed becomes once this source is imported.
+
+    task-32618 (B caps 23/27): the review already classifies the embedded PNG
+    as "Unsupported · Image — not a note", but never told the reader that the
+    NOTES embedding it keep the raw ``![[…]]`` on screen afterwards. It names
+    what the reader will see, not the classification -- the review's own
+    ``![[image]]`` row is the internal fact; "shows as ![[…]] text" is the
+    outcome.
+
+    Args:
+        item: One reviewed preview item.
+
+    Returns:
+        The clause, or ``""`` when this item writes no embeds.
+    """
+    count = item_embedded_file_count(item)
+    if not count:
+        return ""
+    noun = "embed" if count == 1 else "embeds"
+    return f"{count} {noun} shows as ![[…]] text, not the file" if count == 1 else (
+        f"{count} {noun} show as ![[…]] text, not the files"
     )
 
 
@@ -1220,12 +1264,14 @@ def _skipped_items(
 def _receipt_outcome(
     receipt: ImportExecutionReceipt | None,
     resolved_links: int = 0,
+    dead_embeds: int = 0,
 ) -> str:
     """State what this import did, once, in counted plain words.
 
     Args:
         receipt: The settled receipt, or None before one exists.
         resolved_links: Obsidian links that found a note in the same batch.
+        dead_embeds: ``![[…]]`` embeds the imported notes will show as text.
 
     Returns:
         One sentence naming every non-zero outcome and its unit.
@@ -1233,17 +1279,33 @@ def _receipt_outcome(
     if receipt is None:
         return ""
     # task-32130: "All planned items settled." named no outcome at all.
+    # Each row carries its own plural, because task-32622 AC#2 needed a
+    # clause ("links to imported notes") that no "+s" rule produces: "54
+    # links resolved" said nothing about WHAT resolved, and the review's own
+    # visible link rows were nowhere near 54, so the number read as either a
+    # different thing or the same thing twice (B cap 25, A cap 22).
     counts = (
-        (receipt.imported, "note", "created"),
-        (receipt.updated, "note", "updated"),
-        (receipt.skipped, "file", "skipped"),
-        (receipt.failed, "file", "failed"),
-        # task-32178: Obsidian links that found a note in the same batch.
-        (resolved_links, "link", "resolved"),
+        (receipt.imported, "note", "notes", "created"),
+        (receipt.updated, "note", "notes", "updated"),
+        (receipt.skipped, "file", "files", "skipped"),
+        (receipt.failed, "file", "files", "failed"),
+        # task-32178/task-32622: Obsidian links that found a note in the same
+        # batch, now named as what they are -- they are counted per link
+        # occurrence, across every note the batch creates.
+        (
+            resolved_links,
+            "link to an imported note",
+            "links to imported notes",
+            "rewritten",
+        ),
+        # task-32618: the review says the image is not imported; without this
+        # the receipt never says the notes that embed it keep the raw
+        # ![[…]] syntax on screen.
+        (dead_embeds, "embedded file", "embedded files", "left as text"),
     )
     parts = [
-        f"{count} {noun if count == 1 else noun + 's'} {verb}"
-        for count, noun, verb in counts
+        f"{count} {singular if count == 1 else plural} {verb}"
+        for count, singular, plural, verb in counts
         if count
     ]
     return " · ".join(parts or ["Nothing changed"])
