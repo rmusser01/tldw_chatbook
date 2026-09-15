@@ -1224,11 +1224,13 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             )
         # task-32610: the in-place review update above already recomputed
         # the button's own label/tooltip -- it never touched the visible
-        # `.library-disabled-reason` line, which then either stuck on its
-        # pre-activation text or (if the Static never got composed because
-        # this snapshot's root_id first appeared through this same fast
-        # path) never appeared at all, leaving a bare disabled glyph with no
-        # reason on screen.
+        # `.library-disabled-reason` line, which then stuck on its
+        # pre-activation text (a disabled control with a stale reason on
+        # screen). This fast path only runs when root_id is unchanged
+        # from the previous snapshot (the guard above in sync_state), so
+        # the Static was already composed at whatever full recompose
+        # first gave this root a non-empty root_id; it is never absent
+        # here.
         reason_line = self.query("#notes-sync-history-disabled-reason")
         if reason_line:
             reason_widget = reason_line.first(Static)
