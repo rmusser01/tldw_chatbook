@@ -511,11 +511,14 @@ pane's own actions: Copy, Export Markdown, Export text and Delete each name
 themselves ("enter delete note"), and the Keywords field shows no enter chip
 because Enter does nothing there.
 
-Tab out of the rendered body — Preview's or Info's — lands on **Edit**, the
-first of the mode buttons, not on "‹ Notes". "‹ Notes" is one Shift+Tab back
-from Edit, and Escape still leaves the note; the swap exists so that the one
-obvious Tab-then-Enter out of a reading pane cannot close the note by
-accident.
+In **Preview**, where the rendered body is the last stop of the cycle, Tab
+out of it lands on **Edit**, the first of the mode buttons, not on "‹ Notes".
+"‹ Notes" is one Shift+Tab back from Edit, and Escape still leaves the note;
+the swap exists so that the one obvious Tab-then-Enter out of a reading pane
+cannot close the note by accident. In **Info** the body is not the last stop
+— Keywords, Copy, Export Markdown, Export text, Delete and "‹ Notes" follow
+it — so Tab there simply carries on to Keywords and the cycle reaches every
+one of the pane's own actions.
 
 When the note body has keyboard focus, only its boundary becomes more
 prominent. The body background and editor size stay unchanged, so focusing
@@ -2191,12 +2194,18 @@ canvas keeps permanently undisplayed, so the live field was styled unlike
 the title field beside it; the selector now names both. That is a
 consistency change, not a fix for a missing cue.
 Info's footer now names the focused control instead of "run action"; Info's
-Delete takes the readable error role instead of the muted one. Tab out of a
-reading region was confirmed to land on "‹ Notes" before the change and on
-**Edit** after it. The lasting-sync canvas and the Session Git commit form
+Delete takes the readable error role instead of the muted one. Tab out of
+**Preview's** reading region was confirmed to land on "‹ Notes" before the
+change and on **Edit** after it; Info's region is stop 7 of 12, not the last,
+so the override does not fire there and a Tab walk of the Info pane visits
+all twelve stops (fix round 1 — the first cut redirected unconditionally and
+stranded Keywords, Copy, Export Markdown, Export text, Delete and "‹ Notes"
+off the forward ring). The lasting-sync canvas and the Session Git commit form
 now contain Tab (the latter through Textual's own `trap_focus`), and from the
 commit form's subject field Tab reaches **Cancel commit** and **Review
-commit** in two and three presses. Not verified live in a terminal: the
-end-to-end activate-a-root walk against a real vault — headless coverage
-stops at "the activate button is inside the pane's Tab cycle and Tab never
-leaves the pane".)*
+commit** in two and three presses. In the lasting-sync review the pane's own
+stops are "notes-sync-body", "notes-sync-activate" and "notes-sync-back": one
+Tab from the body reaches **Activate reviewed root**, and Enter there fires
+its press, so a reviewed root is activated by keyboard and not merely focused
+by one. Not verified live in a terminal: the same walk end to end against a
+real vault, where the activation does real work.)*

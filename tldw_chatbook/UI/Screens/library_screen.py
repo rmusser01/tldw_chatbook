@@ -735,6 +735,7 @@ _TRASH_RESTORE_FAILURE_COPY = "Could not restore this media item."
 # 5 tests deterministically. See Library_Modules/screen_helpers.py's module
 # docstring and this task's report for the full trace.
 from ..Library_Modules.screen_constants import (
+    LIBRARY_NOTES_FULL_CANVAS_VIEWS,
     _ANALYZE_ORIGIN_IMPORT,
     _ANALYZE_ORIGIN_MEDIA,
     _MEDIA_VIEW_LIST,
@@ -8563,6 +8564,25 @@ class LibraryScreen(BaseAppScreen):
     def action_library_notes_focus_filter(self) -> None:
         return self._notes_controller.action_library_notes_focus_filter()
 
+    def _library_notes_folder_rows(self) -> list[Widget]:
+        """The notes list's folder rows, without walking the whole screen.
+
+        FIX ROUND 1: ``check_action`` runs for every binding on every
+        bindings refresh, and ``_library_notes_footer_shortcuts`` calls it a
+        second time per render, so the ``g`` gate must not cost a full-screen
+        ``query``. Scoping to ``#library-notes-list`` -- the container
+        ``_compose_tree_rows`` builds the rows inside -- keeps the gate exact
+        while Textual caches id-selector ``query_one`` lookups against
+        ``_nodes._updates``, so the container costs nothing between DOM
+        changes and only the list's own subtree is walked.
+        """
+        if not self.is_mounted:
+            return []
+        container = self.query_one_optional("#library-notes-list")
+        if container is None:
+            return []
+        return list(container.query(".library-notes-folder-row"))
+
     def action_library_notes_focus_folders(self) -> None:
         """``g``: jump to the folder tree beside the notes list.
 
@@ -8572,12 +8592,12 @@ class LibraryScreen(BaseAppScreen):
         placement when there is one, so the key resumes where the reader
         left the tree rather than snapping to the top.
         """
-        rows = self.query(".library-notes-folder-row")
+        rows = self._library_notes_folder_rows()
         if not rows:
             return
         target = next(
             (row for row in rows if row.has_class("is-selected")),
-            rows.first(Widget),
+            rows[0],
         )
         self._mark_library_notes_user_interaction()
         target.focus()
@@ -8956,11 +8976,10 @@ class LibraryScreen(BaseAppScreen):
     #: Conversations and the root was never activated (assessor B, cap 33 /
     #: K17; assessor A reports the same shape for the import review). Escape
     #: and F6 remain the ways out of the pane, as they are for the editor.
-    _LIBRARY_WORK_PANE_TAB_VIEWS = (
-        "editor",
-        "import",
-        "lasting_add",
-        "lasting_roots",
+    #: ponytail: derived, so a new full-pane canvas joins the Tab cycle by
+    #: existing rather than by being remembered here as well.
+    _LIBRARY_WORK_PANE_TAB_VIEWS = frozenset(
+        {"editor"} | LIBRARY_NOTES_FULL_CANVAS_VIEWS
     )
 
     def _library_note_work_pane_owns_tab(self, focused: Widget | None) -> bool:
@@ -8994,16 +9013,45 @@ class LibraryScreen(BaseAppScreen):
     #: tab-index, so cutting the ring anywhere else would need a per-control
     #: override table. Add one if forward-only Tab reachability of Back is
     #: ever asked for.
+    #:
+    #: FIX ROUND 1: the redirect has to be conditional on the region really
+    #: being the stop that WRAPS onto the exit. Info's context region is stop
+    #: 7 of 12, not 7 of 7, and an unconditional redirect jumped over
+    #: Keywords, Copy, Export Markdown, Export text, Delete and Back --
+    #: leaving Info's footer naming an Enter action on controls forward Tab
+    #: could no longer reach, which is the defect task-32607 exists to
+    #: remove. The override now fires only when the natural next stop is one
+    #: of the panes' Back buttons.
     _LIBRARY_READING_REGION_IDS = frozenset(
         {"library-note-preview-region", "library-note-context-region"}
+    )
+    _LIBRARY_READING_REGION_WRAP_IDS = frozenset(
+        {"library-note-back", "library-note-context-back"}
     )
     _LIBRARY_READING_REGION_TAB_TARGET = "#library-note-edit"
 
     def _library_reading_region_tab_target(
         self, focused: Widget | None
     ) -> Widget | None:
-        """The forward-Tab stop for a focused reading region, if any."""
+        """The forward-Tab stop for a focused reading region, if any.
+
+        ``None`` -- meaning "let Textual cycle normally" -- unless the region
+        is the pane stop whose forward Tab wraps onto the pane's Back button.
+        """
         if focused is None or focused.id not in self._LIBRARY_READING_REGION_IDS:
+            return None
+        chain = [
+            widget
+            for widget in self.focus_chain
+            if self._library_note_work_pane_owns_tab(widget)
+        ]
+        index = next(
+            (i for i, widget in enumerate(chain) if widget is focused), None
+        )
+        if index is None:
+            return None
+        natural = chain[(index + 1) % len(chain)]
+        if natural.id not in self._LIBRARY_READING_REGION_WRAP_IDS:
             return None
         try:
             target = self.query_one(
@@ -24942,8 +24990,7 @@ class LibraryScreen(BaseAppScreen):
                     visible_notes
                     and region == "navigator"
                     and not isinstance(self.focused, (Input, TextArea))
-                    and self.is_mounted
-                    and self.query(".library-notes-folder-row")
+                    and self._library_notes_folder_rows()
                 )
             if action == "library_notes_export_selected":
                 return bool(

@@ -2942,12 +2942,22 @@ with stray left-edge border fragments), and padding 0 1 so the full
    that RENDERS. `#library-note-keywords` is its twin inside
    `#library-note-wide-utilities`, which `apply_session_state` sets
    `display = False` unconditionally -- so both of these blocks were being
-   spent on a box nobody can focus, and the live Keywords stop in Info fell
-   back to the generic `Input:focus` colour swap: no `text-style: bold`,
-   nothing that survives a monochrome dump. Adding the live id rather than
-   renaming keeps the existing pins (`#library-note-keywords:focus` is
-   asserted by `test_library_notes_labeled_fields_keep_stable_non_semantic_
-   focus_geometry`) honest about the twin that is still composed. */
+   spent on a box nobody can focus, and the live Keywords stop in Info was
+   left on the generic `Input:focus`, styled unlike the Title field
+   directly above it.
+
+   FIX ROUND 1 -- correcting this comment's own first claim: the live field
+   was NOT cue-less. Measured with these two selector additions reverted in
+   place, `#library-note-context-keywords` changes border TYPE `tall` ->
+   `solid` on focus from the generic `Input:focus` alone, and all three
+   parametrisations of `test_every_note_pane_tab_stop_paints_a_shape_change_
+   on_focus` stay green without them. This addition is a CONSISTENCY change
+   -- the live field now wears the same field look as the title field it
+   sits under, and its monochrome-visible cue becomes `text-style: bold`
+   instead of the border-type swap. Adding the live id rather than renaming
+   keeps the existing pins (`#library-note-keywords:focus` is asserted by
+   `test_library_notes_labeled_fields_keep_stable_non_semantic_focus_
+   geometry`) honest about the twin that is still composed. */
 #library-note-title,
 #library-note-keywords,
 #library-note-context-keywords {

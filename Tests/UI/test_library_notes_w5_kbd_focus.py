@@ -418,36 +418,29 @@ async def test_slash_in_the_editor_is_not_advertised_by_the_notes_footer():
 # --- task-32613 AC#2/#3: the order out of a reading pane -----------------
 
 
-@pytest.mark.parametrize(
-    ("mode", "region_id"),
-    (
-        ("preview", "library-note-preview-region"),
-        ("context", "library-note-context-region"),
-    ),
-)
 @pytest.mark.asyncio
-async def test_tab_out_of_a_reading_region_reaches_the_mode_strip(
-    mode: str, region_id: str
-):
+async def test_tab_out_of_previews_reading_region_reaches_the_mode_strip():
     """task-32613 AC#3.
 
     Textual orders the focus chain by screen POSITION, so the heading's
-    "‹ Notes" is the pane's first stop and a reading region is its last:
-    one Tab wrapped the cycle onto the exit and a blind Enter closed the
-    note with no warning. Reproduced headlessly before the fix -- Tab from
-    ``#library-note-preview-region`` focused ``#library-note-back``.
+    "‹ Notes" is the pane's first stop and Preview's reading region is its
+    LAST: one Tab wrapped the cycle onto the exit and a blind Enter closed
+    the note with no warning. Reproduced headlessly before the fix -- Tab
+    from ``#library-note-preview-region`` focused ``#library-note-back``.
     """
     host = _build_notes_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_first_note(screen, pilot)
-        if mode == "preview":
-            await _open_preview(screen, pilot)
-        else:
-            await _open_info(screen, pilot)
+        await _open_preview(screen, pilot)
 
-        screen.query_one(f"#{region_id}").focus()
+        stops = _work_pane_stops(screen)
+        assert stops[-1].id == "library-note-preview-region", [
+            stop.id for stop in stops
+        ]
+
+        stops[-1].focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
@@ -458,6 +451,57 @@ async def test_tab_out_of_a_reading_region_reaches_the_mode_strip(
         # "Select a note to edit it here" empty state.
         assert screen._notes_state.view == "editor"
         assert not screen.query("#library-note-work-empty")
+
+
+@pytest.mark.asyncio
+async def test_tab_walks_every_stop_of_the_info_pane():
+    """task-32613 AC#3, fix round 1 -- the half the first cut broke.
+
+    Info's reading region is stop 7 of 12, not the last, so the Preview
+    override must NOT fire there. The first cut applied it to both regions
+    and the forward ring collapsed to six stops: Keywords, Copy, Export
+    Markdown, Export text, Delete and "‹ Notes" became Shift+Tab-or-mouse
+    only, while task-32607's footer went on naming "enter delete note" on
+    them. Entry focus in Info lands on that region, so the very first
+    forward Tab a reader pressed was the broken one.
+
+    This walks with ``pilot.press("tab")`` rather than ``widget.focus()``:
+    a focus-order pin that sets focus directly cannot see a redirect.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+        await _open_info(screen, pilot)
+
+        stops = _work_pane_stops(screen)
+        expected = [stop.id for stop in stops]
+        assert "library-note-context-region" in expected, expected
+        assert expected[-1] != "library-note-context-region", (
+            "this pin only means anything while Info's region is NOT the "
+            f"last stop: {expected}"
+        )
+
+        stops[0].focus()
+        await pilot.pause()
+
+        visited = [screen.focused.id]
+        for _ in range(len(stops) - 1):
+            await pilot.press("tab")
+            await pilot.pause()
+            focused = screen.focused
+            assert focused is not None
+            assert any(
+                node.id == "library-note-work-pane"
+                for node in focused.ancestors_with_self
+            ), f"Tab left the note pane and landed on {focused.id!r}"
+            visited.append(focused.id)
+
+        missing = [stop for stop in expected if stop not in visited]
+        assert not missing, (
+            f"forward Tab never reached {missing}; walk was {visited}"
+        )
 
 
 @pytest.mark.asyncio
