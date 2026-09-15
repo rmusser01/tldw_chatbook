@@ -30,7 +30,7 @@ Cause PROVEN by capture. Wave 4's layout work (tasks 32544/32549, PR #2684) stop
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Actions unavailable under a filter are disabled with their reason on screen, in the grammar Sort already uses, rather than removed
+- [x] #1 Actions unavailable under a filter are disabled with their reason on screen, in the grammar Sort already uses, rather than removed — in the full shell. The compact (60-column) shell keeps composing only the actions it can fit: three blocked actions wrap its 50-cell toolbar onto two more rows and take a third for their reason, which is three rows of notes (`test_library_note_60x20_navigator_state_allocation` reads them off the list)
 - [x] #2 The toolbar groups its actions by a rule a reader can state, and the secondary group is reachable without scanning ten peers
 - [x] #3 The count of simultaneously visible actions in the notes list is stated as a deliberate number somewhere a later change will see it
 <!-- AC:END -->
@@ -69,4 +69,17 @@ Checked against dev afterwards: that test is a BASELINE red on both sides with
 the identical value (`Region(x=5, y=13, width=50, height=6)`, 3 failed /
 1 passed on dev @ c0d3d4dad7 and on this branch), so the parity is by value,
 not just by name.
+**Fix round 1 — the AC now carries the carve-out (review F3).** AC#1 read as
+universal while the code had a documented exception, which is the exact failure
+mode this group exists to fix. The compact-shell limit is written into AC#1
+itself now, not only into the code comment and the guide. The behaviour is
+unchanged and deliberate; what changed is that the AC no longer over-claims.
+
+**And the brief's `check_action` hypothesis was a dead end, confirmed by the
+reviewer independently:** `library_notes_canvas.py` defines no `check_action`
+at all, and these are `Button`s routed through
+`@on(Button.Pressed, "#library-notes-placement-add")` in `library_screen.py` --
+not bindings. There was never any "dimmed, not dropped" machinery to be
+mis-wired, so the disabled state had to be composed. Worth knowing before the
+next person goes looking for it.
 <!-- SECTION:NOTES:END -->
