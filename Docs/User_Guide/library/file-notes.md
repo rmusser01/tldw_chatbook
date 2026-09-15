@@ -128,10 +128,17 @@ Every step has a keyboard route (task-32606):
 
 While the picker is open the bottom row of the terminal shows the picker's own
 keys instead of Library's, starting with `esc Cancel` — that row is how you
-tell you are inside the dialog. Those keys are clickable as well as typable,
-and clicking one runs it without closing the picker. The last key on the row,
-`^s Select this folder`, is dimmed: it belongs to the file-and-folder picker
-Import once uses, and this dialog's **Select** button does that job instead.
+tell you are inside the dialog. The keys are clickable as well as typable, and
+clicking one does what pressing it does: `esc Cancel` closes the picker, and
+every other key runs without closing it.
+
+The row is ordered by usefulness and the overflow scrolls off the right edge,
+so how much of it you see depends on your terminal's width. At 100 columns it
+ends around `f5 Refresh direc`; the keys past that — `^r Show recent
+locations` and `^s Select this folder` — appear only on a wide terminal.
+`^s Select this folder` is dimmed wherever it does appear: it belongs to the
+file-and-folder picker Import once uses, and this dialog's **Select** button
+does that job instead.
 
 ## Features & controls
 

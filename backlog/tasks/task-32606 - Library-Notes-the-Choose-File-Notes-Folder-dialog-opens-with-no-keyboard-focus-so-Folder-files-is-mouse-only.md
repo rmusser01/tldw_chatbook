@@ -111,7 +111,7 @@ value with no click first (`04`, `10`). Log grep after both walks: zero
 The remaining leg — opening a file from the Files tree — is pinned headless on
 the real route (`test_folder_files_chooses_a_folder_and_edits_a_file_by_key_presses`)
 rather than live: Tab from the folder navigator's search field leaks into the
-Library rail, which is a separate pre-existing gap filed as a rider.
+Library rail, which is a separate pre-existing gap filed as task-32648.
 
 **Trade-off / known residue.** `^s Select this folder` still renders in the
 dialog's footer, dimmed, on pickers that do not offer it — Textual's `Footer`
@@ -121,7 +121,7 @@ it did. Making ctrl+s live on `SelectDirectory` would bypass
 `EnhancedSelectDirectory`'s own select handler and its remembered-directory
 bookkeeping, so it stays dimmed; review round 1 moved it LAST in `BINDINGS`
 so a narrow terminal scrolls it off first instead of spending 23 of 60
-columns on it. Rider stands for suppressing it outright.
+columns on it. task-32647 stands for suppressing it outright.
 
 **Out of scope, stated rather than half-done (review round 1).** The
 `EnhancedFileDialog` family gets NO footer. It re-implements `compose()`, so
@@ -131,8 +131,26 @@ pickers are pinned at, the character-import picker's selection marker fell
 off the bottom and three existing size pins went red. Those pins' premise —
 what is visible at that size — is honest, so re-baselining them would be a
 loosening. The gap is recorded in that `compose()`, in ENHANCEMENTS §8, and
-as a rider. `EnhancedSelectDirectory` keeps the focus fix, which is the
+as task-32653. `EnhancedSelectDirectory` keeps the focus fix, which is the
 defect this task is actually about.
+
+**The footer makes a fragile test file measurably flakier — this diff's doing,
+not a pre-existing flake (re-review 1).** I first reported the one branch-only
+red in `test_file_picker_progressive.py` as an order flake already present on
+`origin/dev`. That attribution was wrong. Under a fixed 7-file prefix the
+re-reviewer measured **branch 4 reds across 9 runs** (two names:
+`test_sort_controls_preserve_highlight_and_file_filter[FileOpen]` x3 and
+`test_click_from_old_painted_row_cannot_select_replacement` x1) against **dev
+0 reds across 7 runs**, with the last three pairs run simultaneously under
+identical (high) machine load, and removing `yield Footer()` from
+`base_dialog.compose` made the prefix green. Mechanism: `Footer
+.bindings_changed` schedules a `recompose` of ~8 `FooterKey` widgets on every
+active-bindings change -- i.e. on every focus move in every vendored picker --
+which adds message-loop work to a file whose `wait_until(..., seconds=4)`
+assertions are already load-sensitive. No coordinate or layout assertion
+fails and the file is green in isolation on both sides, so this is added
+fragility, not a product defect. Raising the bound would hide it rather than
+answer it; filed as task-32654 instead.
 
 **Review round 1 also fixed a Critical of its own making.** Docking the
 footer at screen level put it outside `SAFE_MODAL_CONTENT`, so
