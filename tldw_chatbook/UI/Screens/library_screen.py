@@ -1508,14 +1508,28 @@ class LibraryScreen(BaseAppScreen):
     #: running) now advertises NOTHING instead of a dead "Esc Locked"
     #: entry -- the footer falls back to the global cluster, matching the
     #: honest-footer contract everywhere else on this screen.
+    #: task-32607 AC#5 (critique #4 idea 10): the list footer's map is the
+    #: screen's only keyboard story, so it is made TRUE first and extended
+    #: second. ``n`` replaces ``ctrl+n`` as the advertised spelling because
+    #: it is the key that is live in exactly the states this tier is shown
+    #: in (``on_key``'s accelerator branch shares ``library_notes_new``'s
+    #: gate since task-32138); ``ctrl+n`` still fires and additionally works
+    #: from inside the filter box, where every chip here is suppressed.
+    #: ``g`` and ``e`` are new (``action_library_notes_focus_folders`` /
+    #: ``action_library_notes_export_selected``); ``e`` lives on the
+    #: select-mode tier below, since that is the only state its button is
+    #: on screen in. Every chip in this tier is dropped while a text field
+    #: holds focus (task-32609) -- there they are literal characters.
     LIBRARY_NOTES_NAVIGATOR_SHORTCUTS = (
-        ("ctrl+n", "new note"),
+        ("n", "new note"),
         ("/", "find note"),
+        ("g", "go to folder"),
         ("esc", "focus rail"),
     )
     LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT = (
-        ("ctrl+n", "new"),
+        ("n", "new"),
         ("/", "find"),
+        ("g", "folder"),
         ("esc", "rail"),
     )
     # task-32247 AC#2: the document-end key is advertised beside the other
@@ -8209,24 +8223,59 @@ class LibraryScreen(BaseAppScreen):
             )
         region = self._library_notes_focus_region()
         if region == "navigator":
+            typing = isinstance(self.focused, (Input, TextArea))
             if self._notes_state.select_mode:
+                # task-32607 AC#5: "e export selected" belongs here, not on
+                # the plain tier -- Export selected is composed only by the
+                # select strip, and only fires with a non-empty selection
+                # (``check_action``), so the chip appears exactly with the
+                # live key.
+                export = (
+                    (("e", "export selected"),)
+                    if self.check_action("library_notes_export_selected", ())
+                    else ()
+                )
+                export_compact = (
+                    () if not export else (("e", "export"),)
+                )
                 return self._notes_footer_tier(
-                    (("enter", "select note"), ("esc", "done")),
-                    (("enter", "select"), ("esc", "done")),
+                    (("enter", "select note"),) + export + (("esc", "done"),),
+                    (("enter", "select"),) + export_compact + (("esc", "done"),),
                 )
             if self._notes_state.sort_choices_visible:
                 return self._notes_footer_tier(
                     (("enter", "choose sort"), ("esc", "cancel")),
                     (("enter", "choose sort"), ("esc", "cancel")),
                 )
+            tier = self._notes_footer_tier(
+                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
+                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT,
+            )
+            # task-32609 AC#2 / task-32607 AC#5: every printable key in this
+            # tier is SWALLOWED by a focused text field -- Textual's ``Input``
+            # stops a printable keypress before the screen's bindings run, and
+            # ``library_notes_focus_filter``'s own ``check_action`` says so
+            # explicitly. The tier is shown from the whole navigator REGION,
+            # which includes focus parked in the filter box or (after Escape)
+            # the rail's own search box, so the footer read "/ find note"
+            # while "/" was landing as a literal character and "abc" was
+            # going into "Search Library…". Same transform the shared
+            # Library tier applies (see ``_library_footer_shortcuts_for_
+            # current_state``), scoped to the keys this tier owns.
+            if typing:
+                tier = tuple(
+                    pair
+                    for pair in tier
+                    if not (len(pair[0]) == 1 and pair[0].isprintable())
+                )
+            elif not self.check_action("library_notes_focus_folders", ()):
+                # No folder tree rendered (a flat list, or a list still
+                # loading): "g" would move nothing, so it is not advertised.
+                # The key's OWN gate decides, not a second copy of it.
+                tier = tuple(pair for pair in tier if pair[0] != "g")
             # task-32539 AC#1: after a confirmed delete focus parks on the
             # receipt's Undo, which this tier never named.
-            return self._with_library_notes_focus_chip(
-                self._notes_footer_tier(
-                    self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
-                    self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT,
-                )
-            )
+            return self._with_library_notes_focus_chip(tier)
         if region == "preview":
             # task-32537 AC#1: Tab moves across the mode buttons in Preview
             # exactly as it does in Edit, and a blind Enter there fires Use

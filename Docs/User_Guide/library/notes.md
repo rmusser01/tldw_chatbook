@@ -2021,3 +2021,25 @@ pager's "Previous page unavailable — this is the first page".
 
 The profile logs hold no `unhandled_exception` for either walk; each holds
 one `app_stopping`, the INFO record of a deliberate Ctrl+Q.)*
+
+*Verified against fix/library-notes-w5-kbd-focus — 2026-09-15 (tasks 32607,
+32608, 32609, 32613, critique #4). Measured headlessly against the real
+screen rather than walked in a terminal: every tab stop of the note pane was
+focused in turn and its computed `(text-style, outermost edge type)` pair
+compared focused vs blurred — the pair a monochrome capture keeps. Two stops
+changed nothing, `#library-note-preview-region` and
+`#library-note-context-region` (an accent-coloured `solid` border over a
+`solid` border, with the reset's `*:focus` outline repainting the same
+glyphs); both now take a `heavy` border on focus. `#library-note-context-
+keywords` had no field styling at all — the rule was being spent on
+`#library-note-keywords`, a twin the canvas keeps permanently undisplayed.
+Info's footer now names the focused control instead of "run action"; Info's
+Delete takes the readable error role instead of the muted one. Tab out of a
+reading region was confirmed to land on "‹ Notes" before the change and on
+**Edit** after it. The lasting-sync canvas and the Session Git commit form
+now contain Tab (the latter through Textual's own `trap_focus`), and from the
+commit form's subject field Tab reaches **Cancel commit** and **Review
+commit** in two and three presses. Not verified live in a terminal: the
+end-to-end activate-a-root walk against a real vault — headless coverage
+stops at "the activate button is inside the pane's Tab cycle and Tab never
+leaves the pane".)*
