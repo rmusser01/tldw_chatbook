@@ -2332,14 +2332,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
 
     def _tree_note_actions_unselected(self) -> bool:
-        """Return whether the placement actions have no row to act on."""
+        """Return whether the blocked-note-actions reason belongs on screen.
+
+        True only when the three placement actions were composed blocked --
+        so never in the compact shell, which does not compose them at all
+        (see ``_tree_action_buttons``).
+        """
+        if self.compact:
+            return False
         projection = self.tree_projection
         selected = (
             projection.row(self.tree_selected_placement_id)
             if projection is not None and self.tree_selected_placement_id
             else None
         )
-        return selected is None and not self.compact
+        return selected is None
 
     def _tree_action_buttons(self, *, operation_running: bool) -> list[Button]:
         """Every action the selected placement offers, in composed order.
@@ -2422,7 +2429,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         ),
                     )
                 )
-        else:
+        elif selected is None or selected.kind == "note":
             # task-32617 AC#1: this branch used to require a selected NOTE,
             # so with none the three note actions were DROPPED rather than
             # disabled -- proven by capture with the canvas driven directly:
