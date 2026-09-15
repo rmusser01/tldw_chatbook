@@ -230,6 +230,46 @@ def test_a_notes_door_also_records_the_root_it_returned(tmp_path, monkeypatch):
     assert recent[0]["type"] == "directory"
 
 
+def test_picking_a_FILE_records_where_to_reopen_but_offers_no_new_root(
+    tmp_path, monkeypatch
+):
+    """Review round 1, finding 2: the two facts are not the same fact.
+
+    Import once can return a file, and the start directory rightly takes that
+    file's PARENT -- that is where to reopen. The recents list must not: its
+    rows are offered as answers (`base_dialog._on_recent_selected` dismisses
+    with the row), so a folder the user only browsed THROUGH on the way to a
+    file would come back as a one-keystroke whole-folder adoption of a folder
+    they never chose.
+    """
+    folder = tmp_path / "browsed-through"
+    folder.mkdir()
+    picked_file = folder / "one-note.md"
+    picked_file.write_text("x", encoding="utf-8")
+    saved: list[dict] = []
+    _capture_writes(monkeypatch, saved)
+
+    context = picker_recent_context("library.notes_import")
+    generation = claim_browse_directory("library.notes_import", "last_directory")
+    remember_browse_directory(
+        "library.notes_import",
+        "last_directory",
+        picked_file,
+        generation,
+        recent_context=context,
+    )
+
+    assert len(saved) == 1
+    settings = saved[0]
+    # Still reopens where the user was...
+    assert settings["library.notes_import"] == {"last_directory": str(folder)}
+    # ...and still offers nothing new to adopt wholesale.
+    assert "filepicker" not in settings, (
+        "a picked FILE must not add its parent to the roots ctrl+r offers as "
+        f"answers; it wrote {settings.get('filepicker')!r}"
+    )
+
+
 def test_a_picker_that_offers_no_recents_records_none(tmp_path, monkeypatch):
     """Negative control: a blank ``recent_context`` writes no recents key.
 

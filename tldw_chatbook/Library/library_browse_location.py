@@ -180,11 +180,11 @@ def remember_browse_directory(
             that OFFERS its recent roots back (the three Notes folder doors).
             Blank -- the default -- writes no recents list, so a caller whose
             picker never reads one does not accumulate a key nothing shows.
+            Only a selection that WAS a folder joins that list; see below.
     """
     try:
-        directory = (
-            selected_path if selected_path.is_dir() else selected_path.parent
-        )
+        chose_a_folder = selected_path.is_dir()
+        directory = selected_path if chose_a_folder else selected_path.parent
         with _WRITE_ORDER:
             if _GENERATIONS.get((section, key)) != generation:
                 logger.debug(
@@ -195,7 +195,14 @@ def remember_browse_directory(
             # LIST, so two selections racing here would otherwise each read
             # the pre-existing list and the loser's entry would vanish.
             settings: dict[str, object] = {section: {key: str(directory)}}
-            if recent_context:
+            # Only a folder the user actually CHOSE joins the recents list.
+            # The start directory happily takes a picked file's parent -- that
+            # is where to reopen -- but Ctrl+R offers its rows as answers
+            # (`base_dialog._on_recent_selected` dismisses with the row), so a
+            # folder the user merely browsed THROUGH on the way to a file
+            # would come back as a one-keystroke whole-folder adoption of a
+            # folder they never picked. Review round 1, finding 2.
+            if recent_context and chose_a_folder:
                 settings.update(_recent_roots_write(recent_context, directory))
             saved = save_settings_to_cli_config(settings)
     except Exception:
