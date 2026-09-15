@@ -157,7 +157,10 @@ class LastingSyncSetup:
     direction: str = "bidirectional"
     server_available: bool = False
     server_disabled_reason: str = (
-        "Unavailable - server sync-folder capability not installed"
+        # task-32623: a hyphen here was the one exception to the em dash
+        # this screen otherwise uses throughout, including its own
+        # `_disabled_action_label` grammar in library_note_import_canvas.py.
+        "Unavailable — server sync-folder capability not installed"
     )
     validation_message: str = "Choose a display name, folder, and local destination."
     can_check: bool = False

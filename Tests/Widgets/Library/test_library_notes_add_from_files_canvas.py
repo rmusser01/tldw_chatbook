@@ -198,7 +198,7 @@ async def test_configure_keeps_server_option_readable_but_disabled_and_preserves
         await pilot.pause()
         server = app.query_one("#notes-sync-destination-server", Button)
         assert server.disabled is True
-        assert "Unavailable - server sync-folder capability not installed" in _frame(
+        assert "Unavailable — server sync-folder capability not installed" in _frame(
             app
         )
         name = app.query_one("#notes-sync-display-name", Input)

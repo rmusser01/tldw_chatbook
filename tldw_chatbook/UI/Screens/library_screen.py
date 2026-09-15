@@ -8250,12 +8250,22 @@ class LibraryScreen(BaseAppScreen):
             # editor the way the create canvas and delete prompt apply it.
             # (The append-don't-prepend reasoning now lives on the shared
             # helper, which the Preview and Notes-list tiers also use.)
-            return self._with_library_notes_focus_chip(
-                self._notes_footer_tier(
-                    self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
-                    self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
-                )
+            tier = self._notes_footer_tier(
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
             )
+            # task-32623: `ctrl+end` (task-32247) is a `TextArea`-class
+            # binding -- live only while the note body itself is the
+            # focused widget, per Textual's focus-chain binding lookup.
+            # Tab out of the body onto a toolbar Button (the same move the
+            # comment above already accounts for with the "enter" chip)
+            # and the key reaches nothing, yet the static tier kept
+            # advertising it regardless of which control actually holds
+            # focus. Same id-off-`self.focused` idiom
+            # `_library_focus_enter_label` already uses, not a fresh query.
+            if str(getattr(self.focused, "id", "") or "") != "library-note-body":
+                tier = tuple(pair for pair in tier if pair[0] != "ctrl+end")
+            return self._with_library_notes_focus_chip(tier)
         if region == "create":
             if self._notes_state.create_running:
                 return ()

@@ -141,6 +141,40 @@ async def test_a_caret_move_never_paints_a_count_fed_for_another_note():
         assert f"{_count(SHORT_BODY)} words" not in _facts(screen)
 
 
+# --- task-32623: Info and the editor footer format one word count -----------
+
+
+@pytest.mark.asyncio
+async def test_info_and_the_editor_footer_format_the_same_word_count():
+    """Critique #4: the footer read "5,453 words", Info read "5454" for the
+    same open note -- no thousands separator. Both are built from the exact
+    same int in one ``_library_note_presentation_state()`` call
+    (``state.word_count`` feeds the footer, ``state.metadata_line`` feeds
+    Info), so only the missing separator could make them read differently;
+    fixed by formatting Info's copy the same way the footer already does.
+    """
+    host = _build_two_note_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_short_then_long(screen, pilot)
+        expected = f"{_count(LONG_BODY):,} words"
+        await _wait_for_condition(
+            pilot,
+            lambda: _facts(screen).startswith(expected),
+            message=f"The long note's strip read {_facts(screen)!r}.",
+        )
+
+        screen.query_one("#library-note-context", Button).press()
+        await pilot.pause()
+        info_text = str(
+            screen.query_one("#library-note-context-meta", Static).renderable
+        )
+        assert expected in info_text, (
+            f"Info read {info_text!r}, not matching the footer's {expected!r}."
+        )
+
+
 # --- task-32542: the status clock and Info agree on one zone ----------------
 
 

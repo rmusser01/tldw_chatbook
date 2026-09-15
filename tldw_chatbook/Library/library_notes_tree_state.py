@@ -703,8 +703,16 @@ def _note_row(
     managed = membership.ownership == "managed"
     active = membership.owner_active
     if managed and active:
+        # task-32623: the owning folder's own row already reads "⇄ Sync
+        # managed" (see `folder_row`, immediately above this function's
+        # sibling) -- every note it manages inheriting the identical badge
+        # repeated the same fact once per row (54 times, on the capture
+        # this was found from) instead of once per folder. `semantic_status`
+        # stays "connected" (still drives any status-keyed styling); only
+        # the redundant text goes. The needs-attention case below is real
+        # per-note information, not an echo, and keeps its text.
         semantic_status: LibraryNotesTreeSemanticStatus = "connected"
-        status_text = "⇄ Synced placement"
+        status_text = ""
     elif managed:
         semantic_status = "needs_attention"
         status_text = "! Needs owner review"

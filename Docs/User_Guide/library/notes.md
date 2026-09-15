@@ -665,7 +665,7 @@ cause, and **Check changes** again in the same session.
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
 silently settled by a global winner policy. Server setup is visibly disabled
-with **Unavailable - server sync-folder capability not installed**.
+with **Unavailable — server sync-folder capability not installed**.
 
 For an eligible conflict where the same bound note and file both changed,
 choose **View comparison** to inspect their current text and metadata, then

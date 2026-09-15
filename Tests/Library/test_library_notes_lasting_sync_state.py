@@ -76,7 +76,7 @@ def test_server_destination_is_visibly_unavailable_and_never_checkable() -> None
     assert snapshot.setup.can_check is False
     assert snapshot.setup.server_available is False
     assert snapshot.setup.server_disabled_reason == (
-        "Unavailable - server sync-folder capability not installed"
+        "Unavailable — server sync-folder capability not installed"
     )
     assert "local" in snapshot.setup.validation_message.casefold()
 

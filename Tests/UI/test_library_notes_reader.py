@@ -503,6 +503,62 @@ def test_notes_header_status_channels_follow_approved_precedence(
 
 
 @pytest.mark.asyncio
+async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
+    """task-32623: Edit/Preview/Info must not move under the pointer.
+
+    ``#library-note-mode-controls`` and ``#library-note-task-actions`` are
+    sibling ``Horizontal`` rows inside one ``width: auto``
+    ``#library-note-primary-actions`` -- Discard new note used to be
+    ``display``-toggled, so hiding it shrank the task-actions box, shrank
+    the auto width, and moved mode-controls (its left sibling) under the
+    cursor the instant an untouched new note gained its first character.
+    ``#library-note-task-actions`` now reserves its widest (Discard-shown)
+    width unconditionally, so the row's position no longer depends on
+    which buttons within it happen to be visible.
+
+    235 columns, not this suite's usual ``LIBRARY_TEST_SIZE`` (170): at 170
+    the row's own excess space happens to be exhausted before Discard's
+    width matters, so the shift this pins does not reproduce there --
+    checked by hand against a reverted copy of the CSS fix before landing.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-new")
+        screen.query_one("#library-notes-new", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+
+        discard = screen.query_one("#library-note-discard-new", Button)
+        mode_controls = screen.query_one("#library-note-mode-controls")
+        assert discard.display is True, "untouched new note should offer Discard"
+        x_with_discard = mode_controls.region.x
+
+        body = screen.query_one("#library-note-body", TextArea)
+        body.text = "typed content"
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-note-discard-new", Button).display
+            is False,
+            message="Discard new note never disappeared after typing.",
+        )
+        x_without_discard = mode_controls.region.x
+
+        assert x_without_discard == x_with_discard, (
+            f"Edit/Preview/Info moved from x={x_with_discard} to "
+            f"x={x_without_discard} when Discard new note disappeared."
+        )
+
+
+@pytest.mark.asyncio
 async def test_database_note_status_header_paints_actionable_detail() -> None:
     """Detailed failure/recovery copy survives the pure status projection."""
     app = _build_test_app()
