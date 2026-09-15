@@ -5432,7 +5432,11 @@ def test_a_document_mixing_notes_with_other_records_is_not_called_config(
         (
             "records.csv",
             "title,content\nOne,body\nTwo,\nThree,body\n",
-            "Row 3 could not be read as a note.",
+            # task-32619: names rows parsed so far, the failing row, and the
+            # exact (as-typed) column, plus what to do about it -- not just
+            # "could not be read as a note".
+            '1 row(s) imported so far. Row 3: fix the "content" cell, '
+            "then import again.",
         ),
     ],
 )

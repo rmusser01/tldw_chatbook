@@ -733,33 +733,37 @@ def _payload_from_mapping(
     record: Mapping[Any, Any],
     bounds: ImportBounds,
 ) -> ParsedNotePayload:
+    # task-32619: `detail` also names which role failed ("row" for a
+    # shape-level problem, else the mapping key CSV filled from a column) so
+    # a caller that knows the source's own column labels -- only the CSV
+    # path currently does -- can name the exact cell instead of the row.
     if not all(isinstance(key, str) for key in record):
-        raise _ParseFailure("invalid_content")
+        raise _ParseFailure("invalid_content", "row")
     if any(
         sum(alias in record for alias in aliases) > 1
         for aliases in (_TITLE_ALIASES, _CONTENT_ALIASES, _KEYWORD_ALIASES)
     ):
-        raise _ParseFailure("invalid_content")
+        raise _ParseFailure("invalid_content", "row")
     # Whether a record is note-shaped at all is decided for the whole document
     # in _structured_payloads; a body-less record only reaches here from CSV,
     # which always supplies one.
     content_value = record.get("content", record.get("body"))
     if not isinstance(content_value, str) or not content_value.strip():
-        raise _ParseFailure("invalid_content")
+        raise _ParseFailure("invalid_content", "content")
     title_value = record.get("title", record.get("name", "Untitled"))
     if not isinstance(title_value, str):
-        raise _ParseFailure("invalid_content")
+        raise _ParseFailure("invalid_content", "title")
     if not title_value.strip():
         title_value = "Untitled"
     if len(title_value) > MAX_IMPORT_TITLE_LENGTH:
-        raise _ParseFailure("invalid_content")
+        raise _ParseFailure("invalid_content", "title")
     keywords_value = record.get("keywords", record.get("tags"))
     keywords = _keywords(keywords_value, bounds)
     template = record.get("template")
     if template is not None and not isinstance(template, str):
-        raise _ParseFailure("invalid_content")
+        raise _ParseFailure("invalid_content", "template")
     if template is not None and len(template) > MAX_IMPORT_TEMPLATE_NAME_LENGTH:
-        raise _ParseFailure("invalid_content")
+        raise _ParseFailure("invalid_content", "template")
     return ParsedNotePayload(
         title=title_value,
         content=content_value,
@@ -778,12 +782,12 @@ def _keywords(value: Any, bounds: ImportBounds) -> tuple[str, ...]:
     elif isinstance(value, list) and all(isinstance(item, str) for item in value):
         raw_keywords = value
     else:
-        raise _ParseFailure("invalid_content")
+        raise _ParseFailure("invalid_content", "keywords")
     keywords = tuple(keyword.strip() for keyword in raw_keywords)
     if any(
         not keyword or len(keyword) > MAX_IMPORT_KEYWORD_LENGTH for keyword in keywords
     ):
-        raise _ParseFailure("invalid_content")
+        raise _ParseFailure("invalid_content", "keywords")
     if len(keywords) > bounds.max_keywords_per_note:
         raise _ParseFailure("too_many_keywords")
     return keywords
@@ -830,13 +834,33 @@ def _csv_payloads(text: str, bounds: ImportBounds) -> tuple[ParsedNotePayload, .
         elif content_index is None:
             content_index = _fallback_header_index(normalized_headers)
         template_index = _first_header(normalized_headers, ("template",))
+        # task-32619: the raw (un-normalized) header text a failure names,
+        # so "fix the X cell" points at the column exactly as the user
+        # spelled it in their own file.
+        column_labels = {"title": headers[title_index], "content": headers[content_index]}
+        if keyword_index is not None:
+            column_labels["keywords"] = headers[keyword_index]
+        if template_index is not None:
+            column_labels["template"] = headers[template_index]
+
+        def _row_failure(payloads: list[ParsedNotePayload], field: str) -> _ParseFailure:
+            where = (
+                f'the "{column_labels[field]}" cell'
+                if field in column_labels
+                else "that row"
+            )
+            return _ParseFailure(
+                "invalid_content",
+                f"{len(payloads)} row(s) imported so far. Row {reader.line_num}: "
+                f"fix {where}, then import again.",
+            )
 
         payloads: list[ParsedNotePayload] = []
         for row in reader:
             if len(payloads) >= bounds.max_notes_per_file:
                 raise _ParseFailure("too_many_notes")
             if len(row) != len(headers) or not any(cell for cell in row):
-                raise _ParseFailure("invalid_content")
+                raise _row_failure(payloads, "row")
             mapping: dict[str, Any] = {
                 "title": row[title_index],
                 "content": row[content_index],
@@ -850,10 +874,7 @@ def _csv_payloads(text: str, bounds: ImportBounds) -> tuple[ParsedNotePayload, .
             except _ParseFailure as error:
                 if error.reason_code != "invalid_content":
                     raise
-                raise _ParseFailure(
-                    "invalid_content",
-                    f"Row {reader.line_num} could not be read as a note.",
-                ) from error
+                raise _row_failure(payloads, error.detail) from error
         if not payloads:
             raise _ParseFailure("empty_structured_source")
         return tuple(payloads)
