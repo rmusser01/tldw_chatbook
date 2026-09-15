@@ -673,3 +673,15 @@ gained the note that a brand-new profile has no Browse section — see
 unchanged. Not re-walked live: this page's Git chapter was corrected against
 the widget's own compose, not a capture, and says so rather than carrying a
 capture it does not have.)*
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32614, at
+235x52, 100x30 and 60x24 through the production Library harness): the file
+tree now fills the navigator pane instead of sharing its spare rows with the
+"Folder files" title row — 38 visible tree rows at 235x52 where there were
+20, and 18 at 100x30 where there were 10. At 100x30 the two panes divide
+46/44 rather than 56/34: Folder files uses the same 44-column work-pane floor
+as every other Library destination instead of its own 30. Both identity lines
+— the breadcrumb above the editor and the full path under "File details &
+path" — now paint on exactly one row, middle-elided with "…" so the file's
+own name survives; before this the absolute path folded over six rows at
+100x30, broken inside a directory name.
