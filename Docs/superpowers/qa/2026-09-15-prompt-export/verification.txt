@@ -1,0 +1,35 @@
+TASK-32629 verification, 2026-09-15
+Base: 9ff4839ce0; feat/component-pattern-library
+
+.venv/bin/python -m pytest Tests/UI/test_library_prompt_export_journeys.py Tests/UI/test_library_prompts_canvas.py -k 'export or copy' -q --tb=short
+61 passed, 300 deselected, 2 warnings in 172.09s (0:02:52)
+
+.venv/bin/python -m pytest Tests/Library/test_prompt_export_roundtrip.py -x -q --tb=short
+17 passed, 2 warnings in 1.04s
+
+.venv/bin/python -m pytest Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py -q --tb=short
+13 passed, 2 warnings in 3.95s
+
+.venv/bin/python -m pytest Tests/Architecture/test_library_prompts_wiring.py -q --tb=short
+13 passed, 2 warnings in 1.60s
+
+104 distinct targeted tests passed. The final UI selection contains 19 new journey cases and 42 existing cases.
+Each run reports two pre-existing pytest temporary-directory cleanup warnings for an old Kokoro fixture.
+No full repository sweep was run.
+
+Regression evidence:
+Before the feedback repair: -k 'failures and textual-light and size1' failed waiting for inline status (1 failed, 15 deselected).
+Before the current-screen guard: -k other-screen failed because the hidden original editor status was overwritten (1 failed, 18 deselected).
+Both regressions pass in the final selection.
+
+Ruff: clean new test and native probe; changed functions formatted in their class/top-level context.
+Baseline/current diagnostic counts: controller 16/16; screen 205/205; canvas tests 24/24; renderer 1/1.
+Final formatting was AST-equivalent to the tested production code.
+git diff --check: pass.
+
+Native run-004: PID 41434, LinuxDriver, private profile, exclusive ownership.
+170x48 dark and 80x24 light: Copy OSC52, unavailable adapter, Escape cancellation, real FileNotFoundError, keyboard Save retry, matching Markdown output, retained fields/version.
+Compact Ctrl+Q: app.run returned; fresh /tmp/task-32629-native-run-004.exit = 0; observed 13843 zsh 80x24.
+Post-exit read-only SQLite: Prompt 10 live, version 1, unchanged name and multiline body.
+Six final SVGs rendered with qlmanage and visually inspected. Focused Export/Save and inline results are readable.
+OS clipboard delivery and external provider requests were not qualified.

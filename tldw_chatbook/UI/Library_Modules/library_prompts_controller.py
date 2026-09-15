@@ -2761,6 +2761,31 @@ class LibraryPromptsController:
         if reveal:
             status_static.scroll_visible(animate=False)
 
+    def _report_library_prompt_action_result(
+        self,
+        message: str,
+        *,
+        severity: str = "information",
+        prompt_id: int | None = None,
+    ) -> None:
+        """Reveal action feedback without covering the next focused control.
+
+        Args:
+            message: The result to display.
+            severity: Notification severity if the editor is no longer active.
+            prompt_id: Original export identity; omit for immediate Copy results.
+        """
+        if (
+            self.app.screen is self._screen
+            and self._library_prompt_editor_active()
+            and (prompt_id is None or self._selected_prompt_id == prompt_id)
+        ):
+            self._update_library_prompt_status_static(message, reveal=True)
+            return
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity=severity)
+
     async def _sync_library_prompt_open_existing_button(self, *, show: bool) -> None:
         """Targeted mount/removal of ``#library-prompt-open-existing`` (Task
         8b D3), no recompose.
@@ -3648,22 +3673,22 @@ class LibraryPromptsController:
             return
         detail.update(artifact_fields)
 
-        notify = getattr(self.app_instance, "notify", None)
         copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
         if not callable(copy_to_clipboard):
-            if callable(notify):
-                notify(
-                    "Clipboard copy is unavailable in this runtime.", severity="warning"
-                )
+            self._report_library_prompt_action_result(
+                "Clipboard copy is unavailable in this runtime.", severity="warning"
+            )
             return
         try:
             copy_to_clipboard(render_prompt_markdown(detail))
         except Exception as exc:
-            if callable(notify):
-                notify(f"Error copying prompt: {type(exc).__name__}", severity="error")
+            self._report_library_prompt_action_result(
+                f"Error copying prompt: {type(exc).__name__}", severity="error"
+            )
             return
-        if callable(notify):
-            notify("Prompt copied to clipboard as markdown!", severity="information")
+        self._report_library_prompt_action_result(
+            "Prompt copied to clipboard as markdown!"
+        )
 
     def _library_prompt_artifact_fields(self) -> dict[str, Any]:
         """Return export/copy metadata for the live Prompt working copy.

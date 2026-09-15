@@ -262,3 +262,31 @@ Use in Console flows, then continue through Skills and the other Library
 destinations. This pass qualifies those menu controls' reachability only where
 their full action is outside the recovery journey. Integration into `dev`
 remains pending.
+
+## Prompt Copy and Markdown export — TASK-32629
+
+The [Copy/Export evidence](../qa/2026-09-15-prompt-export/README.md) closes the
+actual clipboard and file-picker journeys. Native compact review exposed
+stacked result notifications covering Copy and the next picker Save button.
+Copy and Export now reveal their existing inline status without moving focus
+or rebuilding fields. Delayed results use an application notification when the
+original editor, Prompt identity or Library screen is no longer active.
+
+The final **104 targeted checks** pass: 19 new production-CSS/SQLite journeys,
+42 neighboring Copy/Export cases, 17 parser/renderer round trips, 13 token/bundle
+checks and 13 controller wiring checks. Legacy and structured Prompt/Recipe
+content is preserved; unavailable/throwing clipboard adapters, write failure,
+retry, cancellation and focus return are covered. The stale renderer limitation
+docstring and user guide now describe current behavior. No new Ruff diagnostics
+were introduced, and no full repository sweep was run.
+
+The final private native journey passes at measured 170×48 dark and 80×24 light,
+including actual OSC52 clipboard handoff, a real FileNotFoundError, keyboard
+Save retry and matching file output. Six rendered captures show readable
+feedback and focused Export/Save. Normal compact Ctrl+Q returned exit 0 to the
+observed shell; read-only SQLite inspection confirms the source remains live
+at version 1 with unchanged multiline content. OS clipboard delivery and a
+provider interaction were not qualified; existing startup/worker notices remain.
+
+Next: History, Collections and Use in Console, followed by Skills and the other
+Library destinations. Integration into `dev` remains pending.

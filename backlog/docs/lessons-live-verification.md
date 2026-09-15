@@ -851,21 +851,31 @@ never asks who else was supposed to construct it that way.
 
 ---
 
-## `save_screenshot` does not render the toast rack — probe `app._notifications`
+## Notification storage and visible toast behavior need separate checks
 
 **What happened.** TASK-2154.16 (FB-05) added an error toast on Console stream
 failure. The notification fired correctly — visible in `app._notifications` with
 `severity="error"`, alive 2.5s after posting — yet the UAT SVG capture
 (`app.save_screenshot`, Textual 8.2.8) showed no trace of it, and neither did a
 control probe that called `notify()` manually and screenshotted 0.3s later. The
-toast rack is simply absent from SVG exports in this Textual version, so "toast
-visible in capture" is unprovable by screenshot and a fix can look broken when it
-is not.
+toast rack was absent from SVG exports in that pilot configuration, so a
+screenshot alone could not establish whether the notification was posted.
 
-**What to do.** To verify toast behavior in a pilot session, assert on
-`app._notifications` (message text + severity + that it is still alive after the
-expected interval), not on the SVG/PNG capture. Use captures for transcript/row
-content only.
+**Follow-up incident (TASK-32629, 2026-09-15).** Prompt Copy/Export journeys
+passed in the headless production-CSS harness, but the same sequence under
+`LinuxDriver` at 80×24 stacked two toasts over focused Copy and the FileSave
+Save button. Waiting for the action to paint merely waited 1–3 seconds for
+toast expiry. This native run's SVG did contain the toast rack; the
+[before capture](../../Docs/superpowers/qa/2026-09-15-prompt-export/before-picker-80.svg)
+shows both notices covering Save. Inline Prompt status feedback resolved the
+obstruction without moving focus or rebuilding fields.
+
+**What to do.** Assert notification text and severity in `app._notifications`
+to establish posting, then check the next focused control in the actual native
+journey to establish visibility. Do not generalize one headless driver's toast
+capture behavior to every runtime, or mask obstruction by waiting for expiry.
+Inspect the rendered native capture and terminal output when they disagree with
+a headless check.
 
 ---
 

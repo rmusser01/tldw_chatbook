@@ -26701,16 +26701,18 @@ class LibraryScreen(BaseAppScreen):
             user_prompt: The prompt's live user-prompt text.
             keywords_text: The prompt's live keywords, as a
                 comma-separated string.
-            prompt_id: The prompt's id (used only for logging).
+            prompt_id: Original prompt identity for feedback routing and logging.
             artifact_fields: Optional structured Prompt/Recipe metadata
                 captured with the live block working copy.
         """
         if self._prompts_state.mutation_in_flight:
             return
-        notify = getattr(self.app_instance, "notify", None)
+        notify = partial(
+            self._prompts_controller._report_library_prompt_action_result,
+            prompt_id=prompt_id,
+        )
         if not selected_path:
-            if callable(notify):
-                notify("Prompt export cancelled.", severity="information")
+            notify("Prompt export cancelled.", severity="information")
             return
         try:
             validated_path = validate_path_simple(selected_path, require_exists=False)
@@ -26718,8 +26720,7 @@ class LibraryScreen(BaseAppScreen):
             logger.warning(
                 f"Rejected Library prompt export path {selected_path!r} for {prompt_id!r}: {exc}"
             )
-            if callable(notify):
-                notify(f"Rejected export path: {exc}", severity="warning")
+            notify(f"Rejected export path: {exc}", severity="warning")
             return
         keywords = self._library_note_keywords_from_input(keywords_text) or []
         detail = {
@@ -26740,16 +26741,12 @@ class LibraryScreen(BaseAppScreen):
                 prompt_id,
                 type(exc).__name__,
             )
-            if callable(notify):
-                notify(
-                    f"Error exporting prompt: {type(exc).__name__}", severity="error"
-                )
+            notify(f"Error exporting prompt: {type(exc).__name__}", severity="error")
             return
-        if callable(notify):
-            notify(
-                f"Prompt exported successfully to {validated_path.name}",
-                severity="information",
-            )
+        notify(
+            f"Prompt exported successfully to {validated_path.name}",
+            severity="information",
+        )
 
     @on(Button.Pressed, "#library-prompt-duplicate")
     def handle_library_prompt_duplicate(self, event: Button.Pressed) -> None:

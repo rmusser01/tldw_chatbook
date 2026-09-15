@@ -349,8 +349,12 @@ close it and return focus to More actions.
 - **Use in Console** opens the shared variable/System authorization dialog
   when needed, appends the selected User text to the Console composer, and can
   replace the session System prompt with confirmation.
-- **Export…** saves a representable Prompt or Recipe as Markdown.
-- **Copy Markdown** copies the exact live working copy.
+- **Export…** saves a representable Prompt or Recipe as Markdown. The filename
+  field starts focused; press **Tab**, then **Enter** on Save to write it.
+  Cancel or completion returns focus to Export.
+- **Copy Markdown** copies the exact live working copy. Copy and Export results
+  appear in the editor's status area, which scrolls into view without moving
+  focus. A failed action leaves your fields intact for retry.
 - **Duplicate** opens a new unsaved copy named `<name> (copy)`.
 - **Delete** confirms before soft-deleting the saved item and leaves an
   Undo/Dismiss receipt after success, including immediately after saving a
@@ -443,7 +447,8 @@ prompt to the Library. See
    **Export bundle (.zip)**. Use the rail's **Export** row and `Everything` when
    you also want media, conversations, and notes.
 6. **Export one Prompt or Recipe as Markdown** — open a losslessly representable
-   artifact, press **Export…**, and pick a location; a notice confirms the export.
+   artifact, open **More actions → Export…**, and pick a location; the editor status
+   confirms the export.
    A compatibility artifact or legacy Recipe that fails this check requires
    **Convert and save as a new Prompt** before Copy, Export, or Duplicate.
 7. **Browse one collection** — press **collection: All prompts ▸**, choose a

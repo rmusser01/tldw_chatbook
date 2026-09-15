@@ -11079,10 +11079,7 @@ async def test_library_prompt_write_export_file_rejects_invalid_path(
         )
 
         assert not destination.exists()
-        # TASK-19602 (lifecycle toast may precede): count no longer one.
-        args, kwargs = app.notify.call_args
-        assert "Rejected export path" in args[0]
-        assert kwargs.get("severity") == "warning"
+        assert screen._prompts_state.status == "Rejected export path: rejected for test"
 
 
 @pytest.mark.asyncio
@@ -11117,8 +11114,7 @@ async def test_library_prompt_write_export_file_cancelled_dialog_notifies_quietl
             prompt_id,
         )
 
-        # TASK-19602 (lifecycle toast may precede): count no longer one.
-        assert "cancelled" in app.notify.call_args.args[0]
+        assert screen._prompts_state.status == "Prompt export cancelled."
 
 
 # ---------------------------------------------------------------------------
@@ -11728,9 +11724,8 @@ async def test_library_prompt_copy_uses_live_unsaved_legacy_lane_markdown(tmp_pa
                 }
             )
         ]
-        assert [notification.message for notification in host._notifications] == [
-            "Prompt copied to clipboard as markdown!"
-        ]
+        assert screen._prompts_state.status == "Prompt copied to clipboard as markdown!"
+        assert not list(host._notifications)
 
 
 @pytest.mark.asyncio
@@ -11818,9 +11813,8 @@ async def test_library_prompt_copy_uses_current_structured_block_working_copy(tm
         await pilot.pause()
 
         assert copied == [expected_markdown]
-        assert [notification.message for notification in host._notifications] == [
-            "Prompt copied to clipboard as markdown!"
-        ]
+        assert screen._prompts_state.status == "Prompt copied to clipboard as markdown!"
+        assert not list(host._notifications)
 
 
 @pytest.mark.asyncio
@@ -11845,11 +11839,11 @@ async def test_library_prompt_copy_warns_when_clipboard_is_unavailable(tmp_path)
         screen.query_one("#library-prompt-copy", Button).press()
         await pilot.pause()
 
-        notifications = list(host._notifications)
-        assert [notification.message for notification in notifications] == [
-            "Clipboard copy is unavailable in this runtime."
-        ]
-        assert [notification.severity for notification in notifications] == ["warning"]
+        assert (
+            screen._prompts_state.status
+            == "Clipboard copy is unavailable in this runtime."
+        )
+        assert not list(host._notifications)
 
 
 @pytest.mark.asyncio
@@ -11879,15 +11873,8 @@ async def test_library_prompt_copy_reports_clipboard_error_without_success_notic
         screen.query_one("#library-prompt-copy", Button).press()
         await pilot.pause()
 
-        notifications = list(host._notifications)
-        assert [notification.message for notification in notifications] == [
-            "Error copying prompt: RuntimeError"
-        ]
-        assert [notification.severity for notification in notifications] == ["error"]
-        assert all(
-            "copied to clipboard" not in notification.message.lower()
-            for notification in notifications
-        )
+        assert screen._prompts_state.status == "Error copying prompt: RuntimeError"
+        assert not list(host._notifications)
 
 
 @pytest.mark.asyncio
