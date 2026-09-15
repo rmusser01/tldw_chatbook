@@ -83,19 +83,33 @@ async def test_the_commit_actions_stay_on_screen_when_the_phase_outgrows_the_pan
 
     The negative control for the test above -- the exact regression
     ``_sync_row_list_height``'s comment warns about one surface over. On a
-    short pane the scroll still shrinks and the footer still paints.
+    pane too short for the form the scroll still shrinks and the footer still
+    paints.
+
+    Fix round 1 (review F5): this ran at 40x20, where the form is 12 rows and
+    the body 18 -- it never outgrew anything, so the name was a claim the test
+    did not make. 40x10 does (measured: the form scrolls to ``y=-3`` inside a
+    6-row body), and the premise is now ASSERTED so it cannot quietly stop
+    holding again.
     """
+    height = 10
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
-    async with _PanelHarness(panel).run_test(size=(40, 20)) as pilot:
+    async with _PanelHarness(panel).run_test(size=(40, height)) as pilot:
         panel.render_commit_availability(_commit_draft_projection())
         panel.query_one("#file-notes-git-commit-staged", Button).press()
         await pilot.pause()
         await pilot.pause()
         await pilot.pause()
+        form = panel.query_one("#file-notes-git-commit-form")
+        body = panel.query_one("#file-notes-git-commit-body")
+        assert form.region.height > body.region.height, (
+            f"the phase fits the pane, so this is not the case the name "
+            f"claims: form {form.region}, body {body.region}"
+        )
         footer = panel.query_one("#file-notes-git-commit-footer")
         assert footer.region.height > 0
-        assert footer.region.y + footer.region.height <= 20, footer.region
+        assert footer.region.y + footer.region.height <= height, footer.region
 
 
 @pytest.mark.parametrize("size", CRITIQUE_SIZES)

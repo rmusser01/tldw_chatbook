@@ -62,4 +62,13 @@ The AC's other half -- 'shows its status in full' -- was NOT reproduced: `render
 **Modified:** `Widgets/Library/library_file_notes_git_panel.py` (`_sync_commit_body_height`, `SessionGitTrustDialog`, `_TRUST_DIALOG_MESSAGE_WIDTH`), `Utils/Utils.py` (`fold_path_lines`), `Widgets/Library/library_file_notes_workspace.py` (compose order only), `Tests/UI/test_library_notes_w5_session_git_layout.py` (new), `Docs/User_Guide/library/file-notes.md`.
 
 **Red first:** '40 rows between the commit fields and their actions'; "line '/Users/macbook-dev/Documents/qa/library-notes-and-vaul' breaks a path component in half"; receipt-under-Danger failed at all three sizes. The trust-dialog pin needed a second attempt -- the first path I chose folded at a separator by luck and passed unfixed, which is recorded in the test.
+**Fix round 1 — the negative control did not exercise its own name (review
+F5).** `test_the_commit_actions_stay_on_screen_when_the_phase_outgrows_the_pane`
+ran at 40x20, where the form is 12 rows inside an 18-row body: nothing outgrew
+anything. Measured the real boundary -- 40x12 is the first height where the form
+exceeds the body, and at 40x10 it scrolls to `y=-3` inside a 6-row body with the
+footer still painted flush to the floor. The test runs at 40x10 now and
+ASSERTS its own premise (`form.region.height > body.region.height`), so it
+cannot quietly stop testing the case its name claims. Behaviour unchanged --
+it was already right at every height measured (20, 12, 10, 8, 6).
 <!-- SECTION:NOTES:END -->
