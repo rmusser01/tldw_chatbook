@@ -22,6 +22,7 @@ import pytest
 from textual.widgets import Button, Input
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from tldw_chatbook.css import build_css
 from Tests.UI.test_library_file_notes_git import (
     _PanelHarness,
     _commit_draft_projection,
@@ -260,9 +261,6 @@ async def test_info_delete_reads_as_destructive_rather_than_disabled():
 
         # And the role is the readable error token, not the 3.06:1 one --
         # asserted in the built sheet because the token resolves per theme.
-        from Tests.UI.consolidated_css import BUNDLED_STYLESHEET  # noqa: PLC0415
-        from tldw_chatbook.css import build_css  # noqa: PLC0415
-
         sheet = (
             BUNDLED_STYLESHEET.parent / build_css.AGENTIC_SPLIT_SHEETS["library"]
         ).read_text(encoding="utf-8")
