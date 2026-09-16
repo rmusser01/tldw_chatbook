@@ -14585,3 +14585,34 @@ rule keyed on its old invisibility — `disabled`, `display`, focus guards,
 `can_focus` — before you believe the move is done; and walk the ring with
 `pilot.press("tab")` at every size the surface claims to support, because a
 control can be painted and unreachable at one width only.
+
+## Assert the paint, not the input to it (wave 5, 2026-09-15)
+
+**Three pins shipped in one wave that could not fail for the case they named**,
+and they share a signature worth learning:
+
+- One asserted source text with `inspect.getsource` — which proves a string
+  exists in a function, not that a user ever sees it.
+- One asserted a widget's `renderable` — which proves what was handed to the
+  renderer, not what the renderer did with it. That one was measured: with the
+  branch's Python and only its five stylesheets reverted, the file reported
+  **19 passed / 0 failed** while the pane painted a single row — *worse than
+  the base*, silently. The entire CSS half of the fix was untested.
+- One used a fixture where the two behaviours under test produced the same
+  value: a folder listing where casefolded `"reading" < "readme.md"` made
+  name-order and folders-first identical, so the sort assertion held either way.
+
+**The rule.** For anything the user sees, assert the **rendered result** —
+`region.height`, `region.y`, the text the compositor actually painted — not the
+model that feeds it. Reserve `renderable`-style assertions for content
+questions, where the model *is* the artifact under test. A layout or styling
+claim tested against a renderable is not tested at all, and a stylesheet
+regression will walk straight past it.
+
+**And ask the second question every time: what fixture would make this vacuous,
+and is that my fixture?** The two failures above are the two ways it happens —
+asserting upstream of the thing you care about, and choosing inputs where the
+right answer and the wrong answer coincide. Both produce a green suite that
+means nothing, and both are invisible unless you break the fix and watch the
+pin fail *for the reason you expect*. "It went red" is not enough; read the
+message.
