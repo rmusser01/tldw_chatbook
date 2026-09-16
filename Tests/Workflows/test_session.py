@@ -178,6 +178,32 @@ async def launch(harness, document=None, inputs=None):
     return revision, ticket, harness.session.start(ticket)
 
 
+async def test_captured_actual_notes_path_is_protected_without_caller_hint(
+    harness, monkeypatch
+):
+    from pathlib import Path
+
+    from tldw_chatbook.Workflows import session as module
+
+    h = harness
+    revision = h.documents.create(json.dumps(file_definition()))
+    ticket = await h.session.prepare(revision, {}, replace(h.setup, protected_paths=()))
+    destination = h.session.bindings(ticket).notes
+    # Changing the mutable template cannot change the captured cached route.
+    h.owner.unified_db_template = None
+    reached = []
+
+    def guard(source, *, protected_paths, before_read):
+        reached.extend(protected_paths)
+        raise ValueError("source_database")
+
+    monkeypatch.setattr(module, "read_local_text", guard)
+    h.session.start(ticket)
+    await until(h.session, lambda v: v.state == "failed")
+    assert Path(destination.db_path) in reached
+    assert h.requests == [] and h.rows() == []
+
+
 async def test_saved_fixture_edited_review_single_note_and_no_execution_rows(harness):
     h = harness
 

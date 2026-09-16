@@ -79,6 +79,7 @@ class _ConfirmationScreen:
 class _ConfirmationHarness:
     _confirm_and_quit = TldwCli._confirm_and_quit
     _confirm_console_runtime_quit = TldwCli._confirm_console_runtime_quit
+    _confirm_workflow_session_quit = TldwCli._confirm_workflow_session_quit
 
     def __init__(self, screen: _ConfirmationScreen) -> None:
         self.screen = screen
@@ -154,6 +155,7 @@ class _Timer:
 class _ApprovedQuitHarness:
     _confirm_and_quit = TldwCli._confirm_and_quit
     _confirm_console_runtime_quit = TldwCli._confirm_console_runtime_quit
+    _confirm_workflow_session_quit = TldwCli._confirm_workflow_session_quit
     _run_approved_quit_cleanup = TldwCli._run_approved_quit_cleanup
 
     def __init__(self) -> None:
@@ -322,6 +324,7 @@ class _QuitOwner:
 
 class _AppLevelQuitHarness:
     _confirm_and_quit = TldwCli._confirm_and_quit
+    _confirm_workflow_session_quit = TldwCli._confirm_workflow_session_quit
     _confirm_console_runtime_quit = TldwCli._confirm_console_runtime_quit
 
     def __init__(

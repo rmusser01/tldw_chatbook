@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from pathlib import Path
 
 from textual import on
 from textual.containers import Horizontal, Vertical
@@ -41,7 +42,7 @@ from tldw_chatbook.Workflows.models import (
 class WorkflowsScreen(BaseAppScreen):
     """Consume app.workflow_documents and app.workflow_drafts.
 
-    Owners initialize lazily on entry. Run is unavailable in this authoring slice.
+    Authoring initializes on entry; the app session initializes only on Run.
     """
 
     def __init__(self, app_instance, **kwargs):
@@ -64,6 +65,7 @@ class WorkflowsScreen(BaseAppScreen):
         self._workflow_views = {}
         self._recovery_was_locked = False
         self._refresh_lock = asyncio.Lock()
+        self._run_release = None
 
     def compose_content(self):
         with Vertical(id="workflow-authoring"):
@@ -139,6 +141,9 @@ class WorkflowsScreen(BaseAppScreen):
             self._error = "Definitions could not be loaded. Retry without changing the selected identity."
             self.call_after_refresh(self._show_status)
         self.call_after_refresh(self._layout_panes)
+        session = getattr(self.app_instance, "_workflow_session", None)
+        if session is not None:
+            await self._attach_session(session)
 
     async def _initialize_authoring(self):
         ensure = getattr(self.app_instance, "ensure_workflow_authoring", None)
@@ -160,6 +165,137 @@ class WorkflowsScreen(BaseAppScreen):
         if self._release:
             self._release()
             self._release = None
+        if self._run_release:
+            self._run_release()
+            self._run_release = None
+
+    async def _attach_session(self, session):
+        from tldw_chatbook.UI.Workflows_Modules.run_controls import WorkflowRunPanel
+
+        if not self.query(WorkflowRunPanel):
+            await self.query_one("#workflow-authoring").mount(
+                WorkflowRunPanel(session, id="workflow-session"),
+                before=self.query_one(WorkflowConsoleContext),
+            )
+        if self._run_release is None:
+            self._run_release = session.subscribe(self._show_status)
+        self._show_status()
+
+    async def _run_saved(self):
+        from tldw_chatbook.UI.Workflows_Modules.run_controls import (
+            WorkflowRunConfirmation,
+            WorkflowRunSetup,
+            captured_models,
+        )
+        from tldw_chatbook.Workflows.session import SessionError, admit_definition
+
+        ensure = getattr(self.app_instance, "ensure_workflow_session", None)
+        if not callable(ensure):
+            return
+        revision = self.controller.inspection or self.controller.head
+        if revision is None:
+            return
+        draft = self.controller.draft
+        if (
+            not self.controller.inspection
+            and draft
+            and draft.raw_text != revision.raw_json
+        ):
+            choice = await self.app.push_screen_wait(
+                ChoiceModal(
+                    "Run which revision?",
+                    (
+                        ("Save revision and run", "save"),
+                        ("Run saved revision", "saved"),
+                    ),
+                    detail=f"Workflow {revision.workflow_id}\nSaved revision {revision.revision_id}\nYour draft differs from this saved revision.",
+                )
+            )
+            if choice is None:
+                return
+            if choice == "save":
+                await self._save()
+                revision = self.controller.head
+                if self.controller.draft.raw_text != revision.raw_json:
+                    return
+        admit_definition(revision)
+        try:
+            models = captured_models(self.app_instance)
+        except Exception:  # noqa: BLE001 - settings/catalog failures must not expose credential diagnostics.
+            raise SessionError(
+                "Run unavailable: configure a keyless llama.cpp provider and endpoint in Settings."
+            ) from None
+        session = ensure()
+        await self._attach_session(session)
+        protected = []
+        workflow_path = getattr(self.app_instance, "_workflow_database_path", None)
+        if workflow_path is not None:
+            protected.append(Path(workflow_path))
+        for name in ("chachanotes_db", "media_db", "prompts_db"):
+            database = getattr(self.app_instance, name, None)
+            path = getattr(database, "db_path_str", None)
+            if isinstance(path, str) and Path(path).is_absolute():
+                protected.append(Path(path))
+        selection = await self.app.push_screen_wait(
+            WorkflowRunSetup(
+                revision,
+                models,
+                self.app_instance.notes_user_id,
+                tuple(protected),
+            )
+        )
+        if selection is None:
+            return
+        values, setup = selection
+        try:
+            ticket = await session.prepare(revision, values, setup)
+            if not self.is_mounted:
+                return
+            if await self.app.push_screen_wait(
+                WorkflowRunConfirmation(
+                    revision, session.bindings(ticket), values["note_title"]
+                )
+            ):
+                session.start(ticket)
+        finally:
+            session.discard_setup()
+
+    def _open_run_note(self, displayed):
+        from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_LIBRARY
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+        session = getattr(self.app_instance, "_workflow_session", None)
+        view = session.view() if session else None
+        if (
+            view is None
+            or not view.note_id
+            or displayed is None
+            or displayed.run_id != view.run_id
+            or displayed.note_id != view.note_id
+        ):
+            return
+        try:
+            destination = session.run_bindings(view.run_id).notes
+            if (
+                self.app_instance.notes_scope_service is not destination.scope
+                or self.app_instance.notes_user_id != destination.user_id
+                or destination.scope.local_notes_service is not destination.owner
+                or destination.db.db_path_str != destination.db_path
+                or destination.db.client_id != destination.client_id
+                or not Path(destination.db_path).is_file()
+            ):
+                raise ValueError
+            # Check the existing public cached-route guard. No recapture or DB read:
+            # later legitimate Note edits do not invalidate the confirmed save.
+            with destination.owner.bound_notes_db(destination.user_id, destination.db):
+                self.app_instance.post_message(
+                    NavigateToScreen(
+                        TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTE_ID: view.note_id}
+                    )
+                )
+        except Exception:  # noqa: BLE001 - fail closed without exposing private destination details.
+            self._error = "Saved Note destination changed or is unavailable. Return to its original Local Notes destination."
+            self._show_status()
 
     def _owner_changed(self):
         self._show_status()
@@ -176,7 +312,11 @@ class WorkflowsScreen(BaseAppScreen):
         self._recovery_was_locked = locked
 
     def _show_status(self):
-        if not self.is_mounted or self.controller is None:
+        if (
+            not self.is_mounted
+            or self.controller is None
+            or not self.query("#workflow-draft-status")
+        ):
             return
         controller = self.controller
         draft = controller.draft
@@ -245,7 +385,46 @@ class WorkflowsScreen(BaseAppScreen):
             "workflow-step-selector",
         ):
             self.query_one("#" + identifier).disabled = locked
-        self.query_one("#workflow-run", Button).disabled = True
+        execution_available = callable(
+            getattr(self.app_instance, "ensure_workflow_session", None)
+        )
+        services_available = all(
+            getattr(self.app_instance, name, None) is not None
+            for name in (
+                "notes_scope_service",
+                "unified_mcp_service",
+                "local_llm_provider_catalog_service",
+            )
+        ) and bool(getattr(self.app_instance, "notes_user_id", None))
+        session = getattr(self.app_instance, "_workflow_session", None)
+        view = session.view() if session else None
+        running = view is not None and view.state not in {
+            "completed",
+            "cancelled",
+            "failed",
+            "rejected",
+            "uncertain",
+        }
+        failed_drain = view is not None and view.message_code == "note_cleanup_failed"
+        self.query_one("#workflow-run", Button).disabled = (
+            not execution_available
+            or not services_available
+            or self._busy
+            or locked
+            or running
+            or failed_drain
+            or not (controller.inspection or controller.head)
+            or bool(getattr(self.app_instance, "_quit_in_progress", False))
+        )
+        if execution_available:
+            # This optional region is an existing Console handoff, not session status.
+            for label in self.query("#workflows-console-unavailable"):
+                label.update("No existing Console handoff")
+            self._run_reason = (
+                "Run a saved revision · session only · keyless llama.cpp to Local Note."
+                if services_available
+                else "Run unavailable: Notes, user, permission or provider service is missing. Authoring remains available."
+            )
         self.query_one("#workflow-add-step", Button).disabled = (
             locked or bool(self._raw_only_reason) or bool(controller.inspection)
         )
@@ -1060,6 +1239,7 @@ class WorkflowsScreen(BaseAppScreen):
             return
         event.stop()
         actions = {
+            "workflow-run": self._run_saved,
             "workflow-save-revision": self._save,
             "workflow-retry-save": self._retry,
             "workflow-validate": self._activate_issue,
@@ -1068,6 +1248,8 @@ class WorkflowsScreen(BaseAppScreen):
         }
         if identifier in actions:
             self._start(actions[identifier]())
+        elif identifier == "workflow-open-note":
+            self._open_run_note(getattr(event, "workflow_view", None))
         elif identifier == "workflow-more":
             self._more()
         elif identifier == "workflow-repair-raw":

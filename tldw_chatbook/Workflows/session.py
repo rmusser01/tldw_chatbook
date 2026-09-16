@@ -602,7 +602,9 @@ class WorkflowSession:
                 destination,
                 url,
                 setup.review_actor,
-                setup.protected_paths,
+                tuple(
+                    dict.fromkeys((*setup.protected_paths, Path(destination.db_path)))
+                ),
             )
 
         task = asyncio.create_task(asyncio.to_thread(capture))
