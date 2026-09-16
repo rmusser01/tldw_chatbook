@@ -171,12 +171,21 @@ async def test_info_meta_line_is_muted_without_pushing_the_rows_below_it():
         meta = screen.query_one("#library-note-context-meta", Static)
         assert "v" in str(meta.renderable)
 
-        # ...occupying exactly its own row: the next thing in the pane starts
-        # immediately under it, with no margin in between. (The muting itself
-        # is pinned by test_library_note_css_bounds_editor_body_and_mutes_meta.)
-        assert meta.region.height == 1
+        # ...occupying exactly its own rows and no more: the next thing in
+        # the pane starts immediately under the last of them, with no margin
+        # in between. (The muting itself is pinned by
+        # test_library_note_css_bounds_editor_body_and_mutes_meta.)
+        #
+        # task-32642 re-pinned the ROW COUNT, not the no-margin rule this
+        # test exists for: the wide layout now gives each property its own
+        # labelled row, so the Static is as many rows tall as it has
+        # properties instead of exactly one. Asserting the count against the
+        # rendered text is what keeps a stray blank line -- a margin's
+        # cheapest disguise -- failing here.
+        rendered = str(meta.renderable)
+        assert meta.region.height == len(rendered.split("\n"))
         title = screen.query_one("#library-note-context-backlinks-title", Static)
-        assert title.region.y == meta.region.y + 1, (
+        assert title.region.y == meta.region.y + meta.region.height, (
             "Info's meta line grew a margin and pushed the rows below it down"
         )
 

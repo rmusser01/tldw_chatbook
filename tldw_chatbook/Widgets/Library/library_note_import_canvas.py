@@ -838,6 +838,17 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             id="note-import-source-summary",
             markup=False,
         )
+        # task-32641: what the folder was recognised as, on the confirmation
+        # line rather than inside the review. Composed only when there is
+        # something to say -- a folder that is not a vault gets no row at
+        # all, not an empty one (AC#3).
+        if state.vault_recognition:
+            yield Static(
+                state.vault_recognition,
+                id="note-import-vault-recognition",
+                classes="note-import-quiet",
+                markup=False,
+            )
 
         if state.selection_kind != "folder":
             yield Button(

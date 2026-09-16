@@ -448,11 +448,12 @@ undo the in-place updates that keep a terminal drag cheap.
 | Control | What it does |
 |---|---|
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
-| **Edit** | Shows the editable title and body. This is the default view when you open a note. |
+| Where this note lives | One row under the title, on a terminal 80 columns or wider. A note that exists only in the Library database reads "In the Library database only — no file on disk". A note that lasting sync keeps in step with a file reads "In a synced folder", then that file's path, then when the file was last written — the file's own time, so an edit made in Obsidian counts too. The path is elided in the middle when the pane is narrower than the row, keeping the file name; the write time is dropped before the path is, and the first part is never shortened. Both facts are read fresh when the note opens, from the sync relationship and from the file itself rather than from anything stored on the note. The time is the file's last write, so just after you save it usually still shows the PREVIOUS one: a save schedules the write, and the folder pass that performs it runs a moment later. Reopen the note to see the new time. That is the row being accurate rather than reassuring — it is telling you the file has not been written yet (task-32640). |
+| **Edit** | Shows the editable title, keywords and body. This is the default view when you open a note. Keywords sit on their own row under the title — comma-separated, edited in place, and reachable with one Tab from the title, so you no longer have to open **Info** to add one. It is the same shape as the Title field, which costs the body five rows at a wide size and one on a compact terminal. The same field appears in Info's Properties; whichever you type in, it is the same keywords. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. A rendered heading is left-aligned, where the rest of the body begins, rather than centred like a page banner — so a note whose title came from Obsidian frontmatter, which never matches its first heading exactly, shows a title and a heading rather than two titles. An Obsidian callout renders as a quoted block headed by its type, on its own line above the body — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker or running the type into the first line of the callout; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
-| **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
+| **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. Each property is on its own row, labelled — Created, Modified, Version, Words — rather than joined into one sentence: on a wide terminal the values line up in a second column, and on a compact one the rows keep a single column so a timestamp is never cut off the pane. |
 | **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
-| Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Right after a save completes in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when that save happened; leaving the note and reopening it later in the same session goes back to the bare "Saved". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). In Info, "Saved" appears once. |
+| Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Right after a save completes in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when that save happened; leaving the note and reopening it later in the same session goes back to the bare "Saved". It does not carry a word count. Created/Modified/version details are under Info → Properties, one labelled row each, with an absolute local timestamp beside its relative age and the word count (e.g. a "Created" row reading "2026-09-08 21:14 · 3m ago", then "Modified", "Version" and "Words"). In Info, "Saved" appears once. |
 | Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. The count is the whole open note's, at any length: a 37 KB, 5,427-word note reads "5,427 words · 1:1" the moment it opens, whatever you had open before it, and the thousands separator is part of the number. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. The editor's Created/Modified/version line lives in one place, Info → Properties. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
@@ -490,7 +491,7 @@ handle ordinary typing.
 
 | Key | What it does |
 |---|---|
-| **Tab** / **Shift+Tab** | Move between the editor's own controls and stay there: "‹ Notes", Edit, Preview, Info, Save, Use in Console, Title, Body, and back round to "‹ Notes". Tab out of the body stays inside that cycle, never wrapping round to the "Library notes / Folder files" switch above the pane. The move lands before the next keystroke, so typing straight through a Tab puts the rest where you meant it. |
+| **Tab** / **Shift+Tab** | Move between the editor's own controls and stay there: "‹ Notes", Edit, Preview, Info, Save, Use in Console, Title, Keywords, Body, and back round to "‹ Notes". Tab out of the body stays inside that cycle, never wrapping round to the "Library notes / Folder files" switch above the pane. The move lands before the next keystroke, so typing straight through a Tab puts the rest where you meant it. |
 | **F6** / **Shift+F6** | Leave the editor for the Notes list or the Library rail. This is the way out of the editor's Tab cycle; **Escape** is the other (it returns to the list). |
 | **Ctrl+End** / **Ctrl+Home** | Jump the caret to the end or the start of the note body. `End` and `Home` still move within the current line. |
 | **Escape** | Returns to the list — one press, from Edit, Preview, or Info. From Info it goes back to the editor first. |
@@ -876,6 +877,16 @@ only line that states the selection: the status line above it says what to
 do next ("Check the selection to see what will be imported.") rather than
 repeating the count (task-32554).
 
+If that folder is an Obsidian vault, a second line under the confirmation says
+so before you check anything: "Obsidian vault", how many notes the scan would
+read, and what it skips — the vault's own folders when they are there
+(`.obsidian/`, `.trash/`, `Templates/`) and empty files, which are always
+skipped. When some of those files have already been imported it says how many,
+and when a lasting-sync root already covers the folder it says "this folder is
+already kept in sync" — both of them here, where you can still pick a
+different folder. A folder that is not a vault gets no extra line at all
+(task-32641).
+
 Picking the folder puts focus back inside Import once, on the confirmation
 itself. From there **Tab** walks **Change selection** → **Clear** → **Check
 selection** → **‹ Notes** and round again: Tab stays inside the Import once
@@ -1000,8 +1011,9 @@ it settles. **Last import** reopens the same-session receipt afterward.
 
 #### Obsidian vaults
 
-If the folder you chose holds an `.obsidian/` directory, the review shows an
-**Obsidian vault** toggle, on by default, and one line saying what it does.
+If the folder you chose holds an `.obsidian/` directory, the selection line
+says so as soon as you pick it (see "Import once" above), and the review shows
+an **Obsidian vault** toggle, on by default, and one line saying what it does.
 
 Windows works the same way: the Windows discovery adapter detects the vault and
 skips its own folders exactly as the POSIX one does.
@@ -2306,3 +2318,28 @@ one folder — past that the count says "48+ notes", meaning at least 48); and
 **Ctrl+R** offers the roots that door RETURNED before, focused, so Enter takes
 one. Pinned in `Tests/UI/test_library_notes_w5_picker_followon.py` — 22 tests
 collected, 18 of them red at dev 48d40df8ce.)*
+
+*Verified against fix/library-notes-w5-ideas — 2026-09-15 at 235x52, 100x30
+and 60x20 (task-32642). Info's Properties were one joined sentence: at 100x30
+the pane is 46 columns and the sheet pinned the line to one row, so it painted
+"Created 2026-06-30 20:00 · 10w ago · Modified" and stopped — three of the
+four properties were off the pane. Each property now has its own labelled row,
+aligned into a second column on a wide terminal and single-column when
+compact. Keywords moved out of an undisplayed container into the editor, under
+the title, where it is the Tab stop between Title and Body at all three sizes.
+Pinned in `Tests/UI/test_library_notes_w5_ideas.py`.*
+
+*Verified against fix/library-notes-w5-ideas — 2026-09-15 at 235x52, 100x30
+and 60x20 (task-32640, task-32641). The editor now answers "where does this
+note live?" in one row under the title; at 60x20 that row is given back to the
+body on the same 80-column rule the chrome strip already uses, so the answer
+is not on screen there. Import once says a folder is an Obsidian vault on the
+confirmation line, with the scan's own counts, before the review builds.
+Pinned in `Tests/UI/test_library_notes_w5_ideas.py` and
+`Tests/Notes/test_notes_sync_note_location.py`.*
+
+*Review round 1, 2026-09-15 (same branch): the "where this note lives" row's
+time is the FILE's last write, and a save schedules that write rather than
+performing it — so the row normally still shows the previous time until the
+note is reopened. The sentence above said "after each save"; the code always
+did the other thing, and the row is right, not stale-by-accident.*

@@ -32,6 +32,7 @@ from tldw_chatbook.Library.library_note_import_state import LibraryNoteImportSna
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
 )
+from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Notes.agent_lessons import (
     AGENT_LESSONS_FOLDER,
     AGENT_LESSONS_FOLDER_GLOSS,
@@ -215,6 +216,97 @@ def library_note_chrome_facts(word_count: int, row: int, column: int) -> str:
     """
     words = "1 word" if word_count == 1 else f"{word_count:,} words"
     return f"{words} · {row + 1}:{column + 1}"
+
+
+#: task-32640: what an unbound note's header says. The Notes list header
+#: already tells a reader that these notes "live in the Library's own
+#: database"; this is the same fact for one note, in the same words.
+NOTE_LOCATION_DATABASE_ONLY = "In the Library database only — no file on disk"
+
+#: The world a bound note is in. "Synced folder" is the chooser's own noun
+#: for the relationship (Keep a folder synced), not an internal name.
+NOTE_LOCATION_SYNCED_PREFIX = "In a synced folder"
+
+#: Below this many cells for the path, the write time is dropped to buy the
+#: path room. Eight cells is "…/x.md" plus an ellipsis -- less than that and
+#: the path is noise either way.
+_NOTE_LOCATION_PATH_FLOOR = 8
+
+
+def library_note_location_line(path: str, written: str, width: int) -> str:
+    """Answer "where does this note live?" in one row (task-32640).
+
+    The rule, in the order a reader can predict it: the world is stated
+    first and is never shortened; the path follows, middle-elided so its
+    filename survives; the write time follows that, and is the first thing
+    dropped when the row runs out of cells.
+
+    Args:
+        path: The bound file's absolute path, or ``""`` for a note that
+            lives in the Library database alone.
+        written: When that file was last written, or ``""`` when there is
+            no file or its time could not be read.
+        width: Cells the row has. ``0`` or less means "not measured yet",
+            where nothing is elided -- the Static's own overflow handling
+            is a better answer than a guessed width.
+
+    Returns:
+        The single line to render.
+    """
+    if not path:
+        return NOTE_LOCATION_DATABASE_ONLY
+    written_clause = f"file written {written}" if written else ""
+    if width <= 0:
+        return " · ".join(
+            part for part in (NOTE_LOCATION_SYNCED_PREFIX, path, written_clause) if part
+        )
+    fixed = len(NOTE_LOCATION_SYNCED_PREFIX) + 3
+    budget = width - fixed - (len(written_clause) + 3 if written_clause else 0)
+    if budget < _NOTE_LOCATION_PATH_FLOOR and written_clause:
+        written_clause = ""
+        budget = width - fixed
+    budget = max(budget, _NOTE_LOCATION_PATH_FLOOR)
+    shown = elide_path_middle(path, budget=budget)
+    return " · ".join(
+        part for part in (NOTE_LOCATION_SYNCED_PREFIX, shown, written_clause) if part
+    )
+
+
+def library_note_property_block(
+    properties: tuple[tuple[str, str], ...],
+    metadata_line: str,
+    *,
+    compact: bool,
+) -> str:
+    """Info's Properties: one labelled row per property, or the joined line.
+
+    task-32642: Info rendered every property as one " · "-joined sentence,
+    so four facts shared a row in a pane 185 columns wide and 36 rows tall
+    -- and in the compact pane, 46 columns wide, that same sentence ran to
+    84 characters against a sheet that pins the Static to one row. Measured
+    at dev 67bfde41d1, it painted "Created 2026-06-30 20:00 · 10w ago ·
+    Modified" and stopped: three of the four properties were off the pane.
+
+    One property per row either way. Wide, the values are aligned into a
+    second column; compact drops the padding and keeps a single column, so
+    a value is wrapped onto the property's own rows rather than cut (AC#2).
+
+    Args:
+        properties: ``(label, value)`` pairs in display order.
+        metadata_line: The joined spelling of the same facts. Used only when
+            no pairs were supplied -- a caller that predates the pairs.
+        compact: Whether the compact sheet is in force.
+
+    Returns:
+        The rows to render, newline-separated, or the joined line.
+    """
+    rows = tuple((label, value) for label, value in properties if value)
+    if not rows:
+        return metadata_line
+    if compact:
+        return "\n".join(f"{label} {value}" for label, value in rows)
+    width = max(len(label) for label, _ in rows)
+    return "\n".join(f"{label.ljust(width)}  {value}" for label, value in rows)
 
 
 def browse_row_width(labels: tuple[str, ...]) -> int:
@@ -752,6 +844,18 @@ class LibraryNotePresentationState:
     snapshot: LibraryNoteSessionSnapshot
     metadata_line: str
     status_line: str
+    #: task-32642: the same facts ``metadata_line`` joins, as ``(label,
+    #: value)`` pairs. Info renders these as aligned rows on a wide
+    #: terminal and falls back to the joined line when compact, where the
+    #: sheet pins the meta Static to one row.
+    properties: tuple[tuple[str, str], ...] = ()
+    #: task-32640: the file this note is kept in step with, or ``""`` when
+    #: it lives in the Library database alone. Resolved live per note by
+    #: ``_load_library_note_location`` -- never carried on the note record.
+    location_path: str = ""
+    #: task-32640: when that file was last written, as the filesystem
+    #: reports it, or ``""`` (no file, or it could not be read).
+    location_written: str = ""
     region: Literal["editor", "context"] = "editor"
     presentation: Literal["edit", "preview"] = "edit"
     compact: bool = False
@@ -937,6 +1041,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         #: Caret moves and resizes repaint from this instead of re-scanning
         #: a body the controller already counted.
         self._note_chrome_word_count = 0
+        #: task-32640: the last (path, written) the controller resolved for
+        #: the open note, so a resize can re-state the location row without
+        #: another binding read.
+        self._note_location: tuple[str, str] = ("", "")
         self._tree_focus_intent_generation: Callable[[], int] | None = None
         self.styles.width = "1fr"
         self.styles.min_width = 40
@@ -2639,6 +2747,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-authority-git-status",
                 markup=False,
             )
+        # task-32640: one row under the title saying which of the three
+        # worlds this note is in, and -- for a note kept in step with a file
+        # -- which file, and when that file was last written. Composed
+        # unconditionally so the answer is on screen in Edit, Preview and
+        # Info alike; `_note_location_follows_width` re-states it against the
+        # pane's measured width, like the chrome strip below the body.
+        yield Static(
+            library_note_location_line(
+                presentation_state.location_path,
+                presentation_state.location_written,
+                self._effective_pane_width(),
+            ),
+            id="library-note-location",
+            markup=False,
+        )
         yield Static(
             "Included in bulk selection"
             if presentation_state.bulk_included
@@ -2707,6 +2830,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     placeholder="Untitled" if self.title_placeholder_only else "",
                     id="library-note-title",
                 )
+            # task-32642 AC#3: keywords used to be reachable only by opening
+            # Info -- this Input is the twin that lived, permanently
+            # undisplayed, inside `#library-note-wide-utilities`. It is the
+            # same id, the same `Input.Changed` handler and the same
+            # `apply_session_state` reconciliation it always had; only its
+            # parent changed, so it is now on the editor's own Tab ring,
+            # under the title, where the note's other two fields are.
+            with Horizontal(id="library-note-keywords-row"):
+                yield Static("Keywords", id="library-note-keywords-label", markup=False)
+                yield NoteEditorInput(
+                    value=keywords_text,
+                    placeholder="Comma-separated keywords",
+                    id="library-note-keywords",
+                )
             yield Static("Body", id="library-note-body-label", markup=False)
             yield NoteEditorTextArea(content, id="library-note-body")
 
@@ -2739,7 +2876,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     placeholder="Comma-separated keywords",
                     id="library-note-context-keywords",
                 )
-            yield Static(metadata_line, id="library-note-context-meta", markup=False)
+            yield Static(
+                library_note_property_block(
+                    presentation_state.properties,
+                    metadata_line,
+                    compact=self.compact,
+                ),
+                id="library-note-context-meta",
+                markup=False,
+            )
             backlinks = (
                 presentation_state.backlinks if presentation_state is not None else ()
             )
@@ -2838,12 +2983,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
 
         with Vertical(id="library-note-wide-utilities"):
-            yield Static("Keywords", id="library-note-keywords-label", markup=False)
-            yield NoteEditorInput(
-                value=keywords_text,
-                placeholder="Comma-separated keywords",
-                id="library-note-keywords",
-            )
+            # task-32642 AC#3: the Keywords label and field that used to sit
+            # here are now in `#library-note-editor-region`, displayed. This
+            # container stays `display = False` and keeps only the duplicate
+            # action buttons it always had.
             # task-32143 AC#2: `#library-note-meta` used to render the
             # Created/Modified/version/word-count line here. Its container
             # has been `display = False` unconditionally since the utilities
@@ -3233,9 +3376,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             authority_status.update(channels.authority_git)
         # task-32143 AC#2: was a two-selector loop -- the second home,
         # `#library-note-meta`, was never displayed. One meta line now.
+        # task-32640: kept current from the state, not from the note record.
+        self._note_location = (state.location_path, state.location_written)
+        self._restate_note_location()
         context_meta = self.query_one("#library-note-context-meta", Static)
-        if self._static_text(context_meta) != state.metadata_line:
-            context_meta.update(state.metadata_line)
+        meta_copy = library_note_property_block(
+            state.properties, state.metadata_line, compact=state.compact
+        )
+        if self._static_text(context_meta) != meta_copy:
+            context_meta.update(meta_copy)
         # task-32145: backlinks are loaded by their own worker AFTER the note
         # opens, so they land on an editor that is already composed -- and a
         # recompose is deferred for as long as the reader owns a field
@@ -3331,7 +3480,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # cancel_and_delete`` asserts the disabled state for that reason.
         title_input.disabled = not show_editor or locked
         body_input.disabled = not show_editor or locked
-        wide_keywords.disabled = state.compact or show_context or locked
+        # task-32642 AC#3: the same rule as the title and body above. This
+        # field used to be disabled whenever the terminal was compact --
+        # harmless while it lived undisplayed inside
+        # `#library-note-wide-utilities`, and a silent Tab hole the moment it
+        # became the editor's own Keywords stop: `focusable` was False at
+        # 100x30 and 60x20 while `display` and `visible` were both True.
+        wide_keywords.disabled = not show_editor or locked
         context_keywords.disabled = not show_context or locked
         preview_body.can_focus = False
         self.query_one("#library-note-preview-region").can_focus = show_preview
@@ -3463,6 +3618,39 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Follow the caret: arrow keys never reach the presentation state."""
         self.update_note_chrome_facts(body=event.text_area)
 
+    def _restate_note_location(self) -> None:
+        """Re-state the location row against the width the pane actually has.
+
+        Compose runs before the canvas is measured, so the row is composed
+        at whatever ``_effective_pane_width`` can say then and re-stated
+        here -- on every state apply and on every resize. Same shape as the
+        import canvas's ``_fit_source_summary``, and the same reason.
+
+        Below ``NOTE_CHROME_FACTS_MIN_WIDTH`` the row is given back to the
+        body, on the same terms and at the same threshold as the chrome
+        strip under it: measured at 60x20, the editor's body is four rows
+        before this task and two after it plus task-32642's Keywords row.
+        A note editor with two rows of note is a worse answer to "can I
+        work here" than an unanswered "where does this live". Nothing else
+        answers it at that width -- the trade is recorded on task-32640.
+        """
+        try:
+            row = self.query_one("#library-note-location", Static)
+        except NoMatches:
+            # Every mode but the editor, and the editor before it composes --
+            # the same guard ``update_note_chrome_facts`` uses beside it.
+            return
+        try:
+            row.display = self.app.size.width >= NOTE_CHROME_FACTS_MIN_WIDTH
+        except NoActiveAppError:
+            row.display = True
+        if not row.display:
+            return
+        path, written = self._note_location
+        copy = library_note_location_line(path, written, self._effective_pane_width())
+        if self._static_text(row) != copy:
+            row.update(copy)
+
     @on(Resize)
     def _note_chrome_follows_width(self, event: Resize) -> None:
         """Re-decide the 80-column gate; the compact flag only flips at 120.
@@ -3471,8 +3659,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         breakpoint crossing re-runs ``apply_session_state``, which decides
         the gate anyway. Pinned by the 100 -> 79 -> 100 walk in
         ``test_the_strip_is_hidden_off_the_editor_and_below_eighty_columns``.
+
+        task-32640's location row is re-stated on the same event, for the
+        same reason: its path elision is width-dependent.
         """
         self.update_note_chrome_facts()
+        self._restate_note_location()
 
     def _compose_create(self) -> ComposeResult:
         """Render the notes canvas in create mode: Blank note + template rows.

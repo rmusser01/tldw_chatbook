@@ -14534,3 +14534,85 @@ mistake its green for coverage of the guard.
 **Corollary already paid for elsewhere in this file:** "revert the fix and
 record the RED text" is the whole rule, not half of it. A revert that leaves
 the suite green is a finding about the pin, not a formality to tick.
+
+## A harness without the app-tier stylesheet measures a layout that does not exist
+
+*(task-32642, wave 5. One hour from a confident wrong diagnosis.)*
+
+The finding was "Info has ~25 blank rows". The first measurement — a
+`ConsolidatedCSSApp` mounting `LibraryNotesCanvas` directly, which is the
+pattern `Tests/Widgets/Library/test_library_notes_canvas.py` uses — showed 33
+blank rows and pointed at a specific cause: `#library-note-context-keywords-row`
+is a `Horizontal`, Textual defaults those to `height: 1fr`, and it was eating
+the pane. That is exactly the defect task-32614 had just fixed one pane over,
+so it read as obviously right.
+
+It was an artifact. `ConsolidatedCSSApp.CSS_PATH` is the two widget-default
+sheets only; the app bundle and the lazily-loaded split sheets are NOT in it,
+and `#library-note-context-keywords-row { height: auto }` lives in
+`css/components/_agentic_terminal.tcss` → `screen_agentic_library.tcss`, an app
+tier sheet. In the real screen that row is one row tall and always was. The
+real defect was somewhere else entirely (one Static carrying a joined sentence,
+truncated at compact width), and a fix for the imagined one would have changed
+nothing a user sees.
+
+**The rule.** Before diagnosing any geometry, measure inside the REAL screen —
+`LibraryProductionCSSHarness` (`Tests/UI/test_library_shell.py`), whose
+`CSS_PATH` is `TldwCli.CSS_PATH`. A widget-only harness is fine for asserting a
+widget's own composed structure; it is not evidence about what a pane looks
+like. Two tells that you are in this trap: the numbers disagree with the
+critique's capture, and the cause you find is one a sibling task just fixed.
+
+## Showing a widget that was hidden is not a compose-only change
+
+*(task-32642, same wave.)*
+
+`#library-note-keywords` had been mounted, permanently undisplayed, inside a
+container `apply_session_state` sets `display = False` unconditionally. Moving
+it into the editor made it paint at every size — and it was still dead on a
+compact terminal, because a line half a file away read
+`wide_keywords.disabled = state.compact or show_context or locked`, which was
+harmless while nobody could see the field.
+
+The symptom is nasty: at 100x30 and 60x20 the field PAINTED, `display` was
+True, `visible` was True, and `focusable` was False, so forward Tab went from
+Title straight to Body with no visible reason. `widget.focus()` in a test
+"works" (Textual focuses it anyway), so a focus-order pin written that way is
+green. Only `pilot.press("tab")` sees it.
+
+**The rule.** When you make a hidden widget visible, grep the file for every
+rule keyed on its old invisibility — `disabled`, `display`, focus guards,
+`can_focus` — before you believe the move is done; and walk the ring with
+`pilot.press("tab")` at every size the surface claims to support, because a
+control can be painted and unreachable at one width only.
+
+## Assert the paint, not the input to it (wave 5, 2026-09-15)
+
+**Three pins shipped in one wave that could not fail for the case they named**,
+and they share a signature worth learning:
+
+- One asserted source text with `inspect.getsource` — which proves a string
+  exists in a function, not that a user ever sees it.
+- One asserted a widget's `renderable` — which proves what was handed to the
+  renderer, not what the renderer did with it. That one was measured: with the
+  branch's Python and only its five stylesheets reverted, the file reported
+  **19 passed / 0 failed** while the pane painted a single row — *worse than
+  the base*, silently. The entire CSS half of the fix was untested.
+- One used a fixture where the two behaviours under test produced the same
+  value: a folder listing where casefolded `"reading" < "readme.md"` made
+  name-order and folders-first identical, so the sort assertion held either way.
+
+**The rule.** For anything the user sees, assert the **rendered result** —
+`region.height`, `region.y`, the text the compositor actually painted — not the
+model that feeds it. Reserve `renderable`-style assertions for content
+questions, where the model *is* the artifact under test. A layout or styling
+claim tested against a renderable is not tested at all, and a stylesheet
+regression will walk straight past it.
+
+**And ask the second question every time: what fixture would make this vacuous,
+and is that my fixture?** The two failures above are the two ways it happens —
+asserting upstream of the thing you care about, and choosing inputs where the
+right answer and the wrong answer coincide. Both produce a green suite that
+means nothing, and both are invisible unless you break the fix and watch the
+pin fail *for the reason you expect*. "It went red" is not enough; read the
+message.

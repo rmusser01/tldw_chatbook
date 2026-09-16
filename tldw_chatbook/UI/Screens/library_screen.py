@@ -1757,6 +1757,7 @@ class LibraryScreen(BaseAppScreen):
     #library-notes-status-row,
     #library-note-heading,
     #library-note-title-row,
+    #library-note-keywords-row,
     #library-note-context-keywords-row,
     #library-notes-create-heading {
         layout: vertical;
@@ -1997,7 +1998,8 @@ class LibraryScreen(BaseAppScreen):
         overflow-y: hidden;
     }
 
-    #library-shell-grid.library-notes-compact #library-note-title-row {
+    #library-shell-grid.library-notes-compact #library-note-title-row,
+    #library-shell-grid.library-notes-compact #library-note-keywords-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -2006,6 +2008,7 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-note-title-label,
+    #library-shell-grid.library-notes-compact #library-note-keywords-label,
     #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
         width: 10;
         height: 1;
@@ -2013,6 +2016,7 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-note-title,
+    #library-shell-grid.library-notes-compact #library-note-keywords,
     #library-shell-grid.library-notes-compact #library-note-context-keywords {
         width: 1fr;
         height: 1;
@@ -2067,9 +2071,19 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
-    #library-shell-grid.library-notes-compact #library-note-context-meta,
     #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
         height: 1;
+        min-height: 1;
+        margin: 0;
+    }
+
+    /* task-32642 AC#2: Info's properties are one row each here too, unpadded --
+       the joined sentence they replaced ran to ~85 characters against this
+       `height: 1`, so the compact pane truncated the values it was stating.
+       `auto` is the smallest change that lets the rows exist; the zero margin
+       this Static shares with its compact siblings is kept. */
+    #library-shell-grid.library-notes-compact #library-note-context-meta {
+        height: auto;
         min-height: 1;
         margin: 0;
     }
@@ -27164,15 +27178,7 @@ class LibraryScreen(BaseAppScreen):
         async def import_callback(selected_path: Path | None) -> None:
             if selected_path is None:
                 return
-            self._persist_library_note_import_location(selected_path)
-            try:
-                self._library_note_import_controller.accept_selected_path(
-                    selected_path,
-                    is_folder=selected_path.is_dir(),
-                    replace=replace,
-                )
-            except (OSError, TypeError, ValueError):
-                self._notify_library_note_import_failure()
+            self._accept_library_note_import_path(selected_path, replace=replace)
 
         self.app.push_screen(
             FileOpen(
@@ -27183,6 +27189,62 @@ class LibraryScreen(BaseAppScreen):
             ),
             import_callback,
         )
+
+    def _accept_library_note_import_path(
+        self, selected_path: Path, *, replace: bool
+    ) -> None:
+        """Admit one picked source and recognise it (task-32641).
+
+        A named method rather than the picker callback's body: everything
+        here happens AFTER the dialog closes, so this is the whole of what
+        picking a source does, and a test can walk it without a modal.
+        """
+        self._persist_library_note_import_location(selected_path)
+        try:
+            is_folder = selected_path.is_dir()
+            self._library_note_import_controller.accept_selected_path(
+                selected_path,
+                is_folder=is_folder,
+                replace=replace,
+            )
+        except (OSError, TypeError, ValueError):
+            self._notify_library_note_import_failure()
+            return
+        if not is_folder:
+            return
+        # task-32641: recognise the folder now, on the confirmation line,
+        # instead of leaving the reader to discover what it is inside the
+        # review. Its own worker: the scan is bounded but not instant, and
+        # the selection must paint immediately.
+        self.run_worker(
+            self._library_note_import_controller.recognise_selected_folder(
+                already_synced=self._library_folder_is_sync_root(selected_path)
+            ),
+            exclusive=True,
+            group="library_note_import_recognition",
+        )
+
+    def _library_folder_is_sync_root(self, folder: Path) -> bool:
+        """Does lasting sync already cover this folder (task-32641)?
+
+        The import side cannot see the sync runtime and should not learn to:
+        this screen owns both, so it asks here and hands the import
+        controller the answer. A runtime that is absent or has not started
+        answers False -- the recognition line then simply omits the clause,
+        which is what "we do not know of a root here" means.
+        """
+        runtime = getattr(self.app_instance, "notes_sync_runtime_owner", None)
+        probe = getattr(runtime, "folder_is_sync_root", None)
+        if not callable(probe):
+            return False
+        try:
+            return bool(probe(folder))
+        except Exception as error:  # noqa: BLE001 - one advisory clause
+            logger.debug(
+                "library_folder_sync_root_probe_failed",
+                error_type=type(error).__name__,
+            )
+            return False
 
     def _library_note_import_browse_location(self) -> str:
         """Return where Import once's picker should open (task-32174 AC#1).

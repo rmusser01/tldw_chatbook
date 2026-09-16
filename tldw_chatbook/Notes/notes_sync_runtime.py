@@ -3116,6 +3116,70 @@ class NotesSyncRuntimeOwner:
                 hinted.append(root_id)
         return tuple(hinted)
 
+    async def note_file_location(self, note_id: str) -> str:
+        """Return the file this note is kept in step with, or ``""``.
+
+        task-32640: the note editor says which of the three worlds the open
+        note lives in, and a synced note's line names its file. The answer
+        is read live, per ask -- the binding from the store and the root's
+        path from ``_root_paths``, which ``_start_once`` fills from the same
+        records the watcher leases. Nothing is cached for the editor, so a
+        note that is bound, retargeted or disconnected while it is open
+        cannot leave a stale sentence on screen.
+
+        Every LOADED root is considered, not only the watchable ones: a
+        paused or blocked root still holds the file the note lives in, and
+        the editor's question is where the note is, not whether anything is
+        watching it. Whether it is being watched is the root row's job.
+
+        Args:
+            note_id: The open note.
+
+        Returns:
+            The absolute path of the bound file, or ``""`` when no active
+            binding claims this note (the database-only world).
+
+        Raises:
+            ValueError: If ``note_id`` is not a bounded opaque identifier.
+        """
+
+        validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        binding = await asyncio.to_thread(
+            self._store.active_binding_path_for_note, note_id
+        )
+        if binding is None:
+            return ""
+        root_id, relative_path = binding
+        root_path = self._root_paths.get(root_id)
+        return "" if not root_path else str(Path(root_path) / relative_path)
+
+    def folder_is_sync_root(self, folder: str | Path) -> bool:
+        """Is this folder already covered by a lasting-sync root (task-32641)?
+
+        Import once asks before the review, so the duplicate-vault case
+        (task-32605, task-32637) is named where the user can still choose
+        differently. True for the root itself and for anything inside it --
+        importing a sub-folder of a synced vault duplicates it just as
+        thoroughly as importing the vault.
+
+        Args:
+            folder: The candidate folder.
+
+        Returns:
+            True when a loaded root is this folder or an ancestor of it.
+        """
+        try:
+            candidate = Path(folder).resolve()
+        except (OSError, RuntimeError, ValueError):
+            return False
+        for root_path in self._root_paths.values():
+            try:
+                if candidate.is_relative_to(Path(root_path).resolve()):
+                    return True
+            except (OSError, RuntimeError, ValueError):
+                continue
+        return False
+
     def _watchable_root_ids(self) -> tuple[str, ...]:
         return tuple(
             sorted(
