@@ -1,9 +1,11 @@
 ---
 id: TASK-32668
 title: Inspect immutable native plugin packages
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-16 04:16'
+updated_date: '2026-09-16 05:51'
 labels:
   - plugins
   - implementation
@@ -30,3 +32,22 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [ ] #3 Malformed recognized extensions retain inspectable portable components while blocking activation when required constraints are unknown; successful guarded packages remain usable.
 - [ ] #4 Inspection reports distinct support, selection, readiness and evidence axes, and ambiguous dialect candidates require an explicit choice.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR paths: backlog/decisions/162-managed-agent-plugins.md; backlog/decisions/163-expanded-console-hook-runtime.md
+Reason: Direct implementation of accepted plugin inspection and constraint-preservation boundaries.
+1. Establish RED tests against native inspection/materialization and independent portable fixtures.
+2. Implement frozen inventory, native extension and dependency validation with locally pinned portable rules.
+3. Implement bounded filesystem capture, secure containment/link adaptation, identity and reproducible digests.
+4. Exercise every scoped failure with valid controls; run exact Plugins tests plus changed-file static checks.
+5. Self-review, commit, independent task review, then complete ACs and implementation notes. Vendor qualification stays in I2; F1 records candidate identity/ambiguity without claiming vendor readiness.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented non-executing native inspection and bounded POSIX snapshot materialization under ADR-162/163. Frozen records separate format support, selection, disabled availability and parsed evidence; native skills/MCP/commands/rules/agents/hooks retain dependency constraints and unknown-scope blockers. Snapshot digests bind copied bytes and executable mode, while a separate source digest preserves internal-link provenance. Vendor candidates retain identity/ambiguity but remain unqualified. Added original licensed fixtures, authoring/operation documentation and 64 feature tests; 103 tests pass including the unchanged 39 path-validation neighbors, with Black, Ruff and syntax checks passing. macOS filesystem evidence only; Windows descriptor capture fails closed pending qualification. Independent review and AC/status closeout remain controller-owned.
+<!-- SECTION:NOTES:END -->
