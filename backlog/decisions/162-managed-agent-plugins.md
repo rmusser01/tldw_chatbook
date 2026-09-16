@@ -1,6 +1,6 @@
 # ADR-162: Managed agent plugins and Git marketplaces
 
-Status: Proposed — approved design direction; written specification awaiting review.
+Status: Accepted (2026-09-15) — written specification reviewed; implementation pending.
 Date: 2026-09-15
 Related Task: [TASK-32645](../tasks/task-32645%20-%20Design-managed-plugins-and-expanded-hook-runtime.md)
 Supersedes: N/A
@@ -130,4 +130,5 @@ declared implemented by this ADR.
 
 - [Managed plugins design](../../Docs/superpowers/specs/2026-09-15-managed-plugins-design.md)
 - [Expanded hook runtime design](../../Docs/superpowers/specs/2026-09-15-expanded-hook-runtime-design.md)
+- [Implementation delivery plan](../../Docs/superpowers/plans/2026-09-15-managed-plugins-delivery.md)
 - [ADR-074: bounded write-ahead coordination precedent](074-portable-actor-packs-and-local-persona-visual-runtime.md)

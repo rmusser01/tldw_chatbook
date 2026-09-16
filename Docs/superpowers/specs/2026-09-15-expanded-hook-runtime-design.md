@@ -1,7 +1,7 @@
 # Expanded Console hook runtime
 
 Date: 2026-09-15
-Status: Draft for written-spec review; expanded capability scope approved.
+Status: Approved for implementation planning after written-spec review and amendments.
 Task: [TASK-32645](../../../backlog/tasks/task-32645%20-%20Design-managed-plugins-and-expanded-hook-runtime.md)
 Decision: [ADR-163](../../../backlog/decisions/163-expanded-console-hook-runtime.md)
 Companion: [Managed plugins](2026-09-15-managed-plugins-design.md)
@@ -820,6 +820,7 @@ ADR path: backlog/decisions/163-expanded-console-hook-runtime.md
 Reason: New lifecycle events, structured effects, scheduling, recursion,
 privacy and permission-sensitive runtime interfaces.
 
-This spec and the plugin spec remain subject to written-spec review.
-They define intended behavior and acceptance evidence; no implementation or
-runtime test success is asserted here.
+Written-spec review is complete. The [hook implementation plan](../plans/2026-09-15-expanded-hooks.md)
+and [delivery plan](../plans/2026-09-15-managed-plugins-delivery.md) carry the
+remaining work. This spec defines intended behavior and acceptance evidence;
+no implementation or runtime test success is asserted here.
