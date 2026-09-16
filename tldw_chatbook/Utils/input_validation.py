@@ -32,6 +32,8 @@ CONSOLE_DRAFT_MAX_LENGTH = 100_000
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
 CONSOLE_CHARACTER_QUERY_MAX_LENGTH = 200
+WORKFLOW_SEARCH_MAX_LENGTH = 512
+WORKFLOW_MAX_PAGE_SIZE = 100
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
 RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
 _VLLM_DRAFT_INPUT_LIMITS = {
@@ -614,6 +616,37 @@ def validate_console_switcher_query(value: object) -> str:
             "Switcher search must be text containing at most "
             f"{CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters."
         ) from None
+
+
+class WorkflowSearchInput(BaseModel):
+    """Strict parameters for local workflow-library reads.
+
+    Attributes:
+        query: Unmodified substring, at most 512 Python characters.
+        page_size: Number of results requested, from 1 to 100.
+        offset: Nonnegative matching-result offset within SQLite's integer range.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, hide_input_in_errors=True
+    )
+
+    query: str
+    page_size: int = Field(ge=1, le=WORKFLOW_MAX_PAGE_SIZE)
+    offset: int = Field(ge=0, le=2**63 - 1)
+
+    @field_validator("query", mode="plain")
+    @classmethod
+    def _bounded_query(cls, value: object) -> str:
+        # Ordinary Pydantic str validation rejects lone surrogates already
+        # admitted in saved JSON names. Validate without rewriting those names.
+        if not isinstance(value, str):
+            raise TypeError("Workflow search must be text")
+        if len(value) > WORKFLOW_SEARCH_MAX_LENGTH:
+            raise ValueError(
+                f"Workflow search must contain at most {WORKFLOW_SEARCH_MAX_LENGTH} characters"
+            )
+        return value
 
 
 class TerminalSessionNameInput(BaseModel):

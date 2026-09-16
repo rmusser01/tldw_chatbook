@@ -279,3 +279,54 @@ The final sample measured 6.87ms main / 71.23ms compact library loads, both with
 zero full-document projections; 500-step raw editing was 37.58ms with a 49.09ms
 maximum heartbeat gap. Independent review is closed with no blockers. These
 results qualify pushing the fixes, not merging before new-head CI/Qodo completes.
+
+## Search-boundary follow-up (2026-09-16 UTC)
+
+Head `af041970e9afef81c6d60af73912e32cbfabd688` passed PR Fast Lane,
+required derived artifacts and UI latency CI. Qodo review `5217561076` added
+comments `4021705887` (unbounded search input) and `4021705892` (repeated OFFSET
+scans), so merge was held again. The two Windows jobs still failed during checkout
+of unchanged dev task32540's long filename; their logs were verified separately.
+
+Both search APIs now use `WorkflowSearchInput` in the existing shared validation
+module. Its strict page-size/offset constraints retain existing limits, and raw
+queries are capped at 512 Python characters without trimming, coercion or case
+normalization. Two oversized-input regressions first proved SQLite was reached
+before rejection. A plain Pydantic field validator deliberately preserves lone
+surrogates: a direct probe showed ordinary Pydantic `str` validation rejects those
+already-admitted JSON names. Errors omit raw input; saved definitions and
+connection settings are unchanged. The user guide documents shortening a query.
+
+Search now executes one ordered statement and calls `fetchmany(100)` on the same
+cursor/transaction, skipping matching offsets in Python and stopping once full.
+Four real-SQLite tests first reproduced 10/11 query executions over 1,000 heads.
+Afterward all six sparse/absent/early-stop cases make one query, with at most 100
+rows per fetch and the expected matching identities. Instrumented SQLite progress
+callbacks (one per 100 VM operations) fell from 471/531 to 180 ticks for the sampled
+full scans, and 18 for early stopping. These are deterministic sample work counts,
+not universal timing promises. No schema, index, cache or storage owner was added.
+
+Intermediate verification: 177 shared-boundary/service tests passed before the
+scan correction; then 191 summary/service/paging tests passed. With early-stop and
+mounted oversize/recovery cases added, 50 summary/paging tests passed, and the six
+instrumented scan cases passed separately. Both real library layouts recover by
+editing the search and retain the exact open draft. These selections overlap.
+Shared input_validation.py retains eight source-attributed baseline Ruff findings
+(unchanged spans, codes, messages and columns; zero unmatched). Other three Python
+files are clean, all four format checks and diff-check pass. Final targeted,
+preflight and independent-review results remain to be recorded before pushing.
+
+Independent review reports no Critical/Important/Minor findings for this diff.
+Its in-memory verification covered six scan cases, twenty-two invalid-input
+cases, exact-limit and unchanged whitespace/Unicode/NUL/surrogate strings. Cursor
+reuse and completed identity collection before full-revision retrieval were
+verified. All seven repository preflight guards pass on the corrected tree.
+
+Final verification: **520 passed**, 192.06s, covering Workflows, authoring storage,
+editor/paging/projection/route-entry and the affected shared reasoning/character
+validation consumers. Separately, **13 import/CSS performance checks passed**,
+29.13s; boot CSS remains 767,424/768,000 bytes and selectors 272/274. Existing
+dependency, resource-fallback and old temporary-cleanup warnings remain disclosed.
+No full sweep, model call, suppression or unrelated cleanup occurred. Final
+list_workflows documentation spells out the changed boundary without executable
+changes; scoped Ruff/format/diff checks pass. Exact-head GitHub gates remain pending.

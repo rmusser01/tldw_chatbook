@@ -1,6 +1,7 @@
 """Library pages read display names and exact identities, never full revisions."""
 
 import json
+import sqlite3
 from contextlib import contextmanager
 from uuid import UUID
 
@@ -74,15 +75,35 @@ def test_summary_search_spans_batches_and_preserves_exact_order(documents, monke
         ({"offset": False}, ValueError),
         ({"offset": "1"}, ValueError),
         ({"query": None}, TypeError),
+        ({"query": b"text"}, TypeError),
+        ({"query": "private-query-" + "x" * 500}, ValueError),
+        ({"offset": 2**63}, ValueError),
     ],
 )
-def test_summary_bounds_are_rejected_before_sql(documents, monkeypatch, kwargs, error):
+@pytest.mark.parametrize("method", ["list_workflows", "list_workflow_summaries"])
+def test_search_bounds_are_rejected_before_sql(
+    documents, monkeypatch, kwargs, error, method
+):
     def forbidden(*args, **options):
         pytest.fail("Invalid summary arguments must not reach SQLite")
 
     monkeypatch.setattr(documents._db, "transaction", forbidden)
-    with pytest.raises(error):
-        documents.list_workflow_summaries(**kwargs)
+    with pytest.raises(error) as caught:
+        getattr(documents, method)(**kwargs)
+    assert "private-query-" not in str(caught.value)
+
+
+@pytest.mark.parametrize("method", ["list_workflows", "list_workflow_summaries"])
+def test_search_accepts_exact_limit_without_normalizing_input(documents, method):
+    name = " " + "ß" * 510 + " "
+    revision = create_named(documents, 0, name)
+    rows = getattr(documents, method)(query=name)
+    assert rows == (
+        ((name, revision.workflow_id, revision.revision_id),)
+        if method == "list_workflow_summaries"
+        else (revision,)
+    )
+    assert getattr(documents, method)(query=" " * 512) == ()
 
 
 @pytest.mark.parametrize(
@@ -153,3 +174,70 @@ def test_summary_preserves_admitted_unicode_names_and_saved_bytes(documents, nam
     )
     assert documents.list_workflows(query=name) == (unusual,)
     assert documents.get_head(unusual.workflow_id).raw_json == unusual.raw_json
+
+
+@pytest.mark.parametrize("method", ["list_workflows", "list_workflow_summaries"])
+@pytest.mark.parametrize(
+    "query,offset,page_size,indices,batch_count",
+    [
+        ("STRASSE", 1, 2, (520, 920), 10),
+        ("missing", 0, 2, (), 11),
+        ("STRASSE", 0, 1, (20,), 1),
+    ],
+)
+def test_search_scans_once_in_bounded_batches(
+    documents, monkeypatch, method, query, offset, page_size, indices, batch_count
+):
+    revisions = [
+        create_named(
+            documents, i, f"Straße {i}" if i in (20, 520, 920) else f"Item {i}"
+        )
+        for i in range(1000)
+    ]
+    statements, batches, ticks = [], [], []
+    transaction = documents._db.transaction
+
+    class ObservedCursor(sqlite3.Cursor):
+        def execute(self, sql, parameters=()):
+            statements.append(sql)
+            return super().execute(sql, parameters)
+
+        def fetchall(self):
+            rows = super().fetchall()
+            batches.append(("fetchall", len(rows)))
+            return rows
+
+        def fetchmany(self, size=1):
+            rows = super().fetchmany(size)
+            batches.append(("fetchmany", len(rows)))
+            return rows
+
+    @contextmanager
+    def observe(*args, **kwargs):
+        with transaction(*args, **kwargs) as cursor:
+            connection = cursor.connection
+            observed = connection.cursor(factory=ObservedCursor)
+            connection.set_progress_handler(lambda: ticks.append(1) or 0, 100)
+            try:
+                yield observed
+            finally:
+                connection.set_progress_handler(None, 0)
+                observed.close()
+
+    monkeypatch.setattr(documents._db, "transaction", observe)
+    rows = getattr(documents, method)(page_size=page_size, offset=offset, query=query)
+    assert rows == tuple(
+        (f"Straße {i}", revisions[i].workflow_id, revisions[i].revision_id)
+        if method == "list_workflow_summaries"
+        else revisions[i]
+        for i in indices
+    )
+    scans = [sql for sql in statements if "FROM workflow_heads" in sql]
+    print(
+        {"query": query, "method": method, "scans": len(scans), "vm_ticks": len(ticks)}
+    )
+    assert len(scans) == 1, "A search must not restart traversal for each batch"
+    assert len(batches) == batch_count, "Stop fetching when the matching page is full"
+    assert batches and all(
+        kind == "fetchmany" and size <= 100 for kind, size in batches
+    )

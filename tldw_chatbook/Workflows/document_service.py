@@ -11,7 +11,13 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
-from tldw_chatbook.Utils.input_validation import validate_json_size
+from tldw_chatbook.Utils.input_validation import (
+    WORKFLOW_MAX_PAGE_SIZE as MAX_PAGE_SIZE,
+)
+from tldw_chatbook.Utils.input_validation import (
+    WorkflowSearchInput,
+    validate_json_size,
+)
 from tldw_chatbook.Workflows.expressions import (
     ExpressionError,
     pointer_child,
@@ -33,7 +39,6 @@ MAX_DOCUMENT_DEPTH = 64
 MAX_DOCUMENT_NODES = 100000
 MAX_GENERATION = 2**63 - 1
 PAGE_SIZE = 20
-MAX_PAGE_SIZE = 100
 # A validation state, never serialized provenance or user-controlled error text.
 FRAGMENT_ERROR = "Incomplete field edit; repair the field or explicitly accept repaired Advanced JSON"
 _EDITABLE_STEP_KEYS = {
@@ -878,16 +883,33 @@ class DocumentService:
 
         Search scans bounded name/identity batches without retaining unmatched
         full definitions. Unicode casefold matching agrees with the editor.
+
+        Args:
+            page_size: Maximum number of matching heads, from 1 to 100.
+            offset: Nonnegative SQLite integer offset within matching heads.
+            query: Display-name substring, at most 512 Python characters;
+                empty returns an unfiltered page. No normalization is applied.
+
+        Returns:
+            Full saved revisions in workflow-ID order, never pending draft text.
+
+        Raises:
+            ValueError: Paging bounds are invalid, including boolean bounds,
+                or the raw query exceeds 512 characters.
+            TypeError: The search query is not text.
         """
-        self._check_page(page_size, offset)
-        if not isinstance(query, str):
-            raise TypeError("Workflow search must be text")
+        parameters = WorkflowSearchInput(
+            query=query, page_size=page_size, offset=offset
+        )
         with self._db.transaction(write=False) as cursor:
-            if query:
+            if parameters.query:
                 return tuple(
                     _get_revision(cursor, workflow_id, revision_id)
                     for _, workflow_id, revision_id in self._workflow_summaries(
-                        cursor, page_size, offset, query
+                        cursor,
+                        parameters.page_size,
+                        parameters.offset,
+                        parameters.query,
                     )
                 )
             return tuple(
@@ -895,7 +917,7 @@ class DocumentService:
                 for row in cursor.execute(
                     "SELECT r.* FROM workflow_heads h JOIN workflow_revisions r "
                     "ON r.revision_id = h.revision_id ORDER BY h.workflow_id LIMIT ? OFFSET ?",
-                    (page_size, offset),
+                    (parameters.page_size, parameters.offset),
                 ).fetchall()
             )
 
@@ -907,7 +929,8 @@ class DocumentService:
         Args:
             page_size: Maximum number of matching heads, from 1 to 100.
             offset: Nonnegative SQLite integer offset within matching heads.
-            query: Unicode casefold substring of the displayed name, or empty.
+            query: Unicode casefold substring of the displayed name, or empty;
+                at most 512 Python characters, without normalization.
 
         Returns:
             Tuples of name, workflow ID and revision ID, ordered by workflow ID.
@@ -915,14 +938,17 @@ class DocumentService:
             beyond authoring limits remain listed; saved bytes stay untouched.
 
         Raises:
-            ValueError: Paging bounds are invalid, including boolean bounds.
+            ValueError: Paging bounds are invalid, including boolean bounds,
+                or the raw query exceeds 512 characters.
             TypeError: The search query is not text.
         """
-        self._check_page(page_size, offset)
-        if not isinstance(query, str):
-            raise TypeError("Workflow search must be text")
+        parameters = WorkflowSearchInput(
+            query=query, page_size=page_size, offset=offset
+        )
         with self._db.transaction(write=False) as cursor:
-            return self._workflow_summaries(cursor, page_size, offset, query)
+            return self._workflow_summaries(
+                cursor, parameters.page_size, parameters.offset, parameters.query
+            )
 
     @staticmethod
     def _workflow_summaries(
@@ -936,7 +962,7 @@ class DocumentService:
             "ELSE json_extract(r.definition_json, '$.name') "
             "END AS name, h.workflow_id, h.revision_id "
             "FROM workflow_heads h JOIN workflow_revisions r "
-            "ON r.revision_id = h.revision_id ORDER BY h.workflow_id LIMIT ? OFFSET ?"
+            "ON r.revision_id = h.revision_id ORDER BY h.workflow_id"
         )
 
         def display_name(row: sqlite3.Row) -> str:
@@ -952,16 +978,18 @@ class DocumentService:
         if not query:
             return tuple(
                 (display_name(row), row["workflow_id"], row["revision_id"])
-                for row in cursor.execute(sql, (page_size, offset)).fetchall()
+                for row in cursor.execute(
+                    sql + " LIMIT ? OFFSET ?", (page_size, offset)
+                ).fetchall()
             )
         summaries = []
-        scanned = matched = 0
+        matched = 0
         folded = query.casefold()
+        cursor.execute(sql)
         while len(summaries) < page_size:
-            rows = cursor.execute(sql, (MAX_PAGE_SIZE, scanned)).fetchall()
+            rows = cursor.fetchmany(MAX_PAGE_SIZE)
             if not rows:
                 break
-            scanned += len(rows)
             for row in rows:
                 name = display_name(row)
                 if folded not in name.casefold():

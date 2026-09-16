@@ -162,3 +162,8 @@ document service, preserving exact saved-head reads and SQLite ownership.
 The implementation and measured verification are recorded in
 `Docs/UAT/2026-09-15-workflows-qodo-remediation.md`. Earlier no-push/no-merge notes
 above describe their historical authorization checkpoints, not this follow-up.
+
+The final search review also amends ADR-138 with the shared 512-character raw-query
+boundary and single-query, bounded-fetch search contract. TASK-32601's
+Search-boundary follow-up records reproduction, preservation and verification;
+no new ADR, schema or SQLite ownership mechanism is required.

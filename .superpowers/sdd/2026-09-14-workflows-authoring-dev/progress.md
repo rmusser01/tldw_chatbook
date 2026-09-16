@@ -539,3 +539,28 @@ Final correction verification nowcomplete:426passed140.11s;all7preflightpass;
 Readycommit/push,4inlineevidencereplies+resolve,/agentic_reviewthenexactheadgates.
 Currentbase67bfunchanged;no rebaseneeded. Finalsamplelibrary6.87ms/71.23ms0projects,
 500stepedit37.58msheartbeat49.09ms. NoMERGEDclaim;AC7open.
+
+### Search-boundary review round (2026-09-16 UTC)
+
+Head af041970e9afef81c6d60af73912e32cbfabd688 passed required Derived, Fast Lane
+and UI latency. Qodo review5217561076 added4021705887 (query bound) and4021705892
+(repeated OFFSET scans). Existing Windows checkout failure was reverified in
+jobs104630033632/104630033023 on unchanged dev task32540; still non-required.
+
+Main reproduced2oversize failures and4 repeated-query failures. Added strict
+WorkflowSearchInput to existing shared input_validation.py (512 raw Python
+characters, existing page/offset limits, plain validator preserves admitted lone
+surrogates; standard Pydanticstr rejected those in an explicit probe). Both read
+APIs use validated fields. Search now one query/fetchmany100, early stop, existing
+cursor/transaction. Six realSQLite probes pass:10/11queries->1,471/531VMticks->180,
+18earlystop. Main/compact oversize recovery retains open draft. No infrastructure.
+
+Final520targeted Workflows/storage/UI/shared-validation tests pass192.06s;
+13import/CSS tests pass29.13s;7preflight checks pass. FourPythonformatchecks pass,
+three files Ruffclean;input_validation retains8exactlysource-attributedbaseline
+findings,zero unmatched. Independent reviewerAverroes found no issues,verified
+22invalidinputcases+6scans+Unicodeboundary;closed. Finaldocstringsonlyaddition.
+Task/ADR/plan/UAT/userguide updated. Needcommit/push, reply/resolve5887 thread
+PRRT_kwDOOcyyl86iwXFP and5892 thread PRRT_kwDOOcyyl86iwXFT, /agentic_review,
+newexactheadrequired/UIchecks thennormalmatch-headmerge. AC7open. Base67bfstill
+latest;preserveUATartifacts;no fullsweep/models/runtime/schema/cache/SQLiteowner.

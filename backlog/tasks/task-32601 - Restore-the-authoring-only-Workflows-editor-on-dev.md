@@ -102,6 +102,24 @@ full-document reads/projections for names; no schema or runtime infrastructure.
 3. Run targeted store/controller/paging/editor and import/CSS guards, review the
    changes, reply to each finding and refresh exact-head review/checks before merge.
 
+### Search-boundary Qodo follow-up (2026-09-16 UTC)
+
+ADR required: amend existing ADR-138 for the bounded search contract; no new ADR.
+ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
+Reason: address findings 4021705887/4021705892 without new storage infrastructure.
+
+1. Reproduce unbounded search acceptance before SQLite and repeated search scans
+   with real query tracing; retain tests of Unicode, raw names and exact paging.
+2. Validate both search entry points through one shared strict Pydantic model:
+   512-character raw query limit plus existing page/offset bounds, without
+   trimming or coercion. Preserve admitted lone-surrogate strings with a local
+   plain field validator; ordinary Pydantic string validation rejects them.
+3. Execute one ordered summary query per search and consume at most 100 rows per
+   fetch, stopping once the requested matching page is full. No connection,
+   schema, index or cache changes.
+4. Verify targeted regressions, mounted search/error recovery, shared validation
+   consumers and preflight; obtain review, push, reply and await final-head gates.
+
 ## ID provenance
 
 The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans already contained IDs through 32600. Only this newly created file/header was moved to the checked-free TASK-32601 before implementation. No existing task was renumbered.
@@ -110,6 +128,19 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Search-boundary follow-up: Qodo findings 4021705887/4021705892 on af041970e9
+reproduced oversized-query admission and 10/11 repeated search statements over
+1,000 heads. Both read APIs now validate through one shared strict Pydantic model
+with a 512-character query cap, preserving admitted Unicode and existing paging
+limits. Search performs one ordered query with bounded fetches and early stopping;
+no schema/cache/connection changes. ADR-138, the plan and user guide are updated.
+Final targeted verification: 520 tests plus 13 import/CSS checks pass, all seven
+preflight guards pass, independent review has no findings. Eight shared-module
+Ruff findings are exactly source-attributed to baseline; no new static debt or
+suppressions. All four touched Python files are formatted. Detailed evidence:
+Docs/UAT/2026-09-15-workflows-qodo-remediation.md. New-head review/CI and merge
+remain pending; AC7 stays open.
+
 Final-head Qodo follow-up (2026-09-16 UTC): four fresh findings on 2e76d7bdf2
 held merge despite its passing required/UI checks. Library pages now read only
 bounded display-name/identity tuples through the existing document service;

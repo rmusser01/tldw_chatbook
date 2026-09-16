@@ -86,6 +86,16 @@ the existing database JSON-object constraint remains authoritative. Search uses
 the same display name as the list. No schema, cache, connection owner or loader
 is added.
 
+The final search review (2026-09-16) bounds raw queries at 512 Python characters,
+validated together with existing page/offset constraints in the shared input
+validation module. Empty, whitespace, case and previously admitted surrogate
+strings are retained without normalization; oversized/non-text inputs fail before
+opening a transaction. Both full-revision and summary search use this boundary.
+A searched page executes one ordered summary query in the existing read
+transaction, consuming at most 100 rows per fetch and skipping matching offsets
+in Python. It stops when the page is full; it does not rerun increasing SQL
+OFFSET scans. Non-search paging and exact-head reads retain their contracts.
+
 New structural admission also limits definitions to 500 steps, 64 container levels
 and 100,000 value/container nodes, including opaque subtrees. The 16 MiB raw-text
 limit is unchanged. These are local authoring bounds, not server schema claims.

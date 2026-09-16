@@ -9,7 +9,7 @@ from uuid import UUID
 import pytest
 from textual.widgets import Button, Input, OptionList, TextArea
 
-from Tests.UI.test_workflows_editor import WorkflowEditorHarness
+from Tests.UI.test_workflows_editor import WorkflowEditorHarness, painted_text
 from Tests.UI.test_workflows_editor import choose_option as choose_existing
 from Tests.Workflows.test_document_complexity import definition, nested_raw
 from tldw_chatbook.UI.Workflows_Modules.editor import WorkflowEditor
@@ -180,6 +180,51 @@ async def test_slow_old_search_cannot_replace_newer_library_results(
             ("Workflow 22", revisions[-1].workflow_id, revisions[-1].revision_id),
         )
         assert controller.library_query == "Workflow 22"
+
+
+@pytest.mark.parametrize("compact", [False, True])
+async def test_oversized_search_recovers_without_changing_open_draft(tmp_path, compact):
+    harness = WorkflowEditorHarness(tmp_path, seed=False)
+    revisions = seed_library(harness)
+    async with harness.run_test(size=(110 if compact else 160, 48)) as pilot:
+        screen = harness.screen
+        await settled(pilot, lambda: screen._loaded)
+        draft = screen.controller.draft
+        if compact:
+            screen.query_one("#workflow-library-selector", Button).press()
+            await settled(
+                pilot,
+                lambda: (
+                    harness.screen is not screen
+                    and not harness.screen.query_one(
+                        "#workflow-dialog-choices"
+                    ).disabled
+                ),
+            )
+        search = harness.screen.query_one(
+            "#workflow-page-search" if compact else "#workflow-library-search", Input
+        )
+        search.value = "x" * 513
+        await settled(pilot, lambda: "Unable to load" in painted_text(harness.screen))
+        assert screen.controller.draft == draft
+        search.value = "Workflow 22"
+        await settled(
+            pilot,
+            lambda: (
+                "Unable to load" not in painted_text(harness.screen)
+                and "Workflow 22" in painted_text(harness.screen)
+            ),
+        )
+        listing = harness.screen.query_one(
+            "#workflow-dialog-choices" if compact else "#workflow-library-list",
+            OptionList,
+        )
+        assert not listing.disabled and listing.option_count == 1
+        assert screen.controller.draft == draft
+        assert (
+            harness.workflow_documents.get_head(revisions[-1].workflow_id)
+            == revisions[-1]
+        )
 
 
 async def test_legacy_over_limit_definition_remains_selectable_and_exportable(tmp_path):

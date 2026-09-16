@@ -37,6 +37,8 @@ page. Use **Previous**/**Next** in the library, or **Previous page**/**Next page
 in selectors, to reach the rest. Library search matches names across all pages,
 including case-insensitive Unicode text. Paging or searching does not change
 your open draft. Pages reflect the current store, not a frozen snapshot.
+Search accepts up to 512 characters. If an oversized search cannot load, shorten
+the query to retry; the open draft is retained.
 
 ## Draft recovery
 
