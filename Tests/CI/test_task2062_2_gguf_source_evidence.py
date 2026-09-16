@@ -56,9 +56,11 @@ EXPECTED_PULL_REQUEST_PATHS = (
     "Tests/UI/test_llm_gguf_source_modes.py",
 )
 EXPECTED_STEP_NAMES = (
+    "Enable long checkout paths on Windows",
     "Check out the exact tested commit",
     "Set up Python 3.12",
     "Install bounded test dependencies",
+    "Prepare Windows package files beneath a trusted private ancestor",
     "Run exact GGUF source evidence nodes",
     "Run each full-app GGUF case with its profile selected before imports",
     "Compare Windows keyboard waits with the dev source baseline",
@@ -127,17 +129,34 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
     steps = job.get("steps")
     assert isinstance(steps, list)
     assert tuple(step.get("name") for step in steps) == EXPECTED_STEP_NAMES
-    # The five evidence steps retain their strict failure and execution rules.
-    assert all(set(step) <= {"name", "uses", "with", "run"} for step in steps[:-1])
+    # Only the final diagnostic may ignore a failure; evidence remains required.
+    expected_step_keys = (
+        {"name", "if", "shell", "run"},
+        {"name", "uses", "with"},
+        {"name", "uses", "with"},
+        {"name", "run"},
+        {"name", "if", "run"},
+        {"name", "working-directory", "run"},
+        {"name", "working-directory", "env", "run"},
+    )
+    assert tuple(set(step) for step in steps[:-1]) == expected_step_keys
     assert set(steps[-1]) == {"name", "if", "continue-on-error", "run"}
     assert [step.get("uses") for step in steps if "uses" in step] == [
         "actions/checkout@v4",
         "actions/setup-python@v5",
     ]
-    assert steps[0].get("with") == {
+    checkout = _named_step(job, "Check out the exact tested commit")
+    assert checkout.get("with") == {
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
     }
-    assert steps[1].get("with") == {"python-version": "3.12"}
+    python = _named_step(job, "Set up Python 3.12")
+    assert python.get("with") == {"python-version": "3.12"}
+    assert steps[0] == {
+        "name": "Enable long checkout paths on Windows",
+        "if": "runner.os == 'Windows'",
+        "shell": "pwsh",
+        "run": "git config --global core.longpaths true",
+    }
 
     lowered = text.casefold()
     assert lowered.count("continue-on-error") == 1
@@ -158,7 +177,6 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
         assert forbidden not in lowered
 
 
-
 def test_windows_failure_diagnostic_keeps_exact_read_only_commands() -> None:
     _text, workflow = _workflow()
     diagnostic = _named_step(_only_job(workflow), EXPECTED_STEP_NAMES[-1])
@@ -166,15 +184,49 @@ def test_windows_failure_diagnostic_keeps_exact_read_only_commands() -> None:
     assert diagnostic.get("continue-on-error") is True
     baseline = "4631b60f8dd9623fc55bf16f4a37e29fcb1240c7"
     assert _command_tokens(str(diagnostic.get("run", ""))) == (
-        "git", "fetch", "--depth=1", "origin", baseline,
-        "git", "worktree", "add", "--detach", "$RUNNER_TEMP/backup-startup-dev", baseline,
+        "git",
+        "fetch",
+        "--depth=1",
+        "origin",
+        baseline,
+        "git",
+        "worktree",
+        "add",
+        "--detach",
+        "$RUNNER_TEMP/backup-startup-dev",
+        baseline,
         "diagnostic=$GITHUB_WORKSPACE/Tests/Backup_Recovery/startup_timing_diagnostic.py",
-        "failed=0", "for", "node", "in", *REQUIRED_UI_NODES[2:], "do",
-        "python", "$diagnostic", "--source", "$RUNNER_TEMP/backup-startup-dev",
-        "--node", "$node", "--label", "dev", "--no-profile", "||", "failed=1",
-        "python", "$diagnostic", "--source", "$GITHUB_WORKSPACE",
-        "--node", "$node", "--label", "candidate", "--no-profile", "||", "failed=1",
-        "done", "exit", "$failed",
+        "failed=0",
+        "for",
+        "node",
+        "in",
+        *REQUIRED_UI_NODES[2:],
+        "do",
+        "python",
+        "$diagnostic",
+        "--source",
+        "$RUNNER_TEMP/backup-startup-dev",
+        "--node",
+        "$node",
+        "--label",
+        "dev",
+        "--no-profile",
+        "||",
+        "failed=1",
+        "python",
+        "$diagnostic",
+        "--source",
+        "$GGUF_EVIDENCE_SOURCE",
+        "--node",
+        "$node",
+        "--label",
+        "candidate",
+        "--no-profile",
+        "||",
+        "failed=1",
+        "done",
+        "exit",
+        "$failed",
     )
 
 
@@ -195,6 +247,10 @@ def test_workflow_runs_every_exact_node_once_with_only_bounded_flags() -> None:
         "Run exact GGUF source evidence nodes",
     )
     command = str(test_step.get("run", ""))
+    assert (
+        test_step.get("working-directory")
+        == "${{ env.GGUF_EVIDENCE_SOURCE || github.workspace }}"
+    )
     assert _command_tokens(command) == (
         "python",
         "-m",
@@ -212,11 +268,29 @@ def test_workflow_runs_every_exact_node_once_with_only_bounded_flags() -> None:
         "Run each full-app GGUF case with its profile selected before imports",
     )
     ui_tokens = _command_tokens(str(ui_step.get("run", "")))
+    assert ui_step.get("working-directory") == test_step.get("working-directory")
+    assert ui_step.get("env") == {
+        "GGUF_APP_TIMEOUT": "${{ runner.os == 'Windows' && '180' || '60' }}"
+    }
     assert ui_tokens == (
-        "failed=0", "for", "node", "in", *REQUIRED_UI_NODES, "do",
+        "failed=0",
+        "for",
+        "node",
+        "in",
+        *REQUIRED_UI_NODES,
+        "do",
         "TLDW_TEST_PRIVATE_PROFILE_NODE=$node",
-        "python", "-m", "pytest", "$node", "--timeout=60", "-v", "||", "failed=1",
-        "done", "exit", "$failed",
+        "python",
+        "-m",
+        "pytest",
+        "$node",
+        "--timeout=$GGUF_APP_TIMEOUT",
+        "-v",
+        "||",
+        "failed=1",
+        "done",
+        "exit",
+        "$failed",
     )
     selected += tuple(token for token in ui_tokens if token.startswith("Tests/"))
     assert selected == REQUIRED_NODES + REQUIRED_UI_NODES

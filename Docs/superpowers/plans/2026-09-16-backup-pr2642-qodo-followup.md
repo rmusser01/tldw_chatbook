@@ -60,3 +60,19 @@ PR checks, current-head Qodo review and final remote-state verification.
 Prior native results remain tied to their original source revisions. No old result
 will be represented as testing changed review fixes. Preserve the requester's
 Change summary and update PR evidence before merging.
+
+Review implementation `6270d26f15` passed all 96 native Linux cases in 117.61s;
+16,915 source files were unchanged and all 2,506 packaged Python files matched
+the committed manifest, wheel and installed copy. Qodo's 14:20:14 UTC review
+reports zero open findings and all nine discussion threads are resolved.
+
+Windows run 35107557433 passed all 59 native checks and 95/96 product cases.
+The remaining fault-injection fixture tried replacing a held destination through
+the legacy Windows rename API. It now moves the held allocation aside and places
+the foreign object at the original name, requiring the exact injected exception.
+The unchanged identity and foreign-content assertions pass locally; native repeat
+is pending. The Fast Lane's 1,128 passing cases exposed two workflow-shape
+contracts missing the new long-path step; both contracts are corrected. The
+separate Windows source-evidence workflow now uses the existing verified private
+source-copy helper and a bounded 180s full-app deadline. Production code is
+unchanged by these fixture/workflow corrections.

@@ -779,7 +779,11 @@ def test_register_failed_attempt_never_removes_foreign_lock(
             and admission_module.os.fstat(fd).st_ino
             == admission_module.os.stat(lease).st_ino
         ):
-            admission_module.os.replace(replacement, lease)
+            # Move the still-held allocation aside before placing foreign data
+            # at its name. Windows refuses replacing an open destination through
+            # the legacy rename API; both native renames below keep object IDs.
+            admission_module.os.rename(lease, control / "displaced-lease")
+            admission_module.os.rename(replacement, lease)
             raise OSError(errno.EIO, "injected_replaced_lock")
         return result
 
@@ -790,7 +794,10 @@ def test_register_failed_attempt_never_removes_foreign_lock(
         else:
             patch.setattr(admission_module, "flush_file", swap_then_fail)
             expected = OSError
-        with pytest.raises(expected):
+        with pytest.raises(
+            expected,
+            match="injected_replaced_lock" if foreign == "replacement" else None,
+        ):
             admission.register("b", (source,))
 
     assert (control / "registry.json").read_bytes() == before

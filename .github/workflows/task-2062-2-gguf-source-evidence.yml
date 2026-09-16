@@ -56,7 +56,35 @@ jobs:
       - name: Install bounded test dependencies
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout
 
+      - name: Prepare Windows package files beneath a trusted private ancestor
+        if: runner.os == 'Windows'
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+          from Tests.Backup_Recovery.run_platform_product import (
+              _copy_tracked_source,
+              _create_private_root,
+          )
+
+          # Bundled Evals/config files are native-owned reads too. The hosted
+          # D:\a checkout ancestor is not a trusted user-owned package location.
+          private = _create_private_root(Path(os.environ["RUNNER_TEMP"]))
+          source, digest = _copy_tracked_source(Path.cwd(), private)
+          subprocess.run(
+              [sys.executable, "-m", "pip", "install", "--no-deps", "-e", str(source)],
+              cwd=source,
+              check=True,
+          )
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write(f"GGUF_EVIDENCE_SOURCE={source.as_posix()}\n")
+          print(f"Private GGUF source: {source}; tracked archive SHA-256: {digest}")
+          PY
+
       - name: Run exact GGUF source evidence nodes
+        working-directory: ${{ env.GGUF_EVIDENCE_SOURCE || github.workspace }}
         run: |
           python -m pytest \
             Tests/Model_Artifacts/test_gguf_admission.py::test_open_local_gguf_rejects_symlink \
@@ -81,6 +109,10 @@ jobs:
             -q
 
       - name: Run each full-app GGUF case with its profile selected before imports
+        working-directory: ${{ env.GGUF_EVIDENCE_SOURCE || github.workspace }}
+        env:
+          # Native Windows startup was still running real callbacks at 60s.
+          GGUF_APP_TIMEOUT: ${{ runner.os == 'Windows' && '180' || '60' }}
         run: |
           failed=0
           for node in \
@@ -89,7 +121,7 @@ jobs:
             "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]" \
             "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]"
           do
-            TLDW_TEST_PRIVATE_PROFILE_NODE="$node" python -m pytest "$node" --timeout=60 -v || failed=1
+            TLDW_TEST_PRIVATE_PROFILE_NODE="$node" python -m pytest "$node" --timeout="$GGUF_APP_TIMEOUT" -v || failed=1
           done
           exit "$failed"
 
@@ -106,6 +138,6 @@ jobs:
             "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]"
           do
             python "$diagnostic" --source "$RUNNER_TEMP/backup-startup-dev" --node "$node" --label dev --no-profile || failed=1
-            python "$diagnostic" --source "$GITHUB_WORKSPACE" --node "$node" --label candidate --no-profile || failed=1
+            python "$diagnostic" --source "$GGUF_EVIDENCE_SOURCE" --node "$node" --label candidate --no-profile || failed=1
           done
           exit "$failed"
