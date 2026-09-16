@@ -9,14 +9,14 @@ from unittest.mock import Mock
 
 import pytest
 from textual.css.query import NoMatches
+from textual.widgets import Static
+
+from Tests.UI.app_factory import _build_test_app
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Static
-
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
-from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
@@ -28,17 +28,17 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     capture_console_staged_evidence_for_chat,
 )
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
-from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
-from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
+from tldw_chatbook.UI.Workflows_Modules.console_context import WorkflowConsoleContext
 
 #: One poll of a UI condition. Small enough that a satisfied condition exits
 #: promptly, large enough not to spin the event loop.
@@ -342,14 +342,7 @@ async def _wait_for_destination_recovery_state(
             "#workflows-launch-in-console",
             "#workflows-console-unavailable",
             "empty-workflows",
-            (
-                "Select an active run",
-                "Unavailable: Console launch for Workflows.",
-                "Why: no active workflow run is available.",
-                "Next: Start or select a workflow run before opening it in Console.",
-                "Recovery: Workflows.",
-                "Owner: local workflow data.",
-            ),
+            ("No active workflow run",),
             "Start or select a workflow run before opening it in Console.",
         ),
         (
@@ -848,7 +841,7 @@ async def test_schedules_console_follow_uses_home_dashboard_app_inputs():
         (
             "workflows",
             "workflows-launch-in-console",
-            "Unavailable: Console launch for Workflows.",
+            "No active workflow run",
         ),
         (
             "acp",
@@ -877,7 +870,11 @@ async def test_skeletal_destination_console_actions_are_disabled_with_recovery_c
             await pilot.pause(0.01)
         button = host.screen.query_one(f"#{button_id}")
         assert button.disabled is True
-        assert "unavailable" in str(button.label).lower()
+        assert (
+            str(button.label) == "Open in Console"
+            if route == "workflows"
+            else "unavailable" in str(button.label).lower()
+        )
         assert expected_copy in _screen_static_text(host.screen)
         await pilot.click(f"#{button_id}")
         await pilot.pause(0.1)
@@ -969,9 +966,10 @@ def test_workflows_console_launch_uses_home_dashboard_app_inputs():
             ),
         )
     )
-    screen = WorkflowsScreen(app)
-
-    item = screen._latest_console_follow_item()
+    context = WorkflowConsoleContext(app)
+    item = context.latest_item(
+        app.screen_state_store.has_snapshots(app._current_runtime_identity())
+    )
 
     assert getattr(item, "item_id", None) == "workflow:run:11"
     assert app.home_active_work_adapter.build_calls == [
@@ -996,9 +994,10 @@ def test_workflows_console_launch_accepts_route_style_source():
             ),
         )
     )
-    screen = WorkflowsScreen(app)
-
-    item = screen._latest_console_follow_item()
+    context = WorkflowConsoleContext(app)
+    item = context.latest_item(
+        app.screen_state_store.has_snapshots(app._current_runtime_identity())
+    )
 
     assert getattr(item, "item_id", None) == "workflow:run:12"
 
@@ -1041,15 +1040,11 @@ async def test_workflows_destination_keeps_console_launch_disabled_without_activ
         button = screen.query_one("#workflows-launch-in-console")
 
         assert button.disabled is True
-        assert str(button.label) == "Console launch unavailable"
+        assert str(button.label) == "Open in Console"
         screen_text = _screen_static_text(screen)
-        assert "Unavailable: Console launch for Workflows." in screen_text
-        assert (
-            "Next: Start or select a workflow run before opening it in Console."
-            in screen_text
-        )
-        assert "State: blocked" in screen_text
-        assert "Console: blocked" in screen_text
+        assert "No active workflow run" in screen_text
+        assert "Run unavailable in this authoring release" in screen_text
+        assert "Start or select a workflow run" in str(button.tooltip)
 
     app.open_active_home_item_in_console.assert_not_called()
 
@@ -1086,11 +1081,10 @@ async def test_workflows_destination_routes_latest_active_run_to_console():
         button = screen.query_one("#workflows-launch-in-console")
 
         assert button.disabled is False
-        assert "Daily digest workflow" in str(button.label)
+        assert str(button.label) == "Open in Console"
         screen_text = _screen_static_text(screen)
-        assert "failed" in screen_text
-        assert "State: failed" in screen_text
-        assert "State: ready" not in screen_text
+        assert "Daily digest workflow · failed" in screen_text
+        assert screen.query_one("#workflow-run").disabled
 
         await pilot.click("#workflows-launch-in-console")
         await pilot.pause(0.1)
@@ -1102,7 +1096,7 @@ async def test_workflows_destination_routes_latest_active_run_to_console():
 
 
 @pytest.mark.asyncio
-async def test_workflows_destination_treats_pending_status_as_pending_approval():
+async def test_workflows_destination_preserves_existing_pending_status():
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1123,9 +1117,9 @@ async def test_workflows_destination_treats_pending_status_as_pending_approval()
         screen = _active_console_screen(host)
         screen_text = _screen_static_text(screen)
 
-        assert "State: pending" in screen_text
-        assert "Approvals: pending" in screen_text
-        assert "Approvals: none pending" not in screen_text
+        assert "Approval workflow · pending" in screen_text
+        assert not screen.query_one("#workflows-launch-in-console").disabled
+        assert screen.query_one("#workflow-run").disabled
 
 
 @pytest.mark.asyncio

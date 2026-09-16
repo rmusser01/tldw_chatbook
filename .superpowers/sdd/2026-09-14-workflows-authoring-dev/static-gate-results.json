@@ -1,0 +1,356 @@
+{
+  "base": "77eb2601a63ba473318b8ec1e4edb53f8ac5899e",
+  "head": "62ab9ebc04996f2f59aaea10890bfe1126726a64",
+  "files": 34,
+  "new_files": 25,
+  "base_lint": 715,
+  "current_lint": 711,
+  "unmatched_lint": 0,
+  "format_failed_files": 5,
+  "format_edits": 64,
+  "unmatched_format_edits": 0,
+  "records": [
+    {
+      "path": "Docs/superpowers/qa/workflows-authoring-dev/capture.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/DB/test_private_sqlite_inventory.py",
+      "new_file": false,
+      "base_lint": 14,
+      "current_lint": 14,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/DB/test_workflows_authoring_storage.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/UI/test_console_live_work_handoffs.py",
+      "new_file": false,
+      "base_lint": 1,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/UI/test_destination_shells.py",
+      "new_file": false,
+      "base_lint": 11,
+      "current_lint": 11,
+      "unmatched_lint": [],
+      "base_format_edits": 4,
+      "current_format_edits": 4,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/UI/test_destination_visual_parity_correction.py",
+      "new_file": false,
+      "base_lint": 11,
+      "current_lint": 10,
+      "unmatched_lint": [],
+      "base_format_edits": 2,
+      "current_format_edits": 2,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/UI/test_workflows_editor.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/Workflows/__init__.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/Workflows/helpers.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/Workflows/test_authoring.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/Workflows/test_catalog.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/Workflows/test_document_service.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/Workflows/test_draft_session.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "Tests/Workflows/test_expressions.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/DB/Workflows_DB.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/DB/private_sqlite.py",
+      "new_file": false,
+      "base_lint": 25,
+      "current_lint": 25,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/workflows_screen.py",
+      "new_file": false,
+      "base_lint": 2,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Workflows_Modules/__init__.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Workflows_Modules/console_context.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Workflows_Modules/controller.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Workflows_Modules/editor.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Workflows_Modules/library.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Workflows_Modules/navigator.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Workflows_Modules/reference_picker.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/Workflows/__init__.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/Workflows/authoring.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/Workflows/catalog.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/Workflows/document_service.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/Workflows/draft_session.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/Workflows/expressions.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/Workflows/models.py",
+      "new_file": true,
+      "base_lint": 0,
+      "current_lint": 0,
+      "unmatched_lint": [],
+      "base_format_edits": 0,
+      "current_format_edits": 0,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/app.py",
+      "new_file": false,
+      "base_lint": 485,
+      "current_lint": 485,
+      "unmatched_lint": [],
+      "base_format_edits": 37,
+      "current_format_edits": 37,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/config.py",
+      "new_file": false,
+      "base_lint": 164,
+      "current_lint": 164,
+      "unmatched_lint": [],
+      "base_format_edits": 18,
+      "current_format_edits": 18,
+      "unmatched_format_edits": []
+    },
+    {
+      "path": "tldw_chatbook/css/build_css.py",
+      "new_file": false,
+      "base_lint": 2,
+      "current_lint": 2,
+      "unmatched_lint": [],
+      "base_format_edits": 3,
+      "current_format_edits": 3,
+      "unmatched_format_edits": []
+    }
+  ],
+  "ruff_version": "0.16.6",
+  "settings": "Ruff default settings; target Python 3.12 inferred from unchanged pyproject.toml; same cwd/config for both revisions"
+}

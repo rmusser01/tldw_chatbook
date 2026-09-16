@@ -1,0 +1,108 @@
+/* Approved editor geometry: 28/27-column rails, 6-row fields and bounded dialogs.
+ * Shared visual values use ADR-150 tokens; geometry remains feature-local. */
+WorkflowsScreen #workflow-authoring { height: 1fr; min-height: 0; }
+    WorkflowsScreen #workflows-title { height: $ds-control-height-compact; color: $ds-action-focus; text-style: $ds-text-strong; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowsScreen #workflow-draft-status { height: auto; max-height: 2; padding: $ds-space-0 $ds-space-inset; background: $ds-surface-panel; }
+    WorkflowsScreen #workflow-action-bar, WorkflowsScreen #workflow-selectors { height: $ds-control-height-compact; padding: $ds-space-0 $ds-space-inset; margin-bottom: $ds-space-stack; }
+    WorkflowsScreen #workflow-panes { height: 1fr; min-height: 0; }
+    WorkflowsScreen #workflow-readiness { height: auto; max-height: 2; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowsScreen #workflows-unavailable { height: auto; padding: $ds-space-inset; }
+
+
+    WorkflowEditor#workflows-editor { width: 1fr; height: 1fr; min-width: 12; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowEditor #workflow-form { height: 1fr; min-height: $ds-control-height-compact; }
+    WorkflowEditor #workflow-general, WorkflowEditor #workflow-step-form { height: auto; }
+    WorkflowEditor .workflow-neighbors, WorkflowEditor .workflow-step-actions { height: $ds-control-height-compact; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; }
+    WorkflowEditor .workflow-field { height: auto; margin-bottom: $ds-space-stack; }
+    WorkflowEditor .workflow-field Label { height: auto; margin: $ds-space-0; }
+    WorkflowEditor TextArea { height: 6; min-height: $ds-control-height; }
+    WorkflowEditor Input { height: $ds-control-height; margin: $ds-space-0; }
+    WorkflowEditor Collapsible { padding: $ds-space-0; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; border: none; }
+    WorkflowEditor Collapsible > Contents { padding: $ds-space-0 $ds-space-inset; }
+    WorkflowEditor .workflow-help { height: auto; color: $ds-text-muted; }
+    WorkflowEditor .workflow-linear-step { width: 100%; height: $ds-control-height; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; }
+    WorkflowEditor #workflow-editor-heading { color: $ds-action-focus; text-style: $ds-text-strong; height: $ds-control-height-compact; }
+    WorkflowEditor #workflow-scroll-hint { height: $ds-control-height-compact; color: $ds-text-muted; }
+
+
+    ChoiceModal { align: center middle; background: $background $ds-opacity-dim; }
+    ChoiceModal > Vertical { width: 90%; max-width: 90; height: 80%; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
+    ChoiceModal OptionList { height: 1fr; min-height: $ds-control-height-compact; }
+    ChoiceModal .workflow-dialog-actions { height: $ds-control-height-compact; }
+    ChoiceModal .choice-copy { height: auto; max-height: 8; }
+    ChoiceModal #workflow-dialog-detail { height: 1fr; min-height: 2; max-height: 8; }
+    ChoiceModal #workflow-dialog-detail Static { height: auto; }
+    ChoiceModal.has-scroll-detail #workflow-dialog-choices { height: $ds-control-height; min-height: $ds-control-height; }
+    StepChooser > Vertical { padding: $ds-space-0 $ds-space-inset; }
+    StepChooser .choice-copy { max-height: $ds-control-height; }
+
+
+    WorkflowLibrary#workflows-library { width: 28; min-width: 0; height: 1fr; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowLibrary#workflows-library OptionList { height: 1fr; min-height: $ds-control-height-compact; }
+    WorkflowLibrary#workflows-library Input { margin: $ds-space-0; }
+    WorkflowLibrary #workflow-library-pages { height: $ds-control-height-compact; }
+
+
+    WorkflowNavigator#workflows-navigator { width: 27; min-width: 0; height: 1fr; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowNavigator#workflows-navigator OptionList { height: 1fr; min-height: $ds-control-height-compact; }
+
+WorkflowsScreen #workflow-run:disabled {
+    background: $ds-disabled-bg;
+    color: $ds-text-disabled-readable;
+    opacity: 1;
+    text-style: $ds-text-strong;
+}
+WorkflowsScreen #workflow-library-search > .input--placeholder {
+    color: $ds-text-muted;
+    text-style: none;
+}
+WorkflowConsoleContext { height: $ds-control-height-compact; padding: $ds-space-0 $ds-space-inset; }
+WorkflowConsoleContext #workflows-run-status,
+WorkflowConsoleContext #workflows-console-unavailable { height: $ds-control-height-compact; width: 1fr; }
+WorkflowConsoleContext .workflow-console-actions { height: $ds-control-height-compact; }
+WorkflowEditor TextArea.workflow-expanded { height: 18; }
+WorkflowsScreen WorkflowEditor TextArea.form-textarea { height: 6; min-height: $ds-control-height; }
+WorkflowsScreen.workflow-short WorkflowEditor TextArea.form-textarea {
+    height: $ds-control-height;
+    padding: $ds-space-0 $ds-space-inset;
+}
+WorkflowsScreen WorkflowEditor TextArea.form-textarea.workflow-expanded { height: 18; max-height: 18; }
+WorkflowsScreen.workflow-short #workflow-action-bar,
+WorkflowsScreen.workflow-short #workflow-selectors { margin-bottom: $ds-space-0; }
+
+.workflow-compact {
+    height: $ds-control-height-compact;
+    min-width: 0;
+    width: auto;
+    margin: $ds-space-0;
+    border: none;
+    outline: none;
+}
+.workflow-compact:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+.workflow-compact:hover {
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+}
+.workflow-compact:disabled, .workflow-compact:disabled:hover {
+    background: $ds-disabled-bg;
+    color: $ds-text-disabled-readable;
+    opacity: 1;
+    text-style: $ds-text-strong;
+}
+WorkflowEditor .workflow-collapse {
+    padding: $ds-space-0;
+    border: none;
+    margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0;
+}
+WorkflowEditor .workflow-collapse-title {
+    height: $ds-control-height-compact;
+    padding: $ds-space-0;
+    border: none;
+}
+.workflow-step-chooser > Vertical { padding: $ds-space-0 $ds-space-inset; }
+.workflow-step-chooser #workflow-type-detail { max-height: $ds-control-height; }
