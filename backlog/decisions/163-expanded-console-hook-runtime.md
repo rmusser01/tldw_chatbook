@@ -142,3 +142,47 @@ actual terminal evidence through PluginRuntimeOwner. Cancelled waiters and reque
 completion do not release a surviving writer's grant. Graceful shutdown closes
 admission before drain and publishes the final clean checkpoint only after joined
 ownership settlement. No additional hook cleanup owner or permission gate is added.
+
+## H2 execution seam (TASK-32677, 2026-09-16)
+
+One `HookBudgetOwner`, created lazily on the running Console application loop,
+serves every immutable v2 engine from `ConsoleRuntime.ensure_hooks_v2`. Its
+thread-safe reservations retain queued, active and suspended lifetimes;
+`HookTicket.suspend()` frees only execution capacity and `acquire()` rejoins the
+fair queue. Observations have separate pending and active counts. No per-call
+loop or plugin import is introduced.
+
+`HookEngine.begin_event(event)` creates a caller-owned execution scope with the
+original 180-second wall deadline and cumulative 60-second active allowance.
+`fire_handler_async(scope, handler_id, event)` and agent-thread `fire_handler`
+execute only an engine-owned definition with the same top-level event identity.
+H3 may change validated event data between invocations; it owns transformer
+ordering, argument validation, final permission review and atomic checkpoint/
+effect acceptance. Closing the scope forbids reuse without retaining a new
+application registry. `fire` rejects calls from its owner loop; async producers
+use `fire_async`. `from_config` preserves the master switch and H1's scoped
+invalid-admission records rather than activating part of an invalid batch.
+
+`begin_close()` synchronously seals ordinary engine admission and fixes the
+teardown deadline once. `fire_teardown_async`/`notify_teardown` accept only
+still-authorized Interrupt/SessionEnd during that window; `close()` closes this
+last admission seam and shields its retained drain. Per-run Interrupt does not
+require closing a session engine. H4/H5 own actual event publication and per-run
+cancellation; an unrelated authorized runtime keeps its application allowance.
+Console disposal retains cleanup through cancelled callers, permits teardown
+until the fixed seal-plus-three deadline, then joins through seal-plus-eight.
+An unresolved owner keeps the disposed runtime attached rather than being
+mistaken for quiescence.
+
+The plugin-independent `HookProcessOwner` reserve/publish/settle protocol is
+adapted by plugin composition to F8's exact-root owner: all roots and dirty
+checkpoint custody precede launch. Pending launch tasks, actual transports,
+terminal callbacks and execution tickets remain owned across cancelled waiters
+and late publication. PID metadata alone is not restart identity; the adapter
+must record its platform-qualified identity. Only actual direct-child reap and
+absence of its POSIX group permit terminal settlement here. Signal attempts,
+pipe EOF and callback completion do not. A failed owner settlement retains the
+record and counters for explicit reconciliation. Darwin local process groups
+are qualified by controlled children; deliberately escaped descendants and
+Windows tree-terminal proof remain outside this qualification. Windows attempts
+the existing tree-kill mechanism but conservatively retains unresolved custody.

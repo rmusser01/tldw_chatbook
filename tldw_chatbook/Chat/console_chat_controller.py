@@ -12915,9 +12915,6 @@ class ConsoleChatController:
     ) -> ConsoleChatSession | None:
         """Delete a session only after its runtime-owned work was drained."""
 
-        # ADR-150: session-scoped chat-create remember grants die with the session.
-        self._chat_create_session_grants.pop(session_id, None)
-
         state = self._session_close_states.pop(ticket.close_id, None)
         if state is None or state[0] != ticket:
             raise RuntimeError("Console session close ticket is stale.")
@@ -12925,6 +12922,8 @@ class ConsoleChatController:
             raise RuntimeError("Console session close generation changed.")
         _stored_ticket, owns_active_stream, repair_session, previous_active_id = state
         session_id = ticket.session_id
+        # ADR-150: only the validated close ticket may clear session grants.
+        self._chat_create_session_grants.pop(session_id, None)
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)
         self._clear_project_instruction_delivery(session_id)
