@@ -1,0 +1,6 @@
+{
+  "reviewer": "/root/sidebar_startup_review",
+  "mode": "read-only, no reviewer test/native execution",
+  "result": "No actionable findings.",
+  "reason": "Existing persistence fields are initialized before the first reactive watcher call and are not reset after loading. Real-constructor regressions cover empty/populated profiles and immediate-teardown persistence. Native helper limits claims to stored state, not visible rail gestures."
+}

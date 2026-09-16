@@ -1,0 +1,13 @@
+{
+  "baseline": "df121a4169",
+  "command": ".venv/bin/python -m pytest Tests/UI/test_chat_screen_sidebar_state_debounce.py -k saved_sidebar_state -q --tb=short",
+  "exit_code": 1,
+  "failed": 2,
+  "deselected": 5,
+  "seconds": 6.58,
+  "observed_error": "Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'",
+  "fixtures": [
+    "empty saved collapsible state",
+    "populated saved collapsible state"
+  ]
+}

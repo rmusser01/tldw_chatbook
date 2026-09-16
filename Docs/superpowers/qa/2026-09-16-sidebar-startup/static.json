@@ -1,0 +1,13 @@
+{
+  "baseline": "df121a4169",
+  "baseline_ruff_diagnostics": 212,
+  "current_ruff_diagnostics": 212,
+  "comparison": "code and message multiset, normalizing embedded line-number offsets",
+  "new_ruff_diagnostics": 0,
+  "changed_range_diagnostics": 0,
+  "changed_range_format": "unchanged",
+  "whole_screen_format": "inherited formatting debt remains outside edited range",
+  "fatal_checks": "passed",
+  "test_and_native_runner_lint": "passed",
+  "test_and_native_runner_format": "passed"
+}

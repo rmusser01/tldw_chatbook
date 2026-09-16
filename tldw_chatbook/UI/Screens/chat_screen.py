@@ -7507,12 +7507,13 @@ class ChatScreen(BaseAppScreen):
         # inspector block's Attach/Detach picker flow.
         self._console_worldbook_dialog_active = False
         self.ui_state = UIState()
-        self._load_sidebar_state()
         # task-15470: debounce state for `watch_sidebar_state` -- see
-        # `SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS`.
+        # `SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS`. Loading saved state can
+        # invoke the reactive watcher, so its persistence fields must exist first.
         self._sidebar_state_save_timer: Any | None = None
         self._sidebar_state_dirty = False
         self._sidebar_state_persist_worker: Any | None = None
+        self._load_sidebar_state()
 
     # Sections `load_settings()` always injects into a disk-loaded config but
     # which Console test fakes never carry. Used to tell a real boot snapshot

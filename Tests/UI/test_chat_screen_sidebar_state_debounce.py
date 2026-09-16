@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import pytest
 import toml
 
 from Tests.UI.app_factory import _build_test_app
@@ -37,6 +38,39 @@ async def _mounted_console_screen(pilot):
     screen = pilot.app.screen_stack[-1]
     await _wait_for_selector(screen, pilot, "#console-native-composer")
     return screen
+
+
+@pytest.mark.parametrize("saved_states", [{}, {"notes": True, "chat": False}])
+async def test_saved_sidebar_state_restores_during_fresh_screen_construction(
+    saved_states, monkeypatch, tmp_path, captured_lines
+):
+    """Restoration must reach the reactive watcher after its timer state exists."""
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+    sidebar = {
+        "collapsible_states": saved_states,
+        "search_query": "saved search",
+        "last_active_section": "notes",
+    }
+    _ui_state_path().write_text(toml.dumps({"sidebar": sidebar}), encoding="utf-8")
+
+    async with ConsoleHarness(_build_test_app()).run_test(size=APP_SIZE) as pilot:
+        screen = await _mounted_console_screen(pilot)
+        assert screen.sidebar_state == saved_states
+        assert screen.ui_state.collapsible_states == saved_states
+        assert screen.ui_state.sidebar_search_query == "saved search"
+        assert screen.ui_state.last_active_section == "notes"
+        assert not any(
+            "Failed to load sidebar state" in line for line in captured_lines
+        )
+
+        # A restored screen must still save a new toggle when quit beats debounce.
+        screen.ui_state.set_collapsible_state("restored-toggle", True)
+        screen.sidebar_state = dict(screen.ui_state.collapsible_states)
+
+    persisted = toml.load(_ui_state_path())["sidebar"]
+    assert persisted["collapsible_states"] == {**saved_states, "restored-toggle": True}
+    assert persisted["search_query"] == "saved search"
+    assert persisted["last_active_section"] == "notes"
 
 
 async def test_toggle_does_not_write_synchronously_on_the_event_loop():
@@ -63,8 +97,7 @@ async def test_toggle_does_not_write_synchronously_on_the_event_loop():
                 "collapsible_states", {}
             )
             assert "task-15470-probe" not in collapsible_states, (
-                "the toggle wrote to disk synchronously instead of "
-                "debouncing"
+                "the toggle wrote to disk synchronously instead of debouncing"
             )
         assert screen._sidebar_state_dirty is True
         assert screen._sidebar_state_save_timer is not None
@@ -93,9 +126,7 @@ async def test_debounced_write_lands_after_the_timer_fires():
             await pilot.pause(0.05)
 
         on_disk = toml.load(_ui_state_path())
-        assert (
-            on_disk["sidebar"]["collapsible_states"]["task-15470-lands"] is True
-        )
+        assert on_disk["sidebar"]["collapsible_states"]["task-15470-lands"] is True
 
 
 async def test_quit_immediately_after_toggle_flushes_the_pending_write():
@@ -123,9 +154,7 @@ async def test_quit_immediately_after_toggle_flushes_the_pending_write():
         # survive on the unmount path alone.
 
     on_disk = toml.load(_ui_state_path())
-    assert (
-        on_disk["sidebar"]["collapsible_states"]["task-15470-quit-flush"] is True
-    )
+    assert on_disk["sidebar"]["collapsible_states"]["task-15470-quit-flush"] is True
 
 
 async def test_reset_settings_schedules_a_write_even_from_an_empty_state():
@@ -196,8 +225,7 @@ async def test_toggle_during_in_flight_write_survives_a_quit():
         assert write_started.wait(timeout=2), "worker never started its write"
         worker = screen._sidebar_state_persist_worker
         assert worker is not None and not worker.is_finished, (
-            "toggle 1's worker must still be in flight for this test to "
-            "mean anything"
+            "toggle 1's worker must still be in flight for this test to mean anything"
         )
 
         # Toggle 2 lands while toggle 1's write is still blocked in flight.
@@ -225,6 +253,4 @@ async def test_toggle_during_in_flight_write_survives_a_quit():
     assert collapsible_states.get("task-15470-inflight-1") is True, (
         "toggle 1 should have landed"
     )
-    assert collapsible_states.get("task-15470-inflight-2") is True, (
-        "toggle 2 LOST"
-    )
+    assert collapsible_states.get("task-15470-inflight-2") is True, "toggle 2 LOST"

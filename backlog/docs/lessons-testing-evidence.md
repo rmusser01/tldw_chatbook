@@ -199,6 +199,16 @@ the error; correcting the caller restored the complete 18-test freshness
 module. Native render evidence needs a review of startup/exit diagnostics,
 especially where optional setup failures are caught and startup continues.
 
+**TASK-32702, 2026-09-16.** Four successful native Import processes exposed a
+caught sidebar-state startup error on each restart. The constructor loaded a
+saved reactive value before initializing its persistence timer; the first
+watcher invocation failed even for an empty saved mapping. Existing debounce
+tests started from profiles without that file, so all passed. Real-constructor
+regressions seeded both empty and populated saved state and failed before the
+ordering fix; two fresh native processes then restored state without the error.
+Startup tests must include an existing state file, and constructor fields used
+by reactive watchers must exist before the first load/read/assignment.
+
 ## Strip whole CSS comments before interpreting selector lines
 
 **TASK-32591 integration, 2026-09-14.** The new split-sheet harness guard
