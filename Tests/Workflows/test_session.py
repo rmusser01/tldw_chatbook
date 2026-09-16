@@ -547,3 +547,100 @@ async def test_unavailable_app_binding_is_a_payload_free_setup_error(harness):
             await session.prepare(revision_of(prompt_definition()), {}, harness.setup)
     finally:
         await session.close()
+
+
+def optional_input_definition(*, nested=False, referenced=True):
+    document = prompt_definition()
+    properties = {"optional_text": {"type": "string"}}
+    if nested:
+        properties = {"details": {"type": "object", "properties": properties}}
+    document["metadata"]["tldw_workflow"]["input_schema"] = {
+        "type": "object",
+        "properties": properties,
+    }
+    path = "inputs.details.optional_text" if nested else "inputs.optional_text"
+    document["steps"][0]["config"]["template"] = (
+        "Reviewed {{ " + path + " }}" if referenced else "No optional input used"
+    )
+    document["steps"].insert(
+        0,
+        {
+            "id": "early_save",
+            "type": "notes",
+            "retry": 0,
+            "timeout_seconds": 300,
+            "config": {
+                "action": "create",
+                "title": "Before missing input",
+                "content": "No write is allowed before complete input validation",
+            },
+        },
+    )
+    return document
+
+
+@pytest.mark.parametrize(
+    "nested,defaults,overrides",
+    [
+        (False, {}, {}),
+        (True, {}, {}),
+        (True, {"details": {}}, {}),
+        (True, {"details": {"optional_text": "saved"}}, {"details": {}}),
+    ],
+    ids=["optional-absent", "parent-absent", "child-absent", "override-removes-child"],
+)
+async def test_missing_optional_input_refused_before_capture_or_effects(
+    harness, monkeypatch, nested, defaults, overrides
+):
+    from tldw_chatbook.Workflows import session as module
+
+    h = harness
+    calls = dict.fromkeys(["capture", "file", "model", "note"], 0)
+
+    def observe(name, original):
+        def counted(*args, **kwargs):
+            calls[name] += 1
+            return original(*args, **kwargs)
+
+        return counted
+
+    for name, seam in (
+        ("capture", "capture_local_note_destination"),
+        ("file", "read_local_text"),
+        ("model", "complete_llama_bounded"),
+        ("note", "create_local_note"),
+    ):
+        monkeypatch.setattr(module, seam, observe(name, getattr(module, seam)))
+    document = optional_input_definition(nested=nested)
+    document["inputs"].update(defaults)
+    refusal = None
+    try:
+        ticket = await h.session.prepare(revision_of(document), overrides, h.setup)
+    except module.SessionError as error:
+        refusal = error
+    else:
+        # On the broken implementation, demonstrate the real earlier Note write.
+        h.session.start(ticket)
+        await until(h.session, lambda v: v.state in {"failed", "completed"})
+    assert calls == {"capture": 0, "file": 0, "model": 0, "note": 0}
+    assert refusal is not None and refusal.code == "reference"
+    assert h.rows() == [] and h.requests == []
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["flat", "nested"])
+@pytest.mark.parametrize("supply", ["unused", "default", "override"])
+async def test_optional_inputs_remain_optional_and_use_final_merged_values(
+    harness, nested, supply
+):
+    h = harness
+    document = optional_input_definition(nested=nested, referenced=supply != "unused")
+    value = {"optional_text": "available"}
+    if nested:
+        value = {"details": value}
+    if supply == "default":
+        document["inputs"].update(value)
+    overrides = value if supply == "override" else {}
+    ticket = await h.session.prepare(revision_of(document), overrides, h.setup)
+    h.session.start(ticket)
+    await until(h.session, lambda v: v.state == "completed")
+    assert len(h.rows()) == 1

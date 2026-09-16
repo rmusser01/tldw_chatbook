@@ -217,15 +217,17 @@ def _config(step: dict) -> None:
         _text(config["content"], "note_content")
 
 
-def _references(value: Any, available: dict) -> None:
+def _references(value: Any, available: dict, *, inputs_only: bool = False) -> None:
     if type(value) is dict:
         for child in value.values():
-            _references(child, available)
+            _references(child, available, inputs_only=inputs_only)
     elif type(value) is list:
         for child in value:
-            _references(child, available)
+            _references(child, available, inputs_only=inputs_only)
     elif type(value) is str:
         for path in reference_paths(value):
+            if inputs_only and path[0] != "inputs":
+                continue
             current = available
             for key in path:
                 if type(current) is not dict or key not in current:
@@ -551,6 +553,8 @@ class WorkflowSession:
             for step in document["steps"]:
                 config = step["config"]
                 context = {"inputs": values}
+                # A schema declaration does not supply an optional input's value.
+                _references(config, context, inputs_only=True)
                 if step["type"] == "media_ingest":
                     if resolve_value(config["sources"][0]["uri"], context) != str(
                         setup.source
