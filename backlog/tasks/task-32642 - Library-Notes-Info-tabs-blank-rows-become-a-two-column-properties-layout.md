@@ -30,7 +30,7 @@ information.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 Info uses its height: no run of blank rows below the last property at 235x52. **NOT MET, and not reachable as written — see Implementation Notes.** Measured on the real screen: 21 blank rows below the last content row before, 18 after (each property now claims a row instead of sharing one). The remaining run is the pane having more rows than the note has facts; closing it needs invented content or a runtime spacer, both rejected.
+- [ ] #1 Info uses its height: no run of blank rows below the last property at 235x52. **NOT MET, and not reachable as written — see Implementation Notes.** Measured on the real screen at 235x52: 21 blank rows below the last content row before, and 20 after with the two-property fixture that was measured. A note with Created and Modified timestamps -- the ordinary case -- adds two more property rows, so the run is 18; that number is arithmetic on the measurement, not a second measurement. The remaining run is the pane having more rows than the note has facts; closing it needs invented content or a runtime spacer, both rejected.
 - [x] #2 The layout collapses to one column at 100x30 rather than truncating values.
 - [x] #3 Keywords are reachable and editable from the editor without opening Info.
 - [x] #4 No property is removed to make the layout fit — the fix is arrangement, not loss.
@@ -83,7 +83,9 @@ and body carry (`not show_editor or locked`).
 **AC#1 is not met and I do not think it is reachable.** At 235x52 the Info
 region is 36 rows and the note has, at most, four properties, a keywords
 field, a links heading, six actions and two section headings -- about 18 rows
-with real timestamps. The blank run went 21 -> 18. Getting it to zero needs
+with real timestamps. Measured: the blank run was 21 and is 20 with the
+two-property fixture; with Created and Modified present it is 18 (arithmetic
+on that measurement, not a second one). Getting it to zero needs
 either content Info does not have, or a runtime-computed spacer that
 bottom-anchors Reuse & Export and Danger. I rejected the spacer: it is
 hand-written layout on a pane that has none, it moves the blank run rather
