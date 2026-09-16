@@ -145,7 +145,10 @@ def test_projected_field_helpers_preserve_opaque_tokens_and_shape_refusals():
 
 
 class EditorHarness(ConsolidatedCSSApp):
-    CSS_PATH: ClassVar = [BUNDLED_STYLESHEET]
+    CSS_PATH: ClassVar = [
+        BUNDLED_STYLESHEET,
+        BUNDLED_STYLESHEET.parent / "screen_feature_workflows.tcss",
+    ]
 
     def compose(self):
         yield WorkflowEditor(DocumentService(None), id="workflows-editor")

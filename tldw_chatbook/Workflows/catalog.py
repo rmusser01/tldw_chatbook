@@ -240,9 +240,10 @@ FIELDS = {
 _OUTPUT_TYPES = {
     # Pinned adapter fixture outputs, not types inferred from arbitrary values.
     "media_ingest": (
-        ("text", "string"),
+        # Server emits text only when extraction yields nonempty content.
+        ("text", "unverified"),
         ("media_ids", "array"),
-        ("metadata", "object"),
+        ("metadata", "array"),
         ("transcripts", "array"),
         ("rag_indexed", "boolean"),
     ),

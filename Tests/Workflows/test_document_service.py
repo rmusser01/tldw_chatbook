@@ -500,6 +500,58 @@ def test_invalid_draft_survives_reopen_without_replacing_projection(tmp_path):
         reopened_db.close()
 
 
+@pytest.mark.parametrize("removed", ["namespace", "metadata"])
+@pytest.mark.parametrize("has_previous", [False, True])
+def test_deleted_identity_stays_invalid_and_exactly_recoverable(
+    tmp_path, removed, has_previous
+):
+    path = tmp_path / "identity.sqlite3"
+    db = WorkflowsDB(path)
+    documents = DocumentService(db)
+    original = prompt_definition()
+    # Keep numeric spelling and whitespace observable across refusal/recovery.
+    opaque = ', "opaque": [-0.000, 1e999999999999999999999]}'
+    try:
+        base = documents.create(json.dumps(original)[:-1] + opaque)
+        last_valid = base.raw_json
+        if has_previous:
+            original["name"] = "Last valid edit"
+            last_valid = json.dumps(original)[:-1] + opaque
+            documents.put_draft(base.workflow_id, base.revision_id, last_valid, 1)
+        if removed == "metadata":
+            del original["metadata"]
+        else:
+            del original["metadata"]["tldw_workflow"]
+        raw = "\n\t" + json.dumps(original, indent=2)[:-1] + opaque + "\n"
+        draft = documents.put_draft(base.workflow_id, base.revision_id, raw, 2)
+        assert draft.error is not None
+        assert "identity" in draft.error.lower()
+        assert draft.raw_text == raw
+        assert draft.last_valid_json == last_valid
+        with pytest.raises(InvalidDraft, match="identity"):
+            documents.save_revision(base.workflow_id, base.revision_id, 2)
+        assert documents.list_revisions(base.workflow_id) == (base,)
+        assert documents.get_head(base.workflow_id) == base
+    finally:
+        db.close()
+
+    reopened = WorkflowsDB(path)
+    try:
+        recovered_documents = DocumentService(reopened)
+        assert (
+            recovered_documents.get_draft(base.workflow_id, base.revision_id) == draft
+        )
+        repaired = recovered_documents.put_draft(
+            base.workflow_id, base.revision_id, last_valid, 3
+        )
+        assert repaired.error is None
+        saved = recovered_documents.save_revision(base.workflow_id, base.revision_id, 3)
+        assert '"opaque":[-0.000,1e999999999999999999999]' in saved.raw_json
+        assert saved.parent_revision_ids == (base.revision_id,)
+    finally:
+        reopened.close()
+
+
 @pytest.mark.parametrize(
     "location", ["root", "metadata", "namespace", "step", "config"]
 )
@@ -563,6 +615,44 @@ def test_absent_identity_creates_distinct_workflows_without_title_matching(
     if metadata:
         assert json.loads(first.raw_json)["metadata"]["vendor"] == [1, 2]
     assert set(documents.list_workflows()) == {first, second}
+
+
+@pytest.mark.parametrize("with_metadata", [False, True])
+async def test_import_without_identity_synthesizes_it_and_preserves_opaque_content(
+    tmp_path, with_metadata
+):
+    from tldw_chatbook.Workflows.authoring import WorkflowAuthoring
+
+    definition = prompt_definition()
+    if with_metadata:
+        definition["metadata"] = {"vendor": {"retained": [True, None, "雪"]}}
+    else:
+        del definition["metadata"]
+    raw = json.dumps(definition)[:-1] + ', "opaque": -0.000}'
+    source = tmp_path / "incoming.json"
+    source.write_text(raw, encoding="utf-8")
+    owner = WorkflowAuthoring(lambda: tmp_path / "import.sqlite3")
+    try:
+        first = await owner.import_file(source)
+        second = await owner.import_file(source)
+        assert first.workflow_id != second.workflow_id
+        assert first.revision_id != second.revision_id
+        for revision in (first, second):
+            imported = json.loads(revision.raw_json)
+            assert imported["metadata"].pop("tldw_workflow") == {
+                "format_version": 1,
+                "workflow_id": str(UUID(revision.workflow_id)),
+                "revision_id": str(UUID(revision.revision_id)),
+                "parent_revision_ids": [],
+            }
+            assert imported.pop("opaque") == 0
+            if not with_metadata:
+                assert imported.pop("metadata") == {}
+            assert imported == definition
+            assert '"opaque":-0.000' in revision.raw_json
+        assert source.read_text(encoding="utf-8") == raw
+    finally:
+        await owner.close()
 
 
 @pytest.mark.parametrize(

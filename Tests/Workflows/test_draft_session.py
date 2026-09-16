@@ -8,6 +8,7 @@ import pytest
 
 from Tests.Workflows.helpers import prompt_definition
 from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
+from tldw_chatbook.Workflows import draft_session
 from tldw_chatbook.Workflows.document_service import DocumentService
 from tldw_chatbook.Workflows.draft_session import DraftSession
 from tldw_chatbook.Workflows.models import (
@@ -493,6 +494,261 @@ async def test_failed_flush_vetoes_selection_retry_and_pending_discard_are_disti
     await session.close()
 
 
+@pytest.mark.parametrize("operation", ["discard_pending", "discard_draft"])
+@pytest.mark.parametrize("same_workflow", [False, True])
+async def test_discard_queued_behind_selection_cannot_retarget_or_lose_new_edits(
+    owner, monkeypatch, operation, same_workflow
+):
+    documents, base = owner
+    session = DraftSession(documents)
+    await session.select(base.workflow_id, base.revision_id)
+    if same_workflow:
+        target = await session.save_revision()
+        await session.select(base.workflow_id, base.revision_id)
+    else:
+        definition = prompt_definition()
+        del definition["metadata"]["tldw_workflow"]
+        target = documents.create(json.dumps(definition))
+    target_draft = documents.put_draft(
+        target.workflow_id, target.revision_id, target.raw_json + " \n", 1
+    )
+    started, release = Event(), Event()
+    read = documents.get_revision
+
+    def blocked(*args):
+        started.set()
+        assert release.wait(5)
+        return read(*args)
+
+    monkeypatch.setattr(documents, "get_revision", blocked)
+    selecting = asyncio.create_task(
+        session.select(target.workflow_id, target.revision_id)
+    )
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        latest = session.update('{"newer opaque text": [')
+        discarding = asyncio.create_task(getattr(session, operation)())
+        await asyncio.sleep(0)
+        waited_for_selection = not discarding.done()
+    finally:
+        release.set()
+    await selecting
+    result = (await asyncio.gather(discarding, return_exceptions=True))[0]
+    await session.close()
+    assert documents.get_draft(base.workflow_id, base.revision_id) == latest
+    assert session.current == target_draft
+    assert documents.get_draft(target.workflow_id, target.revision_id) == target_draft
+    assert waited_for_selection
+    assert isinstance(result, DraftConflict)
+
+
+@pytest.mark.parametrize("operation", ["discard_pending", "discard_draft"])
+async def test_selection_intent_during_discard_flush_invalidates_discard(
+    owner, monkeypatch, operation
+):
+    documents, base = owner
+    definition = prompt_definition()
+    del definition["metadata"]["tldw_workflow"]
+    target = documents.create(json.dumps(definition))
+    session = DraftSession(documents)
+    await session.select(base.workflow_id, base.revision_id)
+    session.update(base.raw_json + " \n")
+    started, release = Event(), Event()
+    put = documents.put_draft
+
+    def blocked(*args, **kwargs):
+        started.set()
+        assert release.wait(5)
+        return put(*args, **kwargs)
+
+    monkeypatch.setattr(documents, "put_draft", blocked)
+    flushing = asyncio.create_task(session.flush())
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        discarding = asyncio.create_task(getattr(session, operation)())
+        await asyncio.sleep(0)
+        selecting = asyncio.create_task(
+            session.select(target.workflow_id, target.revision_id)
+        )
+        await asyncio.sleep(0)
+    finally:
+        release.set()
+    await flushing
+    result = (await asyncio.gather(discarding, return_exceptions=True))[0]
+    selected = await selecting
+    await session.close()
+    assert session.current == selected
+    assert session.base == target
+    assert isinstance(result, DraftConflict)
+
+
+@pytest.mark.parametrize("field_edit", [False, True])
+async def test_pending_discard_preserves_edits_made_during_failed_flush(
+    owner, monkeypatch, field_edit
+):
+    documents, base = owner
+    session = DraftSession(documents)
+    await session.select(base.workflow_id, base.revision_id)
+    await session.flush()
+    session.update(base.raw_json + " \n")
+    started, release = Event(), Event()
+    put = documents.put_draft
+
+    def failed_write(*args, **kwargs):
+        started.set()
+        assert release.wait(5)
+        raise OSError("private test write failure")
+
+    monkeypatch.setattr(documents, "put_draft", failed_write)
+    flushing = asyncio.create_task(session.flush())
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        discarding = asyncio.create_task(session.discard_pending())
+        await asyncio.sleep(0)
+        latest = (
+            session.update_field("/steps/0/retry", '0,"opaque":true')
+            if field_edit
+            else session.update('{"newer opaque text": [')
+        )
+        proof = session.field_edit
+    finally:
+        release.set()
+    with pytest.raises(DraftWriteFailed):
+        await flushing
+    result = (await asyncio.gather(discarding, return_exceptions=True))[0]
+    current, retained_proof, status = (
+        session.current,
+        session.field_edit,
+        session.status,
+    )
+    monkeypatch.setattr(documents, "put_draft", put)
+    await session.close()
+    assert current == latest
+    assert retained_proof == proof
+    assert status == "Not saved locally — Retry"
+    assert documents.get_draft(base.workflow_id, base.revision_id) == latest
+    assert isinstance(result, DraftConflict)
+
+
+async def test_full_discard_does_not_adopt_newer_protected_raw_after_flush(
+    owner, monkeypatch
+):
+    documents, base = owner
+    session = DraftSession(documents)
+    await session.select(base.workflow_id, base.revision_id)
+    session.update_field("/steps/0/retry", '0,"opaque":true')
+    await session.flush()
+    started, release = Event(), Event()
+    put = documents.put_draft
+
+    def blocked(*args, **kwargs):
+        started.set()
+        assert release.wait(5)
+        return put(*args, **kwargs)
+
+    monkeypatch.setattr(documents, "put_draft", blocked)
+    discarding = asyncio.create_task(session.discard_draft())
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        latest = session.update(base.raw_json + " \n")
+        assert latest.error
+    finally:
+        release.set()
+    result = (await asyncio.gather(discarding, return_exceptions=True))[0]
+    await session.close()
+    assert session.current == latest
+    assert session.raw_repair_required
+    assert documents.get_draft(base.workflow_id, base.revision_id) == latest
+    assert isinstance(result, DraftConflict)
+
+
+@pytest.mark.parametrize("operation", ["discard_pending", "discard_draft"])
+async def test_cancelled_discard_leaves_physical_flush_owned_and_newer_text_intact(
+    owner, monkeypatch, operation
+):
+    documents, base = owner
+    session = DraftSession(documents)
+    await session.select(base.workflow_id, base.revision_id)
+    session.update(base.raw_json + " \n")
+    started, release = Event(), Event()
+    put = documents.put_draft
+
+    def blocked(*args, **kwargs):
+        started.set()
+        assert release.wait(5)
+        return put(*args, **kwargs)
+
+    monkeypatch.setattr(documents, "put_draft", blocked)
+    flushing = asyncio.create_task(session.flush())
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        discarding = asyncio.create_task(getattr(session, operation)())
+        await asyncio.sleep(0)
+        discarding.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await discarding
+        latest = session.update('{"newer opaque text": [')
+        closing = asyncio.create_task(session.close())
+        await asyncio.sleep(0)
+        assert not closing.done()
+    finally:
+        release.set()
+    await flushing
+    await closing
+    assert session.current == latest
+    assert documents.get_draft(base.workflow_id, base.revision_id) == latest
+
+
+@pytest.mark.parametrize("stage", ["flush", "repair"])
+async def test_cancelled_full_discard_drains_only_the_accepted_protected_raw_stage(
+    owner, monkeypatch, stage
+):
+    documents, base = owner
+    session = DraftSession(documents)
+    await session.select(base.workflow_id, base.revision_id)
+    session.update_field("/steps/0/retry", '0,"opaque":true')
+    await session.flush()
+    started, release = Event(), Event()
+    put = documents.put_draft
+
+    def blocked(*args, **kwargs):
+        if (kwargs.get("repair_source") is not None) == (stage == "repair"):
+            started.set()
+            assert release.wait(5)
+        return put(*args, **kwargs)
+
+    monkeypatch.setattr(documents, "put_draft", blocked)
+    discarding = asyncio.create_task(session.discard_draft())
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        discarding.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await discarding
+        assert session.editing_locked == (stage == "repair")
+        if stage == "flush":
+            latest = session.update(base.raw_json + " \n")
+        else:
+            with pytest.raises(DraftWriteFailed):
+                session.update(base.raw_json + " \n")
+        closing = asyncio.create_task(session.close())
+        await asyncio.sleep(0)
+        assert not closing.done()
+    finally:
+        release.set()
+    await closing
+    assert not session.editing_locked
+    if stage == "flush":
+        assert session.current == latest
+        assert session.raw_repair_required
+    else:
+        assert session.current.raw_text == base.raw_json
+        assert session.current.error is None
+    reopened = DraftSession(documents)
+    recovered = await reopened.select(base.workflow_id, base.revision_id)
+    assert recovered == session.current
+    await reopened.close()
+
+
 async def test_blocked_write_never_marks_new_generation_saved_and_close_drains(
     owner, monkeypatch
 ):
@@ -543,6 +799,27 @@ async def test_debounce_writes_after_500ms_and_reopen_recovers(owner):
     assert recovered.raw_text == '{"steps": ['
     assert reopened.status == "Draft recovered"
     await reopened.close()
+
+
+async def test_debounce_policy_controls_status_and_actual_write_deadline(
+    owner, monkeypatch
+):
+    documents, base = owner
+    monkeypatch.setattr(draft_session, "DRAFT_DEBOUNCE_SECONDS", 0.05, raising=False)
+    session = DraftSession(documents)
+    await session.select(base.workflow_id, base.revision_id)
+    saved = asyncio.Event()
+    session.subscribe(
+        lambda: saved.set() if session.status == "Saved locally" else None
+    )
+    try:
+        pending = session.update('{"unfinished":')
+        status = session.status
+        await asyncio.wait_for(saved.wait(), 0.3)
+        assert status == "Pending — saved after 50 ms"
+        assert documents.get_draft(base.workflow_id, base.revision_id) == pending
+    finally:
+        await session.close()
 
 
 async def test_cancelled_flush_keeps_physical_write_and_selected_identity(

@@ -240,11 +240,13 @@ def _document(raw: str, base: Revision | None = None) -> tuple[dict, str]:
             raise InvalidDraft("Step IDs must be unique and cannot be inputs or last")
         metadata = document.setdefault("metadata", {})
         if "tldw_workflow" not in metadata:
+            if base is not None:
+                raise InvalidDraft("Draft portable identity is required")
             metadata["tldw_workflow"] = {
                 "format_version": 1,
-                "workflow_id": base.workflow_id if base else str(uuid4()),
-                "revision_id": base.revision_id if base else str(uuid4()),
-                "parent_revision_ids": list(base.parent_revision_ids) if base else [],
+                "workflow_id": str(uuid4()),
+                "revision_id": str(uuid4()),
+                "parent_revision_ids": [],
             }
             _check_complexity(document)
             raw = _serialize(document)

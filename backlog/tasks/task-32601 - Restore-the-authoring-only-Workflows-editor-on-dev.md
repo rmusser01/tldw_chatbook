@@ -67,6 +67,26 @@ Reason: the user explicitly requested rebase, address every Qodo comment, then m
 6. Reply in each Qodo inline thread with fix/test evidence or a demonstrated false-positive explanation. Recheck reviews on the final pushed head and address new findings. Use the app's follow-up mechanism if awaiting posted reviews or CI; never bypass required checks.
 7. Merge PR2690 into dev only after review disposition and required checks are satisfied for the exact final head; verify GitHub reports MERGED. Keep disposable evidence and unrelated worktrees intact.
 
+### Approved CI correction and second Qodo pass (2026-09-15)
+
+ADR required: no new ADR; directly apply existing ADR-097/ADR-150 and ADR-138.
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
+Reason: repair introduced boot-cost and authoring correctness regressions using
+existing boundaries, with no new loading, storage, runtime or sync infrastructure.
+
+1. Keep the existing failing boot-byte and selector-count guards unchanged. Use
+   the existing screen-owned stylesheet splitter and app route loader for the
+   Workflows-only tokens; narrow broad subjects and audit token ownership.
+2. Test first navigation and Workflows-as-initial-route stylesheet loading,
+   rendered form/dialog behavior and the unchanged performance limits. Rebuild
+   generated sheets rather than editing them directly.
+3. Verify second-pass Qodo findings before changes: discard/update/selection
+   races, deleted draft identity, conditional media text and metadata types.
+   Add regressions, preserve raw buffers, and keep the existing draft owner.
+4. Add controller API documentation/precise options annotations and one debounce
+   policy constant. Verify targeted suites/static checks, obtain scoped review,
+   push, reply to each finding, and wait for exact-head checks before merge.
+
 ## ID provenance
 
 The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans already contained IDs through 32600. Only this newly created file/header was moved to the checked-free TASK-32601 before implementation. No existing task was renumbered.
@@ -75,6 +95,19 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Second Qodo/CI pass (2026-09-15): reused the existing screen-owned CSS splitter
+and route loader, bringing boot CSS from 770,849 to 767,019 bytes and broad-subject
+rules from 275 to 272 without raising limits. First-route, initial-route and
+dialog behavior pass. Fixed verified discard races with the existing transition
+lock/freshness checks, rejected deleted identity while retaining exact invalid
+drafts, corrected server media output declarations, and added requested API
+documentation/types plus one debounce constant. No new infrastructure or ADR;
+ADR-097/138/150 apply. Coordinator 301 domain/storage tests, 150 UI/CSS tests,
+20 boot-budget tests and all 7 preflight guards pass. Detailed RED/GREEN evidence
+and environment qualifications: Docs/UAT/2026-09-15-workflows-qodo-remediation.md.
+Independent review, new-head Qodo/CI disposition and merge remain pending; AC7
+and task status remain open. User-approved automatic follow-up is active.
+
 **Current qualification:** reopened for the separately requested PR integration
 and Qodo remediation. The following UAT qualification describes the prior checkpoint.
 

@@ -426,6 +426,18 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
         prefixes={"scheduling": ("scheduling", "schedules")},
         pinned=frozenset(),
     ),
+    # TASK-32601: defer workflow-owned ids/classes until route entry. Bare
+    # types and shared helper classes remain in the boot bundle under the
+    # existing conservative partition; no new loading mechanism is needed.
+    # Exact-token consumer audit (2026-09-15, repo-relative paths): moved
+    # tokens occur only in UI/Workflows_Modules/ and workflows_screen.py;
+    # a no-owner negative control detects the same consumer hits.
+    ScreenOwnedSplit(
+        module="features/_workflows.tcss",
+        sheets={"workflows": "screen_feature_workflows.tcss"},
+        prefixes={"workflows": ("workflow", "workflows")},
+        pinned=frozenset(),
+    ),
     # TASK-32187: the largest un-split bundle module (57,721 B). Its token
     # vocabulary is NOT a single `watchlists-*` prefix -- the screen's panes
     # and modals each carry their own (`sources-*` on the sources pane,

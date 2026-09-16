@@ -14,6 +14,8 @@ from tldw_chatbook.Workflows.models import (
     RevisionConflict,
 )
 
+DRAFT_DEBOUNCE_SECONDS = 0.5
+
 
 class DraftSession:
     """Own one selected draft and retain its writes across fresh screen lifetimes.
@@ -156,7 +158,7 @@ class DraftSession:
             return self.current
 
     def update(self, raw_text: str) -> Draft:
-        """Pure synchronous validation, followed by a 500 ms debounce timer."""
+        """Pure synchronous validation, followed by the shared debounce policy."""
         self._check_editable()
         if self.base is None or self.current is None:
             raise DraftWriteFailed("No editable draft owner is available")
@@ -194,8 +196,10 @@ class DraftSession:
         self.current = candidate
         self._confirmation_version += 1
         self._cancel_timer()
-        self._timer = asyncio.get_running_loop().call_later(0.5, self._debounced_flush)
-        self._publish("Pending — saved after 500 ms")
+        self._timer = asyncio.get_running_loop().call_later(
+            DRAFT_DEBOUNCE_SECONDS, self._debounced_flush
+        )
+        self._publish(f"Pending — saved after {DRAFT_DEBOUNCE_SECONDS * 1000:g} ms")
         return candidate
 
     def _cancel_timer(self) -> None:
@@ -346,10 +350,10 @@ class DraftSession:
         self._publish("Copying draft onto saved head — editing temporarily locked")
         return await asyncio.shield(self._recovery_task)
 
-    def _check_confirmation(self, source: Draft, version: int) -> None:
+    def _check_confirmation(self, source: Draft | None, version: int) -> None:
         if source != self.current or version != self.confirmation_version:
             raise DraftConflict(
-                "Draft or selection changed; open a new recovery confirmation"
+                "Draft or selection changed; confirm the operation again"
             )
 
     async def _recover_to_head(
@@ -480,39 +484,55 @@ class DraftSession:
             self._publish(status)
 
     async def discard_pending(self) -> Draft:
-        """After explicit loss confirmation, restore last durable text only."""
+        """Restore durable text; reject a discard superseded by edits/selection."""
         self._check_editable()
         self._confirmation_version += 1
-        self._cancel_timer()
-        if self._flush_task and not self._flush_task.done():
-            try:
-                await asyncio.shield(self._flush_task)
-            except DraftWriteFailed:
-                pass
-        if self._durable is None:
-            raise DraftWriteFailed("No durable buffer available")
-        self.current = self._durable
-        self._field_checkpoints.clear()
-        known = self._durable_field_edits.get(
-            (self.current.workflow_id, self.current.base_revision_id)
-        )
-        self._field_edit = known[1] if known and known[0] == self.current else None
-        self._publish("Pending changes discarded; durable draft restored")
-        return self.current
+        source, version = self.current, self.confirmation_version
+        async with self._transition:
+            self._check_editable()
+            self._check_confirmation(source, version)
+            self._cancel_timer()
+            if self._flush_task and not self._flush_task.done():
+                try:
+                    await asyncio.shield(self._flush_task)
+                except DraftWriteFailed:
+                    pass
+                self._check_confirmation(source, version)
+            if self._durable is None or self.base is None:
+                raise DraftWriteFailed("No durable buffer available")
+            if (self._durable.workflow_id, self._durable.base_revision_id) != (
+                self.base.workflow_id,
+                self.base.revision_id,
+            ):
+                raise DraftConflict("Durable draft belongs to another base")
+            self.current = self._durable
+            self._field_checkpoints.clear()
+            known = self._durable_field_edits.get(
+                (self.current.workflow_id, self.current.base_revision_id)
+            )
+            self._field_edit = known[1] if known and known[0] == self.current else None
+            self._publish("Pending changes discarded; durable draft restored")
+            return self.current
 
     async def discard_draft(self) -> Draft:
-        """After explicit full-discard confirmation, durably return to base."""
+        """Durably return to base without adopting edits made during the discard."""
         self._check_editable()
         self._confirmation_version += 1
-        if self.base is None:
-            raise DraftWriteFailed("No draft selected")
-        self.update(self.base.raw_json)
-        draft = await self.flush()
-        if self.raw_repair_required:
-            return await self.repair_raw(
-                draft, confirmation_version=self.confirmation_version
-            )
-        return draft
+        source, version = self.current, self.confirmation_version
+        async with self._transition:
+            self._check_editable()
+            self._check_confirmation(source, version)
+            if self.base is None:
+                raise DraftWriteFailed("No draft selected")
+            source = self.update(self.base.raw_json)
+            version = self.confirmation_version
+            draft = await self.flush()
+            self._check_confirmation(source, version)
+            if not self.raw_repair_required:
+                return draft
+        # repair_raw acquires this same non-reentrant lock. There is no await
+        # between releasing it and admitting the existing retained repair task.
+        return await self.repair_raw(draft, confirmation_version=version)
 
     async def close(self) -> None:
         """Drain authoring before app-owned store teardown; failure is retryable."""

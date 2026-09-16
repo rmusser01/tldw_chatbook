@@ -25,7 +25,10 @@ from tldw_chatbook.Workflows.models import DraftConflict, Issue
 
 
 class WorkflowEditorHarness(ConsolidatedCSSApp):
-    CSS_PATH: ClassVar = [BUNDLED_STYLESHEET]
+    CSS_PATH: ClassVar = [
+        BUNDLED_STYLESHEET,
+        BUNDLED_STYLESHEET.parent / "screen_feature_workflows.tcss",
+    ]
     BINDINGS: ClassVar = [Binding("f6", "focus_next_workbench_pane", "Next pane")]
 
     def __init__(self, tmp_path, *, seed=True):

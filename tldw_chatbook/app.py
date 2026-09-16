@@ -3,6 +3,7 @@
 #
 # Disable progress bars early to prevent interference with TUI
 import os
+from typing import ClassVar
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
@@ -12341,10 +12342,11 @@ class TldwCli(
     #: tests (2026-09-04, paired arms). The agentic split sheets predate
     #: this seam and keep their TASK-25812 wiring (console on the boot
     #: path; library/settings via their screens' ``CSS_PATH``).
-    _SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
+    _SCREEN_OWNED_ROUTE_CSS: ClassVar[dict[str, tuple[str, ...]]] = {
         TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
         TAB_EVALS: ("screen_feature_evals.tcss",),
         TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
+        TAB_WORKFLOWS: ("screen_feature_workflows.tcss",),
     }
 
     def _ensure_screen_owned_css(self, canonical_route: str) -> None:

@@ -1,6 +1,7 @@
 """Document/view coordination with no DOM and no workflow execution ownership."""
 
 import asyncio
+from typing import TypedDict, Unpack
 
 from tldw_chatbook.Workflows.catalog import FIELDS, discover
 from tldw_chatbook.Workflows.document_service import PAGE_SIZE, DocumentService
@@ -11,6 +12,14 @@ from tldw_chatbook.Workflows.models import (
     Issue,
     Revision,
 )
+
+
+class StepEditOptions(TypedDict, total=False):
+    """Optional keyword arguments accepted by document structural edits."""
+
+    offset: int
+    step_type: str
+    before: bool
 
 
 def visible_pane_ids(content_width: int) -> tuple[str, ...]:
@@ -42,6 +51,11 @@ class WorkflowsController:
 
     @property
     def draft(self) -> Draft | None:
+        """Return the inspected revision as a draft view, or the current draft.
+
+        Returns:
+            A detached historical view, the live draft, or None without a selection.
+        """
         if self.inspection:
             revision = self.inspection
             return Draft(
@@ -55,6 +69,16 @@ class WorkflowsController:
         return self.drafts.current
 
     async def load(self, selection: tuple[str, str] | None = None) -> None:
+        """Load the first library page and restore an exact draft selection.
+
+        Args:
+            selection: Workflow/base-revision IDs to select. When omitted, retain
+                the current draft or select the first library entry, if any.
+
+        Raises:
+            DraftWriteFailed: Pending draft work cannot settle or selection is locked.
+            RevisionConflict: The requested base does not belong to the workflow.
+        """
         # Settle an accepted recovery before reading current or choosing a base.
         # A removed/cancelled screen is not the lifetime of that transaction.
         if self.drafts.editing_locked:
@@ -84,6 +108,16 @@ class WorkflowsController:
         )
 
     async def load_library(self, offset: int = 0, query: str = "") -> None:
+        """Load a bounded library page, publishing only the latest request.
+
+        Args:
+            offset: Nonnegative SQLite integer offset within matching workflow heads.
+            query: Case-insensitive name search; empty selects all heads.
+
+        Raises:
+            ValueError: The offset is not a nonnegative SQLite integer.
+            TypeError: The query is not text.
+        """
         request = self._library_request = (offset, query, object())
         rows = await asyncio.to_thread(
             self.documents.list_workflows,
@@ -98,6 +132,7 @@ class WorkflowsController:
         self.library_offset, self.library_query = offset, query
 
     async def refresh_head(self) -> None:
+        """Read the selected draft's saved head, clearing it without a draft."""
         draft = self.drafts.current
         self._head = (
             await asyncio.to_thread(self.documents.get_head, draft.workflow_id)
@@ -106,10 +141,26 @@ class WorkflowsController:
         )
 
     async def refresh_library(self) -> None:
+        """Refresh the requested library page and the selected draft's saved head.
+
+        Raises:
+            ValueError: The requested page offset is invalid.
+            TypeError: The requested search query is not text.
+        """
         await self.load_library(*self._library_request[:2])
         await self.refresh_head()
 
     async def select_workflow(self, workflow_id: str, base_revision_id: str) -> None:
+        """Flush pending edits and open an exact draft in the Overview section.
+
+        Args:
+            workflow_id: Portable identity of the workflow to open.
+            base_revision_id: Saved revision whose local draft should be recovered.
+
+        Raises:
+            DraftWriteFailed: The draft owner is locked, closed, or cannot flush.
+            RevisionConflict: The base is missing or belongs to another workflow.
+        """
         await self.drafts.select(workflow_id, base_revision_id)
         self.inspection = None
         self.section = "overview"
@@ -117,11 +168,29 @@ class WorkflowsController:
         self.validate()
 
     async def select_section(self, section: str) -> None:
+        """Flush the current draft before changing the visible editor section.
+
+        Args:
+            section: Overview or step section identifier supplied by the navigator.
+
+        Raises:
+            DraftWriteFailed: Pending changes cannot be persisted.
+        """
         if self.drafts.current:
             await self.drafts.flush()
         self.section = section
 
     async def inspect_revision(self, workflow_id: str, revision_id: str) -> None:
+        """Flush the live draft and inspect an immutable revision in Overview.
+
+        Args:
+            workflow_id: Portable identity of the workflow to inspect.
+            revision_id: Exact saved revision to show without replacing the draft.
+
+        Raises:
+            DraftWriteFailed: The current draft cannot be flushed.
+            RevisionConflict: The revision is missing or belongs to another workflow.
+        """
         await self.drafts.flush()
         self.inspection = await asyncio.to_thread(
             self.documents.get_revision, workflow_id, revision_id
@@ -129,7 +198,14 @@ class WorkflowsController:
         self.section = "overview"
 
     async def edit_inspected_revision(self) -> None:
-        """Historical edits are deliberate and cannot replace a dirty head draft."""
+        """Copy inspected content to a clean head draft; do nothing without inspection.
+
+        Raises:
+            InvalidDraft: The head is unavailable or the source cannot be edited.
+            DraftConflict: The head has a local draft that would be overwritten.
+            RevisionConflict: The source or target revision changed during the copy.
+            DraftWriteFailed: Draft work is locked or persistence fails.
+        """
         source = self.inspection
         if source is None:
             return
@@ -142,6 +218,22 @@ class WorkflowsController:
         self.inspection = None
 
     def edit_field(self, pointer: str, text: str, *, as_json: bool = False) -> Draft:
+        """Update a draft field and refresh issues without waiting for persistence.
+
+        Args:
+            pointer: JSON pointer of the editable field.
+            text: Literal string value or JSON fragment, according to as_json.
+            as_json: Parse text as a JSON field edit, retaining incomplete fragments
+                for repair with the last valid form projection.
+
+        Returns:
+            The updated draft, including any retained field-validation error.
+
+        Raises:
+            InvalidDraft: The view, field, or edit is unavailable or protected.
+            DraftConflict: The edit's draft provenance or generation is invalid.
+            DraftWriteFailed: The draft owner is locked or closed.
+        """
         draft = self.drafts.current
         if self.inspection or draft is None or (draft.error and not as_json):
             raise InvalidDraft(
@@ -157,7 +249,28 @@ class WorkflowsController:
         self.validate()
         return result
 
-    def change_steps(self, operation: str, step_id: str = "", **options) -> Draft:
+    def change_steps(
+        self, operation: str, step_id: str = "", **options: Unpack[StepEditOptions]
+    ) -> Draft:
+        """Apply a structural edit to a valid draft and refresh validation issues.
+
+        Args:
+            operation: One of add, duplicate, move, or delete.
+            step_id: Selected step ID; an absent selection appends an added step.
+            **options: Optional offset (int, default 1) for move, step_type (str,
+                default prompt) for add, and before (bool, default False) for
+                insertion relative to the selected step.
+
+        Returns:
+            The updated draft scheduled for local persistence.
+
+        Raises:
+            InvalidDraft: The view is not editable or the change breaks structure,
+                dependencies, opaque semantics, or authoring limits.
+            ValueError: The requested new step type is unavailable for authoring.
+            DraftConflict: The next draft generation is invalid.
+            DraftWriteFailed: The draft owner is locked or closed.
+        """
         draft = self.drafts.current
         if self.inspection or draft is None or draft.error:
             raise InvalidDraft("Return to a valid editable draft before changing steps")
@@ -168,6 +281,16 @@ class WorkflowsController:
         return result
 
     async def create(self, name: str) -> None:
+        """Flush pending edits, create a named empty workflow, and select it.
+
+        Args:
+            name: Nonblank workflow name; surrounding whitespace is removed.
+
+        Raises:
+            InvalidDraft: The name is blank or the definition exceeds storage bounds.
+            DraftWriteFailed: Pending edits cannot be flushed or selection is locked.
+            RevisionConflict: The generated portable identity already exists.
+        """
         if not name.strip():
             raise InvalidDraft("Name the workflow before creating it")
         if self.drafts.current:
@@ -181,6 +304,13 @@ class WorkflowsController:
         await self.select_workflow(revision.workflow_id, revision.revision_id)
 
     def validate(self) -> tuple[Issue, ...]:
+        """Refresh structural and authoring issues for the visible draft or revision.
+
+        Returns:
+            The issues also stored in self.issues, or an empty tuple without a
+            selection. Invalid JSON is reported as an issue. These checks do not
+            establish runtime availability or authorize workflow execution.
+        """
         draft = self.draft
         if draft is None:
             self.issues = ()

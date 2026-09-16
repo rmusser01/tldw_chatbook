@@ -2,6 +2,37 @@
 
 ## Reopened PR integration — 2026-09-15
 
+Publication checkpoint (local continuation note, not yet committed): pushed
+f17bf03c3af87c2463f7489b0ec7e2a18e413011 with explicit old-head lease. Replied to
+all seven Qodo threads and resolved them. Qodo reply4019766823 accepted the
+performance evidence: no identified pure operation above100ms, no additional
+worker/debounce justified. Manual final-head review requested in5687387378;
+Qodo busy comment5687392227, full final review still pending at last check.
+Final local preflight passed on4fe2c2b5c8 code. PR body updated with evidence.
+
+Remote CI found two real Workflows CSS regressions: ancestor-scoped bare-type
+rules275 >274; boot CSS770849 >768000 bytes (new_workflows module6080bytes).
+Job104545069843/run35017659992. Proposed scoped fix awaits explicit approval
+under gh-fix-ci: use existing build_css.ScreenOwnedSplit + app route CSS loader
+for Workflows-only styles, narrow offending selectors, preserve performance
+limits, verify first-entry/modals/production-CSS harnesses. No CSS edits made.
+ADR097 fully read; existing split/route wiring and integrity tests located.
+Do not add new loading infrastructure or put token-dependent CSS_PATH on screens
+(existing Evals notes explain unstyled harness breakage). Existing harness
+APP_STYLESHEETS union already models all split files; workflow harnesses currently
+pin only BUNDLED_STYLESHEET and will need appropriate scoped verification.
+
+Windows GGUF jobs104545069192/104545069190 fail at checkout before tests on the
+unchanged dev task32540 long filename. git diff dev94cc..HEAD for that task empty;
+last base change68c376161a. Linux/macOS counterparts passed. No unrelated fix.
+PR Fast Lane/required Derived Artifacts still pending. No merge attempted.
+
+Heartbeat creation was REJECTED by auto-review: recurring unattended edits/push/
+merge require explicit user approval. No automation exists; do not workaround.
+Async questions ask approval for (1) follow-up through merge and (2) scoped CSS
+fix. Continue safe diagnostics, but wait for those approvals before respective
+actions. Local .uat-workflows-9NUT5t remains preserved.
+
 Latest checkpoint: code4fe2c2b5c8 passed314 domain/storage/projection/paging tests.
 Independent scoped re-review found both lineage bugs resolved and no new
 actionable findings; legacy preservation remained intact. Final26-file scoped
@@ -410,3 +441,37 @@ source reuse and no dependency/license metadata changed against dev. Source and
 parked branches and their WIP rechecked unchanged. No full suite, model/server
 call, capture, deletion, infrastructure, merge or push. Committed evidence and
 worktree stay available; capture cleanup remains a nonblocking follow-up.
+
+## PR2690 second review and approved CI repair (2026-09-15)
+
+User approved scoped CSS fixes and automatic follow-up edits/push/merge.
+Heartbeat `finish-workflows-pr2690-review-and-merge` is ACTIVE every 10 minutes,
+attached to this task, quiet for unchanged state. Stop it after verified merge.
+
+Current base is dev94cc1200d5; pushed head at start f17bf03c3a. Original required
+derived-artifact check passed, but introduced CSS byte/selector guards failed.
+Reproduced both RED, used existing ScreenOwnedSplit/app route loader, narrowed
+Console Static subjects to their two existing IDs, rebuilt sheets. GREEN:
+767019/768000 boot bytes,272/274 broad-subject rules. New first-navigation and
+default-Workflows tests paint actual controls/dialogs and check hit/focus behavior.
+
+Lovelace implemented existing-owner discard lock/freshness corrections and one
+debounce constant, reproducing 9 races plus debounce RED;48 tests pass. Sagan
+implemented missing-identity rejection (retain exact raw, creation still gets
+identity), server media text/metadata contracts, controller Google docs/Unpack
+options;189 targeted tests pass. Both agents closed, no agent commits. Server
+dev2e1a5e58d3 source verified read-only; no models/runtime/server writes.
+
+Coordinator:301 Workflows/storage tests pass,150 UI/CSS tests pass,20 boot checks
+pass,all7preflight guards pass.13 changed Python files have zero unmatched static
+findings/formatter edits against f17; route map ClassVar eliminates one old app
+finding.9 route/import tests pass after that final annotation. Existing Requests,
+old Kokoro cleanup and joblib low-space serial-fallback warnings remain disclosed.
+Disk ~1GiB free; no deletion. Updated tracked UAT evidence with all dispositions.
+
+Averroes resumed for read-only scoped review of this second round, not previous
+whole-branch work. Pending: review disposition, push approved fixes, reply/resolve
+all7new Qodo comments4019797880/7888/7896/7904/7908/7913/7922, request final
+agentic review, exact-head CI, normal match-head merge and verify MERGED. Baseline
+Windows checkout filename failures remain unrelated/non-required; no bypass.
+AC7 remains open. Preserve .uat-workflows-9NUT5t and original/parked branches.
