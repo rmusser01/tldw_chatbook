@@ -156,9 +156,7 @@ async def test_service_shutdown_drains_root_users_before_final_clean(native_cons
     with pytest.raises(PermissionError):
         await case.service.aclose()
     assert case.service._thread.is_alive()
-    await case.service._call(
-        lambda: case.service._coordinator.owner.settle_process(token, True)
-    )
+    await case.service.settle_data_user(token, confirmed=True)
     await case.service.aclose()
     marker = case.service._marker_factory(None)
     assert marker.load_runtime_checkpoint()["phase"] == "clean"
@@ -430,3 +428,243 @@ def test_restart_preserves_pending_attachment_intent(data_cleanup_case):
     row = case.stack.call(case.stack.coordinator.published_snapshot)["data_roots"][0]
     assert row["generation"] == ref.generation + 1
     assert row["custody"]["attached_installation_id"] is None
+
+
+@pytest.mark.parametrize("replacement", [None, "leaf", "ancestor", "missing_ancestor"])
+def test_completed_absence_dirty_restart_reconciles_only_exact_ancestry(
+    data_cleanup_case, replacement
+):
+    from tldw_chatbook.Plugins.data_cleanup import root_ref
+
+    case = data_cleanup_case
+    ref = create_root(case)
+    deletion = case.stack.call(
+        lambda: case.stack.coordinator.review_data_deletion((ref,))
+    )
+    assert (
+        case.stack.call(
+            lambda: case.stack.coordinator.delete_data((ref,), deletion.operation_id)
+        ).phase
+        == "complete"
+    )
+    original = case.stack.call(case.stack.coordinator.published_snapshot)["data_roots"][
+        0
+    ]
+    ref = root_ref(original)
+    assert original["custody"]["state"] == "cleaned_absent" and not ref.path.exists()
+    sentinel = None
+    if replacement == "leaf":
+        ref.path.mkdir()
+        sentinel = ref.path / "external"
+    elif replacement in {"ancestor", "missing_ancestor"}:
+        ref.path.parent.rename(ref.path.parent.with_name("retained-data-anchor"))
+        if replacement == "ancestor":
+            ref.path.parent.mkdir()
+            sentinel = ref.path.parent / "external"
+    if sentinel is not None:
+        sentinel.write_text("preserve")
+    reopen(case.stack, clean=False)
+    if replacement is not None:
+        with pytest.raises((PermissionError, FileNotFoundError)):
+            case.stack.call(
+                lambda: case.stack.coordinator.review_data_reconciliation(
+                    (ref,), confirm_quiescence=lambda roots: True
+                )
+            )
+        with pytest.raises(PermissionError):
+            case.stack.call(case.stack.coordinator.root_usage.shutdown)
+        if sentinel is not None:
+            assert sentinel.read_text() == "preserve"
+        return
+    review = case.stack.call(
+        lambda: case.stack.coordinator.review_data_reconciliation(
+            (ref,), confirm_quiescence=lambda roots: True
+        )
+    )
+    reconciled = case.stack.call(
+        lambda: case.stack.coordinator.reconcile_data(review, review.operation_id)
+    )
+    assert reconciled[0].generation == ref.generation + 1
+    after = case.stack.call(case.stack.coordinator.published_snapshot)["data_roots"][0]
+    assert (
+        after["custody"]["state"] == "cleaned_absent"
+        and after["path"] == original["path"]
+    )
+    assert (
+        after["installation_id"] == original["installation_id"]
+        and not ref.path.exists()
+    )
+    case.stack.call(case.stack.coordinator.root_usage.shutdown)
+    assert (
+        case.stack.authority.marker_store.load_runtime_checkpoint()["phase"] == "clean"
+    )
+    reopen(case.stack, clean=False)
+    assert not case.stack.coordinator.root_usage.recovery
+    case.stack.call(case.stack.coordinator.root_usage.shutdown)
+
+
+def test_unexpected_missing_present_root_is_not_completed_absence(data_cleanup_case):
+    case = data_cleanup_case
+    ref = create_root(case)
+    ref.path.rmdir()
+    reopen(case.stack, clean=False)
+    with pytest.raises(PermissionError, match="root_missing_without_deleting_intent"):
+        case.stack.call(
+            lambda: case.stack.coordinator.review_data_reconciliation(
+                (ref,), confirm_quiescence=lambda roots: True
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_final_clean_seals_queued_and_new_service_mutations(
+    native_console, monkeypatch
+):
+    import asyncio
+    import threading
+
+    from tldw_chatbook.Plugins.service import PluginService
+
+    case = native_console
+    installed = await case.install()
+    creation = await case.service.review_data_creation(installed.installation_id)
+    ref = await case.service.create_data(creation, creation.operation_id)
+    trust = await case.service.review_trust(installed.installation_id)
+    marker = case.service._coordinator.authority.marker_store
+    real = marker.save_runtime_checkpoint
+    entered, release = threading.Event(), threading.Event()
+
+    def hold_clean(value):
+        real(value)
+        if value["phase"] == "clean":
+            entered.set()
+            assert release.wait(5)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(marker, "save_runtime_checkpoint", hold_clean)
+        closing = asyncio.create_task(case.service.aclose())
+        assert await asyncio.to_thread(entered.wait, 5)
+        mutation = asyncio.create_task(case.service.commit(trust, trust.operation_id))
+        await asyncio.sleep(0.02)
+        release.set()
+        results = await asyncio.gather(closing, mutation, return_exceptions=True)
+    assert results[0] is None
+    assert isinstance(results[1], PermissionError), results[1]
+    assert marker.load_runtime_checkpoint()["marker"] == marker.load_marker()
+    reopened = PluginService(
+        case.service.profile_root,
+        workspace_lookup=case.service.workspace_lookup,
+        marker_store_factory=case.service._marker_factory,
+        accept_reduced_protection=True,
+    )
+    try:
+        await reopened.unlock("test passphrase")
+        token = await reopened.reserve_data_user(
+            "after-clean",
+            installed.installation_id,
+            "workspace-a",
+            installed.inspection.effective_digest,
+            roots=(ref,),
+        )
+        await reopened.settle_data_user(token, confirmed=True)
+    finally:
+        await reopened.aclose()
+
+
+@pytest.mark.asyncio
+async def test_refused_shutdown_seals_mutations_but_accepts_terminal_settlement(
+    native_console,
+):
+    case = native_console
+    installed = await case.install()
+    creation = await case.service.review_data_creation(installed.installation_id)
+    ref = await case.service.create_data(creation, creation.operation_id)
+    trust = await case.service.review_trust(installed.installation_id)
+    token = await case.service.reserve_data_user(
+        "pending-close",
+        installed.installation_id,
+        "workspace-a",
+        installed.inspection.effective_digest,
+        roots=(ref,),
+    )
+    with pytest.raises(PermissionError):
+        await case.service.aclose()
+    try:
+        with pytest.raises(PermissionError, match="plugin_service_closing"):
+            await case.service.commit(trust, trust.operation_id)
+    finally:
+        await case.service.settle_data_user(token, confirmed=True)
+        await case.service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_already_running_authority_mutation(
+    native_console, monkeypatch
+):
+    import asyncio
+    import threading
+
+    case = native_console
+    installed = await case.install()
+    creation = await case.service.review_data_creation(installed.installation_id)
+    await case.service.create_data(creation, creation.operation_id)
+    trust = await case.service.review_trust(installed.installation_id)
+    real = case.service._coordinator.commit
+    entered, release = threading.Event(), threading.Event()
+
+    async def hold(review, operation_id):
+        entered.set()
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        return await real(review, operation_id)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(case.service._coordinator, "commit", hold)
+        mutation = asyncio.create_task(case.service.commit(trust, trust.operation_id))
+        assert await asyncio.to_thread(entered.wait, 5)
+        try:
+            with pytest.raises(PermissionError, match="plugin_calls_not_drained"):
+                await case.service.aclose()
+            assert (
+                case.service._coordinator.authority.marker_store.load_runtime_checkpoint()[
+                    "phase"
+                ]
+                == "dirty"
+            )
+        finally:
+            release.set()
+        assert (await asyncio.wait_for(mutation, 5)).committed
+    await case.service.aclose()
+    marker = case.service._marker_factory(None)
+    assert marker.load_runtime_checkpoint()["marker"] == marker.load_marker()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejects_previously_queued_service_mutation(native_console):
+    import asyncio
+    import threading
+
+    case = native_console
+    installed = await case.install()
+    creation = await case.service.review_data_creation(installed.installation_id)
+    await case.service.create_data(creation, creation.operation_id)
+    trust = await case.service.review_trust(installed.installation_id)
+    entered, release = threading.Event(), threading.Event()
+
+    def block_worker():
+        entered.set()
+        assert release.wait(5)
+
+    blocker = asyncio.create_task(case.service._call(block_worker))
+    assert await asyncio.to_thread(entered.wait, 5)
+    mutation = asyncio.create_task(case.service.commit(trust, trust.operation_id))
+    await asyncio.sleep(0.02)
+    closing = asyncio.create_task(case.service.aclose())
+    await asyncio.sleep(0.02)
+    release.set()
+    assert await blocker is None
+    with pytest.raises(PermissionError, match="plugin_service_closing"):
+        await mutation
+    await closing
+    marker = case.service._marker_factory(None)
+    assert marker.load_runtime_checkpoint()["marker"] == marker.load_marker()

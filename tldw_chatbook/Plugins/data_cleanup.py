@@ -189,6 +189,7 @@ def open_root(owner, row, *, absent=False, rebind=False):
     if path != owner.root / "data" / row["root_id"]:
         raise PermissionError("root_path_unowned")
     binding = (row.get("custody") or {}).get("binding")
+    completed_absence = (row.get("custody") or {}).get("state") == "cleaned_absent"
     boot = boot_identity()
     if binding is not None and binding["boot_id"] != boot and not rebind:
         raise PermissionError("root_boot_identity_changed")
@@ -210,10 +211,16 @@ def open_root(owner, row, *, absent=False, rebind=False):
                 os.open(row["root_id"], DIR_FLAGS, dir_fd=descriptors[-1])
             )
         except FileNotFoundError:
-            if not absent or binding is None:
+            if not (absent or completed_absence) or binding is None:
                 raise PermissionError("root_missing_without_deleting_intent") from None
-            yield descriptors, None
+            # A tombstone retains historical leaf identity; only its observed
+            # ancestry and boot scope are rebound, never an unexpected leaf.
+            yield descriptors, (
+                dict(binding, boot_id=boot) if completed_absence else None
+            )
             return
+        if completed_absence:
+            raise PermissionError("root_unexpected_after_cleanup")
         leaf = physical_identity(descriptors[-1])
         if binding is not None and leaf != binding["leaf"]:
             raise PermissionError("root_incarnation_changed")
@@ -298,7 +305,7 @@ class RootUsage:
                 {row["root_id"]: "root_prior_session_unqualified" for row in roots}
             )
         for row in roots:
-            if (row.get("custody") or {}).get("state") == "present":
+            if (row.get("custody") or {}).get("state") in {"present", "cleaned_absent"}:
                 try:
                     with open_root(self.coordinator.owner, row):
                         pass
@@ -418,13 +425,25 @@ class RootUsage:
 
     def publish_grants(self, claim, versions, token, grants):
         with self.fences.live_lock:
+            held = self.live_grants.get(token, ())
+            captured = dict(versions)
+            captured.update(
+                (root, epoch)
+                for root, epoch in self.grant_epochs.get(token, ())
+                if root in held
+            )
+            # Preserve every durable claim even when publication is refused.
+            # A failed initial reservation settles these through its owner;
+            # later-grant failure must not hide access from process publication.
+            self.live_grants[token] = tuple(
+                sorted(set(held) | {root for root, _ in versions})
+            )
+            self.grant_epochs[token] = tuple(sorted(captured.items()))
             if self.closed or any(
                 self.is_fenced(root_id) or self.epochs.get(root_id, 0) != epoch
-                for root_id, epoch in versions
+                for root_id, epoch in self.grant_epochs[token]
             ):
                 raise PermissionError("root_access_fenced")
-            self.live_grants[token] = tuple(grant["root_id"] for grant in grants)
-            self.grant_epochs[token] = versions
             self.pending.pop(claim, None)
 
     def retain_cancel(self, owner_token: str, callback) -> None:
@@ -591,6 +610,11 @@ class RootUsage:
             )
             with self.fences.live_lock:
                 self.live_grants[owner["token"]] = held
+                self.grant_epochs[owner["token"]] = tuple(
+                    (root, epoch)
+                    for root, epoch in self.grant_epochs.get(owner["token"], ())
+                    if root in held
+                )
 
     def blockers(self, roots, *, limit=50, offset=0):
         from .registry import validate_page
@@ -711,7 +735,7 @@ def issue_root_review(
         coordinator.authority.load_marker(),
         canonical_json(baseline),
         uuid4().hex,
-        expires_at or time.monotonic() + 900,
+        expires_at if expires_at is not None else time.monotonic() + 900,
         serialized,
         phase,
         group_id or uuid4().hex,
@@ -1153,6 +1177,7 @@ async def delete_data(coordinator, refs, operation_id):
                     phase,
                     group_id=original.group_id,
                     target_digest=original.target_digest,
+                    expires_at=original.expires_at,
                 )
                 operation.receipt = await commit_root_phase(
                     coordinator, final, final.operation_id
@@ -1290,6 +1315,11 @@ async def reconcile_data(coordinator, review, operation_id):
     with usage.fences.live_lock:
         for owner, roots in list(usage.live_grants.items()):
             usage.live_grants[owner] = tuple(root for root in roots if root not in ids)
+            usage.grant_epochs[owner] = tuple(
+                (root, epoch)
+                for root, epoch in usage.grant_epochs.get(owner, ())
+                if root not in ids
+            )
     await commit_root_phase(coordinator, review, operation_id)
     with usage.fences.live_lock:
         for root_id in ids:
@@ -1388,6 +1418,7 @@ async def cancel_data_deletion(coordinator, operation_id):
             "cancelled",
             group_id=operation.review.group_id,
             target_digest=operation.review.target_digest,
+            expires_at=operation.review.expires_at,
         )
         operation.receipt = await commit_root_phase(
             coordinator, final, final.operation_id

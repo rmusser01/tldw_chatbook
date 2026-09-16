@@ -577,17 +577,26 @@ and clears only its own fence after safe authority reconciliation. After deletin
 begins, cancellation/IO failure retains the authenticated pending group and
 fence. Read-only receipt lookup never performs cleanup. Resume requires
 `review_data_cleanup_resume` and the original exact authenticated group/action.
-A pending attachment remains an attachment after restart.
+A pending attachment remains an attachment after restart. Every phase keeps the
+original review deadline; expiry leaves pending recovery for a fresh explicit
+review, including when the leaf has already been removed.
 
 The separate bounded runtime checkpoint uses the existing selected marker
-backend. Graceful `aclose` closes root admission, verifies all users and retained
-cleanup callbacks ended, then writes/readbacks clean bound to the final current
-authority marker. A package/activation commit before shutdown is included in that
+backend. Graceful `aclose` seals ordinary service admission and rejects queued
+ordinary callbacks on the worker. Already running calls, users and retained
+cleanup callbacks must finish before clean is written/read back against the
+final current authority marker. A refused shutdown still accepts exact
+`settle_data_user` / `complete_run` terminal evidence, while new authority work
+remains refused. A package/activation commit before shutdown is included in that
 final binding. Dirty, missing, mismatched or malformed checkpoint evidence fences
 all retained roots, including orphans. SQLite restoration cannot establish that
 an omitted writer stopped. `review_data_reconciliation(...,
 confirm_quiescence=host_proof)` / `reconcile_data` requires explicit whole-root
 host proof, repeated at application; a user assertion or empty SQL is not proof.
+Authenticated `cleaned_absent` roots remain tombstones: reconciliation confirms
+the expected absence through exact current ancestry and preserves the historical
+leaf binding. An unexpected leaf, replaced/missing ancestry or a missing
+`present` root refuses.
 
 Native root binding is qualified for same-boot local APFS on Darwin: no-follow
 owner/data anchors and leaf descriptors bind exact device/inode/birth seconds and

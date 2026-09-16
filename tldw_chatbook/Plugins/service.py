@@ -68,6 +68,7 @@ class PluginService:
         self._thread = None
         self._closed = False
         self._closing = False
+        self._ordinary_calls = set()
         self._ready = Future()
         self._catalog = {}
         self._details = ()
@@ -82,10 +83,16 @@ class PluginService:
         self._live_runs = self.fences.runs
         self._revision_refresh_tasks: set[asyncio.Task] = set()
 
-    def _start(self):
+    def _require_open(self, *, terminal=False):
         with self._lock:
             if self._closed:
                 raise PluginUnavailable("plugin_service_closed")
+            if self._closing and not terminal:
+                raise PluginUnavailable("plugin_service_closing")
+
+    def _start(self, *, terminal=False):
+        with self._lock:
+            self._require_open(terminal=terminal)
             if self._thread is None:
                 self._thread = threading.Thread(
                     target=self._worker, name="chatbook-plugin-storage", daemon=True
@@ -133,26 +140,34 @@ class PluginService:
                 owner.close()
             loop.close()
 
-    async def _call(self, callback):
-        loop = await asyncio.wrap_future(self._start())
-
-        async def invoke():
+    async def _invoke(self, callback, *, terminal=False):
+        # Admission is checked again on the worker: a callback queued before
+        # shutdown may not run after the final clean checkpoint.
+        self._require_open(terminal=terminal)
+        task = asyncio.current_task()
+        if not terminal:
+            self._ordinary_calls.add(task)
+        try:
             result = callback()
             return await result if inspect.isawaitable(result) else result
+        finally:
+            self._ordinary_calls.discard(task)
 
+    async def _call(self, callback, *, terminal=False):
+        loop = await asyncio.wrap_future(self._start(terminal=terminal))
         return await asyncio.wrap_future(
-            asyncio.run_coroutine_threadsafe(invoke(), loop)
+            asyncio.run_coroutine_threadsafe(
+                self._invoke(callback, terminal=terminal), loop
+            )
         )
 
-    def _call_from_agent(self, callback):
+    def _call_from_agent(self, callback, *, terminal=False):
         if threading.current_thread() is threading.main_thread():
             raise RuntimeError("plugin synchronous checks require an agent worker")
-        loop = self._start().result()
-
-        async def invoke():
-            return callback()
-
-        return asyncio.run_coroutine_threadsafe(invoke(), loop).result()
+        loop = self._start(terminal=terminal).result()
+        return asyncio.run_coroutine_threadsafe(
+            self._invoke(callback, terminal=terminal), loop
+        ).result()
 
     async def bootstrap(self, passphrase: str) -> None:
         def operation():
@@ -213,6 +228,7 @@ class PluginService:
     ) -> OperationReceipt:
         from .data_cleanup import begin_data_operation
 
+        self._require_open()
         begin_data_operation(self._coordinator, roots, operation_id)
         return await self._call(
             lambda: self._coordinator.delete_data(roots, operation_id)
@@ -283,7 +299,8 @@ class PluginService:
     async def settle_data_user(self, token: str, *, confirmed: bool) -> None:
         """Only actual host terminal evidence permits confirmed settlement."""
         await self._call(
-            lambda: self._coordinator.owner.settle_process(token, confirmed)
+            lambda: self._coordinator.owner.settle_process(token, confirmed),
+            terminal=True,
         )
 
     async def retain_revisions(self, installation_id: str) -> OperationReceipt:
@@ -315,6 +332,7 @@ class PluginService:
     async def apply_revision(
         self, review: PluginReview, operation_id: str
     ) -> OperationReceipt:
+        self._require_open()
         self.revision_drain.activate(
             review.drain_token, review=review, operation_id=operation_id
         )
@@ -822,6 +840,7 @@ class PluginService:
     def _begin_revocation(self, target, kind, *, review=None):
         # Reject a missing event loop before sealing rather than losing task custody.
         asyncio.get_running_loop()
+        self._require_open()
         request = self.fences.request(target, kind, review)
         operation = self.fences.operations[request.request_id]
         self._start_revocation(operation)
@@ -1021,7 +1040,8 @@ class PluginService:
                 lambda: [
                     self._coordinator.owner.settle_process(record.lease_token, True)
                     for record in records
-                ]
+                ],
+                terminal=True,
             )
 
     async def retire_pending(self, pending_id: str) -> None:
@@ -1036,6 +1056,9 @@ class PluginService:
         with self._lock:
             if self._closed:
                 return
+            self._closing = True
+            if hasattr(self, "_coordinator"):
+                self._coordinator.root_usage.closed = True
             if any(
                 (operation.task is not None and not operation.task.done())
                 or operation.cleanup_tasks
@@ -1049,13 +1072,12 @@ class PluginService:
                 raise PluginUnavailable("plugin_revision_work_not_drained")
             if self._live_runs:
                 raise PluginUnavailable("plugin_owned_work_not_drained")
-            self._closing = True
             thread = self._thread
-            if hasattr(self, "_coordinator"):
-                self._coordinator.root_usage.closed = True
         if thread is not None:
 
             async def finalize():
+                if self._ordinary_calls:
+                    raise PluginUnavailable("plugin_calls_not_drained")
                 usage = self._coordinator.root_usage
                 if any(
                     operation.task is not None and not operation.task.done()
@@ -1067,7 +1089,7 @@ class PluginService:
             # Root settlement runs on the owning worker; callers can still submit
             # exact terminal evidence after a refused close, but never new grants.
             if self._ready.done() and self._ready.exception() is None:
-                await self._call(finalize)
+                await self._call(finalize, terminal=True)
         with self._lock:
             self._closed = True
             self._catalog = {}

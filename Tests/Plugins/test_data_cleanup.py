@@ -672,3 +672,153 @@ async def test_service_root_fence_precedes_worker_io(native_console):
         release.set()
         await blocked
     assert (await deletion).phase == "complete"
+
+
+@pytest.mark.parametrize("fence_timing", [None, "before_publication", "during_acquire"])
+def test_later_grant_preserves_all_original_publication_epochs(
+    data_cleanup_case, monkeypatch, fence_timing
+):
+    case = data_cleanup_case
+    a, b = create_root(case), create_root(case)
+    usage = case.stack.coordinator.root_usage
+    token = reserve(case, a)
+    old_epoch = usage.grant_epochs[token]
+    fence = None
+    real = usage._insert
+
+    def fence_first_root(cursor, owner_token, grant):
+        nonlocal fence
+        value = real(cursor, owner_token, grant)
+        if fence_timing == "during_acquire":
+            fence = usage.fence((a,))
+        return value
+
+    monkeypatch.setattr(usage, "_insert", fence_first_root)
+    try:
+        if fence_timing == "during_acquire":
+            with pytest.raises(PermissionError, match="root_access_fenced"):
+                case.stack.call(lambda: usage.acquire(b, token))
+        else:
+            case.stack.call(lambda: usage.acquire(b, token))
+        assert dict(usage.grant_epochs[token])[a.root_id] == dict(old_epoch)[a.root_id]
+        if fence_timing == "before_publication":
+            fence = usage.fence((a,))
+        if fence is not None:
+            usage.unfence(fence)
+            assert not usage.is_fenced(a.root_id)
+        publication = lambda: case.stack.owner.publish_process(
+            token,
+            {
+                "host_handle": "exact pending owner",
+                "pid": os.getpid(),
+                "start_identity": "not live PID proof",
+            },
+        )
+        if fence_timing:
+            with pytest.raises(PermissionError, match="root_late_publication_fenced"):
+                case.stack.call(publication)
+        else:
+            case.stack.call(publication)
+        assert case.stack.call(lambda: usage.blockers((a,)))
+        assert case.stack.call(lambda: usage.blockers((b,)))
+    finally:
+        case.stack.call(lambda: case.stack.owner.settle_process(token, True))
+        if fence:
+            usage.unfence(fence)
+
+
+@pytest.mark.parametrize("expire", [False, True])
+def test_final_cleanup_preserves_original_review_deadline(
+    data_cleanup_case, monkeypatch, expire
+):
+    import types
+
+    import tldw_chatbook.Plugins.coordinator as coordinator_module
+    import tldw_chatbook.Plugins.data_cleanup as cleanup_module
+
+    case = data_cleanup_case
+    ref = create_root(case)
+    review = case.stack.call(
+        lambda: case.stack.coordinator.review_data_deletion((ref,))
+    )
+    now = [review.expires_at - 1]
+    clock = types.SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr(cleanup_module, "time", clock)
+    monkeypatch.setattr(coordinator_module, "time", clock)
+
+    def cut(phase):
+        if phase == "data_root_removed" and expire:
+            now[0] = review.expires_at + 1
+
+    case.stack.call(lambda: setattr(case.stack.coordinator, "progress", cut))
+    if expire:
+        with pytest.raises(ValueError, match="expired review"):
+            case.stack.call(
+                lambda: case.stack.coordinator.delete_data((ref,), review.operation_id)
+            )
+        row = case.stack.call(case.stack.coordinator.published_snapshot)["data_roots"][
+            0
+        ]
+        assert (
+            row["cleanup"]["phase"] == "deleting"
+            and row["generation"] == ref.generation
+        )
+        assert row["deletion_fenced"] and not ref.path.exists()
+        fresh = case.stack.call(
+            lambda: case.stack.coordinator.review_data_cleanup_resume((ref,))
+        )
+        assert fresh.expires_at > now[0]
+        receipt = case.stack.call(
+            lambda: case.stack.coordinator.delete_data((ref,), fresh.operation_id)
+        )
+    else:
+        receipt = case.stack.call(
+            lambda: case.stack.coordinator.delete_data((ref,), review.operation_id)
+        )
+    assert receipt.phase == "complete"
+    row = case.stack.call(case.stack.coordinator.published_snapshot)["data_roots"][0]
+    assert (
+        row["generation"] == ref.generation + 1
+        and row["custody"]["state"] == "cleaned_absent"
+    )
+
+
+def test_later_grants_preserve_released_history_without_refreshing_held_epochs(
+    data_cleanup_case,
+):
+    case = data_cleanup_case
+    a, b, c = create_root(case), create_root(case), create_root(case)
+    usage = case.stack.coordinator.root_usage
+    token = reserve(case, a)
+    case.stack.call(lambda: usage.acquire(b, token))
+    old_b_epoch = dict(usage.grant_epochs[token])[b.root_id]
+    a_usage = case.stack.call(
+        lambda: case.stack.registry._connection.execute(
+            "SELECT usage_token FROM root_users WHERE owner_token=? AND root_id=?",
+            (token, a.root_id),
+        ).fetchone()[0]
+    )
+    case.stack.call(lambda: usage.release(a_usage, confirmed=True))
+    fence = usage.fence((a,))
+    try:
+        case.stack.call(lambda: usage.acquire(c, token))
+        assert dict(usage.grant_epochs[token]) == {b.root_id: old_b_epoch, c.root_id: 0}
+        case.stack.call(
+            lambda: case.stack.owner.publish_process(
+                token, {"host_handle": "exact remaining B/C"}
+            )
+        )
+        rows = case.stack.call(
+            lambda: case.stack.registry._connection.execute(
+                "SELECT root_id, state FROM root_users WHERE owner_token=?", (token,)
+            ).fetchall()
+        )
+        assert {row[0]: row[1] for row in rows} == {
+            a.root_id: "released",
+            b.root_id: "held",
+            c.root_id: "held",
+        }
+        assert not case.stack.call(lambda: usage.blockers((a,)))
+    finally:
+        case.stack.call(lambda: case.stack.owner.settle_process(token, True))
+        usage.unfence(fence)

@@ -1317,3 +1317,9 @@ new dependency is used, and simulated boot changes are not reboot experiments.
 ### F8 retained intent and lifecycle entry
 
 Pending root groups authenticate their action (create/delete/attach) and explicit attachment target alongside membership and phase. Restart resumes that same action; an attachment can never become deletion. Root authority commits require the root lifecycle entry, which owns dirty-checkpoint, proof, drain and phase checks; generic commit cannot bypass it. Cancelling a failed proposal clears only its own live fence after authority recovery proves no deleting phase was committed. A committed deleting phase remains fenced for reviewed recovery. The service installs the exact reviewed live fence before queuing worker storage.
+
+### F8 review corrections: completed absence and final publication
+
+An authenticated `cleaned_absent` root remains a tombstone: reconciliation may confirm its missing leaf only through its exact current no-follow ancestry and original binding. Any unexpected leaf or replaced/missing ancestry refuses; a missing `present` root is never completed absence. Reviewed whole-root proof, generation advancement and boot rebinding rules still apply.
+
+Shutdown seals ordinary service admission before finalization and rejects queued ordinary callbacks on the worker. Already executing calls must finish before clean can be published; a refused close continues to admit exact terminal settlement, not new authority work. The final checkpoint remains the last protected publication. Later root grants preserve all still-owned original epochs, and every cleanup phase retains the original review deadline; expiry leaves pending recovery for a fresh explicit review.
