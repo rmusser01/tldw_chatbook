@@ -56,7 +56,10 @@ ONE Static carrying one " · "-joined sentence. At 100x30 that sentence is 84
 characters in a 46-column pane which the compact sheet pins to `height: 1`, so
 it painted exactly `Created 2026-06-30 20:00 · 10w ago · Modified` and stopped.
 Three of Info's four properties were unreadable at the critique's own compact
-size. That is the defect this task actually closes.
+size. That is the defect this task actually closes: **it was filed as a
+density nit and is a content-loss bug**, and its title is now the smaller half
+of what it fixes. Reproduced verbatim at dev 67bfde41d1 in review round 1, at
+100x30 and again at 60x20.
 
 **One construction, two shapes.** `build_library_note_editor_state` already
 builds the joined line from a `parts` list; it now appends to a `properties`
@@ -87,16 +90,48 @@ with real timestamps. Measured: the blank run was 21 and is 20 with the
 two-property fixture; with Created and Modified present it is 18 (arithmetic
 on that measurement, not a second one). Getting it to zero needs
 either content Info does not have, or a runtime-computed spacer that
-bottom-anchors Reuse & Export and Danger. I rejected the spacer: it is
+bottom-anchors Reuse & Export and Danger. **A fourth option review round 1
+named and I had missed:** the waste at 235x52 is also HORIZONTAL -- Info is
+155 columns wide and uses about 40 -- so a two-column Info (properties and
+links left, Reuse & Export and Danger right) would halve the vertical run
+without inventing content. That is still arrangement rather than invention,
+so it is in scope for this AC; it is not obviously worth it on a
+`priority: low` task, so it is recorded here rather than built. I rejected
+the spacer: it is
 hand-written layout on a pane that has none, it moves the blank run rather
 than removing it, and `height: 1fr` on the links list -- the CSS version of
 the same idea -- clips backlinks 21..50 of a 50-row cap at that size. Recorded
 here rather than quietly re-scoped.
 
-**Trade-off.** The editor's Keywords row costs one row of body at every size;
-at 60x20 the body goes 4 rows -> 3. Info keeps its own Keywords field (they
-are never visible at once -- the editor and context regions are mutually
-exclusive), so nothing was removed to pay for it.
+**Trade-off, re-measured in review round 1 -- the first number here was
+wrong.** I had written "one row of body at every size". It is one row only
+where the compact sheet applies. Measured as
+`#library-note-body.region.height`, dev vs this branch, same fixture:
+
+| size | dev | branch | delta | keywords row | task-32640's location row |
+|---|---|---|---|---|---|
+| 235x52 | 29 | 23 | **-6** | 5 | 1 |
+| 100x30 | 15 | 13 | -2 | 1 | 1 |
+| 60x20 | 6 | 5 | -1 | 1 | 0 (gated below 80 columns) |
+
+At the primary size the un-compact Keywords row is a five-row bordered Input,
+exactly like the Title row above it, so this wave costs the note editor **six
+of 29 body rows -- 21% of the writing area at 235x52**. Matching the Title row
+is the defensible spelling and I am keeping it, but the cost belongs on the
+record rather than in a sentence that only checked the compact sizes.
+
+Info keeps its own Keywords field (the two are never visible at once -- the
+editor and context regions are mutually exclusive), so nothing was removed to
+pay for it.
+
+**Review round 1.** The CSS half of this fix was entirely unpinned: both
+paint tests read `str(widget.renderable)` -- the string the widget was HANDED
+-- so with this branch's Python and dev's stylesheets the file was 19 passed,
+0 failed while Info painted one row at 100x30, worse than dev. The tests now
+assert `region.height`, which is what the pane actually gave the widget:
+`assert 1 == 4` for the property block, and the keywords row's own geometry
+(14 rows at 235x52, 7 at 100x30, 3 at 60x20 without the wrapper rules)
+at all three sizes.
 
 **Files.** `Library/library_notes_state.py`,
 `UI/Library_Modules/library_notes_controller.py`,

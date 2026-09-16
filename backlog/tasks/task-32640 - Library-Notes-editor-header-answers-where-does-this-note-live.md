@@ -65,21 +65,37 @@ Every LOADED root counts, not only the watchable ones. A paused or blocked
 root still holds the file the note lives in; whether anything is watching it is
 the root row's job (task-32604 made that row honest), not the header's.
 
-**Live, per AC#4.** The worker runs on note open and again after a save
-settles, and both facts are read fresh: the binding from the runtime, the write
-time from `os.stat` on the file itself. The mtime is deliberately the file's
-own rather than a record of our writes — a vault edited in Obsidian and a note
-saved here are the same question to the reader, and only the filesystem answers
-both. Nothing is stored on the note, so a note that is bound, retargeted or
-disconnected while open cannot leave a stale sentence on screen.
+**Live, per AC#4.** The worker runs on note open and again when a save
+settles, and both facts are read fresh at that moment: the binding from the
+runtime, the write time from `os.stat` on the file itself. The mtime is
+deliberately the file's own rather than a record of our writes — a vault
+edited in Obsidian and a note saved here are the same question to the reader,
+and only the filesystem answers both. Nothing is stored on the note, so a note
+that is bound, retargeted or disconnected while open cannot leave a stale
+sentence on screen.
 
-*Known ceiling:* an external write to the file while the note sits open does
-not repaint the row until something else re-runs the worker. Closing that
-means subscribing to the watcher's own pass, which is task-32633's ground.
+**Known ceiling, corrected in review round 1 — the first version of this
+paragraph claimed the opposite of the code comment.** The post-save re-read
+RACES the write. A save only `schedule_hint`s the root (task-32604) and the
+file is written by a later background pass, so the `os.stat` usually happens
+BEFORE the bytes land, and nothing re-runs afterwards: right after your own
+save the row normally still names the PREVIOUS write time, until the note is
+reopened or saved again. That reading is accurate — the file really has not
+been written yet, which is the honest half of what this row exists to show —
+but it is not "fresh after every save", and neither these notes nor the guide
+may say that it is. The same staleness applies to an EXTERNAL write while the
+note sits open. Re-running the worker off the sync pass itself would close
+both; that is task-32633's ground, not this task's.
 
-**The narrow-terminal trade.** Measured at 60x20 on the real screen: the
-editor's body is 4 rows before this wave and 2 with this row plus task-32642's
-Keywords row. A note editor with two rows of note is a worse answer to "can I
+**The body-row cost, re-measured in review round 1.** This row costs the
+editor's body one row at every size it is shown. Together with task-32642's
+Keywords row the wave takes six of 29 body rows at 235x52 (23 left), two of 15
+at 100x30, and one of 6 at 60x20 where this row is gated off; the full
+dev-vs-branch table is on task-32642.
+
+**The narrow-terminal trade.** Measured at 60x20 on the real screen
+(`#library-note-body.region.height`): dev 6 rows, and 4 with this row plus
+task-32642's Keywords row shown — 5 with it gated off, which is what ships. A note editor with two rows of note is a worse answer to "can I
 work here" than an unanswered "where does this live", so below 80 columns the
 row is given back to the body — the same threshold and the same reasoning as
 the chrome strip under it (task-32143). Nothing else states the world at that
@@ -89,6 +105,11 @@ width; recorded rather than hidden.
 list header's own noun for that world; "In a synced folder" is the chooser's
 (Keep a folder synced). Neither is an internal name, and the row states the
 world first and never elides it.
+
+**Review round 1 added two paint assertions** that the location row is one
+painted row and that the property/keywords geometry is what the sheet claims —
+the CSS half of this wave was asserted only through `renderable`, the string
+the widget is handed, which cannot see the pane at all.
 
 **Evidence.** Store and runtime against a real `NotesDeviceStateStore` with a
 real root and binding (`Tests/Notes/test_notes_sync_note_location.py`),

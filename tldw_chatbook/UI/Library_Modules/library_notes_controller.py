@@ -3531,10 +3531,18 @@ class LibraryNotesController:
         Both facts are read LIVE every time this runs -- the binding from
         the sync runtime, the write time from the file itself -- rather than
         being carried on the note record, which is what a note looked like
-        when it was opened. Re-run after a save settles (see
-        ``_apply_library_note_saved_presentation``), so a file this session
-        has just written reports its new time rather than the one it had
-        when the note opened.
+        when it was opened.
+
+        It is re-run when a save settles
+        (``_apply_library_note_saved_presentation``), but that re-read RACES
+        the write: a save only ``schedule_hint``s the root (task-32604), and
+        the file is written by a later background pass. So right after your
+        own save the row usually still names the PREVIOUS write time, and
+        nothing re-runs it until the note is reopened or saved again. That
+        is accurate -- the file really has not been written yet -- and it is
+        the honest half of what this row exists to show; it is not "fresh
+        after every save", and the task notes and guide say so in those
+        words. Re-running on the sync pass itself is task-32633's ground.
 
         A runtime that is absent, inert or not yet started answers ""; the
         header then says the note is in the Library database only, which is
