@@ -1,5 +1,18 @@
 # Lessons: verifying against the real thing
 
+## Complete terminal capability probes before driving text input
+
+**TASK-32667, 2026-09-16.** Native queue run-002 timed out in preflight even
+though its private source existed. The captured input contained a trailing
+`[?1;2;4c`; the image library had queried terminal capabilities after Textual
+owned stdin, and the reply became path text. Its log also reported a probe
+timeout. The final audit runner invokes the real cached `probe_terminal()` before
+`app.run()`, as that dependency requires. This qualifies the queue journey with
+an explicitly primed terminal probe; it does not qualify the app's ordinary
+lazy image-probe startup ordering. Both failed-run exit receipts were checked
+before starting a fresh profile.
+
+
 ## Clear exit receipts before reusing a native probe session
 
 **TASK-32603, 2026-09-14.** A compact Prompt journey wrote successful UI

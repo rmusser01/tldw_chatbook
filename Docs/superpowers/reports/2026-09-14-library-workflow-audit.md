@@ -636,3 +636,36 @@ Next review: queue activity and recovery. An attempted fully expanded-form Retry
 focus check painted the docked fold hint over its row; that keyboard overlap
 remains unqualified here. Actual import execution, remote authorities and
 restart remain outside this evidence. No full suite, push or dev integration.
+
+
+## Import queue focus and layout continuity — TASK-32667
+
+The [queue keyboard review](../qa/2026-09-16-ingest-queue/README.md) closes the
+Retry/fold overlap carried forward from TASK-32666. Queue focus is captured at
+the actual rebuild, so a late Tab survives; restoration respects newer focus and
+falls back to the source field when the replacement action is unavailable.
+Retry now paints its complete form-replacement confirmation.
+
+Native investigation also exposed retained focus becoming hidden after preflight
+layout contracted and grew again. The canvas rechecks current focus after
+virtual-size changes, following the Library rail pattern, and stops an earlier
+scroll animation before a visibility check can incorrectly do nothing. The
+controlled layout and animation regressions reproduce these distinct causes.
+
+**203 targeted checks pass**, including 16 queue journeys across both themes and
+wide/compact geometry. Changed code adds no Ruff diagnostics. Existing Library
+screen and ingest-controller size ceilings still fail at baseline and current;
+this repair adds two label-layout lines to each without raising a budget.
+Independent review has no remaining findings.
+
+Final native run-011 passes 170×48 dark and 80×24 light, with six rendered and
+inspected captures and normal exit 0. Ten private databases are healthy; no
+media/messages/ingest jobs were persisted. Source bytes and default-profile hashes
+are unchanged. The registry was synthetic with no store or runner; no import,
+installation, provider or server request occurred. Terminal probing was primed
+before stdin ownership, so ordinary startup timing is not qualified.
+
+Next review: grouped outcomes, Clear/Recent, recovery actions and live-resize
+focus ownership. A trial resize while still focused in Import transferred focus
+to the rail; this broader shell behavior remains unqualified. Re-entry after
+resize is covered. No full suite, push or dev integration.

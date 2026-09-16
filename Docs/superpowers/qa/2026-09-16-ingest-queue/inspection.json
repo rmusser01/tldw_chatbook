@@ -1,0 +1,21 @@
+{
+  "run": "run-011",
+  "method": "Quick Look rendered the six SVGs to PNG; all six inspected together as the confirmation batch.",
+  "sizes": [
+    [
+      170,
+      48
+    ],
+    [
+      80,
+      24
+    ]
+  ],
+  "observations": [
+    "Retry and full form-replacement confirmation remain above both docks, with structural side focus markers.",
+    "Details remains visibly focused after the queue writing transition; Retry and Dismiss are readable beside it.",
+    "Queue counts, failed reason and writing status are legible; staged title stays visible in the wide and empty-queue compact captures."
+  ],
+  "initial_batch": "run-004 compact failed state and wide Details; confirmed obscured Retry before repair.",
+  "bounded_scope": "No broad visual polish or further image iteration."
+}

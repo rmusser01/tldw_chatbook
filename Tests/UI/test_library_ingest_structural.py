@@ -760,7 +760,7 @@ async def test_option_select_focus_is_glyph_level_and_dimensionally_stable():
         await pilot.pause()
         select = pilot.app.query_one("#opt-generic-encoding", Select)
         assert not select.has_focus
-        region_before = select.region
+        region_before = select.virtual_region
         unfocused = _composited_rows(pilot.app, select)
         assert not any(
             glyph in row for row in unfocused for glyph in HEAVY_GLYPHS
@@ -778,11 +778,12 @@ async def test_option_select_focus_is_glyph_level_and_dimensionally_stable():
             glyph in row for row in focused for glyph in HEAVY_GLYPHS
         ), f"focused select shows no structural cue: {focused!r}"
         # The cue must not eat the value (the task-3302 one-row trap) and
-        # must not move the control.
+        # must not change the control's layout. Its screen position may
+        # scroll to reveal focus above the docked import bar.
         assert any("Auto-detect" in row for row in focused), (
             f"focus treatment ate the select's value: {focused!r}"
         )
-        assert select.region == region_before
+        assert select.virtual_region == region_before
         assert len(focused) == len(unfocused)
 
 

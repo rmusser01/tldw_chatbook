@@ -1,5 +1,33 @@
 # Lessons: what counts as evidence a change works
 
+## Queue focus must be captured when the panel actually rebuilds
+
+**TASK-32667, 2026-09-16.** A queue state transition replaced the focused
+Details button and moved focus into Keywords. Capturing focus in the registry
+listener passed the first journey but missed a Tab arriving after scheduling
+and before the actual rebuild. A mounted timing test reproduced that gap.
+Capture at the panel's recompose boundary and restore synchronously: a deferred
+restore let an older Details callback override a newer Retry focus. Reviewer
+probes also caught a same-ID action becoming disabled; Textual silently refuses
+that focus, so the existing source-field fallback must skip non-focusable targets.
+
+The same journey found Retry underneath both docked chrome regions and its
+confirmation clipped to the old button width. Containment ignores docks, and
+`Button.label` repaints without invalidating measured width. Assert focused
+compositor text across the label change, not just label state or region bounds.
+
+Native runs then exposed an animation race: a reveal does nothing while Retry is
+still visible, but an older scroll animation can finish afterward and hide it.
+The controlled animation journey reproduces the same blank y18 row as native.
+Stop old motion at the current position before a settled, current-focus reveal;
+adding another visibility check alone did not repair the failure. A second
+fast-focus regression still failed: an in-memory trace proved that preflight
+layout shrank the virtual height from 83 to 81 and clamped scroll from 64 to 62
+while Retry remained focused. A focus event cannot repair later content growth.
+Follow the Library rail pattern: schedule current-focus reveal after virtual-size
+layout settles. The attempted general deferred-scroll guard was removed.
+
+
 ## Retained option controls need event-order tests across reset
 
 **TASK-32666, 2026-09-16.** Replacing import-form recomposition with retained

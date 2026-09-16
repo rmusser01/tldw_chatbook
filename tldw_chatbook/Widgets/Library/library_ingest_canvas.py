@@ -13,6 +13,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus
 from textual.message import Message
 from textual.geometry import Size
 from textual.widget import Widget
@@ -517,6 +518,33 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
         self.expanded_groups: set[str] = set()
         self.add_class("w-fill")
         self.add_class("h-auto")
+
+    async def recompose(self) -> None:
+        """Capture queue focus at the actual rebuild, including late Tab input."""
+        focused = self.app.focused
+        if focused is not None and focused.id and self in focused.ancestors:
+            control_id = focused.id
+            self.queue_default_after_recompose(
+                lambda: self._restore_queue_focus(control_id)
+            )
+            self.screen.set_focus(None)
+        await super().recompose()
+
+    def _restore_queue_focus(self, control_id: str) -> None:
+        """Restore before older action callbacks, without replacing newer focus."""
+        focused = self.app.focused
+        if (focused is not None and focused.is_attached) or self.parent is None:
+            return
+        for selector in (f"#{control_id}", "#library-ingest-path"):
+            try:
+                target = self.parent.query_one(selector)
+            except NoMatches:
+                continue
+            if not target.focusable:
+                continue
+            # Synchronous so an older pending action sees this newer focus.
+            self.screen.set_focus(target)
+            return
 
     def compose(self) -> ComposeResult:
         state = self.state
@@ -1439,14 +1467,18 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         self.query_one(
             f"#type-group-{group}", Collapsible
         ).title = build_type_group_title(cap, values)
-        self.call_after_refresh(self._reveal_focused_option)
+        self.call_after_refresh(self._reveal_focused_control)
 
-    def _reveal_focused_option(self) -> None:
-        """Reveal current focus after option labels and dependencies settle."""
+    def _reveal_focused_control(self) -> None:
+        """Reveal current focus after labels, queue content or layout settle."""
         if not self.is_attached:
             return
         focused = self.screen.focused
         if focused is not None and self in focused.ancestors:
+            # A reveal is a no-op while focus is visible, even if an older
+            # animation is about to move it under the docks. Stop that motion
+            # at its current position before measuring the current target.
+            self.scroll_to(y=self.scroll_y, animate=False, immediate=True)
             focused.scroll_visible(animate=False, immediate=True)
 
     def _compose_type_group(
@@ -2033,6 +2065,16 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         """Settle the fold indicator once first layout has real sizes."""
         self.call_after_refresh(self.sync_fold_hint)
 
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal keyboard targets above the docked commit bar and fold hint."""
+        if event.widget.has_focus:
+            # Textual's containment check ignores docks. A control under
+            # either dock can otherwise bypass automatic focus scrolling.
+            self.scroll_to_widget(event.widget, animate=False, immediate=True)
+            # Earlier focus scrolling may still be queued for this refresh.
+            # Resolve the current target again after layout, never the old one.
+            self.call_after_refresh(self._reveal_focused_control)
+
     def on_show(self) -> None:
         """Populate DB-backed controls once the canvas is actually visible.
 
@@ -2134,6 +2176,11 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     def on_resize(self, _event: Any) -> None:
         """A viewport change can (un)cover the fold -- re-derive the hint."""
         self.sync_fold_hint()
+
+    def watch_virtual_size(self) -> None:
+        """Reveal retained focus after preflight or queue content changes height."""
+        if self.is_running:
+            self.call_after_refresh(self._reveal_focused_control)
 
     def sync_fold_hint(self) -> None:
         """Show the fold indicator only while the canvas content overflows.

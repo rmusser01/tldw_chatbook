@@ -136,10 +136,15 @@ In server mode the **Export** rail row is disabled, with the tooltip
   the counts rather than just flagging them: "Last import: 4 files
   failed, 2 skipped." with a **Review** button back to the queue.
   Pressing "Start import" scrolls the Queue heading into view, so the
-  freshly queued rows are the first thing you see after a submit.
+  freshly queued rows are the first thing you see after a submit. Queue
+  updates keep keyboard focus on the current action. If that action disappears
+  or becomes unavailable, focus returns to the source field; a newer focus
+  choice takes precedence.
 - **Fold indicator** — while the form is taller than the pane, a pinned
   "▼ more — scroll for the rest" row holds the bottom edge; it disappears
-  once everything fits.
+  once everything fits. Tab and Shift+Tab reveal focused controls above both
+  this hint and the pinned Start area. **Retry this batch** shows the complete
+  "Press again to replace form" confirmation before replacing an edited draft.
 
 **Export bundle (.zip)** is a single form: the "Export bundle (.zip)"
 header, a scope line ("Everything: 128 media · 542 conversations · 87 notes · 34

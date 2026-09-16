@@ -1,0 +1,36 @@
+{
+  "pid": 5855,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "retry_focus_and_full_consent_painted": true,
+      "queue_tick_and_disclosure_focus_preserved": true,
+      "forward_reverse_recovery_focus_painted": true,
+      "draft_preserved": true,
+      "synthetic_jobs_only": 2,
+      "registry_empty_after_fixture_cleanup": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "retry_focus_and_full_consent_painted": true,
+      "queue_tick_and_disclosure_focus_preserved": true,
+      "forward_reverse_recovery_focus_painted": true,
+      "draft_preserved": true,
+      "synthetic_jobs_only": 2,
+      "registry_empty_after_fixture_cleanup": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "synthetic_registry_without_store": true,
+  "passed": true,
+  "app_run_returned": true
+}

@@ -19901,6 +19901,7 @@ class LibraryScreen(BaseAppScreen):
         # Option edits revoke retry consent as well as Start consent.
         for retry in self.query("#library-ingest-retry-last"):
             retry.label = library_ingest_retry_label(new_state.retry_confirm_armed)
+            retry.refresh(layout=True)
         try:
             commit_bar = self.query_one("#library-ingest-commit-bar", Vertical)
         except (NoMatches, QueryError):
@@ -20048,6 +20049,7 @@ class LibraryScreen(BaseAppScreen):
             # re-stage consent rides the same in-place update, so the
             # label and the state can never disagree across a job tick.
             retry_last.label = library_ingest_retry_label(new_state.retry_confirm_armed)
+            retry_last.refresh(layout=True)
         # (task-2042 review) Scope labels depend on per-group file counts,
         # which change WITHOUT the group set changing (generic is always
         # present) -- update them in place so a panel never claims files it

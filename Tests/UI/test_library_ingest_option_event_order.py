@@ -164,7 +164,7 @@ async def test_detached_canvas_reveal_callback_preserves_current_editor():
     async with host.run_test() as pilot:
         await pilot.pause()
         canvas = host.query_one(LibraryIngestCanvas)
-        callback = canvas._reveal_focused_option
+        callback = canvas._reveal_focused_control
         current = Input("Current editor", id="current-editor")
         await host.screen.mount(current)
         current.focus()
