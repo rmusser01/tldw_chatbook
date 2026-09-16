@@ -245,7 +245,9 @@ class HookEngine:
         except Exception:  # noqa: BLE001 - callback text may contain private data
             return False, "authority_check_failed"
 
-    def _failure(self, handler, event, code) -> HookFailure:
+    def _failure(
+        self, handler, event, code, *, dependency: bool | None = None
+    ) -> HookFailure:
         blocking = (
             handler.required
             or (
@@ -257,8 +259,10 @@ class HookEngine:
                 and bool(handler.effects & {"deny", "child_limits"})
             )
         )
-        dependency, failure = self._dependency_status(handler, event)
-        return HookFailure(handler.id, failure or code, blocking, dependency)
+        if dependency is None:
+            dependency, failure = self._dependency_status(handler, event)
+            code = failure or code
+        return HookFailure(handler.id, code, blocking, dependency)
 
     def _configuration_failure(self, event) -> HookEventOutcome | None:
         if not self.invalid_admissions:
@@ -372,8 +376,10 @@ class HookEngine:
                 failures=(HookFailure(handler_id, "unknown_handler", True),)
             )
 
-        def failed(code):
-            return HookEventOutcome(failures=(self._failure(handler, event, code),))
+        def failed(code, *, dependency=None):
+            return HookEventOutcome(
+                failures=(self._failure(handler, event, code, dependency=dependency),)
+            )
 
         try:
             value = _envelope(event)
@@ -409,7 +415,7 @@ class HookEngine:
                 return failed("event_deadline")
             dependency, dependency_failure = self._dependency_status(handler, event)
             if dependency_failure:
-                return failed(dependency_failure)
+                return failed(dependency_failure, dependency=dependency)
             observation = (
                 not handler.effects and not handler.required and not dependency
             )

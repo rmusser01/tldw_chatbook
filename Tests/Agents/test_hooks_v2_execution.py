@@ -675,6 +675,65 @@ async def test_callback_failure_is_fixed_metadata_with_requiredness(boundary):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dependency_mode", "expected_code", "expected_dependency"),
+    [
+        ("raise_then_false", "dependency_check_failed", True),
+        ("stable_false", "authority_refused", False),
+        ("stable_true", "authority_refused", True),
+    ],
+)
+@pytest.mark.parametrize(
+    ("required", "effects", "expected_blocking"),
+    [(False, [], False), (True, [], True), (False, ["deny"], True)],
+    ids=["dependency_only", "explicit_required", "event_control"],
+)
+async def test_dependency_admission_preserves_obtained_status(
+    dependency_mode,
+    expected_code,
+    expected_dependency,
+    required,
+    effects,
+    expected_blocking,
+):
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    calls = 0
+
+    def dependency(*_):
+        nonlocal calls
+        calls += 1
+        if dependency_mode == "raise_then_false" and calls == 1:
+            raise RuntimeError("review-sensitive-marker")
+        return dependency_mode == "stable_true"
+
+    budget = HookBudgetOwner()
+    engine = HookEngine(
+        (command(required=required, effects=effects),),
+        lambda *_: False,
+        budget,
+        dependency_required=dependency,
+    )
+    try:
+        result = await engine.fire_async(event())
+        assert not result.succeeded and not result.accepted
+        assert len(result.failures) == 1
+        failure = result.failures[0]
+        assert failure.code == expected_code
+        assert failure.dependency_required is expected_dependency
+        assert failure.blocking is expected_blocking
+        assert result.allowed is not expected_blocking
+        assert "review-sensitive-marker" not in repr(result)
+        assert not result.outstanding_cleanup
+        assert not engine.processes.records
+        assert not engine.cleanup_pending
+        assert not any(budget.snapshot().values())
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("boundary", ["admission", "final_acceptance", "dependency"])
 async def test_callback_cancellation_preserves_cancel_and_custody(boundary):
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
