@@ -373,7 +373,7 @@ async def test_recovery_confirmation_cannot_survive_changes(owner, change):
         if change == "typing":
             session.update(source.raw_text)
     current = session.current
-    with pytest.raises(DraftConflict):
+    with pytest.raises(DraftConflict, match="open a new confirmation"):
         await session.recover_to_head(source, head, confirmation_version=version)
     assert session.current == current
     if change == "invalid":

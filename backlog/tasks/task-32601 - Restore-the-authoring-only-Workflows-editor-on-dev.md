@@ -95,6 +95,18 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Final integration checkpoint: dev advanced to 67bfde41d1 while review ran.
+Rebased all 17 patches, preserving both independent lessons appends; all code
+patches are identical by range-diff. Qodo's e5fde9a080 review resolved all
+behavioral findings; its final draft-method documentation request is implemented.
+A fresh integration run caught changed recovery-message wording; corrected the
+instruction and strengthened three owner regressions. The final 145-test
+owner/editor/file-picker/CSS/boot/authoring selection passes on the new base;
+all 7 derived-artifact preflight checks pass. Independent review found no
+Critical/Important issues and accepted the wording correction. AC7 stays open
+until refreshed exact-head review/checks and verified merge; automatic follow-up
+remains active. See the UAT record for exact evidence and baseline warnings.
+
 Second Qodo/CI pass (2026-09-15): reused the existing screen-owned CSS splitter
 and route loader, bringing boot CSS from 770,849 to 767,019 bytes and broad-subject
 rules from 275 to 272 without raising limits. First-route, initial-route and

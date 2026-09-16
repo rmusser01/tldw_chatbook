@@ -158,7 +158,23 @@ class DraftSession:
             return self.current
 
     def update(self, raw_text: str) -> Draft:
-        """Pure synchronous validation, followed by the shared debounce policy."""
+        """Validate raw editing synchronously and schedule the shared debounce.
+
+        Args:
+            raw_text: Complete Advanced JSON buffer. Invalid JSON or document
+                structure remains recoverable with its last valid projection.
+
+        Returns:
+            The current draft for unchanged text, otherwise the new draft with
+            validation feedback. A scheduled write is not a durability guarantee.
+
+        Raises:
+            InvalidDraft: The raw buffer violates text admission limits.
+            DraftConflict: The prior draft belongs to a different base or the next
+                generation exceeds the SQLite integer range.
+            DraftWriteFailed: No editable selection exists or the owner is locked,
+                closing, or closed.
+        """
         self._check_editable()
         if self.base is None or self.current is None:
             raise DraftWriteFailed("No editable draft owner is available")
@@ -352,9 +368,7 @@ class DraftSession:
 
     def _check_confirmation(self, source: Draft | None, version: int) -> None:
         if source != self.current or version != self.confirmation_version:
-            raise DraftConflict(
-                "Draft or selection changed; confirm the operation again"
-            )
+            raise DraftConflict("Draft or selection changed; open a new confirmation")
 
     async def _recover_to_head(
         self, source: Draft, head: Revision, version: int
@@ -484,7 +498,20 @@ class DraftSession:
             self._publish(status)
 
     async def discard_pending(self) -> Draft:
-        """Restore durable text; reject a discard superseded by edits/selection."""
+        """Restore durable text after the caller confirms losing pending edits.
+
+        Returns:
+            The last durable draft for the selected base, including retained
+            invalid text, after an existing flush settles. The owner also restores
+            any associated field provenance; it is not part of the returned Draft.
+            A failed flush does not prevent restoring that durable snapshot.
+
+        Raises:
+            DraftConflict: Edits or selection supersede the discard, or the durable
+                snapshot belongs to another base. Newer state is left intact.
+            DraftWriteFailed: No durable selection exists or the owner is locked,
+                closing, or closed.
+        """
         self._check_editable()
         self._confirmation_version += 1
         source, version = self.current, self.confirmation_version
@@ -515,7 +542,19 @@ class DraftSession:
             return self.current
 
     async def discard_draft(self) -> Draft:
-        """Durably return to base without adopting edits made during the discard."""
+        """Durably return to base after the caller confirms discarding the draft.
+
+        Returns:
+            The persisted base-content draft, with protected raw repair completed
+            when needed. No new immutable workflow revision is created.
+
+        Raises:
+            InvalidDraft: Base content cannot pass text admission or raw repair.
+            DraftConflict: Edits or selection supersede the discard or retained
+                repair. Newer edits are not accepted on the old confirmation.
+            DraftWriteFailed: Selection is unavailable, the owner is locked or
+                closed, or persistence fails. Pending state remains recoverable.
+        """
         self._check_editable()
         self._confirmation_version += 1
         source, version = self.current, self.confirmation_version

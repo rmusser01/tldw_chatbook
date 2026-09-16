@@ -475,3 +475,27 @@ all7new Qodo comments4019797880/7888/7896/7904/7908/7913/7922, request final
 agentic review, exact-head CI, normal match-head merge and verify MERGED. Baseline
 Windows checkout filename failures remain unrelated/non-required; no bypass.
 AC7 remains open. Preserve .uat-workflows-9NUT5t and original/parked branches.
+
+### Latest integration checkpoint
+
+Dev moved to67bfde41d1 and GitHub reported a conflict; the PRAPIbase remained
+stale at94cc, so ls-remote established the true tip. Backup branch
+codex/workflows-authoring-before-dev67bf retains e5fde9a080. Rebase produced
+5d61911395,16identicalpatches andonlylessonsappendcontextdiff in17th; preserve
+both appends. All code patches unchanged andcorefix/CSSfilesbyte-identical.
+
+Freshpostrebase97selectionfound1recoverymessageassertionfailure. Earlier150UIrun
+startedbeforeagentfinalgenericmessageedit; don'tclaimthat150testedfinalwording.
+Changedonlysharedmessage to'open a new confirmation'; strengthened3ownerchecks
+(all3REDbeforefix). Fresh145owner/editor/authoring/filepicker/bootCSS tests pass
+in126.62s. Newbasebootbytes767424<768000;selectors272<274;all7preflightpassagain.
+Scopedlint/format/diffclean. No changedlocking/persistencebehaviorinthisfollowup.
+
+AverroesreviewnoCritical/Important,codepatchescarryforward,one-linecopyaccepted
+conditionalonfreshtests(nowpassed). Qodoreview5217319999on e5resolvedallbehavioral
+findingsanddismissedperformance. Sole newinline4021489070/PRRT_kwDOOcyyl86iv0l0
+asksGooglecontractsfor3draftmethods;docsimplemented. Needreply/resolveafterpush.
+Original7andsecond7threadsallreplied/resolved. LatestmanualQodorequest5690239253
+completedone5;requestfreshafterfinalrebasedpush. Needexplicitforcelease=e5head,
+verifyMERGEABLE,exact-headUIlatency/requiredDerivedchecksandfreshQodo,thenmerge
+normallywithmatch-headguard. Currentlocaldocsrecordallthis;noMERGEDclaimyet.

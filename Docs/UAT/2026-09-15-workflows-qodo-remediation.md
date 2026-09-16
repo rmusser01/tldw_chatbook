@@ -143,3 +143,46 @@ Second-pass verification (overlapping selections, not an aggregate full suite):
 
 Independent scoped review, GitHub replies and checks on the next pushed head
 remain integration gates; these local results are not a merge claim.
+
+## Final dev rebase and recovery-message check
+
+While the second review ran, dev advanced to
+`67bfde41d196dd64a4df45f4cb5059e191da4d21`. GitHub reported a conflict although
+its PR base SHA was temporarily stale. Live remote refs established the new tip.
+Backup `codex/workflows-authoring-before-dev67bf` retains `e5fde9a080`; rebase
+produced `5d61911395f5ebef681d74116e008b7e74a41b38`. The only conflict was
+independent appends to the lessons document; both remain exactly once. Range-diff
+shows 16 identical patches, with only append context differing in the seventeenth.
+Core domain/controller and Workflows CSS files are byte-identical across rebase.
+All seven derived-artifact preflight checks passed again on this base.
+
+The first fresh integration selection found one recovery-message mismatch
+(96 passed, 1 failed). The earlier 150-test UI run had started before the draft
+implementer's final shared-message edit, so it did not qualify that wording.
+Draft-preservation assertions passed; the new generic wording omitted the visible
+"confirmation" instruction expected by the recovery flow. The shared message now
+says "open a new confirmation", retaining its applicability to discard and repair.
+The strengthened owner check produced three expected RED failures before the
+one-line correction. The complete owner/editor/stylesheet/boot/authoring rerun
+then passed **145 tests**, 126.62s, including the original mounted recovery case.
+On this newer base, boot CSS is **767,424/768,000 bytes** and the selector census
+remains **272/274**. No limits changed. Scoped Ruff/format and diff checks pass.
+
+Independent scoped review reported no Critical/Important findings for the second
+round, verified unchanged code across rebase, and accepted the recovery-message
+correction conditional on its passing owner/UI tests. Qodo review `5217319999`
+on `e5fde9a080` marked all behavioral findings resolved and dismissed the prior
+performance claim. Its sole new comment `4021489070` requests fuller contracts
+for `update`, `discard_pending`, and `discard_draft`. Google-style documentation
+now describes raw-input admission, pending versus durable returns, explicit
+confirmation preconditions, preservation and applicable failures for those three
+methods. These docstrings introduce no additional behavior.
+
+The final narrow review found no blocking issues and independently exercised all
+three stale-confirmation cases in memory. Its one documentation precision was
+applied: pending discard restores field provenance on the owner, not inside the
+returned `Draft`.
+
+All posted original and second-round inline discussions have evidence-backed
+replies and are resolved. The final documentation reply, refreshed exact-head
+review/checks and requested merge are still to be confirmed on GitHub.
