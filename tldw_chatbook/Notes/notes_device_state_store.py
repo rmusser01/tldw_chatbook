@@ -1297,6 +1297,47 @@ class NotesDeviceStateStore:
             ).fetchall()
         return tuple(str(row[0]) for row in rows)
 
+    def active_binding_path_for_note(self, note_id: str) -> tuple[str, str] | None:
+        """Return ``(root_id, relative path)`` for a note's active binding.
+
+        task-32640: the editor header answers "where does this note live?",
+        which is the one question about a binding that starts from the NOTE
+        rather than from a root. ``active_binding_note_ids`` answers the
+        reverse (root -> notes) and ``has_binding_for_note_or_path`` is a
+        per-root predicate, so neither can be pointed at this without walking
+        every root and hydrating rows the caller discards.
+
+        No index leads on ``note_id`` and this deliberately does not add one:
+        a database with no ``sqlite_stat1`` ignores an index the planner has
+        no statistics for (see the migrations README), and one scan of a
+        table that holds one row per synced file, once per note opened, is
+        not worth a schema change. ``LIMIT 1`` stops it at the first match.
+
+        Args:
+            note_id: The note whose file, if any, to name.
+
+        Returns:
+            The owning root and the note's normalized path within it, or
+            ``None`` when no active binding claims this note.
+
+        Raises:
+            ValueError: If ``note_id`` is not a bounded opaque identifier.
+        """
+
+        validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT root_id, normalized_relative_path
+                FROM notes_sync_bindings
+                WHERE note_id = ? AND state = ?
+                ORDER BY binding_id
+                LIMIT 1
+                """,
+                (note_id, NotesSyncBindingState.ACTIVE.value),
+            ).fetchone()
+        return None if row is None else (str(row[0]), str(row[1]))
+
     def list_binding_summaries(
         self,
         root_id: str,

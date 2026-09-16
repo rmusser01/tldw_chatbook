@@ -1951,6 +1951,20 @@ with stray left-edge border fragments), and padding 0 1 so the full
    while Edit is the open view on a terminal 80 columns or wider, and the
    body's `1fr` pays for it there (measured at 100x30: body 16 -> 15).
    Muted to the same tier as the meta line above -- chrome, not content. */
+/* task-32640: the "where does this note live?" row, one line under the
+   title. Muted like the chrome strip -- it is provenance, not content --
+   and hard-capped at one row: `library_note_location_line` elides the PATH
+   to fit the pane, so the row must never buy itself a second line by
+   wrapping and push the editor down. */
+#library-note-location {
+    width: 100%;
+    height: 1;
+    padding: 0 0 0 1;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 #library-note-chrome-facts {
     width: 100%;
     height: 1;
