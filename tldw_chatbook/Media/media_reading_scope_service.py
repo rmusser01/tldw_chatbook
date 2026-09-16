@@ -179,6 +179,20 @@ class MediaReadingScopeService:
             and not inspect.iscoroutinefunction(fn)
             and not self._is_memory_backed(service)
         ):
+            from tldw_chatbook.Backup_Recovery.participants import (
+                run_finite_local_worker,
+            )
+            from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+            from tldw_chatbook.Media.local_media_reading_service import (
+                LocalMediaReadingService,
+            )
+
+            if (
+                type(service) is LocalMediaReadingService
+                and type(service.media_db) is MediaDatabase
+                and getattr(fn, "__func__", None) is getattr(LocalMediaReadingService, method_name)
+            ):
+                return await asyncio.to_thread(run_finite_local_worker, fn, *args, **kwargs)
             return await asyncio.to_thread(fn, *args, **kwargs)
         return await self._maybe_await(fn(*args, **kwargs))
 

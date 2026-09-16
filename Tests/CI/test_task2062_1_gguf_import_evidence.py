@@ -106,11 +106,17 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
         if isinstance(step, dict) and "uses" in step
     ]
     assert uses == ["actions/checkout@v4", "actions/setup-python@v5"]
-    checkout = job["steps"][0]
+    assert job["steps"][0] == {
+        "name": "Enable long checkout paths on Windows",
+        "if": "runner.os == 'Windows'",
+        "shell": "pwsh",
+        "run": "git config --global core.longpaths true",
+    }
+    checkout = job["steps"][1]
     assert checkout.get("with") == {
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
     }
-    setup = job["steps"][1]
+    setup = job["steps"][2]
     assert setup.get("with") == {"python-version": "3.12"}
 
     lowered = text.casefold()

@@ -154,7 +154,7 @@ async def test_reset_settings_schedules_a_write_even_from_an_empty_state():
         assert screen._sidebar_state_dirty is True
 
 
-async def test_toggle_during_in_flight_write_survives_a_quit():
+async def test_toggle_during_in_flight_write_survives_a_quit(monkeypatch):
     """Review round (task-15470): a toggle landing WHILE a debounced write
     is still in flight must survive a quit -- not just a toggle landing
     before the debounce timer ever fires (the case
@@ -179,14 +179,15 @@ async def test_toggle_during_in_flight_write_survives_a_quit():
 
         write_started = threading.Event()
         proceed = threading.Event()
-        real_write = screen._write_sidebar_state_snapshot
+        real_dump = toml.dump
 
-        def slow_write(snapshot):
-            write_started.set()
-            assert proceed.wait(timeout=5), "test stalled waiting to proceed"
-            real_write(snapshot)
+        def slow_dump(data, stream, *args, **kwargs):
+            if "task-15470-inflight-1" in data.get("sidebar", {}).get("collapsible_states", {}):
+                write_started.set()
+                assert proceed.wait(timeout=5), "test stalled waiting to proceed"
+            return real_dump(data, stream, *args, **kwargs)
 
-        screen._write_sidebar_state_snapshot = slow_write
+        monkeypatch.setattr(toml, "dump", slow_dump)
 
         # Toggle 1: goes through the real debounce + worker dispatch.
         screen.ui_state.set_collapsible_state("task-15470-inflight-1", True)
@@ -228,3 +229,173 @@ async def test_toggle_during_in_flight_write_survives_a_quit():
     assert collapsible_states.get("task-15470-inflight-2") is True, (
         "toggle 2 LOST"
     )
+
+
+async def test_exclusive_sidebar_cancel_preserves_running_writer_and_latest_toggle(monkeypatch):
+    """A replacement Textual worker must wait for the cancelled worker's real IO."""
+    app = _build_test_app()
+    started, finish = threading.Event(), threading.Event()
+    real_dump = toml.dump
+    def gated(data, stream, *args, **kwargs):
+        states = data.get("sidebar", {}).get("collapsible_states", {})
+        if states.get("phase7-first") and not states.get("phase7-latest"):
+            started.set()
+            assert finish.wait(8)
+        return real_dump(data, stream, *args, **kwargs)
+    monkeypatch.setattr(toml, "dump", gated)
+    async with ConsoleHarness(app).run_test(size=APP_SIZE) as pilot:
+        screen = await _mounted_console_screen(pilot)
+        screen.ui_state.set_collapsible_state("phase7-first", True)
+        screen.sidebar_state = dict(screen.ui_state.collapsible_states)
+        screen._sidebar_state_save_timer.stop()
+        screen._flush_sidebar_state_after_debounce()
+        try:
+            for _ in range(300):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            assert started.is_set()
+            first = screen._sidebar_state_persist_worker
+            screen.ui_state.set_collapsible_state("phase7-latest", True)
+            screen.sidebar_state = dict(screen.ui_state.collapsible_states)
+            screen._sidebar_state_save_timer.stop()
+            screen._flush_sidebar_state_after_debounce()
+            await asyncio.sleep(0.03)
+            assert first.is_cancelled
+            assert screen._sidebar_state_persist_lock.locked()
+            flush = asyncio.create_task(screen._flush_sidebar_state_now())
+            await asyncio.sleep(0.03)
+            assert not flush.done()
+            finish.set()
+            assert await flush
+            assert not screen._sidebar_state_dirty
+        finally:
+            finish.set()
+        states = toml.load(_ui_state_path())["sidebar"]["collapsible_states"]
+        assert states["phase7-first"] and states["phase7-latest"]
+
+
+async def test_queued_textual_sidebar_cancel_keeps_dirty_and_flushes_later():
+    """Cancel the real Textual worker while its executor callback is still queued."""
+    from concurrent.futures import ThreadPoolExecutor
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    app = _build_test_app()
+    async with ConsoleHarness(app).run_test(size=APP_SIZE) as pilot:
+        screen = await _mounted_console_screen(pilot)
+        await screen._flush_sidebar_state_now()
+        loop = asyncio.get_running_loop()
+        original = loop._default_executor
+        executor = ThreadPoolExecutor(max_workers=1)
+        gate = threading.Event()
+        occupied = executor.submit(gate.wait, 8)
+        loop.set_default_executor(executor)
+        try:
+            screen.ui_state.set_collapsible_state("phase7-queued", True)
+            screen.sidebar_state = dict(screen.ui_state.collapsible_states)
+            screen._sidebar_state_save_timer.stop()
+            screen._flush_sidebar_state_after_debounce()
+            for _ in range(200):
+                if screen._sidebar_state_persist_lock.locked():
+                    break
+                await asyncio.sleep(0.01)
+            assert screen._sidebar_state_persist_lock.locked()
+            worker = screen._sidebar_state_persist_worker
+            worker.cancel()
+            for _ in range(100):
+                if not screen._sidebar_state_persist_lock.locked():
+                    break
+                await asyncio.sleep(0.01)
+            assert not screen._sidebar_state_persist_lock.locked()
+            assert screen._sidebar_state_dirty
+            if _ui_state_path().exists():
+                assert "phase7-queued" not in toml.load(_ui_state_path()).get("sidebar", {}).get("collapsible_states", {})
+            gate.set()
+            assert await screen._flush_sidebar_state_now()
+            assert toml.load(_ui_state_path())["sidebar"]["collapsible_states"]["phase7-queued"]
+        finally:
+            gate.set()
+            occupied.result(5)
+            executor.shutdown(wait=True)
+            loop._default_executor = original
+
+
+async def test_sidebar_refusal_failure_and_retry_preserve_latest_state(monkeypatch):
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    app = _build_test_app()
+    async with ConsoleHarness(app).run_test(size=APP_SIZE) as pilot:
+        screen = await _mounted_console_screen(pilot)
+        selected = _ui_state_path()
+        selected.write_text('[unrelated]\nkeep = "yes"\n')
+        screen.ui_state.set_collapsible_state("phase7-dirty", True)
+        screen.sidebar_state = dict(screen.ui_state.collapsible_states)
+        participant = raw._raw_participant(screen)
+        participant.close_admission()
+        try:
+            assert await screen._flush_sidebar_state_now() is False
+            assert screen._sidebar_state_dirty
+            assert screen._sidebar_state_persistence_error == "RecoveryRequired"
+            assert screen._save_sidebar_state() is False
+            screen._load_sidebar_state()
+            assert screen.ui_state.collapsible_states["phase7-dirty"]
+            assert toml.load(selected) == {"unrelated": {"keep": "yes"}}
+        finally:
+            participant.resume()
+        original = toml.dump
+        def failed(*args, **kwargs):
+            raise OSError("test write error")
+        monkeypatch.setattr(toml, "dump", failed)
+        assert await screen._flush_sidebar_state_now() is False
+        assert screen._sidebar_state_dirty
+        assert screen._sidebar_state_persistence_error == "OSError"
+        assert toml.load(selected) == {"unrelated": {"keep": "yes"}}
+        monkeypatch.setattr(toml, "dump", original)
+        assert await screen._flush_sidebar_state_now()
+        assert not screen._sidebar_state_dirty
+        assert screen._sidebar_state_persistence_error is None
+        saved = toml.load(selected)
+        assert saved["unrelated"] == {"keep": "yes"}
+        assert saved["sidebar"]["collapsible_states"]["phase7-dirty"]
+
+
+async def test_queued_sidebar_snapshot_cannot_switch_config_profiles(monkeypatch, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    app = _build_test_app()
+    async with ConsoleHarness(app).run_test(size=APP_SIZE) as pilot:
+        screen = await _mounted_console_screen(pilot)
+        await screen._flush_sidebar_state_now()
+        selected = _ui_state_path()
+        loop = asyncio.get_running_loop()
+        old_executor = loop._default_executor
+        executor = ThreadPoolExecutor(max_workers=1)
+        gate = threading.Event()
+        occupied = executor.submit(gate.wait, 8)
+        loop.set_default_executor(executor)
+        original_selector = chat_screen._get_effective_config_path
+        try:
+            screen.ui_state.set_collapsible_state("phase7-profile", True)
+            screen.sidebar_state = dict(screen.ui_state.collapsible_states)
+            screen._sidebar_state_save_timer.stop()
+            task = asyncio.create_task(screen._persist_sidebar_state_off_loop())
+            for _ in range(200):
+                if screen._sidebar_state_persist_lock.locked():
+                    break
+                await asyncio.sleep(0.01)
+            assert screen._sidebar_state_persist_lock.locked()
+            other = tmp_path / "different-profile" / "config.toml"
+            monkeypatch.setattr(chat_screen, "_get_effective_config_path", lambda: other)
+            gate.set()
+            assert await task is False
+            assert screen._sidebar_state_dirty
+            assert not other.parent.exists()
+            monkeypatch.setattr(chat_screen, "_get_effective_config_path", original_selector)
+            assert await screen._flush_sidebar_state_now()
+            assert toml.load(selected)["sidebar"]["collapsible_states"]["phase7-profile"]
+        finally:
+            monkeypatch.setattr(chat_screen, "_get_effective_config_path", original_selector)
+            gate.set()
+            occupied.result(5)
+            executor.shutdown(wait=True)
+            loop._default_executor = old_executor

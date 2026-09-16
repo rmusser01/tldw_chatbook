@@ -1,0 +1,19 @@
+{
+  "revision": "dc96b849dc4f05e64843572016c63f645753b150",
+  "source": "/home/ml-user/Working/chatbook-backup-linux-20260912/source-final-dc96b849dc-2gdxzs37",
+  "fixture": "/home/ml-user/Working/chatbook-backup-linux-20260912/native-final-dc96b849dc-vdayfeb7",
+  "pytest_returncode": 0,
+  "source_tracked_unchanged": true,
+  "status": {
+    "collected": 10,
+    "counts": {
+      "failed": 0,
+      "passed": 10,
+      "skipped": 0
+    },
+    "exitstatus": 0,
+    "failed_ordinals": [],
+    "unfinished": 0
+  },
+  "privacy": "Raw logs and fixtures remain on host; only numeric status and source identity returned."
+}

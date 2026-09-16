@@ -1,0 +1,82 @@
+{
+  "revision": "10cc230016610db91771b68b82945667084d9a0b",
+  "verified_artifact_files": 165,
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "561559d6e8e2dfd47c69811777633949d9a2cfd0557dc1dda14a166a4df69b11",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    },
+    {
+      "fixture": "product-pytest/f9-native-package1/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "a09d63e0d71e5379066a0161305626a364e6c5b4e9e8c5dbfed52db528ca80df",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "windows": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "failures": []
+    },
+    "product": {
+      "collected": 293,
+      "counts": {
+        "passed": 291,
+        "failed": 2
+      },
+      "failures": [
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]",
+          "seconds": 189.828
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+          "seconds": 271.562
+        }
+      ]
+    }
+  },
+  "windows_run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/34889283757",
+  "git_blobs": {
+    "revision": "10cc230016610db91771b68b82945667084d9a0b",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 2,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "linux": {
+    "collected": 78,
+    "passed": 77,
+    "failed": 1,
+    "skipped": 0,
+    "unfinished": 0,
+    "failed_ordinals": [
+      49
+    ],
+    "matching_python_processes": 0,
+    "source": "/home/ml-user/Working/chatbook-backup-linux-20260912/source-final-10cc230016-4boglzfu",
+    "fixture": "/home/ml-user/Working/chatbook-backup-linux-20260912/native-final-10cc230016-oluuhife",
+    "qualification": "Numeric terminal status only; no failure logs read; final tracked-source recheck not performed in this status inquiry."
+  },
+  "console": "WorkerFailed inner traceback: config sync/rail/workspace to AgentRuns subagent count, fresh connection, private directory helper rejects enclosing raw config selection. Three local native controlled cases reproduce cached success, reopened-under-config refusal and outside-config reopen success. No product change yet.",
+  "settings": "SchedulerLoop._maintenance_drain reports false at30s; startup not retired; exclusive AdmissionTimeout. Trace-maintenance Notes transaction and Scheduler heartbeat contend in native initialization; exact leader/cycle unproven.",
+  "library": "Full mounted capture/readback/resumed-write PASS161.441s;5unchanged inventories, leases8to1to0, startup retired. Prior failure cause not proven fixed.",
+  "evidence_hashes": {
+    "/private/tmp/uat-windows-10cc-support/verification.json": "5eed1115416f192c516ee3c5bd8dccb1945cabb9605f8f5fa058636c5a98028b",
+    "/private/tmp/uat-windows-10cc-support/git-blob-verification.json": "aa4a97b7b94491726b76d86c886f5bf8fa4d986a2ef8e0f6d5f8695b6a933843",
+    "/private/tmp/uat-windows-10cc-settings-library-review.md": "d60af550d9c086f8554f85ea1d64c4b8379ed0d3f89e4d464e491d732991e822",
+    "/private/tmp/uat-agent-runs-config-reopen-probe.py": "ffdc84b3d7f0443faccca01e554e2ea0a361a02fb46dc69ad4d8c3203a383842",
+    "/private/tmp/uat-agent-runs-config-reopen-probe2.log": "6bae9e1ffd49990b15ac3395d403bd7c3960c3b9a74e83e60b1e558f34663318"
+  }
+}

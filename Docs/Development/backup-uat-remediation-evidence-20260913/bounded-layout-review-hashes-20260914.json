@@ -1,0 +1,30 @@
+{
+  "base": "a5237449584d5b6d0090c15adabb4b12846a4aaa",
+  "verdict": "approved",
+  "files": {
+    "tldw_chatbook/Widgets/Console/console_bounded_section.py": "e8391c8792bce8bd070390fd59589dcf7f7bd8687f1dda6be839b484f61ae9f2",
+    "Tests/Backup_Recovery/test_console_bounded_layout.py": "446d3b79aab38771974a0d9c6a57645b2e791bee9e9bbe2e2b22af0dfbcb3692",
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "935a899a2c2737dfcfbacc6f78c58c978957e04236c43a5011f00d77e9a29536",
+    "Tests/Backup_Recovery/run_platform_product.py": "ccdc3fa0deb265dd9885febbdddbc5bcfb8efeae0502a3fc2c3dcd63f4b83093"
+  },
+  "independent_native_tests": {
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 11.9,
+    "log": "/private/tmp/uat-bounded-independent-final.log"
+  },
+  "original_contracts_XML_verified": {
+    "passed": 8,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "root_log": "/private/tmp/uat-bounded-compat-corrected.log"
+  },
+  "root_combined": {
+    "passed": 19,
+    "seconds": 61.71,
+    "log": "/private/tmp/uat-bounded-final.log"
+  },
+  "guidance_non_observation_AST_matches_HEAD": true
+}

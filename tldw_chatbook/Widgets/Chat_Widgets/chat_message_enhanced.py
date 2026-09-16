@@ -242,6 +242,8 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
         image_mime_type: Optional[str] = None,
         feedback: Optional[str] = None,
         sender: Optional[str] = None,
+        recovered_root=None,
+        recovered_profile=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -253,6 +255,19 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
         self.timestamp = timestamp
         self.image_data = image_data
         self.image_mime_type = image_mime_type
+        self.recovered_image_status = "unknown"
+        if message_id:
+            from tldw_chatbook.Backup_Recovery.recovered_media import (
+                resolve_message_image,
+            )
+
+            status, payload, mime_type = resolve_message_image(
+                message_id, root=recovered_root, profile=recovered_profile,
+            )
+            self.recovered_image_status = status
+            if status != "unknown":
+                self.image_data = payload
+                self.image_mime_type = mime_type
         self.feedback = feedback
         self._image_widget = None
 
@@ -309,6 +324,8 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
             yield Markdown(self.message_text, classes="message-text")
 
             # Image display if present
+            if self.recovered_image_status in {"missing", "deleted"}:
+                yield Static(self.recovered_image_status.capitalize() + " recovered media")
             if self.image_data:
                 with Container(classes="message-image-container"):
                     # Create image display widget

@@ -1,0 +1,64 @@
+{
+  "revision": "4244ce3e7af4c14018a2c1f615d255c88964767e",
+  "verified_artifact_files": 104,
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "a8f453472e96d4cd9a7a9f52b1cb2ea03441b0843a46ee1e0a0d9343d5841f4e",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    },
+    {
+      "fixture": "product-pytest/f9-native-package1/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "6f57b9a856e40c4fcc639f789dd696de412f861424fea877c8b6a3ea7b6e9d2d",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    }
+  ],
+  "summary_effective_returncode": 1,
+  "run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/34856938381",
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.571
+    },
+    "product": {
+      "collected": 161,
+      "counts": {
+        "passed": 158,
+        "failed": 3
+      },
+      "seconds": 2061.046
+    }
+  },
+  "failure_cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_recovery_restart::test_actual_handoff_execs_fresh_recovery_ui[handoff]",
+      "seconds": 113.091
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+      "seconds": 210.876
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+      "seconds": 242.588
+    }
+  ],
+  "git_blobs": {
+    "revision": "4244ce3e7af4c14018a2c1f615d255c88964767e",
+    "source_clean": true,
+    "python_git_blobs": 2474,
+    "installed_receipts": 2,
+    "matching_modes": {
+      "windows_crlf": 2442,
+      "exact": 32
+    },
+    "mismatches": []
+  }
+}

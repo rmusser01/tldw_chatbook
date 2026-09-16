@@ -42,6 +42,7 @@ HEAVY_JOB_KEYS = {
     "textual-minimum",
     "all-tests",
     "test-summary",
+    "backup-platform-windows",
 }
 STANDALONE_WORKFLOWS = (
     "derived-artifacts.yml",
@@ -112,6 +113,9 @@ def test_heavy_tests_run_only_on_main_push_or_manual_dispatch() -> None:
     assert set(triggers) == {"push", "workflow_dispatch"}
     assert triggers["push"]["branches"] == ["main"]
     assert set(workflow["jobs"]) == HEAVY_JOB_KEYS
+    assert workflow["jobs"]["backup-platform-windows"]["if"] == (
+        "github.event_name == 'workflow_dispatch' && inputs.backup_platform_only == true"
+    )
     assert workflow["permissions"] == {"contents": "read"}
     assert "createComment" not in (WORKFLOW_ROOT / "test.yml").read_text()
 

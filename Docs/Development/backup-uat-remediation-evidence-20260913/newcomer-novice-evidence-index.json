@@ -1,0 +1,107 @@
+{
+  "task": "TASK-32562",
+  "files": [
+    {
+      "file": "novice-f69-journey-report.md",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/evidence/novice-newcomer-uat-report.md",
+      "bytes": 4260,
+      "sha256": "6d963c20f16ecf2b9a8b98641a2d61e61a47a5dc5def05f96f75d682971ea691"
+    },
+    {
+      "file": "novice-complete-review.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/evidence/novice-24-complete-review-after.txt",
+      "bytes": 9892,
+      "sha256": "cd3778daa142ae9989a39002f6e1c37b702629112d9d6cb28b401dbfea03d763"
+    },
+    {
+      "file": "novice-verified-capture.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/evidence/novice-26-capture-status-after.txt",
+      "bytes": 9971,
+      "sha256": "b30f251a9582ac91e27216a49f60bc26484875e0e9a7824454b30a95484e9878"
+    },
+    {
+      "file": "novice-archive-readback.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/evidence/novice-archive-verification.json",
+      "bytes": 627,
+      "sha256": "01ad13a1b13b65075b3e46149a130957101e3b0491fc134d64a347d7637d7705"
+    },
+    {
+      "file": "novice-restored-note-and-resumed-write.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/evidence/newcomer-restored-note-and-live-write.json",
+      "bytes": 830,
+      "sha256": "e9005d80df2182f24ffa0d13bd03649a80e3267291b4057fad4e0824e872059d"
+    },
+    {
+      "file": "novice-f69-installed-hashes.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/evidence/novice-newcomer-installed-after-child.json",
+      "bytes": 94,
+      "sha256": "ee0aab51d48cf459c0ead95ed423b70634f859eb13d0d552a3533b8038b22fb5"
+    },
+    {
+      "file": "newcomer-f69-failed-open-quit.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/evidence/newcomer-31-parent-open-result-after.txt",
+      "bytes": 7316,
+      "sha256": "ce3bf34da8cfba218d8bad287053ed1df1420b614a9d9f6f2169fab8aed2bbcb"
+    },
+    {
+      "file": "newcomer-f69-failed-config-delta.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/evidence/newcomer-open-failure-config-delta.json",
+      "bytes": 1005,
+      "sha256": "7673e5697ff5780fef577157860fc9594fb72d87c71020e1e81705ee52752061"
+    },
+    {
+      "file": "newcomer-c8-open-quit-report.md",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/newcomer-open-quit-uat-report.md",
+      "bytes": 3253,
+      "sha256": "29625ad8a9d2c8766e9e33ed879375a751eee5af1e98293533b7bf14160007b0"
+    },
+    {
+      "file": "newcomer-c8-restoration-validated.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/newcomer-15-restoration-result-after.txt",
+      "bytes": 6326,
+      "sha256": "56a13afcbf4b6682c6005c7d83ea3377fe59c3e5b1cc4eff091fd8fa0e539691"
+    },
+    {
+      "file": "newcomer-c8-console-mounted.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/newcomer-19-child-mounted-after.txt",
+      "bytes": 3170,
+      "sha256": "945bc1355c293bb177a059f0dd483a19902b9593e3f7df3ae6b3922b4f83034d"
+    },
+    {
+      "file": "newcomer-c8-normal-quit-parent.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/newcomer-20-child-normal-quit-after.txt",
+      "bytes": 7266,
+      "sha256": "6c564d8030930a2018d866994242b943972e7fd222e67157c75c74ffcd44bceb"
+    },
+    {
+      "file": "newcomer-c8-parent-profile-validated.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/newcomer-21-parent-result-after.txt",
+      "bytes": 7240,
+      "sha256": "708d3dc338c49e645d23ea3120d442ff1eedbaee40b390eb989b8c654322acc1"
+    },
+    {
+      "file": "newcomer-c8-artifact-hashes.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/newcomer-artifact-before.json",
+      "bytes": 279,
+      "sha256": "2a52f6eabb968171420ef9deed3c143a39255e0ac11aba1636bd254e20b3f292"
+    },
+    {
+      "file": "newcomer-c8-before-open-readback.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/newcomer-before-open.json",
+      "bytes": 426,
+      "sha256": "5ebf445aca690b9a326e226a5e3e9f57e5eff23ab51d1872e6a2dce43817103d"
+    },
+    {
+      "file": "newcomer-c8-mounted-config-receipt.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/newcomer-child-mounted.json",
+      "bytes": 340,
+      "sha256": "4fbc7de9fdc28bb87669cc3d3b701c93252be8482159ff1b3a39f5506a10ffc2"
+    },
+    {
+      "file": "newcomer-c8-after-quit-verification.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/newcomer-after-quit.json",
+      "bytes": 945,
+      "sha256": "9ca12abe869211d05431e0e9087ffefa4553e4c55c6510ffdbfb5ac0e13adae8"
+    }
+  ]
+}

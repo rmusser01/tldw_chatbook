@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,7 +10,10 @@ import pytest
 from textual.widgets import Button, Input, Select, Static
 from textual.widgets._select import SelectOverlay
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.gguf_source_modes import (
     GGUFSourceMode,
     GGUFSourceSelection,
@@ -27,9 +30,6 @@ from tldw_chatbook.UI import LLM_Management_Window as window_module
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens import llm_screen as llm_screen_module
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
-from tldw_chatbook.app import TldwCli
-from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
-
 
 REF_A = ArtifactRef("managed-a", "a" * 40, "q4_k_m")
 REF_B = ArtifactRef("managed-b", "b" * 40, "q8_0")
@@ -919,8 +919,10 @@ async def test_accepted_start_immediately_fences_every_source_control(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_claim_authority_survives_screen_recompose_and_not_window_selection(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     app, pilot, context, screen, window, _service = await _mount_models(monkeypatch)
     try:
@@ -1177,8 +1179,10 @@ async def test_disabled_gguf_controls_keep_live_compositor_contrast(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     async def load_fixture_profiles(screen: LLMScreen) -> None:
         screen._accept_vllm_profiles(screen._vllm_profiles)
@@ -1345,11 +1349,13 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
     ("provider", "view_name"),
     (("llamacpp", "llama-cpp"), ("llamafile", "llamafile")),
 )
+@private_profile_test
 async def test_supported_width_keyboard_reaches_each_provider_source_and_actions(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     provider: str,
     view_name: str,
+    request: pytest.FixtureRequest,
 ) -> None:
     choices = (
         ManagedGGUFChoice(

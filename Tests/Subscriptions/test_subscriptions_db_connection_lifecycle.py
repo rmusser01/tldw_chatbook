@@ -158,7 +158,8 @@ def test_close_checkpoints_and_truncates_the_wal(db, tmp_path):
     try:
         for index in range(300):
             db.add_subscription(
-                name=f"s{index}", type="rss", source=f"https://e.invalid/{index}.xml"
+                name=f"s{index}", type="rss", source=f"https://e.invalid/{index}.xml",
+                auto_pause_threshold=10,
             )
         assert _wal_bytes(tmp_path) > 0, "nothing was written to the WAL to settle"
 
@@ -324,7 +325,8 @@ def test_close_all_connections_settles_the_file_and_reports_the_rest(db, tmp_pat
     with _worker_holding_a_connection(db):
         for index in range(300):
             db.add_subscription(
-                name=f"s{index}", type="rss", source=f"https://e.invalid/{index}.xml"
+                name=f"s{index}", type="rss", source=f"https://e.invalid/{index}.xml",
+                auto_pause_threshold=10,
             )
 
         remaining = db.close_all_connections()
@@ -465,7 +467,8 @@ def test_the_exit_hook_settles_a_registered_database(tmp_path):
     try:
         for index in range(300):
             database.add_subscription(
-                name=f"s{index}", type="rss", source=f"https://e.invalid/{index}.xml"
+                name=f"s{index}", type="rss", source=f"https://e.invalid/{index}.xml",
+                auto_pause_threshold=10,
             )
         wal = tmp_path / "hooked.db-wal"
         assert wal.stat().st_size > 0

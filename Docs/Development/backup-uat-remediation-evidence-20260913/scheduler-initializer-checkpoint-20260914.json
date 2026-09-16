@@ -1,0 +1,23 @@
+{
+  "results": [
+    {
+      "variant": "complete",
+      "returncode": 0,
+      "log": "/private/tmp/uat-scheduler-initializer-_4q_pzp7/complete/run.log"
+    },
+    {
+      "variant": "pause",
+      "returncode": 0,
+      "log": "/private/tmp/uat-scheduler-initializer-_4q_pzp7/pause/run.log"
+    }
+  ],
+  "hashes": {
+    "/private/tmp/uat-scheduler-initializer-probe.py": "01243dedd6e5ac39a10755330826e033992dd3912dec73d74035f635504a763c",
+    "/private/tmp/uat-scheduler-initializer-results.json": "3b0ac7432d98c4a6492864e36cbd653b4151e759050677fa9f7756e2d7917010",
+    "/private/tmp/uat-scheduler-initializer-_4q_pzp7/complete/run.log": "7afd42b56273527965ba2e275038c5f82623f5b4e2258cb9ca156ad377530430",
+    "/private/tmp/uat-scheduler-initializer-_4q_pzp7/pause/run.log": "dd25d2e2b54de868760663f56a466eaa2fb075c73f2fc54538727497aa983865"
+  },
+  "conclusion": "Native arranged contention settles after initializer release and retains real maintenance worker. This does not reproduce or resolve the Windows delay. No product change justified.",
+  "outer_launcher_limit_seconds": 30,
+  "review": "scheduler-initializer-causal-review-20260914.md"
+}

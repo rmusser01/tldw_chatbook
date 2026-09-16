@@ -1,0 +1,57 @@
+{
+  "scope": "Skip a progress timer tick only while its current descendant is absent. No backup guard, selection, worker cadence, or timeout changes.",
+  "base_revision": "9affd29ca07530528bfb408899fd6bf82d3866d4",
+  "red": {
+    "test": "test_progress_tick_during_descendant_replacement_keeps_console_usable",
+    "outcome": "NoMatches at left_rail.py:2556",
+    "log": "/private/tmp/uat-console-progress-red2.log",
+    "first_harness_failure": "raw_source_selection_changed before timer; not counted as RED"
+  },
+  "root_focused": {
+    "passed": 5,
+    "seconds": 3.57
+  },
+  "root_rail_lifecycle": {
+    "passed": 3,
+    "failed": 1,
+    "seconds": 6.94,
+    "failure": "Existing fixture raw_source_selection_changed before rail construction; reproduced against exact HEAD callback by independent review."
+  },
+  "independent": {
+    "regression_passed": 1,
+    "seconds": 2.46,
+    "existing_progress_module": {
+      "passed": 3,
+      "failed": 4,
+      "baseline_same_outcomes": true
+    }
+  },
+  "installed_settings": {
+    "installed_python_matches": 2474,
+    "mismatches": [],
+    "wheel_sha256": "6ca3eab96b365d9c69907962944f88aa6d5925133a1673619d9bbff033e1f5fc",
+    "installed_files": 2866,
+    "test_passed": true,
+    "source": "working tree with bounded progress timer correction",
+    "base_revision": "9affd29ca07530528bfb408899fd6bf82d3866d4",
+    "product_left_rail_sha256": "f0d67556a252ed1abe5e25191daa98f635d21e5ba9f18d66e25c8952db613160"
+  },
+  "installed_settings_seconds": 63.72,
+  "ruff": {
+    "current": 7,
+    "baseline": 7,
+    "new_findings": 0
+  },
+  "bandit": {
+    "current_assertions": 4,
+    "baseline_assertions": 1,
+    "nonassert_findings": 0,
+    "scan_errors": 0
+  },
+  "hashes": {
+    "tldw_chatbook/UI/Console_Modules/left_rail.py": "f0d67556a252ed1abe5e25191daa98f635d21e5ba9f18d66e25c8952db613160",
+    "Tests/Backup_Recovery/test_console_progress_timer.py": "9efce7b46d6fc9924a4b2641ca2bd7fe56461bcc022bdefcc16aadc2e4c5d0b5",
+    "Tests/Backup_Recovery/run_platform_product.py": "f96ec5d3f93d6dd1a01330b1fdbcf7b3ae4770e182ab682bd48980929ee6a92a"
+  },
+  "limitations": "The missing-descendant exception is fixed in the reproduced lifecycle. This does not establish the cause or resolution of the earlier Windows F4 Pilot wait. A native Windows repeat is required."
+}

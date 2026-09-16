@@ -1,0 +1,431 @@
+{
+  "task": "TASK-32628",
+  "implementation_revision": "5c5f5a6df7ea20bcfb486257e82480fc5691ff98",
+  "integrated_dev_revision": "657f70ffe7",
+  "selection": "Tests/Backup_Recovery/run_platform_product.py::_SELECTABLE_GROUP_TESTS",
+  "macos": {
+    "source_revision": "5c5f5a6df7ea20bcfb486257e82480fc5691ff98",
+    "runtime": {
+      "system": "Darwin",
+      "release": "25.5.0",
+      "machine": "arm64",
+      "python": "3.12.11"
+    },
+    "tests": {
+      "collected": 500,
+      "passed": 500,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 827.51
+    },
+    "junit_sha256": "9f8208d043835cdf1489549672b6a8d78994597e2c4f00580b22374869f45026",
+    "frozen_changed_python_files": 54,
+    "frozen_files_match_git": true,
+    "wheel_sha256": "51ae94032571911f84e2b382cbb1aa30d02dc09775c264f322aefc78c75d0d0d",
+    "installed_files": 2895,
+    "installed_files_sha256": "f06811492d9ac7a1a16fbb9f84cfed3e280d3708a3502aac425842d6fc8143fb",
+    "package_python_files_matching_git_wheel_and_install": 2506,
+    "static": {
+      "parsed_python_files": 54,
+      "production_files": 25,
+      "ruff_current": 54,
+      "ruff_baseline": 54,
+      "new_ruff_findings": 0,
+      "bandit_findings": 4,
+      "bandit_baseline_findings": 4,
+      "new_bandit_findings": 0,
+      "bandit_errors": 0,
+      "diff_check_returncode": 0
+    }
+  },
+  "linux": {
+    "delta_sha256": "683da3616e8823797c3b174a49d7762e42bc92e5f652ffd3b103d715658ed8c7",
+    "installed": [
+      {
+        "file_count": 2895,
+        "files_sha256": "c2f3ae92a38eaf81a6dce9a0fa30487ae30d87c2aa1a79a3989ef39d5b2d45d1",
+        "wheel_sha256": "8edde311dea9a538e86e7a9eff47c6493f2e2185eb98e4857cf1be00138b269e"
+      }
+    ],
+    "manifest_sha256": "c8a68e2db8f44df2bcf9aa2e245d260d1e474b9ba4b1746ce3db768d6a0ed9c6",
+    "pytest_returncode": 0,
+    "qualified": true,
+    "runtime": {
+      "machine": "x86_64",
+      "python": "3.12.8",
+      "release": "6.12.107+deb13-amd64",
+      "system": "Linux"
+    },
+    "source_files": 16912,
+    "source_revision": "5c5f5a6df7ea20bcfb486257e82480fc5691ff98",
+    "source_unchanged": true,
+    "status": {
+      "collected": 500,
+      "counts": {
+        "failed": 0,
+        "passed": 500,
+        "skipped": 0
+      },
+      "failed_ordinals": [],
+      "unfinished": 0
+    },
+    "audit": {
+      "duration_seconds": 901.84,
+      "package_python_files_matching_manifest_wheel_and_install": 2506,
+      "raw_logs_remain_on_host": true,
+      "source_revision": "5c5f5a6df7ea20bcfb486257e82480fc5691ff98"
+    }
+  },
+  "windows": {
+    "run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35070813386",
+    "qualified": true,
+    "source_revision": "39c4c286d8fa5a3d5838c3de1d78a73cedf61307",
+    "source_files_matching_git": 16914,
+    "files_with_native_crlf_conversion": 15696,
+    "source_archive_sha256": "054497bc448c9d43d67eb27f37e983716ddd932fbd89e68bd478788bb7ede3ad",
+    "indexed_artifacts_verified": 43,
+    "artifact_index_sha256": "b6f97f84ad6d400ca844cf718b8c5e7b249eecf4465c4d6112000b35352c9ad1",
+    "native_identity": {
+      "machine": "AMD64",
+      "native_identity": {
+        "arch": "AMD64",
+        "filesystem": "NTFS",
+        "flags": 65472255,
+        "os": "Windows",
+        "python": "3.12.10",
+        "release": "2022Server"
+      },
+      "operations": {
+        "admission": [
+          true,
+          "supported_native_contract"
+        ],
+        "publish_directory": [
+          true,
+          "supported_native_contract"
+        ],
+        "publish_file": [
+          true,
+          "supported_native_contract"
+        ],
+        "publish_new": [
+          true,
+          "supported_native_contract"
+        ]
+      },
+      "os_name": "nt",
+      "platform": "Windows-2022Server-10.0.20348-SP0",
+      "python": "3.12.10",
+      "release": "2022Server",
+      "system": "Windows"
+    },
+    "phases": {
+      "native": {
+        "passed": 59,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 2.024,
+        "junit_sha256": "b2d6799536f0821ed86b2c4de5153b712f805513d815fc4b45645f5a98895f7a"
+      },
+      "product": {
+        "passed": 124,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 1165.839,
+        "junit_sha256": "4971f2c80dd5e79c5f1f837188b638ab67914af49a4b5d31395476a97f4f1d22"
+      }
+    },
+    "installed": [
+      {
+        "wheel_sha256": "5aa521d17adb195fc70f034f7dff251d8c24812e30ebcac7b53fbce03f84059e",
+        "file_count": 2895,
+        "files_sha256": "16cde64c7d61a26b5797eac0ffdcdf67f6dc5cde4c6131143e5f7c5d61742a52",
+        "python_files_matching_native_git_export": 2506
+      }
+    ],
+    "coverage_across_native_runs": {
+      "unique_product_cases_passed": 500,
+      "original_full_run": "35062911011",
+      "corrective_run": "35070813386",
+      "latest_run_product_cases": 124,
+      "production_and_packaging_unchanged": true,
+      "original_junit_sha256": "80e1153836644bdc72025603132dce4a3278565bbc57c9e6fcd74b8f5c5f49d9"
+    }
+  },
+  "fixture_followup": {
+    "source_revision": "f5f15f6548d28ec64fcf745be66d485aca3846d3",
+    "production_unchanged_from": "5c5f5a6df7ea20bcfb486257e82480fc5691ff98",
+    "macos": {
+      "passed": 160,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 279.87,
+      "selection": "124 diagnostic product cases plus 36 CI contracts"
+    },
+    "linux": {
+      "delta_sha256": "66016b2e1c9bd11b22fc2c372b0b61fd558a0e516126e7a824380522b4ff11cf",
+      "installed": [
+        {
+          "file_count": 2895,
+          "files_sha256": "c30d7406f572a63f7b8c3afecb4279fba8639285838120f96378a2b57b75ccd0",
+          "wheel_sha256": "34c265d7d60693185d52eb7856898caba0fe22123b7f6db6c977a4f93c66401a"
+        }
+      ],
+      "manifest_sha256": "7b27cf78284fb3c00517c3e9647a99af44c5205e9df80f29f22419fda86289a6",
+      "pytest_returncode": 0,
+      "qualified": true,
+      "runtime": {
+        "machine": "x86_64",
+        "python": "3.12.8",
+        "release": "6.12.107+deb13-amd64",
+        "system": "Linux"
+      },
+      "source_files": 16914,
+      "source_revision": "f5f15f6548d28ec64fcf745be66d485aca3846d3",
+      "source_unchanged": true,
+      "status": {
+        "collected": 124,
+        "counts": {
+          "failed": 0,
+          "passed": 124,
+          "skipped": 0
+        },
+        "failed_ordinals": [],
+        "unfinished": 0
+      },
+      "audit": {
+        "duration_seconds": 299.6,
+        "package_python_files_matching_manifest_wheel_and_install": 2506,
+        "raw_logs_remain_on_host": true,
+        "source_revision": "f5f15f6548d28ec64fcf745be66d485aca3846d3"
+      }
+    },
+    "static": {
+      "parsed_files": 9,
+      "ruff_findings": 0,
+      "bandit_test_assertions_excluded": true,
+      "bandit_current": 3,
+      "bandit_baseline": 3,
+      "new_bandit_findings": 0,
+      "bandit_errors": 0
+    },
+    "windows": {
+      "run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35068720686",
+      "qualified": false,
+      "source_revision": "f5f15f6548d28ec64fcf745be66d485aca3846d3",
+      "source_files_matching_git": 16914,
+      "files_with_native_crlf_conversion": 15696,
+      "source_archive_sha256": "e3bbb85cc8725275a8f163f8f8b115cb3363eb4cae5544662c3c90ef8897d8d2",
+      "indexed_artifacts_verified": 37,
+      "artifact_index_sha256": "e467515182e20e60c28eece9af41c44094c8e094d0961a58235a9b9fc41098a8",
+      "native_identity": {
+        "machine": "AMD64",
+        "native_identity": {
+          "arch": "AMD64",
+          "filesystem": "NTFS",
+          "flags": 65472255,
+          "os": "Windows",
+          "python": "3.12.10",
+          "release": "2022Server"
+        },
+        "operations": {
+          "admission": [
+            true,
+            "supported_native_contract"
+          ],
+          "publish_directory": [
+            true,
+            "supported_native_contract"
+          ],
+          "publish_file": [
+            true,
+            "supported_native_contract"
+          ],
+          "publish_new": [
+            true,
+            "supported_native_contract"
+          ]
+        },
+        "os_name": "nt",
+        "platform": "Windows-2022Server-10.0.20348-SP0",
+        "python": "3.12.10",
+        "release": "2022Server",
+        "system": "Windows"
+      },
+      "phases": {
+        "native": {
+          "passed": 59,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "duration_seconds": 2.09,
+          "junit_sha256": "debfded8401c8cefce425c94e26422b87f8539d9b1a168cd98713062d069faab"
+        },
+        "product": {
+          "passed": 123,
+          "failed": 1,
+          "errors": 0,
+          "skipped": 0,
+          "duration_seconds": 911.857,
+          "junit_sha256": "b8948b52d94f7640ac33f39d95b4315265708065f19d879fc17d5562513c9d67"
+        }
+      },
+      "installed": [
+        {
+          "wheel_sha256": "38365eef4794e704a00347e491b4b943fd7e5ddfb6511a75498ed93d66d84f54",
+          "file_count": 2895,
+          "files_sha256": "b33985277446e099b4c8077db0a7959cbb64080ca5eeb7ecd36ecd93305f8e98",
+          "python_files_matching_native_git_export": 2506
+        }
+      ]
+    }
+  },
+  "credential_readiness": {
+    "source_revision": "39c4c286d8fa5a3d5838c3de1d78a73cedf61307",
+    "production_unchanged_from": "5c5f5a6df7ea20bcfb486257e82480fc5691ff98",
+    "macos": {
+      "source_revision": "39c4c286d8fa5a3d5838c3de1d78a73cedf61307",
+      "runtime": {
+        "system": "Darwin",
+        "release": "25.5.0",
+        "machine": "arm64",
+        "python": "3.12.11"
+      },
+      "tests": {
+        "collected": 12,
+        "passed": 12,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 85.64
+      },
+      "junit_sha256": "7ab1baca782843dab97681f02ea3a0ea06cb8458750a984d1b5a8efa470a7986",
+      "wheel_sha256": "794c6f2b52dff5a30b4ef9c735d719a2a0cef1784aec833668d63842fcc087da",
+      "installed_files": 2895,
+      "installed_files_sha256": "d9ba75e286263c0db2b1f1d523a9674a1a15dd73fcfad2895c1023440da09738",
+      "package_python_files_matching_git_wheel_and_install": 2506,
+      "static": {
+        "parsed_module_and_flow": true,
+        "ruff_findings": 0,
+        "bandit_findings": 1,
+        "bandit_baseline_findings": 1,
+        "new_bandit_findings": 0,
+        "bandit_errors": 0
+      },
+      "changed_test_module_matches_git": true
+    },
+    "linux": {
+      "delta_sha256": "db1727a0562ee94972ce451a448ed6a31733b248489aaff6bbfba80280b17fd8",
+      "installed": [
+        {
+          "file_count": 2895,
+          "files_sha256": "95eee4235ddd0b175606bfd56ded4a577b14042d4b06739ac814ef08dd45a501",
+          "wheel_sha256": "26f60095c5d54b6e81fd99d7cbfd7e194e5d9795a1bbc588bb96b833f2dd497c"
+        }
+      ],
+      "manifest_sha256": "bd7fcb22240e16ad14ec78fecc08eed62b9134f70208c8f40b33a28ed33c5fe2",
+      "pytest_returncode": 0,
+      "qualified": true,
+      "runtime": {
+        "machine": "x86_64",
+        "python": "3.12.8",
+        "release": "6.12.107+deb13-amd64",
+        "system": "Linux"
+      },
+      "source_files": 16914,
+      "source_revision": "39c4c286d8fa5a3d5838c3de1d78a73cedf61307",
+      "source_unchanged": true,
+      "status": {
+        "collected": 1,
+        "counts": {
+          "failed": 0,
+          "passed": 1,
+          "skipped": 0
+        },
+        "failed_ordinals": [],
+        "unfinished": 0
+      },
+      "audit": {
+        "duration_seconds": 92.95,
+        "package_python_files_matching_manifest_wheel_and_install": 2506,
+        "raw_logs_remain_on_host": true,
+        "source_revision": "39c4c286d8fa5a3d5838c3de1d78a73cedf61307"
+      }
+    }
+  },
+  "windows_initial": {
+    "run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35062911011",
+    "qualified": false,
+    "source_revision": "5d448a15774dfd7edbd748de1dfa4aac2a84e908",
+    "source_files_matching_git": 16912,
+    "files_with_native_crlf_conversion": 15694,
+    "source_archive_sha256": "ec2f04a037c60cfd82a01f6e7cc3aeee0f92a7298af8602faed22b6e7f138358",
+    "indexed_artifacts_verified": 53,
+    "artifact_index_sha256": "15ce157a4629678e3f1a46c3ea2a43ab81f7bfeea03e400489a0e4d9d6d16b17",
+    "native_identity": {
+      "machine": "AMD64",
+      "native_identity": {
+        "arch": "AMD64",
+        "filesystem": "NTFS",
+        "flags": 65472255,
+        "os": "Windows",
+        "python": "3.12.10",
+        "release": "2022Server"
+      },
+      "operations": {
+        "admission": [
+          true,
+          "supported_native_contract"
+        ],
+        "publish_directory": [
+          true,
+          "supported_native_contract"
+        ],
+        "publish_file": [
+          true,
+          "supported_native_contract"
+        ],
+        "publish_new": [
+          true,
+          "supported_native_contract"
+        ]
+      },
+      "os_name": "nt",
+      "platform": "Windows-2022Server-10.0.20348-SP0",
+      "python": "3.12.10",
+      "release": "2022Server",
+      "system": "Windows"
+    },
+    "phases": {
+      "native": {
+        "passed": 59,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 1.824,
+        "junit_sha256": "cba494d87f97d57e184c2cc3882b41822909610fd29915a8150183af1aa8bf46"
+      },
+      "product": {
+        "passed": 472,
+        "failed": 22,
+        "errors": 6,
+        "skipped": 0,
+        "duration_seconds": 3176.15,
+        "junit_sha256": "80e1153836644bdc72025603132dce4a3278565bbc57c9e6fcd74b8f5c5f49d9"
+      }
+    },
+    "installed": [
+      {
+        "wheel_sha256": "5c6934c71ee4b687110d9adf2cb32fe7cd8d8ab83042829ff1d71f6ca0653fc5",
+        "file_count": 2895,
+        "files_sha256": "279d655e9d99e11a21c8fcdabbd3bb251b4164945d851a1f38d237ea0ab910ee",
+        "python_files_matching_native_git_export": 2506
+      }
+    ]
+  },
+  "qualified": true,
+  "qualification_completed": "2026-09-16"
+}

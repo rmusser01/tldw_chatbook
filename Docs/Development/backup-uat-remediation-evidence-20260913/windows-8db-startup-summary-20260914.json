@@ -1,0 +1,755 @@
+{
+  "revision": "8db7465e6110726307f2d5ef745646e00f939a9f",
+  "run": 34923085663,
+  "job": 104235243302,
+  "log_sha256": "abd97c1c6739f7cd35adf6cf014e0b367deb351a696d503493b2ca7e4f263d3f",
+  "outcomes": {
+    "non_ui_pass": 31,
+    "non_ui_seconds": 9.69,
+    "primary_timeout_nodes": [
+      "Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection",
+      "Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable",
+      "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]",
+      "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]"
+    ],
+    "primary_deadline_seconds": 60,
+    "dev_diagnostic": {
+      "passed": 1,
+      "warnings": 1,
+      "pytest_total_seconds": 65.15,
+      "test_call_seconds": 46.87,
+      "teardown_seconds": 2.68
+    },
+    "candidate_diagnostic_timeout": true
+  },
+  "profile_count": 9,
+  "profiles": [
+    {
+      "line": 1909,
+      "label": "dev",
+      "elapsed_seconds": 13.922,
+      "sha256": "82c81a550f042525d112dc8598a7c9a1f250cfad7525925805ecd0e818cf5148",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_counts": {},
+      "config_active": [],
+      "config_slowest": {},
+      "config_errors": [],
+      "dropped_active": 0
+    },
+    {
+      "line": 1962,
+      "label": "dev",
+      "elapsed_seconds": 29.969,
+      "sha256": "58c68028ec551977b5bd3c2f620eeb24908c0cf54077f3ba74831ec3486a60fb",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_counts": {
+        "settings_rebuild": 1,
+        "user_directory": 8
+      },
+      "config_active": [],
+      "config_slowest": {
+        "user_directory": {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 8344,
+          "elapsed_seconds": 0.175071,
+          "thread_cpu_seconds": 0.0
+        },
+        "settings_rebuild": {
+          "function": "settings_rebuild",
+          "outcome": "returned",
+          "thread": 8344,
+          "elapsed_seconds": 0.01951,
+          "thread_cpu_seconds": 0.03125
+        }
+      },
+      "config_errors": [],
+      "dropped_active": 0
+    },
+    {
+      "line": 1965,
+      "label": "dev",
+      "elapsed_seconds": 47.234,
+      "sha256": "9336fe6ef9f495324ab33bd65deae610fce66910523d35b5efd93c375395dd7f",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_counts": {
+        "settings_rebuild": 2,
+        "user_directory": 21,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1
+      },
+      "config_active": [],
+      "config_slowest": {
+        "user_directory": {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 8344,
+          "elapsed_seconds": 0.204645,
+          "thread_cpu_seconds": 0.0
+        },
+        "settings_rebuild": {
+          "function": "settings_rebuild",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.024082,
+          "thread_cpu_seconds": 0.0
+        },
+        "publication": {
+          "function": "publication",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.058027,
+          "thread_cpu_seconds": 0.0
+        },
+        "config_lock": {
+          "function": "config_lock",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.697546,
+          "thread_cpu_seconds": 0.171875,
+          "acquisition_seconds": 0.076807,
+          "body_and_release_seconds": 0.620739
+        },
+        "transaction": {
+          "function": "transaction",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.697686,
+          "thread_cpu_seconds": 0.171875
+        }
+      },
+      "config_errors": [],
+      "dropped_active": 0
+    },
+    {
+      "line": 1969,
+      "label": "dev",
+      "elapsed_seconds": 65.766,
+      "sha256": "1fd0b5308f213dad94f29f33d8fb4f5353f4815bdf3d8ab74ce2d6ea27badaa1",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_counts": {
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1
+      },
+      "config_active": [],
+      "config_slowest": {
+        "user_directory": {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 7868,
+          "elapsed_seconds": 0.317675,
+          "thread_cpu_seconds": 0.0
+        },
+        "settings_rebuild": {
+          "function": "settings_rebuild",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.024082,
+          "thread_cpu_seconds": 0.0
+        },
+        "publication": {
+          "function": "publication",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.058027,
+          "thread_cpu_seconds": 0.0
+        },
+        "config_lock": {
+          "function": "config_lock",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.697546,
+          "thread_cpu_seconds": 0.171875,
+          "acquisition_seconds": 0.076807,
+          "body_and_release_seconds": 0.620739
+        },
+        "transaction": {
+          "function": "transaction",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.697686,
+          "thread_cpu_seconds": 0.171875
+        }
+      },
+      "config_errors": [],
+      "dropped_active": 0
+    },
+    {
+      "line": 1970,
+      "label": "dev",
+      "elapsed_seconds": 68.656,
+      "sha256": "80835bf15ce836ae7fe59dfeccac1797d094b3bbba88b98eb8aa6efd01231ab0",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_counts": {
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1
+      },
+      "config_active": [],
+      "config_slowest": {
+        "user_directory": {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 7868,
+          "elapsed_seconds": 0.317675,
+          "thread_cpu_seconds": 0.0
+        },
+        "settings_rebuild": {
+          "function": "settings_rebuild",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.024082,
+          "thread_cpu_seconds": 0.0
+        },
+        "publication": {
+          "function": "publication",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.058027,
+          "thread_cpu_seconds": 0.0
+        },
+        "config_lock": {
+          "function": "config_lock",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.697546,
+          "thread_cpu_seconds": 0.171875,
+          "acquisition_seconds": 0.076807,
+          "body_and_release_seconds": 0.620739
+        },
+        "transaction": {
+          "function": "transaction",
+          "outcome": "returned",
+          "thread": 9352,
+          "elapsed_seconds": 0.697686,
+          "thread_cpu_seconds": 0.171875
+        }
+      },
+      "config_errors": [],
+      "dropped_active": 0
+    },
+    {
+      "line": 2006,
+      "label": "candidate",
+      "elapsed_seconds": 14.343,
+      "sha256": "1b7b691a21a301013622b9e83e93b49d0567ab751ad4f9ab7877ea1af3df8c34",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_counts": {
+        "user_directory": 2
+      },
+      "config_active": [],
+      "config_slowest": {
+        "user_directory": {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 9656,
+          "elapsed_seconds": 0.485829,
+          "thread_cpu_seconds": 0.484375
+        }
+      },
+      "config_errors": [],
+      "dropped_active": 0
+    },
+    {
+      "line": 2030,
+      "label": "candidate",
+      "elapsed_seconds": 29.0,
+      "sha256": "aef2ff7fbf6110a98aede1c3243ba12161ed22e00fea1a806724e930f4909c7a",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_counts": {
+        "user_directory": 8
+      },
+      "config_active": [
+        {
+          "function": "user_directory",
+          "thread": 9656,
+          "phase": "running",
+          "elapsed_seconds": 4.658943
+        }
+      ],
+      "config_slowest": {
+        "user_directory": {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 9656,
+          "elapsed_seconds": 0.49278,
+          "thread_cpu_seconds": 0.46875
+        }
+      },
+      "config_errors": [],
+      "dropped_active": 0
+    },
+    {
+      "line": 2043,
+      "label": "candidate",
+      "elapsed_seconds": 44.906,
+      "sha256": "a3bb5779a76d0b9f7db41bebf4e932522c1ab6f588843413c51114efdd4fdde9",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_counts": {
+        "user_directory": 13
+      },
+      "config_active": [],
+      "config_slowest": {
+        "user_directory": {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 9656,
+          "elapsed_seconds": 5.139337,
+          "thread_cpu_seconds": 0.5
+        }
+      },
+      "config_errors": [],
+      "dropped_active": 0
+    },
+    {
+      "line": 2044,
+      "label": "candidate",
+      "elapsed_seconds": 61.0,
+      "sha256": "2e280e2dd2901bfc35b54f59fb71562718287c35cccb3424481aa227892cba2c",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_counts": {
+        "user_directory": 15
+      },
+      "config_active": [],
+      "config_slowest": {
+        "user_directory": {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 9656,
+          "elapsed_seconds": 5.139337,
+          "thread_cpu_seconds": 0.5
+        }
+      },
+      "config_errors": [],
+      "dropped_active": 0
+    }
+  ],
+  "final_threads": [
+    {
+      "label": "Stack of asyncio_6 (4680)",
+      "line": 2049,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 93,
+          "function": "_worker"
+        },
+        {
+          "file": "thread.py",
+          "line": 59,
+          "function": "run"
+        },
+        {
+          "file": "_win_sleep.py",
+          "line": 100,
+          "function": "wait_inner"
+        }
+      ],
+      "frame_count": 6
+    },
+    {
+      "label": "Stack of asyncio_5 (7768)",
+      "line": 2062,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ],
+      "frame_count": 4
+    },
+    {
+      "label": "Stack of asyncio_4 (3464)",
+      "line": 2071,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ],
+      "frame_count": 4
+    },
+    {
+      "label": "Stack of ui-stall-persist (6724)",
+      "line": 2080,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "ui_responsiveness.py",
+          "line": 118,
+          "function": "_drain_stalls"
+        },
+        {
+          "file": "queue.py",
+          "line": 180,
+          "function": "get"
+        },
+        {
+          "file": "threading.py",
+          "line": 359,
+          "function": "wait"
+        }
+      ],
+      "frame_count": 6
+    },
+    {
+      "label": "Stack of asyncio_3 (4040)",
+      "line": 2093,
+      "frames": [
+        {
+          "file": "native_files.py",
+          "line": 41,
+          "function": "pinned_directory"
+        },
+        {
+          "file": "windows_files.py",
+          "line": 686,
+          "function": "open"
+        },
+        {
+          "file": "windows_files.py",
+          "line": 545,
+          "function": "open_handle"
+        },
+        {
+          "file": "windows_files.py",
+          "line": 428,
+          "function": "info"
+        }
+      ],
+      "frame_count": 4
+    },
+    {
+      "label": "Stack of asyncio_2 (6944)",
+      "line": 2102,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ],
+      "frame_count": 4
+    },
+    {
+      "label": "Stack of asyncio_1 (6248)",
+      "line": 2111,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ],
+      "frame_count": 4
+    },
+    {
+      "label": "Stack of asyncio_0 (2760)",
+      "line": 2120,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ],
+      "frame_count": 4
+    },
+    {
+      "label": "Stack of chatbook-storage-admission (4976)",
+      "line": 2129,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "storage_admission.py",
+          "line": 512,
+          "function": "_run"
+        },
+        {
+          "file": "threading.py",
+          "line": 655,
+          "function": "wait"
+        },
+        {
+          "file": "threading.py",
+          "line": 355,
+          "function": "wait"
+        }
+      ],
+      "frame_count": 6
+    },
+    {
+      "label": "Stack of backup-startup-profile (8184)",
+      "line": 2142,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "startup_timing_diagnostic.py",
+          "line": 261,
+          "function": "sample"
+        },
+        {
+          "file": "threading.py",
+          "line": 655,
+          "function": "wait"
+        },
+        {
+          "file": "threading.py",
+          "line": 359,
+          "function": "wait"
+        }
+      ],
+      "frame_count": 6
+    },
+    {
+      "label": "Stack of MainThread (9656)",
+      "line": 2155,
+      "frames": [
+        {
+          "file": "widget.py",
+          "line": 4714,
+          "function": "_on_compose"
+        },
+        {
+          "file": "widget.py",
+          "line": 4718,
+          "function": "_compose"
+        },
+        {
+          "file": "compose.py",
+          "line": 54,
+          "function": "compose"
+        },
+        {
+          "file": "compact_model_bar.py",
+          "line": 46,
+          "function": "compose"
+        },
+        {
+          "file": "config.py",
+          "line": 8719,
+          "function": "get_cli_providers_and_models"
+        },
+        {
+          "file": "config_participants.py",
+          "line": 419,
+          "function": "wrapped"
+        },
+        {
+          "file": "contextlib.py",
+          "line": 137,
+          "function": "__enter__"
+        },
+        {
+          "file": "config_participants.py",
+          "line": 343,
+          "function": "operation"
+        }
+      ],
+      "frame_count": 54
+    }
+  ],
+  "candidate_user_directory": {
+    "completed": 15,
+    "wall_median": 0.489254,
+    "cpu_median": 0.484375,
+    "slowest": {
+      "function": "user_directory",
+      "outcome": "returned",
+      "thread": 9656,
+      "elapsed_seconds": 5.139337,
+      "thread_cpu_seconds": 0.5
+    }
+  },
+  "candidate_profile_selected_hot": [
+    {
+      "file": "Utils/windows_files.py",
+      "function": "fstat",
+      "line": 699,
+      "calls": 69976,
+      "total_seconds": 28.974757,
+      "self_seconds": 0.185356
+    },
+    {
+      "file": "Backup_Recovery/storage_admission.py",
+      "function": "acquire_storage",
+      "line": 830,
+      "calls": 271,
+      "total_seconds": 27.887609,
+      "self_seconds": 0.002713
+    },
+    {
+      "file": "app.py",
+      "function": "__init__",
+      "line": 7785,
+      "calls": 1,
+      "total_seconds": 22.862134,
+      "self_seconds": 0.000673
+    },
+    {
+      "file": "Backup_Recovery/bootstrap.py",
+      "function": "_registry",
+      "line": 281,
+      "calls": 1384,
+      "total_seconds": 17.659126,
+      "self_seconds": 0.036157
+    }
+  ],
+  "mac_layout_control": {
+    "samples": 24,
+    "wall_span": 34.1010079998523,
+    "cpu_span": 13.561854292000001,
+    "max_section_count": 6,
+    "sha256": "11319efa018a17b0a9b23b70a9140690f32a0e462fcdf4d2835452363129f208",
+    "not_windows_reproduction": true
+  }
+}

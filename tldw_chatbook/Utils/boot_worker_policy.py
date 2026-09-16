@@ -338,6 +338,12 @@ class StaggeredBootWorkerGate:
         self._in_flight.remove(key)
         return True
 
+    def defer(self, keys: Iterable[str]) -> None:
+        """Return admitted but unstarted work to the front of the queue."""
+        for key in reversed(tuple(keys)):
+            if self.complete(key) and not self._closed:
+                self._pending.appendleft(key)
+
     def close(self) -> tuple[str, ...]:
         """Stop admitting (shutdown) and drop whatever never started.
 

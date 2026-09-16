@@ -1,0 +1,37 @@
+{
+  "base": "9dff9dd1b2a73795eece24970ac43f1dc571c2b6",
+  "reviewed_files": {
+    "tldw_chatbook/Utils/windows_files.py": "d7122b58529895b564c061700365c9b58aa3948a36ce82f3472ae3d5a59d4d55",
+    "Tests/Utils/test_windows_security_decode.py": "af62b7d8f8e281c3841b9d30c00736c5cd5f649d8d7af709697db2a37b706ed8",
+    "Tests/Backup_Recovery/run_platform_product.py": "2d807c5d08c10c56b1a86593e77b6a2dc9fe9806e795c18426631881add01916"
+  },
+  "stage": "In Progress; Windows correctness and startup benefit pending",
+  "local": {
+    "passed": 40,
+    "windows_only_skipped": 19,
+    "seconds": 1.3
+  },
+  "independent": {
+    "passed": 40,
+    "skipped_native_windows": 19,
+    "seconds": 0.87,
+    "log": "/private/tmp/uat-security-decode-independent.log",
+    "junit": "/private/tmp/uat-security-decode-independent.xml"
+  },
+  "bandit": {
+    "B101_test_assertions": 44,
+    "other_findings": 0
+  },
+  "linux_9dff9": {
+    "passed": 26,
+    "skipped": 0,
+    "source_unchanged": true
+  },
+  "evidence_sha256": {
+    "windows-security-decode-review-20260914.md": "1cd06a68e7eb896f1a5925b2620dc1f63017e950d8a8483b490fc743c1049700",
+    "windows-security-decode-reviewed-hashes-20260914.json": "778a7af421ff7296f593dc14060771fb90d3c42969fa84c35829deaf95805e13",
+    "windows-9dff9-startup-review-20260914.md": "5822d97b17bf365c533b6459d5d64210fd3a428d9af24e50538ac0b50c029e0b",
+    "windows-9dff9-startup-summary-20260914.json": "e715a726198f50d098093f64710787c005bacecaf26c34babf13cec98613a50e",
+    "original-uat-requirements-audit-20260914.md": "9a4a16a1f924a59d883792989554b148383728d16764b965fc004b3d076390b8"
+  }
+}

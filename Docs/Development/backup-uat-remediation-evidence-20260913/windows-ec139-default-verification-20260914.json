@@ -1,0 +1,50 @@
+{
+  "revision": "ec139a0241f2de0b8c5da62916e25157f9ac4b35",
+  "verified_artifact_files": 34,
+  "product_selection": "replacement-default-evals",
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "883beadd620e1b0f7b0f3bd4a310d7d75b1fcf2f7fad8e34aa623bf7fca232e3",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    }
+  ],
+  "summary_effective_returncode": 1,
+  "run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/34869269028",
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.943
+    },
+    "product": {
+      "collected": 10,
+      "counts": {
+        "failed": 1,
+        "passed": 9
+      },
+      "seconds": 1853.311
+    }
+  },
+  "git_blob_verification": {
+    "revision": "ec139a0241f2de0b8c5da62916e25157f9ac4b35",
+    "source_clean": true,
+    "python_git_blobs": 2474,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2442,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "failure": "Default composite later child exceeded unchanged900s harness timeout while advancing through post-publication Persona validation; no terminal validation outcome. Evals9 pass. No admission error observed; overall failure retained.",
+  "source_hashes": {
+    "verification.json": "5ccad6dfbd2c8daea540e0a4c9d7be98b23f295fef2029b8094936efd1236047",
+    "git-blob-verification.json": "bf54fa67f551d8bee4c05cc5b5562d0bf91f1d2b72eecf4913920f2b017b2d25",
+    "case-accounting.json": "73a961d4d4011e2ec10529474e4ba7c5765252f006d7a54bb283b054969c1ee5"
+  }
+}

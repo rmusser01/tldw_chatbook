@@ -3417,6 +3417,47 @@ class ImpersonateResult:
     detail: str = ""
 
 
+_MAINTENANCE_REFUSAL = "Console generation is paused for backup maintenance."
+
+
+def _maintenance_boundary(kind="turn"):
+    """Retain one controller call through nested preflight/publication awaits."""
+    def decorate(function):
+        @functools.wraps(function)
+        async def admitted(self, *args, **kwargs):
+            task = asyncio.current_task()
+            depth = self._maintenance_calls.get(task, 0)
+            if self._maintenance_paused and not depth:
+                if kind == "bool":
+                    return False
+                if kind == "compact":
+                    return False, _MAINTENANCE_REFUSAL
+                if kind == "impersonate":
+                    return ImpersonateResult("", "maintenance", _MAINTENANCE_REFUSAL)
+                if kind in ("queue", "queue_message"):
+                    if kind == "queue_message":
+                        message_id = args[0] if args else kwargs["message_id"]
+                        session_id = self.store.session_id_for_message(message_id)
+                    else:
+                        session_id = args[0] if args else kwargs["session_id"]
+                    return PromptQueueMutationResult(
+                        QueueMutationStatus.INVALID,
+                        self.prompt_queue_registry.snapshot(session_id),
+                        detail=_MAINTENANCE_REFUSAL,
+                    )
+                return ConsoleSubmitResult(False, False, _MAINTENANCE_REFUSAL)
+            self._maintenance_calls[task] = depth + 1
+            try:
+                return await function(self, *args, **kwargs)
+            finally:
+                if depth:
+                    self._maintenance_calls[task] = depth
+                else:
+                    self._maintenance_calls.pop(task, None)
+        return admitted
+    return decorate
+
+
 @dataclass(frozen=True, slots=True)
 class _CharacterEmoteAuthority:
     """Captured character ownership fence for one provider dispatch."""
@@ -3767,6 +3808,7 @@ class ConsoleChatController:
         staged_evidence_provider: Callable[[str], bool] | None = None,
         cancel_raw_cli_session: Callable[[str], object] | None = None,
         canvas_enabled_reader: Callable[[], bool] | None = None,
+        canvas_disabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
     ) -> None:
@@ -3812,6 +3854,7 @@ class ConsoleChatController:
 
             canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
+        self._canvas_disabled_reader = canvas_disabled_reader
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
         )
@@ -4073,6 +4116,9 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        self._maintenance_paused = False
+        self._maintenance_calls: dict[asyncio.Task, int] = {}
+        self._maintenance_background: set[asyncio.Task] = set()
         self._pending_dispatch_transitions: dict[str, asyncio.Task[None]] = {}
         self._deferred_user_stop_markers: set[str] = set()
         # Physical SQLite maintenance sets this process-local gate before its
@@ -5496,6 +5542,66 @@ class ConsoleChatController:
                 return self._lifecycle_revision
             return self._session_lifecycle_revisions.get(session_id, 0)
 
+    def maintenance_close_admission(self) -> None:
+        """Fence new turns without cancelling admitted work or changing drafts."""
+        self._maintenance_paused = True
+        self.prompt_queue_coordinator.maintenance_close_admission()
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait for preflight, publication and retained native agent calls."""
+        if not self._maintenance_paused:
+            raise RuntimeError("console_maintenance_not_paused")
+        while (
+            self._maintenance_calls
+            or self._maintenance_background
+            or self._fleet_wake._delivery_tasks
+        ):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def _retain_maintenance_task(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._maintenance_background.add(task)
+        task.add_done_callback(self._maintenance_task_finished)
+        return task
+
+    def _maintenance_task_finished(self, task):
+        self._maintenance_background.discard(task)
+        if not task.cancelled():
+            # A cancelled caller may no longer await the shielded native call.
+            # Retrieve failures without changing normal await propagation.
+            task.exception()
+
+    def maintenance_resume(self) -> None:
+        """Reopen intake and only restart queues suspended by maintenance."""
+        if not self._maintenance_paused:
+            return
+        self._maintenance_paused = False
+        for session_id, revision in self.prompt_queue_coordinator.maintenance_resume():
+            self._retain_maintenance_task(
+                self._resume_maintenance_queue(session_id, revision)
+            )
+        self._fleet_wake.retry_soon()
+
+    @_maintenance_boundary("queue")
+    async def _resume_maintenance_queue(self, session_id, revision):
+        return await self.prompt_queue_coordinator.resume_after_maintenance(
+            session_id, revision
+        )
+
+    async def _run_maintenance_agent_call(self, function, **kwargs):
+        # The native bridge call survives caller cancellation. Keep its task
+        # until it really returns, while the existing caller handles Stop.
+        from tldw_chatbook.Agents.activation import worker_guard
+
+        owned_call = functools.partial(self._run_owned_chat_db_operation, function)
+        worker = worker_guard(self._agent_bridge)(owned_call)
+        task = self._retain_maintenance_task(asyncio.to_thread(worker, **kwargs))
+        return await asyncio.shield(task)
+
     def lifecycle_impact(
         self, *, session_id: str | None = None
     ) -> ConsoleLifecycleImpact:
@@ -5719,6 +5825,7 @@ class ConsoleChatController:
             self.prompt_queue_coordinator.publish_registry_change(session_id)
         return result
 
+    @_maintenance_boundary("turn")
     async def run_prompt_chain(
         self,
         draft: str | None = None,
@@ -6426,6 +6533,7 @@ class ConsoleChatController:
             "Wait for one to finish or interrupt it."
         )
 
+    @_maintenance_boundary("bool")
     async def recover_provider_continuation(
         self,
         action: str,
@@ -8431,6 +8539,7 @@ class ConsoleChatController:
             requires_pre_dispatch_authority=requires_pre_dispatch_authority,
         )
 
+    @_maintenance_boundary("turn")
     async def submit_draft(
         self,
         draft: str,
@@ -18183,6 +18292,7 @@ class ConsoleChatController:
                 return message.id
         return None
 
+    @_maintenance_boundary("turn")
     async def retry_message(
         self,
         message_id: str,
@@ -18279,6 +18389,7 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
 
+    @_maintenance_boundary("queue")
     async def resume_prompt_queue(self, session_id: str) -> PromptQueueMutationResult:
         """Resume next queued prompt after visibly reacquiring one agent slot."""
 
@@ -18302,6 +18413,7 @@ class ConsoleChatController:
             session_id, expected_revision=expected_revision
         )
 
+    @_maintenance_boundary("queue")
     async def skip_and_resume_prompt_queue(
         self, session_id: str
     ) -> PromptQueueMutationResult:
@@ -18309,6 +18421,7 @@ class ConsoleChatController:
 
         return await self.prompt_queue_coordinator.resume_and_drain(session_id)
 
+    @_maintenance_boundary("queue_message")
     async def retry_failed_queue_turn(
         self, message_id: str
     ) -> PromptQueueMutationResult:
@@ -18322,6 +18435,7 @@ class ConsoleChatController:
             ),
         )
 
+    @_maintenance_boundary("queue_message")
     async def retry_stopped_queue_turn(
         self, message_id: str
     ) -> PromptQueueMutationResult:
@@ -18335,6 +18449,7 @@ class ConsoleChatController:
             ),
         )
 
+    @_maintenance_boundary("queue")
     async def use_current_context_and_resume_prompt_queue(
         self,
         session_id: str,
@@ -18350,6 +18465,7 @@ class ConsoleChatController:
             reviewed_context_epoch=reviewed_context_epoch,
         )
 
+    @_maintenance_boundary("turn")
     async def continue_from_message(self, message_id: str) -> ConsoleSubmitResult:
         """Continue from a selected message by streaming a new assistant turn."""
         active_rejection = self._active_run_rejection()
@@ -18433,6 +18549,7 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
 
+    @_maintenance_boundary("turn")
     async def regenerate_message(
         self,
         message_id: str,
@@ -18643,6 +18760,7 @@ class ConsoleChatController:
         )
         return result
 
+    @_maintenance_boundary("turn")
     async def summarize_up_to(
         self, message_id: str, focus: str = ""
     ) -> ConsoleSubmitResult:
@@ -18651,6 +18769,7 @@ class ConsoleChatController:
             message_id, from_here=False, focus=focus
         )
 
+    @_maintenance_boundary("turn")
     async def summarize_from(
         self, message_id: str, focus: str = ""
     ) -> ConsoleSubmitResult:
@@ -19241,6 +19360,7 @@ class ConsoleChatController:
         )
         return ConsoleNoteDraft(title=title, content=content)
 
+    @_maintenance_boundary("impersonate")
     async def impersonate_user_reply(self, session_id: str) -> "ImpersonateResult":
         """Draft the USER's next message with the session's current model.
 
@@ -19413,6 +19533,7 @@ class ConsoleChatController:
                 chunks.append(chunk)
         return "".join(chunks)
 
+    @_maintenance_boundary("turn")
     async def edit_and_resend_message(
         self, message_id: str, new_content: str
     ) -> ConsoleSubmitResult:
@@ -23293,6 +23414,9 @@ class ConsoleChatController:
             return None
 
     def _global_context_policy_overrides(self):
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery.config_participants import operation
+
         keys = (
             "conversation_budget_mode",
             "conversation_budget_tokens",
@@ -23304,7 +23428,8 @@ class ConsoleChatController:
             "compaction_failure_behavior",
             "compaction_carry_forward_mode",
         )
-        values = {key: get_cli_setting("console", key, None) for key in keys}
+        with operation(config):
+            values = {key: get_cli_setting("console", key, None) for key in keys}
         return context_policy_overrides_from_console_config(values)
 
     def _validated_legacy_memory(
@@ -23576,6 +23701,7 @@ class ConsoleChatController:
         # dropped in _run's finally alongside the in-flight guard.
         self._micro_compaction_tasks[session_id] = loop.create_task(_run())
 
+    @_maintenance_boundary("compact")
     async def compact_context_now(
         self, session_id: str, *, micro: bool = False
     ) -> tuple[bool, str]:
@@ -26766,14 +26892,14 @@ class ConsoleChatController:
                     canvas_run,
                     scope=canvas_scope,
                     enabled_reader=self._canvas_enabled_reader,
+                    disabled_reader=self._canvas_disabled_reader,
                 )
                 canvas_authority = canvas_provider.issue_registration_authority()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
-            run_id, outcome = await asyncio.to_thread(
-                self._run_owned_chat_db_operation,
+            run_id, outcome = await self._run_maintenance_agent_call(
                 self._agent_bridge.run_reply,
                 work_origin=work_origin,
                 work_chain_id=work_chain_id,

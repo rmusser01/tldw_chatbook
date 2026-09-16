@@ -1,0 +1,24 @@
+{
+  "source_sha256": {
+    "Tests/Backup_Recovery/test_profile_open.py": "68f29c1f1278f80416847cb9458b641a7244efccc0a879b41a81577548cfb538"
+  },
+  "local_positive_workflows": {
+    "passed": 2,
+    "seconds": 24.08
+  },
+  "local_injected_failure_workflows": {
+    "passed": 2,
+    "seconds": 12.18
+  },
+  "review": "Independent AST proof: normalize only Windows inner timeout to20 and the complete module/child AST matches baseline. Ruff0, Bandit unchanged.",
+  "native_windows": "Pending full receipt/edit/Quit assertions; earlier failed cases remain failures.",
+  "bounds": "Windows whole child240/service255/outer300 retained; firstscreen135, edit10, nonWindows20/45/50/70 unchanged. IndependentGGUF60startupfailure unresolved.",
+  "product_changed": false,
+  "admission_proposal": "Not implemented: differing concurrent-state observation and unproven Windows benefit.",
+  "evidence": {
+    "profile-open-existing-budget-review-20260914.md": "3e8b8269c0876d139c60974417636cd4121c44b62dbe795ac243166e21cbec19",
+    "profile-open-existing-budget-tests-20260914.xml": "3d927f58c47a7e8e2c4d29ff1a9dfa36896be16827cfc89fa908eeff67b40534",
+    "profile-open-existing-budget-negative-tests-20260914.xml": "9776ba9322f30d554414aa5285c43cb8808f49c9627e8591592d1835140fcf8d",
+    "admission-read-sharing-design-review-20260914.md": "05449bc4f0e144874433e5676586f512be4a7270abc850b52a6b40c952fc1ee8"
+  }
+}

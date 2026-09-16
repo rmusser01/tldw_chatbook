@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Build a fresh tldw_chatbook PyPI distribution.
+# Build committed source in an external scratch tree, preserving release options.
 
 set -euo pipefail
 
 PYTHON="${PYTHON:-python}"
 DIST_DIR="${DIST_DIR:-dist}"
-
 cd "$(dirname "$0")/.."
-
 REPO_ROOT="$(pwd -P)"
 
 DIST_DIR_REAL=$("$PYTHON" - "$DIST_DIR" "$REPO_ROOT" <<'PY'
@@ -26,28 +24,29 @@ PY
     exit 1
 }
 
-echo "Building tldw_chatbook distribution into ${DIST_DIR_REAL}..."
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+    echo "ERROR: commit or remove task changes before building a release" >&2
+    exit 1
+fi
 
 "$PYTHON" -c "import build, setuptools, twine, wheel" || {
     echo "Install release tools with: $PYTHON -m pip install 'setuptools>=77.0' build twine wheel" >&2
     exit 1
 }
 
-rm -rf "$DIST_DIR_REAL" build ./*.egg-info
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/tldw-chatbook-dist.XXXXXX")
+trap 'rm -rf "$SCRATCH"' EXIT
+mkdir -p "$SCRATCH/source" "$SCRATCH/dist"
+git archive --format=tar HEAD | tar -xf - -C "$SCRATCH/source"
+cd "$SCRATCH/source"
+
+echo "Building committed tldw_chatbook source in $SCRATCH"
+"$PYTHON" -m build --sdist --wheel --no-isolation --outdir "$SCRATCH/dist"
+"$PYTHON" -m twine check "$SCRATCH/dist"/*
+"$PYTHON" Packaging/check_manifest.py "$SCRATCH/dist"
+
+rm -rf "$DIST_DIR_REAL"
 mkdir -p "$DIST_DIR_REAL"
-
-echo "Building source and wheel distributions..."
-"$PYTHON" -m build --sdist --wheel --no-isolation --outdir "$DIST_DIR_REAL"
-
-echo "Checking package metadata..."
-"$PYTHON" -m twine check "$DIST_DIR_REAL"/*
-
-echo "Verifying distribution contents..."
-"$PYTHON" Packaging/check_manifest.py "$DIST_DIR_REAL"
-
-echo
-echo "Build complete. Distribution files:"
+cp "$SCRATCH/dist"/* "$DIST_DIR_REAL/"
+echo "Distribution files created in $DIST_DIR_REAL"
 ls -la "$DIST_DIR_REAL"
-echo
-echo "Installed-wheel regression:"
-echo "  $PYTHON -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider"

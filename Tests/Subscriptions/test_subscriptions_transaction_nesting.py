@@ -131,7 +131,8 @@ def test_record_check_result_with_stats_really_nests(db, monkeypatch):
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 
     source_id = db.add_subscription(
-        name="s", type="rss", source="https://e.invalid/f.xml"
+        name="s", type="rss", source="https://e.invalid/f.xml",
+        auto_pause_threshold=10,
     )
     depths: list[int] = []
     original = SubscriptionsDB.transaction
@@ -169,7 +170,8 @@ def test_record_check_result_with_stats_is_one_atomic_unit(db):
     undo.
     """
     source_id = db.add_subscription(
-        name="s", type="rss", source="https://e.invalid/f.xml"
+        name="s", type="rss", source="https://e.invalid/f.xml",
+        auto_pause_threshold=10,
     )
 
     with pytest.raises(RuntimeError):

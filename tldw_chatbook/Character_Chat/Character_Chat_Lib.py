@@ -4227,8 +4227,11 @@ def remove_message_from_conversation(
         if the deletion failed, e.g., due to a version mismatch
         (ConflictError), or a database error.
     """
+    from tldw_chatbook.Backup_Recovery import recovered_media_messages
+
+    binding = recovered_media_messages.bind_message_references(db)
     try:
-        return db.soft_delete_message(message_id, expected_version)
+        result = db.soft_delete_message(message_id, expected_version)
     except (CharactersRAGDBError, ConflictError) as e:
         logger.error(f"Failed to remove message ID {message_id}: {e}")
         return False
@@ -4237,6 +4240,11 @@ def remove_message_from_conversation(
             f"Unexpected error removing message ID {message_id}: {e}"
         )
         return False
+    if result:
+        recovered_media_messages.release_after_message_delete(
+            binding, db, (message_id,)
+        )
+    return result
 
 
 def find_messages_in_conversation(

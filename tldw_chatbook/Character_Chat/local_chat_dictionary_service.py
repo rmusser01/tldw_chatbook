@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery import chat_source_participants as _chat_sources
 from . import Chat_Dictionary_Lib as cdl
 from .Chat_Dictionary_Lib import _coerce_bool
 
@@ -194,6 +195,7 @@ class LocalChatDictionaryService:
         self._history: dict[str, dict[str, list[dict[str, Any]]]] = {}
         self._load_history()
 
+    @_chat_sources.guarded
     def _require_db(self) -> Any:
         if self.db is None:
             raise ValueError("Local chat dictionary backend is unavailable.")
@@ -203,11 +205,12 @@ class LocalChatDictionaryService:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    @_chat_sources.guarded
     def _load_history(self) -> None:
         if self.history_store_path is None or not self.history_store_path.exists():
             return
         try:
-            payload = json.loads(self.history_store_path.read_text(encoding="utf-8"))
+            payload = json.loads(_chat_sources.read_text(self))
         except (OSError, json.JSONDecodeError):
             with self._history_lock:
                 self._history = {}
@@ -238,6 +241,7 @@ class LocalChatDictionaryService:
                     else [],
                 }
 
+    @_chat_sources.guarded
     def _persist_history(self) -> None:
         """Rewrite the history sidecar. Callers must hold ``_history_lock``.
 
@@ -247,18 +251,12 @@ class LocalChatDictionaryService:
         """
         if self.history_store_path is None:
             return
-        self.history_store_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.history_store_path.with_suffix(
-            self.history_store_path.suffix + ".tmp"
+        _chat_sources.write_text(
+            self,
+            json.dumps({"dictionaries": self._history}, indent=2, sort_keys=True, default=str),
         )
-        temp_path.write_text(
-            json.dumps(
-                {"dictionaries": self._history}, indent=2, sort_keys=True, default=str
-            ),
-            encoding="utf-8",
-        )
-        temp_path.replace(self.history_store_path)
 
+    @_chat_sources.guarded
     def _history_bucket(self, dictionary_id: int) -> dict[str, list[dict[str, Any]]]:
         """Return (creating if needed) one dictionary's history bucket.
 
@@ -288,6 +286,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def _record_history(
         self, dictionary_id: int, action: str, record: Mapping[str, Any]
     ) -> None:
@@ -329,6 +328,7 @@ class LocalChatDictionaryService:
                 bucket["versions"][existing_index] = version_record
             self._persist_history()
 
+    @_chat_sources.guarded
     def _ensure_history_baseline(
         self, dictionary_id: int, record: Mapping[str, Any] | None = None
     ) -> None:
@@ -350,6 +350,7 @@ class LocalChatDictionaryService:
             if record is not None:
                 self._record_history(int(dictionary_id), "baseline", record)
 
+    @_chat_sources.guarded
     def _normalize_dictionary(
         self, record: dict[str, Any] | None
     ) -> dict[str, Any] | None:
@@ -374,6 +375,7 @@ class LocalChatDictionaryService:
         )
         return normalized
 
+    @_chat_sources.guarded
     def _load_required_dictionary(self, dictionary_id: int) -> dict[str, Any]:
         record = cdl.load_chat_dictionary(self._require_db(), int(dictionary_id))
         if record is None:
@@ -401,6 +403,7 @@ class LocalChatDictionaryService:
             ]
         return updates
 
+    @_chat_sources.guarded
     def list_dictionaries(
         self, *, include_inactive: bool = False, include_usage: bool = False
     ) -> dict[str, Any]:
@@ -426,6 +429,7 @@ class LocalChatDictionaryService:
             dictionaries.append(normalized)
         return {"dictionaries": dictionaries, "source": "local"}
 
+    @_chat_sources.guarded
     def create_dictionary(self, request_data: Any) -> dict[str, Any]:
         payload = _payload(request_data)
         dictionary_id = cdl.save_chat_dictionary(
@@ -449,11 +453,13 @@ class LocalChatDictionaryService:
         self._record_history(int(dictionary_id), "create", record)
         return record
 
+    @_chat_sources.guarded
     def get_dictionary(self, dictionary_id: int) -> dict[str, Any] | None:
         return self._normalize_dictionary(
             cdl.load_chat_dictionary(self._require_db(), int(dictionary_id))
         )
 
+    @_chat_sources.guarded
     def update_dictionary(
         self,
         dictionary_id: int,
@@ -480,6 +486,7 @@ class LocalChatDictionaryService:
         self._record_history(int(dictionary_id), "update", record)
         return record
 
+    @_chat_sources.guarded
     def delete_dictionary(
         self,
         dictionary_id: int,
@@ -506,6 +513,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def add_entry(self, dictionary_id: int, request_data: Any) -> dict[str, Any]:
         record = self._load_required_dictionary(int(dictionary_id))
         entries = list(record.get("entries") or [])
@@ -519,6 +527,7 @@ class LocalChatDictionaryService:
             entries[-1], dictionary_id=int(dictionary_id), index=len(entries) - 1
         )
 
+    @_chat_sources.guarded
     def list_entries(
         self, dictionary_id: int, *, group: str | None = None
     ) -> dict[str, Any]:
@@ -536,6 +545,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def update_entry(self, entry_id: str, request_data: Any) -> dict[str, Any]:
         dictionary_id, index = _parse_entry_id(entry_id)
         record = self._load_required_dictionary(dictionary_id)
@@ -554,6 +564,7 @@ class LocalChatDictionaryService:
             entries[index], dictionary_id=dictionary_id, index=index
         )
 
+    @_chat_sources.guarded
     def delete_entry(self, entry_id: str) -> dict[str, Any]:
         dictionary_id, index = _parse_entry_id(entry_id)
         record = self._load_required_dictionary(dictionary_id)
@@ -568,6 +579,7 @@ class LocalChatDictionaryService:
         )
         return {"status": "deleted", "entry_id": str(entry_id), "source": "local"}
 
+    @_chat_sources.guarded
     def reorder_entries(self, dictionary_id: int, request_data: Any) -> dict[str, Any]:
         payload = _payload(request_data)
         record = self._load_required_dictionary(int(dictionary_id))
@@ -600,6 +612,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def process_text(self, request_data: Any) -> dict[str, Any]:
         payload = _payload(request_data)
         text = str(payload.get("text") or "")
@@ -651,6 +664,7 @@ class LocalChatDictionaryService:
             )
         return response
 
+    @_chat_sources.guarded
     def import_markdown(self, request_data: Any) -> dict[str, Any]:
         payload = _payload(request_data)
         dictionary_id = cdl.save_chat_dictionary(
@@ -668,6 +682,7 @@ class LocalChatDictionaryService:
             self._record_history(int(dictionary_id), "import", record)
         return {"dictionary_id": int(dictionary_id), "source": "local"}
 
+    @_chat_sources.guarded
     def export_markdown(self, dictionary_id: int) -> dict[str, Any]:
         record = self._load_required_dictionary(int(dictionary_id))
         content = record.get("content")
@@ -686,6 +701,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def import_json(self, request_data: Any) -> dict[str, Any]:
         """Import a dictionary from a JSON payload, preserving the strategy field for round-trip.
 
@@ -725,6 +741,7 @@ class LocalChatDictionaryService:
             self._record_history(int(dictionary_id), "import", record)
         return {"dictionary_id": int(dictionary_id), "source": "local"}
 
+    @_chat_sources.guarded
     def export_json(self, dictionary_id: int) -> dict[str, Any]:
         """Export a dictionary to a JSON-serializable payload for round-trip import.
 
@@ -757,6 +774,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def list_activity(
         self, dictionary_id: int, *, limit: int = 20, offset: int = 0
     ) -> dict[str, Any]:
@@ -777,6 +795,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def list_versions(
         self,
         dictionary_id: int,
@@ -818,6 +837,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def get_version(self, dictionary_id: int, revision: int) -> dict[str, Any]:
         self._ensure_history_baseline(int(dictionary_id))
         with self._history_lock:
@@ -828,6 +848,7 @@ class LocalChatDictionaryService:
             f"local_chat_dictionary_version_not_found:{dictionary_id}:{revision}"
         )
 
+    @_chat_sources.guarded
     def revert_version(self, dictionary_id: int, revision: int) -> dict[str, Any]:
         version = self.get_version(int(dictionary_id), int(revision))
         snapshot = dict(version["snapshot"])
@@ -859,6 +880,7 @@ class LocalChatDictionaryService:
         record["reverted_to_revision"] = int(revision)
         return record
 
+    @_chat_sources.guarded
     def get_statistics(self, dictionary_id: int) -> dict[str, Any]:
         """Load the dictionary and summarize it.
 
@@ -870,6 +892,7 @@ class LocalChatDictionaryService:
         record = self._load_required_dictionary(int(dictionary_id))
         return statistics_from_record(record, dictionary_id=int(dictionary_id))
 
+    @_chat_sources.guarded
     def _load_conversation_or_raise(self, conversation_id: str) -> dict[str, Any]:
         record = self._require_db().get_conversation_by_id(str(conversation_id))
         if record is None:
@@ -895,6 +918,7 @@ class LocalChatDictionaryService:
                 continue
         return result
 
+    @_chat_sources.guarded
     def _write_active_dictionaries(
         self, record: dict[str, Any], conversation_id: str, ids: list[int]
     ) -> None:
@@ -911,6 +935,7 @@ class LocalChatDictionaryService:
             expected_version=record["version"],
         )
 
+    @_chat_sources.guarded
     def attach_to_conversation(
         self, dictionary_id: int, conversation_id: str
     ) -> dict[str, Any]:
@@ -940,6 +965,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def detach_from_conversation(
         self, dictionary_id: int, conversation_id: str
     ) -> dict[str, Any]:
@@ -1011,6 +1037,7 @@ class LocalChatDictionaryService:
          ORDER BY conversation_rowid
     """
 
+    @_chat_sources.guarded
     def list_dictionary_conversations(self, dictionary_id: int) -> dict[str, Any]:
         """Reverse used-by: conversations whose active_dictionaries include this id.
 
@@ -1065,6 +1092,7 @@ class LocalChatDictionaryService:
                 )
         return {"conversations": conversations, "source": "local"}
 
+    @_chat_sources.guarded
     def _load_character_or_raise(self, character_id: int) -> dict[str, Any]:
         record = self._require_db().get_character_card_by_id(int(character_id))
         if record is None:
@@ -1092,6 +1120,7 @@ class LocalChatDictionaryService:
             raw = []
         return [b for b in raw if isinstance(b, dict) and b.get("name")]
 
+    @_chat_sources.guarded
     def _write_embedded_dictionaries(
         self, record: dict[str, Any], character_id: int, blocks: list[dict[str, Any]]
     ) -> None:
@@ -1101,6 +1130,7 @@ class LocalChatDictionaryService:
             int(character_id), {"extensions": ext}, expected_version=record["version"]
         )
 
+    @_chat_sources.guarded
     def attach_to_character(
         self, dictionary_id: int, character_id: int
     ) -> dict[str, Any]:
@@ -1137,6 +1167,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def detach_from_character(
         self, character_id: int, dictionary_name: str
     ) -> dict[str, Any]:
@@ -1171,6 +1202,7 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def list_character_dictionaries(self, character_id: int) -> dict[str, Any]:
         """Summarize a character's embedded dictionaries (from the snapshots only).
 
@@ -1202,6 +1234,7 @@ class LocalChatDictionaryService:
             )
         return {"dictionaries": dictionaries, "source": "local"}
 
+    @_chat_sources.guarded
     def summarize_active_dictionaries(
         self, conversation_id, character_id
     ) -> dict[str, Any]:

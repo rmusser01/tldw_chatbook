@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import uuid4
 
+from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
+
 _LOCAL_MCP_STORE_FILENAME = "local_mcp_store.json"
 
 
@@ -716,29 +718,38 @@ class LocalMCPStoreState:
 
 
 class LocalMCPStore:
+    @mcp_sources.guarded
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else _default_local_mcp_store_path()
+        from .recovery_activation import select
 
+        select(self)
+
+    @mcp_sources.guarded
     def load(self) -> LocalMCPStoreState:
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.local"):
+            return LocalMCPStoreState()
         payload = self._read_payload()
         if not isinstance(payload, Mapping):
             return LocalMCPStoreState()
         return LocalMCPStoreState.from_dict(payload)
 
+    @mcp_sources.guarded
     def save(self, state: LocalMCPStoreState) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+        from .recovery_activation import require_store_write
+
+        require_store_write(self, "mcp.local")
         payload = state.to_dict()
         payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
+        mcp_sources.write_json(self, payload)
 
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-
-        temp_path.replace(self.path)
-
+    @mcp_sources.guarded
     def list_profiles(self) -> list[LocalExternalMCPProfile]:
         return list(self.load().profiles)
 
+    @mcp_sources.guarded
     def get_external_catalog(
         self,
     ) -> list[tuple[LocalExternalMCPProfile, dict[str, Any] | None]]:
@@ -760,6 +771,7 @@ class LocalMCPStore:
             for profile in state.profiles
         ]
 
+    @mcp_sources.guarded
     def get_profile(self, profile_id: str) -> LocalExternalMCPProfile | None:
         normalized_profile_id = _text(profile_id)
         for profile in self.list_profiles():
@@ -767,6 +779,7 @@ class LocalMCPStore:
                 return profile
         return None
 
+    @mcp_sources.guarded
     def save_profile(self, profile: LocalExternalMCPProfile) -> LocalExternalMCPProfile:
         current = self.load()
         now = datetime.now(timezone.utc)
@@ -827,6 +840,7 @@ class LocalMCPStore:
         )
         return saved_profile
 
+    @mcp_sources.guarded
     def delete_profile(self, profile_id: str) -> bool:
         normalized_profile_id = _text(profile_id)
         current = self.load()
@@ -853,6 +867,7 @@ class LocalMCPStore:
         )
         return True
 
+    @mcp_sources.guarded
     def save_discovery_snapshot(
         self, profile_id: str, snapshot: Mapping[str, Any]
     ) -> dict[str, Any]:
@@ -876,9 +891,11 @@ class LocalMCPStore:
         )
         return discovery_snapshots[normalized_profile_id]
 
+    @mcp_sources.guarded
     def get_discovery_snapshot(self, profile_id: str) -> dict[str, Any] | None:
         return self.load().discovery_snapshots.get(_text(profile_id))
 
+    @mcp_sources.guarded
     def get_profile_runtime_state(self, profile_id: str) -> dict[str, Any] | None:
         """Return the persisted lifecycle-attempt record for a profile.
 
@@ -892,6 +909,7 @@ class LocalMCPStore:
         record = state.profile_runtime_state.get(_text(profile_id))
         return dict(record) if record is not None else None
 
+    @mcp_sources.guarded
     def save_profile_runtime_state(
         self, profile_id: str, record: Mapping[str, Any]
     ) -> dict[str, Any]:
@@ -925,6 +943,7 @@ class LocalMCPStore:
         )
         return profile_runtime_state[normalized_profile_id]
 
+    @mcp_sources.guarded
     def get_catalog_bundle(self) -> dict[str, Any]:
         """Return the catalog-relevant state in one read.
 
@@ -947,9 +966,11 @@ class LocalMCPStore:
             "profile_runtime_state": dict(state.profile_runtime_state),
         }
 
+    @mcp_sources.guarded
     def list_governance_rules(self) -> list[LocalGovernanceRule]:
         return list(self.load().governance_rules)
 
+    @mcp_sources.guarded
     def save_governance_rule(self, rule: LocalGovernanceRule) -> LocalGovernanceRule:
         current = self.load()
         now = datetime.now(timezone.utc)
@@ -989,6 +1010,7 @@ class LocalMCPStore:
         )
         return saved_rule
 
+    @mcp_sources.guarded
     def delete_governance_rule(self, rule_id: str) -> bool:
         current = self.load()
         normalized_rule_id = _text(rule_id)
@@ -1013,9 +1035,11 @@ class LocalMCPStore:
         )
         return True
 
+    @mcp_sources.guarded
     def list_approval_requests(self) -> list[LocalApprovalRequest]:
         return list(self.load().approval_requests)
 
+    @mcp_sources.guarded
     def save_approval_request(
         self, request: LocalApprovalRequest
     ) -> LocalApprovalRequest:
@@ -1082,6 +1106,7 @@ class LocalMCPStore:
         )
         return saved_request
 
+    @mcp_sources.guarded
     def resolve_approval_request(
         self, request_id: str, status: str
     ) -> LocalApprovalRequest | None:
@@ -1137,6 +1162,7 @@ class LocalMCPStore:
         )
         return resolved_request
 
+    @mcp_sources.guarded
     def delete_approval_request(self, request_id: str) -> bool:
         normalized_request_id = _text(request_id)
         if not normalized_request_id:
@@ -1161,6 +1187,7 @@ class LocalMCPStore:
         )
         return True
 
+    @mcp_sources.guarded
     def list_runtime_activity(self, limit: int = 20) -> list[dict[str, Any]]:
         normalized_limit = max(1, int(limit or 20))
         return [
@@ -1168,6 +1195,7 @@ class LocalMCPStore:
             for activity in reversed(self.load().runtime_activity[-normalized_limit:])
         ]
 
+    @mcp_sources.guarded
     def record_runtime_activity(
         self,
         entry: Mapping[str, Any],
@@ -1211,15 +1239,17 @@ class LocalMCPStore:
         )
         return saved_entry.to_dict()
 
+    @mcp_sources.guarded
     def _read_payload(self) -> Any:
         try:
-            with self.path.open("r", encoding="utf-8") as handle:
+            with mcp_sources.reader(self) as handle:
                 return json.load(handle)
         except FileNotFoundError:
             return {}
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise LocalMCPStoreLoadError(self.path, exc) from exc
 
+    @mcp_sources.guarded
     def _launch_config_changed(
         self,
         existing_profile: LocalExternalMCPProfile,
@@ -1229,6 +1259,7 @@ class LocalMCPStore:
             existing_profile
         ) != self._launch_config_signature(updated_profile)
 
+    @mcp_sources.guarded
     def _launch_config_signature(
         self,
         profile: LocalExternalMCPProfile,

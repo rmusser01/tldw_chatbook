@@ -140,6 +140,7 @@ _TRUST_SETUP_EXPLANATION_COPY = (
 # (``library_skills_state.py``); the "" key never renders a button (see
 # ``_compose_list``).
 _TRUST_HEADER_ACTION_LABELS = {
+    "recovery_review": "Review restored skills",
     "setup": "Set up skill trust",
     "resetup": "Set up skill trust",
     "retry": "Retry",
@@ -1213,8 +1214,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         # in its own retained region so that update cannot invalidate a row's
         # already-posted Button.Pressed event.
         yield LibrarySkillsTrustHeader(
-            has_skills=state.source_summary_fresh
-            and (bool(state.rows) or bool(title_count) or state.blocked_total > 0),
+            has_skills=self.trust_posture == "recovery_review" or (state.source_summary_fresh
+            and (bool(state.rows) or bool(title_count) or state.blocked_total > 0)),
             blocked_count=(
                 state.blocked_total
                 if state.pager is not None

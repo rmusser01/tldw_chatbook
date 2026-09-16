@@ -187,10 +187,10 @@ def load_note_templates():
     # First try user config
     if user_config_path.exists():
         try:
-            with open(user_config_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                templates_data = data.get("templates", data)
-                loaded_from = "user config"
+            from ..Notes.template_store import read_templates
+
+            templates_data = read_templates()
+            loaded_from = "user config"
         except Exception as e:
             logger.warning(
                 f"Failed to load user templates from {user_config_path}: {e}"

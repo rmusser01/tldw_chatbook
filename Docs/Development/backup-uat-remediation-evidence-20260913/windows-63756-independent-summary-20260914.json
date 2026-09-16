@@ -1,0 +1,203 @@
+{
+  "revision": "63756d61d621be37f4b5a94df9640fd565575333",
+  "artifact_files_verified": 21,
+  "source_clean": true,
+  "source_files": 16673,
+  "selected_test_source_matches": {
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_bound_config_companions.py": "windows_crlf",
+    "Tests/Backup_Recovery/run_platform_product.py": "windows_crlf",
+    "Tests/ProductionApp/test_backup_restore_end_to_end.py": "windows_crlf",
+    "Tests/Backup_Recovery/startup_timing_diagnostic.py": "windows_crlf",
+    "Tests/UI/test_llm_gguf_source_modes.py": "windows_crlf",
+    "Tests/network_guard.py": "windows_crlf"
+  },
+  "native": {
+    "collected": 59,
+    "counts": {
+      "passed": 59
+    },
+    "seconds": 1.707,
+    "failures": [],
+    "skips": []
+  },
+  "product": {
+    "collected": 3,
+    "passed": 1,
+    "failed": 2,
+    "skipped": 0,
+    "unfinished": 0,
+    "cases": [
+      {
+        "name": "test_f9_created_archive_restores_and_opens_through_actual_controls[plain]",
+        "seconds": 335.202,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_guidance_is_coherent_and_refreshes_after_real_settings_save",
+        "seconds": 45.027,
+        "status": "failed"
+      },
+      {
+        "name": "test_native_display_pairs_preserve_outputs_and_later_fresh_send_guard",
+        "seconds": 45.025,
+        "status": "failed"
+      }
+    ]
+  },
+  "installed": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "e052272b565f91cf3387da7bd0271e90d6094cf622fb55feb0a6021fd85eadc0",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "git_python": {
+    "revision": "63756d61d621be37f4b5a94df9640fd565575333",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "startup": {
+    "non_ui_pass": 31,
+    "primary_timeouts": 4,
+    "limit_seconds": 60,
+    "dev_revision": "4631b60f8dd9623fc55bf16f4a37e29fcb1240c7",
+    "dev_session_seconds": [
+      49.87,
+      41.72
+    ],
+    "dev_call_seconds": [
+      41.25,
+      38.13
+    ],
+    "candidate_timeouts": 2,
+    "records": 23,
+    "all_source_matches": true,
+    "cprofile_enabled": false,
+    "groups": [
+      {
+        "label": "dev",
+        "record_count": 6,
+        "last_elapsed_seconds": 50.813,
+        "counts": {
+          "test_case": 1,
+          "test_mount": 1,
+          "settings_rebuild": 2,
+          "user_directory": 26,
+          "transaction": 1,
+          "config_lock": 1,
+          "publication": 1,
+          "test_settle": 10,
+          "test_focus": 1,
+          "test_close": 1
+        },
+        "active_boundaries": []
+      },
+      {
+        "label": "candidate",
+        "record_count": 6,
+        "last_elapsed_seconds": 60.047,
+        "counts": {
+          "test_case": 1,
+          "test_mount": 1,
+          "config_operation": 551,
+          "user_directory": 25,
+          "transaction": 1,
+          "config_lock": 1,
+          "publication": 1,
+          "settings_rebuild": 1
+        },
+        "active_boundaries": [
+          {
+            "function": "test_case",
+            "phase": "running",
+            "elapsed_seconds": 55.13184,
+            "suspended_at": {
+              "file": "test_llm_gguf_source_modes.py",
+              "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+              "line": 1367
+            }
+          },
+          {
+            "function": "test_mount",
+            "phase": "running",
+            "elapsed_seconds": 55.131787,
+            "suspended_at": {
+              "file": "test_llm_gguf_source_modes.py",
+              "function": "_mount_models",
+              "line": 114
+            }
+          }
+        ]
+      },
+      {
+        "label": "dev",
+        "record_count": 5,
+        "last_elapsed_seconds": 42.641,
+        "counts": {
+          "test_case": 1,
+          "test_mount": 1,
+          "settings_rebuild": 2,
+          "user_directory": 26,
+          "transaction": 1,
+          "config_lock": 1,
+          "publication": 1,
+          "test_settle": 10,
+          "test_focus": 1,
+          "test_close": 1
+        },
+        "active_boundaries": []
+      },
+      {
+        "label": "candidate",
+        "record_count": 6,
+        "last_elapsed_seconds": 60.079,
+        "counts": {
+          "test_case": 1,
+          "test_mount": 1,
+          "config_operation": 490,
+          "user_directory": 25,
+          "transaction": 1,
+          "config_lock": 1,
+          "publication": 1,
+          "settings_rebuild": 1
+        },
+        "active_boundaries": [
+          {
+            "function": "test_case",
+            "phase": "running",
+            "elapsed_seconds": 54.860493,
+            "suspended_at": {
+              "file": "test_llm_gguf_source_modes.py",
+              "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+              "line": 1367
+            }
+          },
+          {
+            "function": "test_mount",
+            "phase": "running",
+            "elapsed_seconds": 54.860443,
+            "suspended_at": {
+              "file": "test_llm_gguf_source_modes.py",
+              "function": "_mount_models",
+              "line": 114
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "evidence_sha256": {
+    "/private/tmp/uat-windows-63756-restore/backup-platform-windows-2022-py3.12-restore-diagnostic-63756d61d621be37f4b5a94df9640fd565575333/artifact-sha256.json": "60b6b3c195b03fb99b0bf7d9abb607fbbb7599c6e0bf8f7702d3bd4a04b898bb",
+    "/private/tmp/uat-63756-windows-native-job.log": "27c827924d4e390b84df8446c1711cb2d9f82b8b1be0d71ed774744694c9d48e",
+    "/private/tmp/uat-63756-windows-startup-job.log": "bfd068154c81d8a4a993a1bc1764d74dff3b2913f0a9deffc4708769532cbb0c"
+  }
+}

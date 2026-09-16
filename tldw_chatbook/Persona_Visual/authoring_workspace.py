@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Backup_Recovery import persona_visual_participants as visual_lifetime
+from tldw_chatbook.Backup_Recovery.persona_visual_participants import (
+    native_open as _native_open, native_close as _native_close,
+)
+
 import hashlib
 import hmac
 import os
@@ -92,33 +97,37 @@ def create_persona_visual_authoring_workspace(
 ) -> PersonaVisualAuthoringWorkspace:
     """Create one verified-private, identity-pinned authoring candidate."""
 
-    try:
+    with visual_lifetime.request():
         root = _absolute_root(profile_root)
+        source = visual_lifetime.source_for(root)
         base = root / "persona_visual" / "authoring"
-        privacy = secure_private_directory(base, create=True, application_owned=True)
-        if not privacy.verified_private:
-            raise ValueError
         name = f".draft-{uuid4().hex}"
         candidate = base / name
-        candidate.mkdir(mode=0o700)
-        (candidate / "assets").mkdir(mode=0o700)
-        metadata = os.lstat(candidate)
-        if not _private_directory(metadata):
-            raise ValueError
-        identity = (metadata.st_dev, metadata.st_ino)
-        secret = os.urandom(32).hex()
-        marker = _marker(secret, name, identity)
-        _write_private(candidate / _MARKER_NAME, marker.encode("ascii"))
-        return PersonaVisualAuthoringWorkspace(
-            root,
-            f"persona_visual/authoring/{name}",
-            identity,
-            secret,
-        )
-    except Exception:
-        raise PersonaVisualAuthoringWorkspaceError(
-            "persona_visual_authoring_staging_failed"
-        ) from None
+        directories = (root / "persona_visual", base, candidate, candidate / "assets")
+        marker_path = candidate / _MARKER_NAME
+        with visual_lifetime.files(source, (marker_path,), directories,
+                                   writing=directories + (marker_path,)) as native_scope:
+            try:
+                privacy = secure_private_directory(base, create=True, application_owned=True)
+                if not privacy.verified_private:
+                    raise ValueError
+                visual_lifetime.mkdir(candidate, mode=0o700)
+                visual_lifetime.mkdir(candidate / "assets", mode=0o700)
+                metadata = os.lstat(candidate)
+                if not _private_directory(metadata):
+                    raise ValueError
+                identity = (metadata.st_dev, metadata.st_ino)
+                secret = os.urandom(32).hex()
+                marker = _marker(secret, name, identity)
+                _write_private(marker_path, marker.encode("ascii"))
+                native_scope.result = visual_lifetime.issue(PersonaVisualAuthoringWorkspace(
+                    root, f"persona_visual/authoring/{name}", identity, secret,
+                ), source)
+                return native_scope.result
+            except Exception:
+                raise PersonaVisualAuthoringWorkspaceError(
+                    "persona_visual_authoring_staging_failed"
+                ) from None
 
 
 def stage_persona_visual_authoring_asset(
@@ -210,76 +219,87 @@ def cleanup_persona_visual_authoring_workspace(
 
     if type(workspace) is not PersonaVisualAuthoringWorkspace:
         return False
-    root_fd = base_fd = candidate_fd = assets_fd = -1
-    try:
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        root_fd = os.open(workspace.profile_root, flags)
-        visual_fd = os.open("persona_visual", flags, dir_fd=root_fd)
-        os.close(root_fd)
-        root_fd = visual_fd
-        base_fd = os.open("authoring", flags, dir_fd=root_fd)
-        name = PurePosixPath(workspace.relative_root).name
-        candidate_fd = os.open(name, flags, dir_fd=base_fd)
-        opened = os.fstat(candidate_fd)
-        named = os.stat(name, dir_fd=base_fd, follow_symlinks=False)
-        if (
-            not _private_directory(opened)
-            or not _private_directory(named)
-            or (opened.st_dev, opened.st_ino) != workspace.identity
-            or (named.st_dev, named.st_ino) != workspace.identity
-            or _read_marker(candidate_fd)
-            != _marker(workspace.secret, name, workspace.identity)
-        ):
+    with visual_lifetime.request():
+        try:
+            source = visual_lifetime.candidate_source(workspace, workspace.profile_root)
+        except visual_lifetime.bootstrap.RecoveryRequired:
             return False
-        assets_fd = os.open("assets", flags, dir_fd=candidate_fd)
-        expected = set(workspace.asset_names)
-        if set(os.listdir(assets_fd)) != expected:
-            return False
-        for asset in workspace._assets:
-            descriptor = os.open(
-                asset.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=assets_fd
-            )
+        candidate = workspace.profile_root / workspace.relative_root
+        selected = (candidate / _MARKER_NAME, *(candidate / "assets" / name for name in workspace.asset_names))
+        directories = (candidate, candidate / "assets")
+        with visual_lifetime.files(source, selected, directories, writing=selected + directories) as native_scope:
+            native_scope.candidate_cleanup = workspace
+            root_fd = base_fd = candidate_fd = assets_fd = -1
             try:
-                opened_asset = os.fstat(descriptor)
-                named_asset = os.stat(
-                    asset.name, dir_fd=assets_fd, follow_symlinks=False
-                )
+                flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                root_fd = _native_open(workspace.profile_root, flags)
+                visual_fd = _native_open("persona_visual", flags, dir_fd=root_fd)
+                _native_close(root_fd)
+                root_fd = visual_fd
+                base_fd = _native_open("authoring", flags, dir_fd=root_fd)
+                name = PurePosixPath(workspace.relative_root).name
+                candidate_fd = _native_open(name, flags, dir_fd=base_fd)
+                opened = os.fstat(candidate_fd)
+                named = os.stat(name, dir_fd=base_fd, follow_symlinks=False)
                 if (
-                    not _regular_file(opened_asset)
-                    or not _regular_file(named_asset)
-                    or _file_identity(opened_asset) != asset.identity
-                    or _file_identity(named_asset) != asset.identity
-                    or _digest_fd(descriptor, opened_asset.st_size) != asset.sha256
-                    or _file_identity(os.fstat(descriptor)) != asset.identity
+                    not _private_directory(opened)
+                    or not _private_directory(named)
+                    or (opened.st_dev, opened.st_ino) != workspace.identity
+                    or (named.st_dev, named.st_ino) != workspace.identity
+                    or _read_marker(candidate_fd)
+                    != _marker(workspace.secret, name, workspace.identity)
                 ):
                     return False
+                assets_fd = _native_open("assets", flags, dir_fd=candidate_fd)
+                expected = set(workspace.asset_names)
+                if set(os.listdir(assets_fd)) != expected:
+                    return False
+                for asset in workspace._assets:
+                    descriptor = _native_open(
+                        asset.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=assets_fd
+                    )
+                    try:
+                        opened_asset = os.fstat(descriptor)
+                        named_asset = os.stat(
+                            asset.name, dir_fd=assets_fd, follow_symlinks=False
+                        )
+                        if (
+                            not _regular_file(opened_asset)
+                            or not _regular_file(named_asset)
+                            or _file_identity(opened_asset) != asset.identity
+                            or _file_identity(named_asset) != asset.identity
+                            or _digest_fd(descriptor, opened_asset.st_size) != asset.sha256
+                            or _file_identity(os.fstat(descriptor)) != asset.identity
+                        ):
+                            return False
+                    finally:
+                        _native_close(descriptor)
+                if set(os.listdir(assets_fd)) != expected:
+                    return False
+                if set(os.listdir(candidate_fd)) != {_MARKER_NAME, "assets"}:
+                    return False
+                for asset_name in workspace.asset_names:
+                    visual_lifetime.unlink(asset_name, dir_fd=assets_fd)
+                _native_close(assets_fd)
+                assets_fd = -1
+                visual_lifetime.rmdir("assets", dir_fd=candidate_fd)
+                visual_lifetime.unlink(_MARKER_NAME, dir_fd=candidate_fd)
+                opened = os.fstat(candidate_fd)
+                named = os.stat(name, dir_fd=base_fd, follow_symlinks=False)
+                if (opened.st_dev, opened.st_ino) != workspace.identity or (
+                    named.st_dev,
+                    named.st_ino,
+                ) != workspace.identity:
+                    return False
+                visual_lifetime.rmdir(name, dir_fd=base_fd)
+                native_scope.result = True
+                return True
+            except Exception:
+                return False
             finally:
-                os.close(descriptor)
-        if set(os.listdir(assets_fd)) != expected:
-            return False
-        if set(os.listdir(candidate_fd)) != {_MARKER_NAME, "assets"}:
-            return False
-        for asset_name in workspace.asset_names:
-            os.unlink(asset_name, dir_fd=assets_fd)
-        os.close(assets_fd)
-        assets_fd = -1
-        os.rmdir("assets", dir_fd=candidate_fd)
-        os.unlink(_MARKER_NAME, dir_fd=candidate_fd)
-        opened = os.fstat(candidate_fd)
-        named = os.stat(name, dir_fd=base_fd, follow_symlinks=False)
-        if (opened.st_dev, opened.st_ino) != workspace.identity or (
-            named.st_dev,
-            named.st_ino,
-        ) != workspace.identity:
-            return False
-        os.rmdir(name, dir_fd=base_fd)
-        return True
-    except Exception:
-        return False
-    finally:
-        for descriptor in (assets_fd, candidate_fd, base_fd, root_fd):
-            if descriptor >= 0:
-                os.close(descriptor)
+                for descriptor in (assets_fd, candidate_fd, base_fd, root_fd):
+                    if descriptor >= 0:
+                        _native_close(descriptor)
 
 
 def _write_workspace_asset(
@@ -290,65 +310,72 @@ def _write_workspace_asset(
     suffix: str,
 ) -> tuple[PersonaVisualAuthoringWorkspace, PersonaVisualDraftAsset]:
     name = f"{uuid4().hex}{suffix}"
-    root_fd = base_fd = candidate_fd = assets_fd = descriptor = -1
-    try:
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        root_fd = os.open(workspace.profile_root, flags)
-        visual_fd = os.open("persona_visual", flags, dir_fd=root_fd)
-        os.close(root_fd)
-        root_fd = visual_fd
-        base_fd = os.open("authoring", flags, dir_fd=root_fd)
-        candidate_name = PurePosixPath(workspace.relative_root).name
-        candidate_fd = os.open(candidate_name, flags, dir_fd=base_fd)
-        named_candidate = os.stat(candidate_name, dir_fd=base_fd, follow_symlinks=False)
-        if (
-            (os.fstat(candidate_fd).st_dev, os.fstat(candidate_fd).st_ino)
-            != workspace.identity
-            or (named_candidate.st_dev, named_candidate.st_ino) != workspace.identity
-            or _read_marker(candidate_fd)
-            != _marker(workspace.secret, candidate_name, workspace.identity)
-        ):
-            raise OSError
-        assets_fd = os.open("assets", flags, dir_fd=candidate_fd)
-        descriptor = os.open(
-            name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=assets_fd,
-        )
-        view = memoryview(data)
-        while view:
-            written = os.write(descriptor, view[:_READ_CHUNK_BYTES])
-            if written <= 0:
-                raise OSError
-            view = view[written:]
-        os.fsync(descriptor)
-        written_metadata = os.fstat(descriptor)
-        pin = _WorkspaceAsset(
-            name,
-            _file_identity(written_metadata),
-            hashlib.sha256(data).hexdigest(),
-        )
-    except Exception:
-        if assets_fd >= 0:
+    with visual_lifetime.request():
+        source = visual_lifetime.candidate_source(workspace, workspace.profile_root)
+        candidate = workspace.profile_root / workspace.relative_root
+        selected = (candidate / _MARKER_NAME, candidate / "assets" / name)
+        with visual_lifetime.files(source, selected, (candidate, candidate / "assets"),
+                                   writing=(selected[-1],)) as native_scope:
+            root_fd = base_fd = candidate_fd = assets_fd = descriptor = -1
             try:
-                os.unlink(name, dir_fd=assets_fd)
-            except OSError:
-                pass
-        raise
-    finally:
-        for file_descriptor in (
-            descriptor,
-            assets_fd,
-            candidate_fd,
-            base_fd,
-            root_fd,
-        ):
-            if file_descriptor >= 0:
-                os.close(file_descriptor)
-    source_key = f"{workspace.relative_root}/assets/{name}"
-    updated = replace(workspace, _assets=workspace._assets + (pin,))
-    return updated, PersonaVisualDraftAsset(source_key, metadata)
+                flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                root_fd = _native_open(workspace.profile_root, flags)
+                visual_fd = _native_open("persona_visual", flags, dir_fd=root_fd)
+                _native_close(root_fd)
+                root_fd = visual_fd
+                base_fd = _native_open("authoring", flags, dir_fd=root_fd)
+                candidate_name = PurePosixPath(workspace.relative_root).name
+                candidate_fd = _native_open(candidate_name, flags, dir_fd=base_fd)
+                named_candidate = os.stat(candidate_name, dir_fd=base_fd, follow_symlinks=False)
+                if (
+                    (os.fstat(candidate_fd).st_dev, os.fstat(candidate_fd).st_ino)
+                    != workspace.identity
+                    or (named_candidate.st_dev, named_candidate.st_ino) != workspace.identity
+                    or _read_marker(candidate_fd)
+                    != _marker(workspace.secret, candidate_name, workspace.identity)
+                ):
+                    raise OSError
+                assets_fd = _native_open("assets", flags, dir_fd=candidate_fd)
+                descriptor = _native_open(
+                    name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=assets_fd,
+                )
+                view = memoryview(data)
+                while view:
+                    written = os.write(descriptor, view[:_READ_CHUNK_BYTES])
+                    if written <= 0:
+                        raise OSError
+                    view = view[written:]
+                os.fsync(descriptor)
+                written_metadata = os.fstat(descriptor)
+                pin = _WorkspaceAsset(
+                    name,
+                    _file_identity(written_metadata),
+                    hashlib.sha256(data).hexdigest(),
+                )
+            except Exception:
+                if assets_fd >= 0:
+                    try:
+                        visual_lifetime.unlink(name, dir_fd=assets_fd)
+                    except OSError:
+                        pass
+                raise
+            finally:
+                for file_descriptor in (
+                    descriptor,
+                    assets_fd,
+                    candidate_fd,
+                    base_fd,
+                    root_fd,
+                ):
+                    if file_descriptor >= 0:
+                        _native_close(file_descriptor)
+            source_key = f"{workspace.relative_root}/assets/{name}"
+            updated = replace(workspace, _assets=workspace._assets + (pin,))
+            native_scope.result = (visual_lifetime.issue(updated, source, replaces=workspace), PersonaVisualDraftAsset(source_key, metadata))
+            return native_scope.result
 
 
 def _decode(data: bytes) -> tuple[str, str, int, int, int, int | None]:
@@ -453,7 +480,7 @@ def _marker(secret: str, name: str, identity: tuple[int, int]) -> str:
 
 
 def _write_private(path: Path, data: bytes) -> None:
-    descriptor = os.open(
+    descriptor = _native_open(
         path,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
         0o600,
@@ -467,11 +494,11 @@ def _write_private(path: Path, data: bytes) -> None:
             view = view[written:]
         os.fsync(descriptor)
     finally:
-        os.close(descriptor)
+        _native_close(descriptor)
 
 
 def _read_marker(candidate_fd: int) -> str:
-    descriptor = os.open(_MARKER_NAME, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=candidate_fd)
+    descriptor = _native_open(_MARKER_NAME, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=candidate_fd)
     try:
         metadata = os.fstat(descriptor)
         if (
@@ -486,7 +513,7 @@ def _read_marker(candidate_fd: int) -> str:
             raise ValueError
         return data.decode("ascii")
     finally:
-        os.close(descriptor)
+        _native_close(descriptor)
 
 
 __all__ = [

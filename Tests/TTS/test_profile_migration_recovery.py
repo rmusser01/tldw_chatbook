@@ -216,6 +216,7 @@ def test_authoritative_validation_retains_parent_and_file_after_close_failure(
         assert journal.exists()
         assert os.fstat(pins[0]).st_ino == active.stat().st_ino
         owner = _migration_cleanup_owner(failure.value)
+        parent_fd, file_fd = owner.parent_fd, owner.file_fd
         assert stages == (
             ["admitted", "admitted", "repaired"]
             if defer_signal
@@ -224,10 +225,12 @@ def test_authoritative_validation_retains_parent_and_file_after_close_failure(
         owner.close()
         owner.close()
         assert proxies[0].close_calls == 2
-        assert len(raw_after_failure) == 2
-        assert raw_after_failure[0] == pins[0]
+        assert [fd for fd in raw_after_failure if fd in {file_fd, parent_fd}] == [
+            file_fd, parent_fd
+        ]
+        assert not owner.native.active
         with pytest.raises(OSError):
-            os.fstat(raw_after_failure[1])
+            os.fstat(parent_fd)
     finally:
         for proxy in proxies:
             proxy.connection.close()

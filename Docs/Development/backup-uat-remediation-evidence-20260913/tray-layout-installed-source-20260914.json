@@ -1,0 +1,11 @@
+{
+  "installed_files": 2867,
+  "application_python_files": 2475,
+  "all_application_python_match_worktree": true,
+  "native_package": {
+    "wheel": "/private/tmp/uat-tray-installed-pytest/f9-native-package0/wheels/tldw_chatbook-0.2.2-py3-none-any.whl",
+    "sha256": "2252a7a32cce7824e221152cab55c0a7d8ccb1a6833187c70ec3f04d94d9a2b9",
+    "installed": "/private/tmp/uat-tray-installed-pytest/f9-native-package0/installed",
+    "installed_files": 2867
+  }
+}

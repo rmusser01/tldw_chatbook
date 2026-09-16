@@ -1,0 +1,31 @@
+{
+  "verdict": "approved_test_only",
+  "base": "92f8f9224bc3cadfc22ba9fe997597b1ce89a05a",
+  "files": {
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "10c97ca5bc36e6e613269fa6f569b71f7820845ef14f7c9132b2ce3135794213",
+    "Tests/Backup_Recovery/test_console_bounded_layout.py": "80bf306861666c1bdd632aedc2441c72f58b1db4307550db09f35bf93ad5c203"
+  },
+  "independent_layout": {
+    "passed": 8,
+    "failed": 0,
+    "skips": 0,
+    "seconds": 11.02,
+    "log": "/private/tmp/uat-bounded-quiescence-independent.log"
+  },
+  "approved_guidance_probe": {
+    "passed": 2,
+    "seconds": 12.13,
+    "log": "/private/tmp/uat-guidance-unmounted-independent.log",
+    "promoted_AST_equals_probe": true
+  },
+  "root_final": {
+    "passed": 10,
+    "seconds": 20.7,
+    "log": "/private/tmp/uat-final-fixture.log"
+  },
+  "AST_verification": "/private/tmp/uat-final-fixture-independent-ast.json",
+  "retained_assertions": {
+    "guidance": 57,
+    "bounded": 16
+  }
+}

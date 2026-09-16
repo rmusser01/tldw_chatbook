@@ -1,0 +1,19 @@
+{
+  "before_sha256": "1fe222e08de364a57d5d37e7d8bfed838f3df4f06754bd8c393a3ebe23480430",
+  "after_sha256": "47675235389b33c75e096edf41d93f52479097a92ec83d97913d44cdddfd8ade",
+  "without_new_rail_seed_sha256": "1fe222e08de364a57d5d37e7d8bfed838f3df4f06754bd8c393a3ebe23480430",
+  "exact_reconstruction_match": true,
+  "added_rail_state": {
+    "console_rail_state:global:shared-layout-v1": {
+      "left_open": true,
+      "workspace_open": false,
+      "conversations_open": true,
+      "model_open": false,
+      "details_open": false,
+      "agent_open": false,
+      "inspector_more_open": false,
+      "environment_open": true,
+      "tasks_open": true
+    }
+  }
+}

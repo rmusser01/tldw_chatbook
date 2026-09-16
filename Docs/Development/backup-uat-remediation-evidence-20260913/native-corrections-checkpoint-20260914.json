@@ -1,0 +1,36 @@
+{
+  "status": "Reviewed native corrections passed; current installed/platform/keyboard repetition remains pending.",
+  "native_lifecycle": {
+    "passed": 1,
+    "seconds": 254.31
+  },
+  "eval_retention": {
+    "author_passed": 9,
+    "independent_passed": 9
+  },
+  "persona_refusals": {
+    "passed": 19,
+    "independent_subset_passed": 6
+  },
+  "windows_support_4becc": {
+    "native_passed": 42,
+    "product_collected": 549,
+    "product_passed": 467,
+    "product_failed": 8,
+    "without_terminal_result": 74,
+    "outer_timeout_minutes": 80,
+    "verified_artifact_hashes": 234,
+    "product_junit_present": false
+  },
+  "files": {
+    "nested-persona-rollback-report.md": "639c23ade00daad0e50d626c31bf5cb5b6086bf627807d94d13b14a44de6d60d",
+    "canonical-eval-retention-report.md": "c89901bb1d1d769c614f55092b17cfc0571ff0740346257ce4012db88fef0c70",
+    "nested-persona-final-hashes.json": "67dcf464d57179381f43b605bcad869ab3af7599ebd1f7465f100f2f3b059c8a",
+    "nested-persona-independent-review.md": "706d189b92bd12ce59ae9c4322253dfe1fd13710f16488c917dc7b93eb1d5e77",
+    "canonical-eval-independent-review.md": "e5f71d1684e270c13b0e70bf41482488252c7e3342c007f74bef81444e19fe61",
+    "windows-support-selection-review.md": "ffffaef1f69b351df80c609198070bfecb811fca1273f765bb7bcb2c64792e8b",
+    "windows-4becc-support-report.md": "9ae4bc46d2b5a63d97d4db74c52707fd80c7302bec03de5582884c583dc95652",
+    "windows-4becc-five-case-review.md": "b60897af21db8c6e9324cf08a88b1d56a615fb3b0322189101ca92bc1b883f96",
+    "windows-4becc-acl-review.md": "2478321e850d79d67404b97ddc344ab1ec66e3dfc3ddcc96f1a1aa518c6389fd"
+  }
+}

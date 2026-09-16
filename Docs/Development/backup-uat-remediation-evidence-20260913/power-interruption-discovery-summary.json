@@ -1,0 +1,43 @@
+{
+  "issues": [
+    "config_discovery_failure",
+    "dependency_unavailable",
+    "unavailable",
+    "unsupported"
+  ],
+  "trace": [
+    {
+      "exception": "ValueError",
+      "code": "eval_retained_binding_changed",
+      "line": 581,
+      "selected": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/one/config/config.toml"
+    },
+    {
+      "exception": "FileNotFoundError",
+      "code": "nonfixed_message_omitted",
+      "line": 661,
+      "selected": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/two/config/config.toml"
+    }
+  ],
+  "problem_items": [
+    {
+      "owner": "config",
+      "id": "profile:0af9dab488952cda2bf86b6a:config",
+      "status": "unsupported",
+      "path": "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/one/config/config.toml"
+    },
+    {
+      "owner": "config",
+      "id": "profile:0af9dab488952cda2bf86b6a:config:discovery_failure",
+      "status": "unavailable",
+      "path": "None"
+    }
+  ],
+  "configs": [
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/home/.config/tldw_cli/config.toml",
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/one/config/config.toml",
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/two/config/config.toml"
+  ],
+  "classification": "Prior restored-profile binding failure; interruption causality not established",
+  "source": "Separate read-only installed preview with metadata-only exception observation; actual app unchanged"
+}

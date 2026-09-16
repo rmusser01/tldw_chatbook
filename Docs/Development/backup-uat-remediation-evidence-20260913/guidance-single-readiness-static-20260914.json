@@ -1,0 +1,38 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "ruff_existing": 208,
+    "bandit_existing": 9,
+    "new_findings": 0
+  },
+  {
+    "path": "Tests/Backup_Recovery/run_platform_product.py",
+    "ruff_existing": 0,
+    "bandit_existing": 0,
+    "new_findings": 0
+  },
+  {
+    "path": "Tests/UI/test_console_fleet_wake_ui_freshness.py",
+    "ruff_existing": 4,
+    "bandit_existing": 19,
+    "new_findings": 0
+  },
+  {
+    "path": "Tests/UI/test_console_prompts_controller.py",
+    "ruff_existing": 2,
+    "bandit_existing": 118,
+    "new_findings": 0
+  },
+  {
+    "path": "Tests/UI/test_console_right_rail.py",
+    "ruff_existing": 1,
+    "bandit_existing": 181,
+    "new_findings": 0
+  },
+  {
+    "path": "Tests/UI/test_console_workbench_contract.py",
+    "ruff_existing": 7,
+    "bandit_existing": 270,
+    "new_findings": 0
+  }
+]

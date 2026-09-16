@@ -15,6 +15,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, model_validator
 from .citation_trace_models import EXTERNAL_OPAQUE_ID_UTF8_BYTES_MAX
 from tldw_chatbook.runtime_policy.server_credentials import (
     is_secure_keyring_backend,
+    RECOVERY_SETUP_REQUIRED,
 )
 
 
@@ -445,6 +446,8 @@ class KeyringCitationFingerprintKeyProvider:
         """Load an existing key; never generates or replaces one."""
 
         key_id = _bounded_identifier(fingerprint_key_id)
+        if key_id == RECOVERY_SETUP_REQUIRED:
+            raise CitationFingerprintKeyUnavailable("fingerprint_key_setup_required")
         try:
             backend = self._secure_backend()
             encoded = backend.get_password(
@@ -465,6 +468,8 @@ class KeyringCitationFingerprintKeyProvider:
         """Create one missing key after the caller proves replacement is safe."""
 
         key_id = _bounded_identifier(fingerprint_key_id)
+        if key_id == RECOVERY_SETUP_REQUIRED:
+            raise CitationFingerprintKeyUnavailable("fingerprint_key_setup_required")
         try:
             backend = self._secure_backend()
             encoded = backend.get_password(

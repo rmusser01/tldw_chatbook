@@ -1,0 +1,167 @@
+{
+  "revision": "dc96b849dc4f05e64843572016c63f645753b150",
+  "run": 34942614500,
+  "job": 104294555043,
+  "status": "success",
+  "verified_artifact_hashes": 22,
+  "source_files": 16708,
+  "source_clean": true,
+  "execution_source": "private_tracked_head_copy",
+  "selection": [
+    "Tests/ProductionApp/test_backup_restore_end_to_end.py::test_f9_created_archive_restores_and_opens_through_actual_controls[plain]",
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py",
+    "Tests/Backup_Recovery/test_console_tray_layout.py",
+    "Tests/Backup_Recovery/test_console_bounded_layout.py"
+  ],
+  "native": {
+    "collected": 59,
+    "counts": {
+      "passed": 59
+    },
+    "seconds": 1.264,
+    "failures": [],
+    "skips": []
+  },
+  "product": {
+    "collected": 16,
+    "passed": 16,
+    "failed": 0,
+    "skipped": 0,
+    "unfinished": 0,
+    "suite_seconds": 367.634,
+    "cases": [
+      {
+        "name": "test_f9_created_archive_restores_and_opens_through_actual_controls[plain]",
+        "seconds": 220.386,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_guidance_is_coherent_and_refreshes_after_real_settings_save",
+        "seconds": 30.1,
+        "status": "passed"
+      },
+      {
+        "name": "test_native_display_pairs_preserve_outputs_and_later_fresh_send_guard",
+        "seconds": 36.243,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[covered]",
+        "seconds": 6.261,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[transparent]",
+        "seconds": 6.169,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[hidden]",
+        "seconds": 6.092,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[visible]",
+        "seconds": 6.064,
+        "status": "passed"
+      },
+      {
+        "name": "test_tray_recomposition_waits_for_its_screen_layout[unmount]",
+        "seconds": 6.142,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[covered-wrapped]",
+        "seconds": 6.256,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[covered-native]",
+        "seconds": 6.257,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[transparent-wrapped]",
+        "seconds": 6.151,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[transparent-native]",
+        "seconds": 6.205,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[hidden-wrapped]",
+        "seconds": 6.137,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[hidden-native]",
+        "seconds": 6.298,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[unmount-wrapped]",
+        "seconds": 6.333,
+        "status": "passed"
+      },
+      {
+        "name": "test_bounded_section_waits_for_owner_layout[unmount-native]",
+        "seconds": 6.204,
+        "status": "passed"
+      }
+    ]
+  },
+  "installed": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "1053772fc0b6f7c6dbfd59a38e0a69e27a54653e4b3af291c92af2093a89bf2c",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "git_python": {
+    "revision": "dc96b849dc4f05e64843572016c63f645753b150",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "selected_source_matches": {
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_console_bounded_layout.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_console_tray_layout.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_home_citation_retirement.py": "windows_crlf",
+    "Tests/Backup_Recovery/test_bound_config_companions.py": "windows_crlf",
+    "Tests/ProductionApp/test_backup_restore_end_to_end.py": "windows_crlf",
+    "Tests/Backup_Recovery/run_platform_product.py": "windows_crlf",
+    "Tests/network_guard.py": "windows_crlf"
+  },
+  "guidance_phase_files": {
+    "test_native_guidance_is_cohere0": [
+      "import_begin",
+      "import_complete",
+      "construct_begin",
+      "construct_complete",
+      "context_ready",
+      "assertions_complete",
+      "shutdown_complete"
+    ],
+    "test_native_display_pairs_pres0": [
+      "import_begin",
+      "import_complete",
+      "construct_begin",
+      "construct_complete",
+      "context_ready",
+      "assertions_complete",
+      "shutdown_complete"
+    ]
+  },
+  "product_native_packaging_pyproject_identical_2031d": true,
+  "artifact_index_sha256": "ff89fe63571888a3423d651542c96194d7cf72efa747d75a486a1942a0478c9c"
+}

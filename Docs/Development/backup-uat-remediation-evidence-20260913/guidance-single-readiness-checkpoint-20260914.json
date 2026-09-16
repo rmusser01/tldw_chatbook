@@ -1,0 +1,118 @@
+{
+  "reviewed_base": "f311792948ffc252657eb208cb63ceb57fface3d",
+  "product_files": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "851c53a1299068a8e430f8307bdc5f56a28a73c99b9d40bf85fc1179273ed0ea",
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "90b91264ebbd94c382eb5eafced69fa5757bd93dfc8de42270cd844d30586a35",
+    "Tests/UI/test_console_fleet_wake_ui_freshness.py": "271a4dea3f03eddad2407fa2c309ff1b5477e3be106e08a8ccba72a00a6bacd4",
+    "Tests/UI/test_console_workbench_contract.py": "7c612a4d29ee04ed7dc1f1146a240a2e09f34eddbefe8ad3da8162f2d8fe8de6",
+    "Tests/UI/test_console_right_rail.py": "edd1d8ac0c7118aec8af4f1857c97d17082a2990e927f54b4697012c3d4733e0",
+    "Tests/UI/test_console_prompts_controller.py": "158c6cd316bd9ed258ff999024885c691a42eed3a71afc729ab29c3d842b745e",
+    "Tests/Backup_Recovery/run_platform_product.py": "44857eabd8cab19f7b25076c8453a6f74602e32a26bc518c168d2776432aa2f5"
+  },
+  "root_native": {
+    "passed": 5,
+    "seconds": 43.67
+  },
+  "independent_native": {
+    "passed": 1,
+    "seconds": 8.389
+  },
+  "red": {
+    "expected_derives_per_pass": 1,
+    "actual": [
+      3,
+      3,
+      3,
+      3
+    ],
+    "all_state_assertions_reached": true
+  },
+  "compatibility": {
+    "cases": [
+      {
+        "node": "Tests.UI.test_console_fleet_wake_ui_freshness::test_composer_blocked_copy_names_the_wake_not_provider_setup",
+        "seconds": 8.964,
+        "root": "/private/tmp/uat-guidance-compat-0-vwh6vg8c",
+        "outcome": "passed"
+      },
+      {
+        "node": "Tests.UI.test_console_workbench_contract::test_prompts_provider_recovery_uses_existing_console_settings_seam",
+        "seconds": 2.52,
+        "root": "/private/tmp/uat-guidance-compat-1-wkd_yqj0",
+        "outcome": "passed"
+      },
+      {
+        "node": "Tests.UI.test_console_right_rail::test_real_inspector_producer_variants_are_strictly_owned",
+        "seconds": 3.943,
+        "root": "/private/tmp/uat-guidance-compat-2-b3ww5ar1",
+        "outcome": "passed"
+      },
+      {
+        "node": "Tests.UI.test_console_prompts_controller::test_prompts_modal_reads_provider_recovery_off_the_screen_at_open",
+        "seconds": 4.298,
+        "root": "/private/tmp/uat-guidance-compat-3-tquh90_e",
+        "outcome": "passed"
+      },
+      {
+        "node": "Tests.UI.test_console_prompts_controller::test_improve_stays_unavailable_during_an_active_run_even_with_a_healthy_provider",
+        "seconds": 3.95,
+        "root": "/private/tmp/uat-guidance-compat-4-1_8xptk8",
+        "outcome": "passed"
+      }
+    ],
+    "fixed_lambdas": 6,
+    "fixture_AST_preserved": true,
+    "runner_AST_preserved_except_two_additions": true
+  },
+  "additional_journeys": [
+    {
+      "node": "Tests.UI.test_console_draft_sync_equality_gate::test_the_draft_sync_derives_the_provider_selection_once",
+      "seconds": 3.737,
+      "path": "/private/tmp/uat-guidance-app-0-1azor5fb",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_console_draft_sync_equality_gate::test_the_derivation_memo_is_torn_down_even_when_a_leg_raises",
+      "seconds": 3.476,
+      "path": "/private/tmp/uat-guidance-app-1-cjv9q9cc",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_console_draft_sync_equality_gate::test_the_derivation_memo_is_off_outside_a_scope",
+      "seconds": 3.674,
+      "path": "/private/tmp/uat-guidance-app-2-4sp3k1kl",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_llm_gguf_source_modes::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]",
+      "seconds": 21.316,
+      "path": "/private/tmp/uat-guidance-app-3-zlvl2qyl",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_llm_gguf_source_modes::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]",
+      "seconds": 18.05,
+      "path": "/private/tmp/uat-guidance-app-4-3r9p_ilx",
+      "outcome": "passed"
+    }
+  ],
+  "native_close_collection": 44,
+  "product_new_security_findings": 0,
+  "new_test_assertion_bandit_count": 39,
+  "pending": [
+    "Native Windows guidance and installed backup repeat",
+    "Native Windows unchanged startup repeat",
+    "Native Linux five affected regressions"
+  ],
+  "artifacts": {
+    "/private/tmp/uat-guidance-red.log": "b1540c9c681ce69c561e7a3ac06daa8a6f841f274e8ff84f0904a90252b46af0",
+    "/private/tmp/uat-guidance-red2.log": "5c9a1b2e2d26f4aded3c67e5986e0d36f75de38740d203b967f57874607e37ea",
+    "/private/tmp/uat-guidance-green.log": "47a0ae494144337f6e0e72c62c2112e9594784ba9be8dcfd275ed6f457af36a3",
+    "/private/tmp/uat-guidance-independent.log": "9341c563fc407327fb35b9ae184466ad30282aa762f6a5a9fe16c808fa8b3b75",
+    "/private/tmp/uat-guidance-independent.xml": "98bb343dcfff54e78cab9a405fbc5d4cc567ccf559a0c1a1c35769c914a08425",
+    "/private/tmp/uat-guidance-compat-status.log": "35e7e904eda61c5ecc79ef9cf9a8e7561a906def91efcd2f75df8dc35f03a0a9",
+    "/private/tmp/uat-guidance-app-status.log": "38370e07f0ba2836d17e5e7d54b26e4da10491896a4eba5192da832280501bca",
+    "/private/tmp/uat-guidance-final-static-summary.json": "a7766ba377e0dd8d57113a58b7b8628c3811e801ac1df5aa68b93d3371c9a07c",
+    "/private/tmp/uat-guidance-collection.log": "07764e3d74f78655c3802d2bf42f6917610db266f7e8ade63190b1a8f8ddad40"
+  }
+}

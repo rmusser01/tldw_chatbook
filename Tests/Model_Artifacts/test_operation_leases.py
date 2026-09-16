@@ -154,7 +154,11 @@ def test_lease_set_does_not_start_later_key_after_total_deadline(
         def close(self) -> None:
             pass
 
-    def record_open(path: Path, *args: object, **kwargs: object) -> Handle:
+    original_open = Path.open
+
+    def record_open(path: Path, *args: object, **kwargs: object):
+        if path.parent != tmp_path:
+            return original_open(path, *args, **kwargs)
         opened.append(path)
         return Handle()
 

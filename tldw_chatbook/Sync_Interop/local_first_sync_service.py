@@ -6,15 +6,20 @@ import hashlib
 import json
 from typing import Any, Mapping, Sequence, TYPE_CHECKING
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+)
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 from tldw_chatbook.Sync_Interop.validation import (
-    validate_pull_pagination_state,
-    validate_push_response_scope,
     validate_outgoing_envelope_scope,
+    validate_pull_pagination_state,
     validate_pulled_response_scope,
+    validate_push_response_scope,
 )
+
+from .server_sync_service import _sync_call
 
 if TYPE_CHECKING:
     from tldw_chatbook.Notes.notes_organization_repository import (
@@ -25,6 +30,18 @@ if TYPE_CHECKING:
 
 class LocalFirstSyncService:
     """Push local envelopes, pull remote envelopes, and apply them locally."""
+
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
 
     def __init__(
         self,
@@ -39,6 +56,7 @@ class LocalFirstSyncService:
         personal_context_service: Any = None,
         personal_context_runtime_loader: Any = None,
     ) -> None:
+        self._producer_lifetime = ProducerLifetime()
         self.server_service = server_service
         self.state_repository = state_repository
         self.local_store = local_store
@@ -49,6 +67,7 @@ class LocalFirstSyncService:
         self.personal_context_service = personal_context_service
         self.personal_context_runtime_loader = personal_context_runtime_loader
 
+    @_sync_call(delegate=True, local=True)
     async def sync_once(
         self,
         *,

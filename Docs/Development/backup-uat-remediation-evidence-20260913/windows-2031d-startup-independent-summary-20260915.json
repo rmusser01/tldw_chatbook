@@ -1,0 +1,430 @@
+{
+  "revision": "2031d0c5261c2b4781aba40752f228da9d19b4eb",
+  "run": 34939974091,
+  "job": 104286174204,
+  "log_bytes": 524167,
+  "log_sha256": "a872e3c63e829a813d60da5e8feb77991e96496e2430628ecf69a855c8ccb413",
+  "observer_git_sha256": "973e6d8bc973b29ac52f62a8da40328bbf45b33cbd1462ff632fc92a16207c48",
+  "observer_identical_a523": true,
+  "non_ui": {
+    "passed": 31,
+    "seconds": 10.54
+  },
+  "primary": {
+    "timeouts": 4,
+    "limit_seconds": 60
+  },
+  "dev_revision": "4631b60f8dd9623fc55bf16f4a37e29fcb1240c7",
+  "dev_passes": 2,
+  "dev_session_seconds": [
+    51.17,
+    43.2
+  ],
+  "dev_call_seconds": [
+    42.32,
+    39.39
+  ],
+  "candidate_timeouts": 2,
+  "records": 23,
+  "all_source_matches": true,
+  "observer_errors": [],
+  "config_errors": [],
+  "max_dropped_active": 0,
+  "cprofile_enabled": false,
+  "groups": [
+    {
+      "label": "dev",
+      "provider": "llamacpp",
+      "record_count": 6,
+      "last_elapsed": 52.109,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 28,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_focus": 1,
+        "test_close": 1
+      },
+      "completed_test_phases": [
+        {
+          "function": "test_mount",
+          "outcome": "returned",
+          "thread": 6684,
+          "elapsed_seconds": 13.437171,
+          "thread_cpu_seconds": 8.890625
+        },
+        {
+          "function": "test_focus",
+          "outcome": "returned",
+          "thread": 6684,
+          "elapsed_seconds": 15.136519,
+          "thread_cpu_seconds": 3.25,
+          "completed_focus_steps": 42
+        },
+        {
+          "function": "test_case",
+          "outcome": "returned",
+          "thread": 6684,
+          "elapsed_seconds": 42.318303,
+          "thread_cpu_seconds": 14.84375
+        }
+      ],
+      "pending_test_phases": [],
+      "sampled_thread_frames": [],
+      "slowest_completed_config_operation": null
+    },
+    {
+      "label": "candidate",
+      "provider": "llamacpp",
+      "record_count": 6,
+      "last_elapsed": 60.031,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 480,
+        "user_directory": 25,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "completed_test_phases": [],
+      "pending_test_phases": [
+        {
+          "function": "test_case",
+          "thread": 3596,
+          "phase": "running",
+          "elapsed_seconds": 55.240493,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          }
+        },
+        {
+          "function": "test_mount",
+          "thread": 3596,
+          "phase": "running",
+          "elapsed_seconds": 55.240429,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        }
+      ],
+      "sampled_thread_frames": [
+        {
+          "file": "windows_files.py",
+          "function": "open_handle",
+          "line": 560
+        },
+        {
+          "file": "windows_files.py",
+          "function": "_parent",
+          "line": 646
+        },
+        {
+          "file": "contextlib.py",
+          "function": "__enter__",
+          "line": 137
+        },
+        {
+          "file": "windows_files.py",
+          "function": "stat",
+          "line": 738
+        },
+        {
+          "file": "raw_participants.py",
+          "function": "_check",
+          "line": 373
+        },
+        {
+          "file": "raw_participants.py",
+          "function": "_scope",
+          "line": 494
+        },
+        {
+          "file": "contextlib.py",
+          "function": "__enter__",
+          "line": 137
+        },
+        {
+          "file": "config_participants.py",
+          "function": "operation",
+          "line": 319
+        },
+        {
+          "file": "contextlib.py",
+          "function": "__enter__",
+          "line": 137
+        },
+        {
+          "file": "config_participants.py",
+          "function": "wrapped",
+          "line": 419
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "line": 6261
+        },
+        {
+          "file": "config.py",
+          "function": "get_cli_setting",
+          "line": 8482
+        },
+        {
+          "file": "config.py",
+          "function": "get_user_folder_name",
+          "line": 9118
+        },
+        {
+          "file": "config.py",
+          "function": "get_user_data_dir",
+          "line": 9130
+        },
+        {
+          "file": "config_participants.py",
+          "function": "wrapped",
+          "line": 420
+        },
+        {
+          "file": "emergency_stop.py",
+          "function": "default_emergency_stop_path",
+          "line": 104
+        },
+        {
+          "file": "loop.py",
+          "function": "_emergency_stopped",
+          "line": 600
+        },
+        {
+          "file": "loop.py",
+          "function": "_dispatch_due",
+          "line": 631
+        },
+        {
+          "file": "loop.py",
+          "function": "tick",
+          "line": 515
+        },
+        {
+          "file": "loop.py",
+          "function": "admitted",
+          "line": 50
+        }
+      ],
+      "slowest_completed_config_operation": {
+        "function": "config_operation",
+        "outcome": "returned",
+        "thread": 9360,
+        "elapsed_seconds": 1.755028,
+        "thread_cpu_seconds": 0.84375,
+        "acquisition_seconds": 0.890962,
+        "body_and_release_seconds": 0.864066
+      }
+    },
+    {
+      "label": "dev",
+      "provider": "llamafile",
+      "record_count": 5,
+      "last_elapsed": 44.172,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_focus": 1,
+        "test_close": 1
+      },
+      "completed_test_phases": [
+        {
+          "function": "test_mount",
+          "outcome": "returned",
+          "thread": 7808,
+          "elapsed_seconds": 13.174343,
+          "thread_cpu_seconds": 6.453125
+        },
+        {
+          "function": "test_focus",
+          "outcome": "returned",
+          "thread": 7808,
+          "elapsed_seconds": 12.165112,
+          "thread_cpu_seconds": 2.765625,
+          "completed_focus_steps": 38
+        },
+        {
+          "function": "test_case",
+          "outcome": "returned",
+          "thread": 7808,
+          "elapsed_seconds": 39.384813,
+          "thread_cpu_seconds": 12.171875
+        }
+      ],
+      "pending_test_phases": [],
+      "sampled_thread_frames": [],
+      "slowest_completed_config_operation": null
+    },
+    {
+      "label": "candidate",
+      "provider": "llamafile",
+      "record_count": 6,
+      "last_elapsed": 60.016,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 456,
+        "user_directory": 23,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "completed_test_phases": [],
+      "pending_test_phases": [
+        {
+          "function": "test_case",
+          "thread": 6300,
+          "phase": "running",
+          "elapsed_seconds": 54.97102,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          }
+        },
+        {
+          "function": "test_mount",
+          "thread": 6300,
+          "phase": "running",
+          "elapsed_seconds": 54.97097,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        }
+      ],
+      "sampled_thread_frames": [
+        {
+          "file": "windows_files.py",
+          "function": "info",
+          "line": 428
+        },
+        {
+          "file": "windows_files.py",
+          "function": "open_handle",
+          "line": 575
+        },
+        {
+          "file": "windows_files.py",
+          "function": "open",
+          "line": 711
+        },
+        {
+          "file": "private_paths.py",
+          "function": "_native_open",
+          "line": 556
+        },
+        {
+          "file": "private_paths.py",
+          "function": "_open_directory_component",
+          "line": 174
+        },
+        {
+          "file": "private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 388
+        },
+        {
+          "file": "bootstrap.py",
+          "function": "pinned_directory",
+          "line": 35
+        },
+        {
+          "file": "contextlib.py",
+          "function": "__enter__",
+          "line": 137
+        },
+        {
+          "file": "bootstrap.py",
+          "function": "_control_records",
+          "line": 171
+        },
+        {
+          "file": "bootstrap.py",
+          "function": "_records",
+          "line": 253
+        },
+        {
+          "file": "control_records.py",
+          "function": "admission_authority",
+          "line": 122
+        },
+        {
+          "file": "storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 907
+        },
+        {
+          "file": "storage_admission.py",
+          "function": "acquire_storage",
+          "line": 840
+        },
+        {
+          "file": "raw_participants.py",
+          "function": "_scope",
+          "line": 699
+        },
+        {
+          "file": "contextlib.py",
+          "function": "__enter__",
+          "line": 137
+        },
+        {
+          "file": "config_participants.py",
+          "function": "operation",
+          "line": 352
+        },
+        {
+          "file": "contextlib.py",
+          "function": "__enter__",
+          "line": 137
+        },
+        {
+          "file": "config_participants.py",
+          "function": "wrapped",
+          "line": 419
+        },
+        {
+          "file": "chat_screen.py",
+          "function": "_provider_readiness_app_config",
+          "line": 7615
+        },
+        {
+          "file": "chat_screen.py",
+          "function": "_build_console_provider_selection_uncached",
+          "line": 9613
+        }
+      ],
+      "slowest_completed_config_operation": {
+        "function": "config_operation",
+        "outcome": "returned",
+        "thread": 6300,
+        "elapsed_seconds": 2.229171,
+        "thread_cpu_seconds": 0.234375,
+        "acquisition_seconds": 2.228784,
+        "body_and_release_seconds": 0.000387
+      }
+    }
+  ]
+}

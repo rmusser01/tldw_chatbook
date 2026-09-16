@@ -1,0 +1,24 @@
+{
+  "artifact_tree": "ab24f6b0c2690f7705bdcddf46a941104541fe07",
+  "installed_wheel_sha256": "198a7494d194b553e1bba81d01adf401ae5e6590c93f9f310fc0659e489ad8bb",
+  "method": "Actual installed terminal keyboard UAT; file-byte snapshot readback opens only copied SQLite files. Actions containing disposable passwords are excluded.",
+  "pass": [
+    "untouched replacement Abort",
+    "normal startup and original-note readback after Abort",
+    "normal Quit",
+    "all 5347 installed file hashes unchanged"
+  ],
+  "unfinished": [
+    "acknowledged replacement retry refuses target_unverified after normal startup",
+    "later rollback and normal reopen on this artifact",
+    "current native Linux and Windows repeats"
+  ],
+  "evidence": {
+    "replacement-ab24-clean-abort-reopen.json": "305aa0dbcf820035e7c246064d10ca20ce150db4a1444628782ec534a4060c12",
+    "replacement-ab24-clean-abort-result.txt": "68c52af06eb96fb6748851c3a77805d974af151a844fe58b126a2e23d228bd72",
+    "replacement-ab24-installed-verification.json": "ac63caa48f8175f80fc1bd95777f7a41dc25f865a910bd4a8515dd2aea8564e9",
+    "replacement-ab24-normal-after-abort-library.txt": "9ac9a6656ea6d75e999963cc16c4d201263e8eca4f36d33187fc3b42c7c3109a",
+    "replacement-ab24-post-restart-binding.json": "5b70ba2a2dd396b712073fdba32b86ce8db7552c2409fa014cfd3c979b67e56d",
+    "replacement-ab24-post-restart-review-refused.txt": "859e1a5834333298bf05834df4d2cd75cd625a30c8b8589380917cf9d1d29900"
+  }
+}

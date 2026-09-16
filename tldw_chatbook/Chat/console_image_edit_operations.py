@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import logging
 import threading
+import time
 from typing import TypeAlias
 from uuid import uuid4
 
@@ -91,6 +92,29 @@ class ImageEditOperationRegistry:
         self._completions: dict[str, ImageEditCompletion] = {}
         self._failure_notices: dict[str, ImageEditFailureNotice] = {}
         self._discarded_generations: set[str] = set()
+        self._maintenance_closed = False
+        # Session deletion can detach a still-settling runner from _active.
+        self._owned_tasks: set[asyncio.Task[None]] = set()
+
+    def _maintenance_close_admission(self) -> None:
+        """Fence new starts on the app loop without cancelling existing edits."""
+        self._maintenance_closed = True
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        """Await actual child completion without discarding outcomes or drafts."""
+        if not self._maintenance_closed:
+            raise RuntimeError("participant_admission_not_closed")
+        tasks = tuple(self._owned_tasks)
+        if not tasks:
+            return True
+        _, pending = await asyncio.wait(
+            tasks, timeout=max(0.0, deadline - time.monotonic())
+        )
+        return not pending
+
+    def _maintenance_resume(self) -> None:
+        """Reopen starts on the app loop after capture releases storage."""
+        self._maintenance_closed = False
 
     def start(
         self,
@@ -103,7 +127,11 @@ class ImageEditOperationRegistry:
         on_settled: ImageEditSettled | None = None,
     ) -> ActiveImageEditOperation | None:
         """Start one owned child, or refuse when the session is already active."""
-        if session_id in self._active or session_id in self._completions:
+        if (
+            self._maintenance_closed
+            or session_id in self._active
+            or session_id in self._completions
+        ):
             return None
         _required_text(session_id, "session_id")
         _required_text(attachment_id, "attachment_id")
@@ -172,6 +200,8 @@ class ImageEditOperationRegistry:
             task=task,
         )
         self._active[session_id] = operation
+        self._owned_tasks.add(task)
+        task.add_done_callback(self._owned_tasks.discard)
         return operation
 
     async def shutdown(self) -> None:

@@ -11,6 +11,20 @@ Communication is done via JSON over stdin/stdout.
 """
 
 import sys
+from pathlib import Path
+
+# The backend invokes this file by pathname without adding PYTHONPATH. Select the
+# package adjacent to this script for source and installed layouts, never the cwd
+# or an unrelated editable checkout. Module launches already have package context.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+# ADR-126: fence and enroll before runtime imports, including direct workers.
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+admit_startup()
+
+
 import os
 
 # CRITICAL: Redirect stdout/stderr BEFORE any other imports

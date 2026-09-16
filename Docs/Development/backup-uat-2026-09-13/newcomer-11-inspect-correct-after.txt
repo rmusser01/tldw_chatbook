@@ -1,0 +1,40 @@
+
+  Backup & Restore
+
+                        Create backup                                            Inspect / restore
+
+
+                       Recovery copies                                           Restored profiles
+
+
+  Archive verified
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/offline-restore-fixture.tldw-backup.zip.age
+
+
+  Backup archive
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/offline-restore-fixture.tldw-backup.zip.age          ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+   Choose archive
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  Archive password, if encrypted                                                                                 ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  Archive verified
+  Files: 134 · Payload bytes: 26716920
+  Consistency: partial
+  Credentials: exclude
+  Owners: external.models, server.data, actor_packs.import_staging, agents.history, audio.history,
+  cache.model_catalog, chat.attachments, chat.dictionaries, chat.dictionary_history, chat.grammars,
+  chat.prompt_history, chat.prompts, chat.rag_context, chatbooks.archives, chatbooks.registry, chunking.templates,
+  collections.archives, config, config.history, db.agent_runs, db.chachanotes.primary, db.evals,
+  db.library_collections, db.library_ingest_jobs, db.media.primary, db.prompts.primary, db.rag_indexing,
+  db.scheduled_tasks, db.subscriptions, db.workspaces, diagnostics.logs, eval.definitions, feedback,
+  generation.assets, generation.styles, kanban.local, mcp.context, mcp.history, mcp.local, mcp.permissions,
+  mcp.targets, models.artifacts, notes.file_notes, notes.sync_bindings, notes.sync_state, notes.templates,
+  notifications.client, persona.assets, persona.visual_identity, persona.visual_identity_builtin, personas,
+  quiz.local, rag.definitions, rag.projections, recovered.media, research.local, research.paste_staging,
+
+
+                 Inspect                           Cancel operation                              Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to S▏^p Palette Menu

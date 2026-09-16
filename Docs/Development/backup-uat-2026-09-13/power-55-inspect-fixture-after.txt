@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Archive verified
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/offline-restore-fixture.tldw-backup.zip
+
+
+  Backup archive                                                                                                                                             ▃
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▁
+  ▊  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/novice/offline-restore-fixture.tldw-backup.zip                                                      ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+   Choose archive
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  Archive password, if encrypted                                                                                                                         ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  Archive verified
+  Files: 134 · Payload bytes: 26716920
+  Consistency: partial
+  Credentials: exclude
+  Owners: external.models, server.data, actor_packs.import_staging, agents.history, audio.history, cache.model_catalog, chat.attachments, chat.dictionaries,
+  chat.dictionary_history, chat.grammars, chat.prompt_history, chat.prompts, chat.rag_context, chatbooks.archives, chatbooks.registry, chunking.templates,
+  collections.archives, config, config.history, db.agent_runs, db.chachanotes.primary, db.evals, db.library_collections, db.library_ingest_jobs,
+  db.media.primary, db.prompts.primary, db.rag_indexing, db.scheduled_tasks, db.subscriptions, db.workspaces, diagnostics.logs, eval.definitions, feedback,
+  generation.assets, generation.styles, kanban.local, mcp.context, mcp.history, mcp.local, mcp.permissions, mcp.targets, models.artifacts, notes.file_notes,
+  notes.sync_bindings, notes.sync_state, notes.templates, notifications.client, persona.assets, persona.visual_identity, persona.visual_identity_builtin,
+  personas, quiz.local, rag.definitions, rag.projections, recovered.media, research.local, research.paste_staging, runtime.chatbook_scratch,
+  runtime.crash_forensics, runtime.event_state, runtime.instance_lock, runtime.scheduler_heartbeat, runtime.source_state, runtime.sync_state, skills,
+  study.local, subscriptions.assets, tamagotchi.config, tokenizers.custom, tts.profile_store, tts.references, tts.voices, ui.emoji_recents, ui.state,
+  ui.themes, workspaces.change_tracking, writing.local, sqlite.transient, recovery.control, unknown
+  Required capabilities:
+  Excluded profile:8da6048f8999247ca9652103:external.models: intentionally_excluded
+  Excluded profile:8da6048f8999247ca9652103:server.data: intentionally_excluded
+  Excluded profile:8da6048f8999247ca9652103:actor_packs.import_staging:af3b4eca15f9d7632f86828f622e7fe828570ae9ee6d1b5f0ce1854017fb5c00: unused
+  Excluded profile:8da6048f8999247ca9652103:agents.history:5f842eeaf86472c005ba18e0c1fecd2f424059c1d11eb9a813b6b5a178c95655: unused
+  Excluded profile:8da6048f8999247ca9652103:agents.history:3f7fa7fff66d81e0067ec350472ed89b6456869e50102671488e4c4177a3fc32: unused
+  Excluded profile:8da6048f8999247ca9652103:agents.history:ea5a6370fc24fcd5d9683d91999602d6175e87cd90079bfcb33d954b9d164f89: unused
+  Excluded profile:8da6048f8999247ca9652103:audio.history: unused
+  Excluded profile:8da6048f8999247ca9652103:cache.model_catalog: intentionally_excluded
+  Excluded profile:8da6048f8999247ca9652103:chat.dictionary_history: unused
+
+
+                       Inspect                                         Cancel operation                                           Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

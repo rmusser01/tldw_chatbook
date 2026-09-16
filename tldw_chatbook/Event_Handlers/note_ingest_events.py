@@ -396,131 +396,8 @@ async def handle_ingest_notes_import_now_button_pressed(
         results = []
 
         if import_as_templates:
-            # Import as templates
-            # Load existing templates
-            from ..config import _get_effective_config_path
-
-            user_config_dir = _get_effective_config_path().parent
-            user_templates_path = user_config_dir / "note_templates.json"
-
-            # Create directory if needed
-            user_config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Load existing templates if any
-            templates = {}
-            if user_templates_path.exists():
-                try:
-                    with open(user_templates_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        templates = data.get("templates", {})
-                except Exception as e:
-                    logger.error(f"Error loading existing templates: {e}")
-
-            # Process each file (TASK-15468: snapshot, not the live list)
-            for file_path in note_files_snapshot:
-                if cancel_event.is_set():
-                    logger.info(
-                        "Template import cancelled; stopping at file boundary."
-                    )
-                    break
-                notes_in_file = _parse_single_note_file_for_preview(
-                    file_path, app, import_as_template=True
-                )
-                file_cancelled = False
-                for note_data in notes_in_file:
-                    if cancel_event.is_set():
-                        file_cancelled = True
-                        break
-                    if (
-                        "error" in note_data
-                        or not note_data.get("title")
-                        or not note_data.get("content")
-                    ):
-                        results.append(
-                            {
-                                "file_path": str(file_path),
-                                "note_title": note_data.get("title", file_path.stem),
-                                "status": "failure",
-                                "message": note_data.get(
-                                    "error", "Missing title or content."
-                                ),
-                            }
-                        )
-                        continue
-
-                    try:
-                        # Generate a unique template key from the title
-                        base_key = (
-                            note_data["title"]
-                            .lower()
-                            .replace(" ", "_")
-                            .replace("-", "_")
-                        )
-                        # Remove non-alphanumeric characters except underscores
-                        base_key = "".join(
-                            c for c in base_key if c.isalnum() or c == "_"
-                        )
-
-                        # Ensure unique key
-                        key = base_key
-                        counter = 1
-                        while key in templates:
-                            key = f"{base_key}_{counter}"
-                            counter += 1
-
-                        # Create template entry
-                        templates[key] = {
-                            "title": note_data["title"],
-                            "content": note_data["content"],
-                            "keywords": note_data.get("keywords", ""),
-                            "description": f"Imported template: {note_data['title']}",
-                        }
-
-                        results.append(
-                            {
-                                "file_path": str(file_path),
-                                "note_title": note_data["title"],
-                                "status": "success",
-                                "message": f"Template imported successfully. Key: {key}",
-                                "template_key": key,
-                            }
-                        )
-                    except Exception as e:
-                        logger.opt(exception=True).error(
-                            f"Error importing template '{note_data['title']}' from {file_path}: {e}"
-                        )
-                        results.append(
-                            {
-                                "file_path": str(file_path),
-                                "note_title": note_data["title"],
-                                "status": "failure",
-                                "message": f"Error: {type(e).__name__}",
-                            }
-                        )
-                if file_cancelled:
-                    logger.info(
-                        "Template import cancelled; stopping at note boundary."
-                    )
-                    break
-
-            # Save all templates parsed so far (honest partial progress if
-            # cancelled -- see cancel_event above).
-            if any(r["status"] == "success" for r in results):
-                try:
-                    output = {"templates": templates}
-                    with open(user_templates_path, "w", encoding="utf-8") as f:
-                        json.dump(output, f, indent=2, ensure_ascii=False)
-                    logger.info(
-                        f"Saved {len(templates)} templates to {user_templates_path}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error saving templates file: {e}")
-                    # Update all success results to failure
-                    for r in results:
-                        if r["status"] == "success":
-                            r["status"] = "failure"
-                            r["message"] = f"Template imported but failed to save: {e}"
-
+            # The installed template job dispatches _import_template_files directly.
+            raise RuntimeError("template_import_requires_source_job")
         else:
             # Import as notes (existing logic). TASK-15468: snapshot, not
             # the live list; checked for cancellation between files and
@@ -741,6 +618,20 @@ async def handle_ingest_notes_import_now_button_pressed(
         # unattended -- and therefore how long process shutdown can block
         # waiting on the executor -- to "until the next note/file
         # boundary" instead of "the rest of the batch".
+        if import_as_templates:
+            from ..Notes import template_store
+            from ..Backup_Recovery.async_file_participants import _FileJob
+
+            with _FileJob(template_store, "note_templates") as job:
+                outcome = await job.run((app, note_files_snapshot, cancel_event))
+                if outcome.cancelled:
+                    raise asyncio.CancelledError
+                if outcome.error is not None:
+                    on_import_failure_notes(outcome.error)
+                    raise outcome.error
+                on_import_success_notes(outcome.value)
+                return outcome.value
+
         try:
             results = await asyncio.to_thread(import_worker_notes)
         except asyncio.CancelledError:
@@ -758,3 +649,45 @@ async def handle_ingest_notes_import_now_button_pressed(
         group="file_operations",
         description="Importing selected note files.",
     )
+
+
+def _import_template_files(app, note_files_snapshot, cancel_event, selected):
+    """Actual off-thread template import; file membership publishes in one merge."""
+    from ..Notes.template_store import merge_templates
+
+    results, entries = [], []
+    for file_path in note_files_snapshot:
+        if cancel_event.is_set():
+            break
+        notes = _parse_single_note_file_for_preview(file_path, app, import_as_template=True)
+        for note_data in notes:
+            if cancel_event.is_set():
+                break
+            result = {"file_path": str(file_path), "note_title": note_data.get("title", file_path.stem)}
+            if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
+                result.update(status="failure", message=note_data.get("error", "Missing title or content."))
+            else:
+                base = note_data["title"].lower().replace(" ", "_").replace("-", "_")
+                key = "".join(c for c in base if c.isalnum() or c == "_")
+                entries.append((key, {
+                    "title": note_data["title"], "content": note_data["content"],
+                    "keywords": note_data.get("keywords", ""),
+                    "description": f"Imported template: {note_data['title']}",
+                }))
+                result.update(status="pending", message="Template awaiting persistence.")
+            results.append(result)
+    if entries:
+        try:
+            keys, count = merge_templates(entries, unique=True, selected=selected)
+            committed = iter(keys)
+            for result in results:
+                if result["status"] == "pending":
+                    key = next(committed)
+                    result.update(status="success", template_key=key, message=f"Template imported successfully. Key: {key}")
+            logger.info(f"Saved {count} note templates")
+        except Exception as error:
+            logger.error(f"Error saving templates file: {error}")
+            for result in results:
+                if result["status"] == "pending":
+                    result.update(status="failure", message=f"Template failed to save: {type(error).__name__}")
+    return results

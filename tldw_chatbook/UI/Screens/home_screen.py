@@ -561,16 +561,35 @@ class HomeScreen(BaseAppScreen):
                     return await result
                 return result
 
+            from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
+            from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+            from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+            scope_service = getattr(callable_obj, "__self__", None)
+            method = getattr(callable_obj, "__func__", None)
+            local_media = getattr(scope_service, "local_service", None)
+            media_db = getattr(local_media, "media_db", None)
+            owns_media = (
+                type(scope_service) is MediaReadingScopeService
+                and method is MediaReadingScopeService.list_media_items
+                and kwargs.get("mode", "local") in (None, "local")
+                and type(local_media) is LocalMediaReadingService
+                and type(media_db) is MediaDatabase
+                and not media_db.is_memory_db
+            )
+
             def invoke_seam_in_worker() -> Any:
-                result = callable_obj(**kwargs)
-                if inspect.isawaitable(result):
-                    # This thread has no event loop, and the awaitable must
-                    # complete here so blocking async services stay off the
-                    # UI loop (mirrors Library's _run_library_service_call).
-                    return asyncio.run(
-                        _await_home_seam_result(result)
-                    )  # policy-exception: worker-thread loop
-                return result
+                db = media_db if owns_media else None
+                try:
+                    result = callable_obj(**kwargs)
+                    if inspect.isawaitable(result):
+                        return asyncio.run(
+                            _await_home_seam_result(result)
+                        )  # policy-exception: worker-thread loop
+                    return result
+                finally:
+                    if type(db) is MediaDatabase and not db.is_memory_db:
+                        db.close_connection()
 
             return await asyncio.to_thread(invoke_seam_in_worker)
         except Exception as exc:

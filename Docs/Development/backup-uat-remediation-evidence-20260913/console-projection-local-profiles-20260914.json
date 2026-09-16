@@ -1,0 +1,1661 @@
+{
+  "before": [
+    {
+      "diagnostic": "backup_startup_profile",
+      "label": "candidate",
+      "source_matches": true,
+      "largest_total": [
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "acquire_storage",
+          "line": 830,
+          "calls": 933,
+          "total_seconds": 4.596135,
+          "self_seconds": 0.00283
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 933,
+          "total_seconds": 4.538117,
+          "self_seconds": 0.013301
+        },
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "wrapped",
+          "line": 400,
+          "calls": 539,
+          "total_seconds": 4.473612,
+          "self_seconds": 0.002307
+        },
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "operation",
+          "line": 294,
+          "calls": 1220,
+          "total_seconds": 4.249535,
+          "self_seconds": 0.005671
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 1254,
+          "total_seconds": 4.07724,
+          "self_seconds": 0.01618
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "line": 6253,
+          "calls": 367,
+          "total_seconds": 2.948906,
+          "self_seconds": 0.000402
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_canvas_enabled",
+          "line": 2778,
+          "calls": 246,
+          "total_seconds": 2.571263,
+          "self_seconds": 0.000392
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_read_canvas_enabled",
+          "line": 2770,
+          "calls": 247,
+          "total_seconds": 2.523652,
+          "self_seconds": 0.000326
+        },
+        {
+          "file": "config.py",
+          "function": "get_canvas_execution_enabled",
+          "line": 398,
+          "calls": 247,
+          "total_seconds": 2.523176,
+          "self_seconds": 0.000407
+        },
+        {
+          "file": "Backup_Recovery/control_records.py",
+          "function": "admission_authority",
+          "line": 113,
+          "calls": 934,
+          "total_seconds": 2.492771,
+          "self_seconds": 0.003186
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 10413,
+          "total_seconds": 2.443075,
+          "self_seconds": 0.153317
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_ensure_console_chat_store",
+          "line": 9973,
+          "calls": 238,
+          "total_seconds": 2.169404,
+          "self_seconds": 0.001204
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "bind_canvas_native_view",
+          "line": 2642,
+          "calls": 238,
+          "total_seconds": 2.138152,
+          "self_seconds": 0.001527
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "pinned_directory",
+          "line": 33,
+          "calls": 19836,
+          "total_seconds": 2.134393,
+          "self_seconds": 0.010589
+        },
+        {
+          "file": "Backup_Recovery/control_records.py",
+          "function": "_existing_admission_authority",
+          "line": 140,
+          "calls": 933,
+          "total_seconds": 1.923932,
+          "self_seconds": 0.005221
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_records",
+          "line": 251,
+          "calls": 5092,
+          "total_seconds": 1.902106,
+          "self_seconds": 0.002983
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_directory_component",
+          "line": 173,
+          "calls": 118770,
+          "total_seconds": 1.869808,
+          "self_seconds": 0.029098
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection",
+          "line": 9592,
+          "calls": 54,
+          "total_seconds": 1.793902,
+          "self_seconds": 0.000155
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection_uncached",
+          "line": 9609,
+          "calls": 54,
+          "total_seconds": 1.79356,
+          "self_seconds": 0.000608
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 4759,
+          "total_seconds": 1.743703,
+          "self_seconds": 0.024942
+        }
+      ],
+      "largest_self": [
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 10413,
+          "total_seconds": 2.443075,
+          "self_seconds": 0.153317
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_active_visual_source",
+          "line": 504,
+          "calls": 254542,
+          "total_seconds": 0.276204,
+          "self_seconds": 0.116885
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_open",
+          "line": 546,
+          "calls": 129314,
+          "total_seconds": 1.623796,
+          "self_seconds": 0.064226
+        },
+        {
+          "file": "Utils/textual_css_fastpath.py",
+          "function": "_ordered_candidates",
+          "line": 166,
+          "calls": 2153,
+          "total_seconds": 0.621828,
+          "self_seconds": 0.058581
+        },
+        {
+          "file": "Backup_Recovery/native_files.py",
+          "function": "pinned_directory",
+          "line": 16,
+          "calls": 15457,
+          "total_seconds": 1.392869,
+          "self_seconds": 0.05751
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_close",
+          "line": 574,
+          "calls": 125148,
+          "total_seconds": 0.412882,
+          "self_seconds": 0.051855
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_runtime_operation",
+          "line": 499,
+          "calls": 254623,
+          "total_seconds": 0.287884,
+          "self_seconds": 0.04998
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_visual_native_scope",
+          "line": 515,
+          "calls": 254467,
+          "total_seconds": 0.306548,
+          "self_seconds": 0.030498
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_voice_operation",
+          "line": 524,
+          "calls": 254520,
+          "total_seconds": 0.04544,
+          "self_seconds": 0.029293
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "native_identity",
+          "line": 56,
+          "calls": 4979,
+          "total_seconds": 0.15377,
+          "self_seconds": 0.029118
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_directory_component",
+          "line": 173,
+          "calls": 118770,
+          "total_seconds": 1.869808,
+          "self_seconds": 0.029098
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_runtime_operation",
+          "line": 1063,
+          "calls": 254326,
+          "total_seconds": 0.222853,
+          "self_seconds": 0.025926
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_trusted_directory_owner",
+          "line": 169,
+          "calls": 248154,
+          "total_seconds": 0.02534,
+          "self_seconds": 0.02534
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 4759,
+          "total_seconds": 1.743703,
+          "self_seconds": 0.024942
+        },
+        {
+          "file": "Backup_Recovery/profile_paths.py",
+          "function": "lexical_path",
+          "line": 16,
+          "calls": 33329,
+          "total_seconds": 0.176465,
+          "self_seconds": 0.022616
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 1254,
+          "total_seconds": 4.07724,
+          "self_seconds": 0.01618
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "_qualified_identity",
+          "line": 228,
+          "calls": 4979,
+          "total_seconds": 0.243444,
+          "self_seconds": 0.015791
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_read",
+          "line": 44,
+          "calls": 4757,
+          "total_seconds": 0.121563,
+          "self_seconds": 0.015014
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 933,
+          "total_seconds": 4.538117,
+          "self_seconds": 0.013301
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_check",
+          "line": 320,
+          "calls": 3692,
+          "total_seconds": 0.197963,
+          "self_seconds": 0.011974
+        }
+      ],
+      "elapsed_seconds": 12.042,
+      "observer_errors": []
+    },
+    {
+      "diagnostic": "backup_startup_profile",
+      "label": "candidate",
+      "source_matches": true,
+      "largest_total": [
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "operation",
+          "line": 294,
+          "calls": 3616,
+          "total_seconds": 16.172446,
+          "self_seconds": 0.014279
+        },
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "wrapped",
+          "line": 400,
+          "calls": 1699,
+          "total_seconds": 15.740595,
+          "self_seconds": 0.005815
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 3654,
+          "total_seconds": 14.598016,
+          "self_seconds": 0.039579
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "acquire_storage",
+          "line": 830,
+          "calls": 2386,
+          "total_seconds": 12.05878,
+          "self_seconds": 0.007999
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 2386,
+          "total_seconds": 11.492539,
+          "self_seconds": 0.031779
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "line": 6253,
+          "calls": 1132,
+          "total_seconds": 10.532313,
+          "self_seconds": 0.001234
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_canvas_enabled",
+          "line": 2778,
+          "calls": 908,
+          "total_seconds": 10.516825,
+          "self_seconds": 0.000895
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_read_canvas_enabled",
+          "line": 2770,
+          "calls": 909,
+          "total_seconds": 10.183955,
+          "self_seconds": 0.000943
+        },
+        {
+          "file": "config.py",
+          "function": "get_canvas_execution_enabled",
+          "line": 398,
+          "calls": 909,
+          "total_seconds": 9.985952,
+          "self_seconds": 0.001117
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_ensure_console_chat_store",
+          "line": 9973,
+          "calls": 890,
+          "total_seconds": 9.642149,
+          "self_seconds": 0.003514
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "bind_canvas_native_view",
+          "line": 2642,
+          "calls": 890,
+          "total_seconds": 9.511282,
+          "self_seconds": 0.004147
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_sync_native_console_chat_ui",
+          "line": 18390,
+          "calls": 10,
+          "total_seconds": 9.50958,
+          "self_seconds": 0.000361
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_reconcile_console_after_attach",
+          "line": 16565,
+          "calls": 9,
+          "total_seconds": 6.419994,
+          "self_seconds": 8.1e-05
+        },
+        {
+          "file": "Backup_Recovery/control_records.py",
+          "function": "admission_authority",
+          "line": 113,
+          "calls": 2386,
+          "total_seconds": 5.532293,
+          "self_seconds": 0.007987
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 26382,
+          "total_seconds": 5.419138,
+          "self_seconds": 0.388172
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "pinned_directory",
+          "line": 33,
+          "calls": 50336,
+          "total_seconds": 5.17678,
+          "self_seconds": 0.026509
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection",
+          "line": 9592,
+          "calls": 198,
+          "total_seconds": 4.970392,
+          "self_seconds": 0.000494
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection_uncached",
+          "line": 9609,
+          "calls": 198,
+          "total_seconds": 4.969277,
+          "self_seconds": 0.001453
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_inspector_state",
+          "line": 14197,
+          "calls": 20,
+          "total_seconds": 4.870917,
+          "self_seconds": 0.001252
+        },
+        {
+          "file": "UI/Console_Modules/session.py",
+          "function": "_ensure_active_console_session_settings",
+          "line": 3515,
+          "calls": 362,
+          "total_seconds": 4.828321,
+          "self_seconds": 0.002045
+        }
+      ],
+      "largest_self": [
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_open",
+          "line": 546,
+          "calls": 326826,
+          "total_seconds": 3.862286,
+          "self_seconds": 0.388425
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 26382,
+          "total_seconds": 5.419138,
+          "self_seconds": 0.388172
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_active_visual_source",
+          "line": 504,
+          "calls": 643386,
+          "total_seconds": 0.706008,
+          "self_seconds": 0.296602
+        },
+        {
+          "file": "Backup_Recovery/native_files.py",
+          "function": "pinned_directory",
+          "line": 16,
+          "calls": 39855,
+          "total_seconds": 2.388399,
+          "self_seconds": 0.147351
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_close",
+          "line": 574,
+          "calls": 316427,
+          "total_seconds": 1.342105,
+          "self_seconds": 0.131647
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_runtime_operation",
+          "line": 499,
+          "calls": 643505,
+          "total_seconds": 0.80245,
+          "self_seconds": 0.126377
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_control_records",
+          "line": 161,
+          "calls": 13116,
+          "total_seconds": 3.039086,
+          "self_seconds": 0.117956
+        },
+        {
+          "file": "Utils/textual_css_fastpath.py",
+          "function": "_ordered_candidates",
+          "line": 166,
+          "calls": 3677,
+          "total_seconds": 0.756524,
+          "self_seconds": 0.098307
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_visual_native_scope",
+          "line": 515,
+          "calls": 643263,
+          "total_seconds": 0.782829,
+          "self_seconds": 0.07707
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_directory_component",
+          "line": 173,
+          "calls": 300242,
+          "total_seconds": 4.408764,
+          "self_seconds": 0.076572
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_voice_operation",
+          "line": 524,
+          "calls": 643348,
+          "total_seconds": 0.115258,
+          "self_seconds": 0.07414
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "native_identity",
+          "line": 56,
+          "calls": 12854,
+          "total_seconds": 0.388014,
+          "self_seconds": 0.071613
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_trusted_directory_owner",
+          "line": 169,
+          "calls": 627129,
+          "total_seconds": 0.064274,
+          "self_seconds": 0.064274
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 12056,
+          "total_seconds": 4.624934,
+          "self_seconds": 0.062842
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_runtime_operation",
+          "line": 1063,
+          "calls": 643208,
+          "total_seconds": 0.368988,
+          "self_seconds": 0.062318
+        },
+        {
+          "file": "Backup_Recovery/profile_paths.py",
+          "function": "lexical_path",
+          "line": 16,
+          "calls": 71887,
+          "total_seconds": 0.381015,
+          "self_seconds": 0.048946
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "_qualified_identity",
+          "line": 228,
+          "calls": 12854,
+          "total_seconds": 0.817626,
+          "self_seconds": 0.040166
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 3654,
+          "total_seconds": 14.598016,
+          "self_seconds": 0.039579
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_read",
+          "line": 44,
+          "calls": 12054,
+          "total_seconds": 0.311637,
+          "self_seconds": 0.037686
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 2386,
+          "total_seconds": 11.492539,
+          "self_seconds": 0.031779
+        }
+      ],
+      "elapsed_seconds": 24.197,
+      "observer_errors": []
+    },
+    {
+      "diagnostic": "backup_startup_profile",
+      "label": "candidate",
+      "source_matches": true,
+      "largest_total": [
+        {
+          "file": "Utils/ui_responsiveness.py",
+          "function": "close",
+          "line": 144,
+          "calls": 1,
+          "total_seconds": 18.735046,
+          "self_seconds": 5e-06
+        },
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "operation",
+          "line": 294,
+          "calls": 3624,
+          "total_seconds": 18.207937,
+          "self_seconds": 0.014314
+        },
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "wrapped",
+          "line": 400,
+          "calls": 1703,
+          "total_seconds": 17.777075,
+          "self_seconds": 0.00583
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 3662,
+          "total_seconds": 16.631564,
+          "self_seconds": 0.039792
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "acquire_storage",
+          "line": 830,
+          "calls": 2400,
+          "total_seconds": 14.31778,
+          "self_seconds": 0.008078
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 2400,
+          "total_seconds": 13.20437,
+          "self_seconds": 0.031978
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "line": 6253,
+          "calls": 1136,
+          "total_seconds": 12.568808,
+          "self_seconds": 0.001242
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_canvas_enabled",
+          "line": 2778,
+          "calls": 910,
+          "total_seconds": 12.542488,
+          "self_seconds": 0.00092
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_read_canvas_enabled",
+          "line": 2770,
+          "calls": 911,
+          "total_seconds": 12.201639,
+          "self_seconds": 0.000948
+        },
+        {
+          "file": "config.py",
+          "function": "get_canvas_execution_enabled",
+          "line": 398,
+          "calls": 911,
+          "total_seconds": 11.995074,
+          "self_seconds": 0.001126
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_ensure_console_chat_store",
+          "line": 9973,
+          "calls": 890,
+          "total_seconds": 9.642149,
+          "self_seconds": 0.003514
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "bind_canvas_native_view",
+          "line": 2642,
+          "calls": 890,
+          "total_seconds": 9.511282,
+          "self_seconds": 0.004147
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_sync_native_console_chat_ui",
+          "line": 18390,
+          "calls": 10,
+          "total_seconds": 9.50958,
+          "self_seconds": 0.000361
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_reconcile_console_after_attach",
+          "line": 16565,
+          "calls": 9,
+          "total_seconds": 6.419994,
+          "self_seconds": 8.1e-05
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 12126,
+          "total_seconds": 6.079775,
+          "self_seconds": 0.063606
+        },
+        {
+          "file": "Backup_Recovery/control_records.py",
+          "function": "admission_authority",
+          "line": 113,
+          "calls": 2400,
+          "total_seconds": 5.777626,
+          "self_seconds": 0.008049
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 26536,
+          "total_seconds": 5.458057,
+          "self_seconds": 0.390887
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "pinned_directory",
+          "line": 33,
+          "calls": 50624,
+          "total_seconds": 5.292169,
+          "self_seconds": 0.027268
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection",
+          "line": 9592,
+          "calls": 198,
+          "total_seconds": 4.970392,
+          "self_seconds": 0.000494
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection_uncached",
+          "line": 9609,
+          "calls": 198,
+          "total_seconds": 4.969277,
+          "self_seconds": 0.001453
+        }
+      ],
+      "largest_self": [
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 26536,
+          "total_seconds": 5.458057,
+          "self_seconds": 0.390887
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_open",
+          "line": 546,
+          "calls": 328810,
+          "total_seconds": 3.909688,
+          "self_seconds": 0.389796
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_active_visual_source",
+          "line": 504,
+          "calls": 647316,
+          "total_seconds": 0.710869,
+          "self_seconds": 0.298529
+        },
+        {
+          "file": "Backup_Recovery/native_files.py",
+          "function": "pinned_directory",
+          "line": 16,
+          "calls": 40071,
+          "total_seconds": 2.724166,
+          "self_seconds": 0.151126
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_close",
+          "line": 574,
+          "calls": 318369,
+          "total_seconds": 1.348148,
+          "self_seconds": 0.132511
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_runtime_operation",
+          "line": 499,
+          "calls": 647439,
+          "total_seconds": 0.804277,
+          "self_seconds": 0.127303
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_control_records",
+          "line": 161,
+          "calls": 13190,
+          "total_seconds": 3.051653,
+          "self_seconds": 0.118143
+        },
+        {
+          "file": "Utils/textual_css_fastpath.py",
+          "function": "_ordered_candidates",
+          "line": 166,
+          "calls": 4057,
+          "total_seconds": 0.777277,
+          "self_seconds": 0.105396
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_visual_native_scope",
+          "line": 515,
+          "calls": 647189,
+          "total_seconds": 0.788191,
+          "self_seconds": 0.077576
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_directory_component",
+          "line": 173,
+          "calls": 302066,
+          "total_seconds": 4.468246,
+          "self_seconds": 0.077494
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_voice_operation",
+          "line": 524,
+          "calls": 647278,
+          "total_seconds": 0.116069,
+          "self_seconds": 0.074635
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "native_identity",
+          "line": 56,
+          "calls": 12924,
+          "total_seconds": 0.390852,
+          "self_seconds": 0.072126
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_trusted_directory_owner",
+          "line": 169,
+          "calls": 630931,
+          "total_seconds": 0.064724,
+          "self_seconds": 0.064724
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 12126,
+          "total_seconds": 6.079775,
+          "self_seconds": 0.063606
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_runtime_operation",
+          "line": 1063,
+          "calls": 647142,
+          "total_seconds": 0.369627,
+          "self_seconds": 0.062702
+        },
+        {
+          "file": "Backup_Recovery/profile_paths.py",
+          "function": "lexical_path",
+          "line": 16,
+          "calls": 72065,
+          "total_seconds": 0.38201,
+          "self_seconds": 0.049096
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "_qualified_identity",
+          "line": 228,
+          "calls": 12924,
+          "total_seconds": 1.522168,
+          "self_seconds": 0.040473
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 3662,
+          "total_seconds": 16.631564,
+          "self_seconds": 0.039792
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_read",
+          "line": 44,
+          "calls": 12124,
+          "total_seconds": 0.314468,
+          "self_seconds": 0.037953
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 2400,
+          "total_seconds": 13.20437,
+          "self_seconds": 0.031978
+        }
+      ],
+      "elapsed_seconds": 26.195,
+      "observer_errors": []
+    }
+  ],
+  "after": [
+    {
+      "diagnostic": "backup_startup_profile",
+      "label": "candidate",
+      "source_matches": true,
+      "largest_total": [
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "wrapped",
+          "line": 400,
+          "calls": 687,
+          "total_seconds": 4.514088,
+          "self_seconds": 0.002303
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "acquire_storage",
+          "line": 830,
+          "calls": 866,
+          "total_seconds": 4.482828,
+          "self_seconds": 0.002726
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 866,
+          "total_seconds": 4.438662,
+          "self_seconds": 0.012907
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 1566,
+          "total_seconds": 4.388215,
+          "self_seconds": 0.016429
+        },
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "operation",
+          "line": 294,
+          "calls": 1530,
+          "total_seconds": 4.044684,
+          "self_seconds": 0.006342
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "line": 6253,
+          "calls": 458,
+          "total_seconds": 2.924395,
+          "self_seconds": 0.000469
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_canvas_enabled",
+          "line": 2778,
+          "calls": 329,
+          "total_seconds": 2.553183,
+          "self_seconds": 0.000309
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_read_canvas_enabled",
+          "line": 2770,
+          "calls": 330,
+          "total_seconds": 2.523903,
+          "self_seconds": 0.000384
+        },
+        {
+          "file": "config.py",
+          "function": "get_canvas_execution_enabled",
+          "line": 398,
+          "calls": 330,
+          "total_seconds": 2.52117,
+          "self_seconds": 0.000415
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 9672,
+          "total_seconds": 2.520307,
+          "self_seconds": 0.146589
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "pinned_directory",
+          "line": 33,
+          "calls": 18414,
+          "total_seconds": 2.506641,
+          "self_seconds": 0.009907
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_directory_component",
+          "line": 173,
+          "calls": 110473,
+          "total_seconds": 2.299503,
+          "self_seconds": 0.027811
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_ensure_console_chat_store",
+          "line": 9973,
+          "calls": 321,
+          "total_seconds": 2.116395,
+          "self_seconds": 0.001291
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "bind_canvas_native_view",
+          "line": 2642,
+          "calls": 321,
+          "total_seconds": 2.097877,
+          "self_seconds": 0.001556
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_open",
+          "line": 546,
+          "calls": 120287,
+          "total_seconds": 1.879094,
+          "self_seconds": 0.063122
+        },
+        {
+          "file": "Backup_Recovery/control_records.py",
+          "function": "admission_authority",
+          "line": 113,
+          "calls": 867,
+          "total_seconds": 1.82961,
+          "self_seconds": 0.00301
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 4425,
+          "total_seconds": 1.723439,
+          "self_seconds": 0.024815
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection",
+          "line": 9592,
+          "calls": 73,
+          "total_seconds": 1.619604,
+          "self_seconds": 0.00019
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection_uncached",
+          "line": 9609,
+          "calls": 73,
+          "total_seconds": 1.618256,
+          "self_seconds": 0.000481
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "startup_permission",
+          "line": 345,
+          "calls": 1788,
+          "total_seconds": 1.56835,
+          "self_seconds": 0.003994
+        }
+      ],
+      "largest_self": [
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 9672,
+          "total_seconds": 2.520307,
+          "self_seconds": 0.146589
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_active_visual_source",
+          "line": 504,
+          "calls": 236807,
+          "total_seconds": 0.26542,
+          "self_seconds": 0.111184
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_open",
+          "line": 546,
+          "calls": 120287,
+          "total_seconds": 1.879094,
+          "self_seconds": 0.063122
+        },
+        {
+          "file": "Utils/textual_css_fastpath.py",
+          "function": "_ordered_candidates",
+          "line": 166,
+          "calls": 2201,
+          "total_seconds": 0.652651,
+          "self_seconds": 0.063118
+        },
+        {
+          "file": "Backup_Recovery/native_files.py",
+          "function": "pinned_directory",
+          "line": 16,
+          "calls": 14287,
+          "total_seconds": 0.684368,
+          "self_seconds": 0.054822
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_close",
+          "line": 574,
+          "calls": 116428,
+          "total_seconds": 0.711307,
+          "self_seconds": 0.049315
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_runtime_operation",
+          "line": 499,
+          "calls": 236893,
+          "total_seconds": 0.30508,
+          "self_seconds": 0.04707
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_visual_native_scope",
+          "line": 515,
+          "calls": 236723,
+          "total_seconds": 0.294268,
+          "self_seconds": 0.029028
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_voice_operation",
+          "line": 524,
+          "calls": 236780,
+          "total_seconds": 0.042319,
+          "self_seconds": 0.027907
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_directory_component",
+          "line": 173,
+          "calls": 110473,
+          "total_seconds": 2.299503,
+          "self_seconds": 0.027811
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "native_identity",
+          "line": 56,
+          "calls": 4598,
+          "total_seconds": 0.155233,
+          "self_seconds": 0.027519
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 4425,
+          "total_seconds": 1.723439,
+          "self_seconds": 0.024815
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_trusted_directory_owner",
+          "line": 169,
+          "calls": 230817,
+          "total_seconds": 0.024344,
+          "self_seconds": 0.024344
+        },
+        {
+          "file": "Backup_Recovery/profile_paths.py",
+          "function": "lexical_path",
+          "line": 16,
+          "calls": 35378,
+          "total_seconds": 0.192464,
+          "self_seconds": 0.024223
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_runtime_operation",
+          "line": 1063,
+          "calls": 236596,
+          "total_seconds": 0.243508,
+          "self_seconds": 0.024218
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 1566,
+          "total_seconds": 4.388215,
+          "self_seconds": 0.016429
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "_qualified_identity",
+          "line": 228,
+          "calls": 4598,
+          "total_seconds": 0.362455,
+          "self_seconds": 0.015598
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_read",
+          "line": 44,
+          "calls": 4423,
+          "total_seconds": 0.126907,
+          "self_seconds": 0.015251
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_check",
+          "line": 320,
+          "calls": 4454,
+          "total_seconds": 0.237348,
+          "self_seconds": 0.014817
+        },
+        {
+          "file": "Utils/textual_css_fastpath.py",
+          "function": "<lambda>",
+          "line": 232,
+          "calls": 100517,
+          "total_seconds": 0.016455,
+          "self_seconds": 0.013058
+        }
+      ],
+      "elapsed_seconds": 12.095,
+      "observer_errors": []
+    },
+    {
+      "diagnostic": "backup_startup_profile",
+      "label": "candidate",
+      "source_matches": true,
+      "largest_total": [
+        {
+          "file": "Utils/ui_responsiveness.py",
+          "function": "close",
+          "line": 144,
+          "calls": 1,
+          "total_seconds": 14.92285,
+          "self_seconds": 7e-06
+        },
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "wrapped",
+          "line": 400,
+          "calls": 1703,
+          "total_seconds": 11.239574,
+          "self_seconds": 0.005267
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "acquire_storage",
+          "line": 830,
+          "calls": 1872,
+          "total_seconds": 11.178987,
+          "self_seconds": 0.006813
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 1872,
+          "total_seconds": 10.941305,
+          "self_seconds": 0.027856
+        },
+        {
+          "file": "Backup_Recovery/config_participants.py",
+          "function": "operation",
+          "line": 294,
+          "calls": 3624,
+          "total_seconds": 10.645547,
+          "self_seconds": 0.013594
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 3662,
+          "total_seconds": 10.513137,
+          "self_seconds": 0.033869
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_canvas_enabled",
+          "line": 2778,
+          "calls": 910,
+          "total_seconds": 9.136991,
+          "self_seconds": 0.000775
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "_read_canvas_enabled",
+          "line": 2770,
+          "calls": 911,
+          "total_seconds": 8.989541,
+          "self_seconds": 0.000881
+        },
+        {
+          "file": "config.py",
+          "function": "get_canvas_execution_enabled",
+          "line": 398,
+          "calls": 911,
+          "total_seconds": 8.83903,
+          "self_seconds": 0.00124
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_ensure_console_chat_store",
+          "line": 9973,
+          "calls": 890,
+          "total_seconds": 8.73793,
+          "self_seconds": 0.00308
+        },
+        {
+          "file": "Chat/console_runtime.py",
+          "function": "bind_canvas_native_view",
+          "line": 2642,
+          "calls": 890,
+          "total_seconds": 7.770955,
+          "self_seconds": 0.003853
+        },
+        {
+          "file": "config.py",
+          "function": "load_cli_config_and_ensure_existence",
+          "line": 6253,
+          "calls": 1136,
+          "total_seconds": 7.724272,
+          "self_seconds": 0.001211
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_active_console_settings_readiness",
+          "line": 9846,
+          "calls": 116,
+          "total_seconds": 6.341869,
+          "self_seconds": 0.000166
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection",
+          "line": 9592,
+          "calls": 198,
+          "total_seconds": 6.121134,
+          "self_seconds": 0.000505
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_provider_selection_uncached",
+          "line": 9609,
+          "calls": 198,
+          "total_seconds": 6.050518,
+          "self_seconds": 0.001073
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_sync_native_console_chat_ui",
+          "line": 18390,
+          "calls": 10,
+          "total_seconds": 5.642885,
+          "self_seconds": 0.00027
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_active_console_settings_readiness_uncached",
+          "line": 9864,
+          "calls": 116,
+          "total_seconds": 5.4109,
+          "self_seconds": 0.000797
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "pinned_directory",
+          "line": 33,
+          "calls": 39536,
+          "total_seconds": 5.108345,
+          "self_seconds": 0.023918
+        },
+        {
+          "file": "UI/Screens/chat_screen.py",
+          "function": "_build_console_inspector_state",
+          "line": 14197,
+          "calls": 20,
+          "total_seconds": 4.993624,
+          "self_seconds": 0.001048
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 20728,
+          "total_seconds": 4.949007,
+          "self_seconds": 0.316938
+        }
+      ],
+      "largest_self": [
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_open",
+          "line": 546,
+          "calls": 257266,
+          "total_seconds": 3.653387,
+          "self_seconds": 0.367003
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_verified_parent",
+          "line": 340,
+          "calls": 20728,
+          "total_seconds": 4.949007,
+          "self_seconds": 0.316938
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_active_visual_source",
+          "line": 504,
+          "calls": 506604,
+          "total_seconds": 0.581866,
+          "self_seconds": 0.241234
+        },
+        {
+          "file": "Backup_Recovery/native_files.py",
+          "function": "pinned_directory",
+          "line": 16,
+          "calls": 31095,
+          "total_seconds": 1.745113,
+          "self_seconds": 0.120142
+        },
+        {
+          "file": "Utils/textual_css_fastpath.py",
+          "function": "_ordered_candidates",
+          "line": 166,
+          "calls": 4053,
+          "total_seconds": 0.814297,
+          "self_seconds": 0.110154
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_native_close",
+          "line": 574,
+          "calls": 249201,
+          "total_seconds": 1.135032,
+          "self_seconds": 0.107403
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_runtime_operation",
+          "line": 499,
+          "calls": 506727,
+          "total_seconds": 0.492822,
+          "self_seconds": 0.10207
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_read",
+          "line": 44,
+          "calls": 9484,
+          "total_seconds": 0.330156,
+          "self_seconds": 0.080421
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_open_directory_component",
+          "line": 173,
+          "calls": 236330,
+          "total_seconds": 4.572483,
+          "self_seconds": 0.066157
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_visual_native_scope",
+          "line": 515,
+          "calls": 506477,
+          "total_seconds": 0.644761,
+          "self_seconds": 0.063165
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "native_identity",
+          "line": 56,
+          "calls": 10020,
+          "total_seconds": 0.344405,
+          "self_seconds": 0.061266
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_voice_operation",
+          "line": 524,
+          "calls": 506566,
+          "total_seconds": 0.092358,
+          "self_seconds": 0.061011
+        },
+        {
+          "file": "Backup_Recovery/bootstrap.py",
+          "function": "_registry",
+          "line": 281,
+          "calls": 9486,
+          "total_seconds": 3.638317,
+          "self_seconds": 0.054382
+        },
+        {
+          "file": "Utils/private_paths.py",
+          "function": "_trusted_directory_owner",
+          "line": 169,
+          "calls": 493651,
+          "total_seconds": 0.053045,
+          "self_seconds": 0.053045
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_runtime_operation",
+          "line": 1063,
+          "calls": 506430,
+          "total_seconds": 0.360209,
+          "self_seconds": 0.049791
+        },
+        {
+          "file": "Backup_Recovery/profile_paths.py",
+          "function": "lexical_path",
+          "line": 16,
+          "calls": 65719,
+          "total_seconds": 0.361657,
+          "self_seconds": 0.046013
+        },
+        {
+          "file": "Backup_Recovery/qualification.py",
+          "function": "_qualified_identity",
+          "line": 228,
+          "calls": 10020,
+          "total_seconds": 1.004765,
+          "self_seconds": 0.034934
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_scope",
+          "line": 451,
+          "calls": 3662,
+          "total_seconds": 10.513137,
+          "self_seconds": 0.033869
+        },
+        {
+          "file": "Backup_Recovery/storage_admission.py",
+          "function": "_acquire_storage",
+          "line": 849,
+          "calls": 1872,
+          "total_seconds": 10.941305,
+          "self_seconds": 0.027856
+        },
+        {
+          "file": "Backup_Recovery/raw_participants.py",
+          "function": "_check",
+          "line": 320,
+          "calls": 7699,
+          "total_seconds": 0.385779,
+          "self_seconds": 0.026481
+        }
+      ],
+      "elapsed_seconds": 22.549,
+      "observer_errors": []
+    }
+  ]
+}

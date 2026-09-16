@@ -22,7 +22,6 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesSyncRootState,
 )
 from tldw_chatbook.Notes.notes_sync_models import NotesSyncSerializationProfile
-from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
 
 _DIGEST = hashlib.sha256(b"note-location").hexdigest()
 _PROFILE = NotesSyncSerializationProfile(
@@ -98,9 +97,10 @@ def test_a_binding_that_is_not_active_is_not_a_location(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_the_runtime_joins_the_binding_to_its_root_path(tmp_path: Path) -> None:
     """task-32640 AC#2: an absolute path, built from live runtime state."""
+    from Tests.Notes.test_notes_sync_runtime import _Adapter, _owner
+
     store, root_folder = _store_with_binding(tmp_path)
-    owner = NotesSyncRuntimeOwner.__new__(NotesSyncRuntimeOwner)
-    owner._store = store
+    owner, _, _ = _owner(store=store, admitted=True, adapter=_Adapter([]))
     owner._root_paths = {"root-1": str(root_folder.resolve())}
     try:
         assert await owner.note_file_location("note-1") == str(
@@ -112,4 +112,4 @@ async def test_the_runtime_joins_the_binding_to_its_root_path(tmp_path: Path) ->
         owner._root_paths = {}
         assert await owner.note_file_location("note-1") == ""
     finally:
-        store.close()
+        await owner.shutdown()

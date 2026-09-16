@@ -1,0 +1,656 @@
+{
+  "revision": "9dff9dd1b2a73795eece24970ac43f1dc571c2b6",
+  "run": 34926584886,
+  "job": 104245831443,
+  "sha256": {
+    "uat-9dff9-windows-startup-job.log": "07896ad7dc83535c3a65e60ddfda425aea089b6aa10a628a631fd598f18a224e",
+    "uat-9dff9-startup-profiles.json": "989099362ab1cc0566cbbba0cd2a14e3166f61bd2a327d45b014700fbe5cea45"
+  },
+  "extracted_records_equal_log": true,
+  "records": 23,
+  "all_source_matches": true,
+  "observer_errors": 0,
+  "all_cprofile_disabled": true,
+  "non_ui": {
+    "passed": 31,
+    "seconds": 10.2
+  },
+  "primary": {
+    "passed": 0,
+    "timeouts": 4,
+    "limit_seconds": 60
+  },
+  "pairs": [
+    {
+      "case": "llamacpp",
+      "label": "dev",
+      "outcome": "passed",
+      "call_seconds": 42.41,
+      "session_seconds": 53.19,
+      "profiles": 6,
+      "final_observation_seconds": 54.109,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_close": 1
+      },
+      "slowest_completed_transaction": {
+        "function": "transaction",
+        "outcome": "returned",
+        "thread": 9128,
+        "elapsed_seconds": 0.443619,
+        "thread_cpu_seconds": 0.03125
+      },
+      "mount_observations": [
+        {
+          "seconds": 10.0,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "seconds": 20.015,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 116
+          }
+        }
+      ],
+      "terminal_config_operations": []
+    },
+    {
+      "case": "llamacpp",
+      "label": "candidate",
+      "outcome": "timeout",
+      "call_seconds": null,
+      "session_seconds": null,
+      "profiles": 6,
+      "final_observation_seconds": 60.204,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 512,
+        "user_directory": 23,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "slowest_completed_transaction": {
+        "function": "transaction",
+        "outcome": "returned",
+        "thread": 1736,
+        "elapsed_seconds": 1.838075,
+        "thread_cpu_seconds": 0.90625
+      },
+      "mount_observations": [
+        {
+          "seconds": 10.0,
+          "suspended_at": null
+        },
+        {
+          "seconds": 20.016,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "seconds": 30.016,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "seconds": 40.016,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "seconds": 50.016,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        },
+        {
+          "seconds": 60.204,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        }
+      ],
+      "terminal_config_operations": [
+        {
+          "function": "config_operation",
+          "thread": 9988,
+          "phase": "running",
+          "elapsed_seconds": 0.452666,
+          "frames": [
+            {
+              "file": "private_paths.py",
+              "function": "_native_close",
+              "line": 583
+            },
+            {
+              "file": "private_paths.py",
+              "function": "_open_verified_parent",
+              "line": 437
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "pinned_directory",
+              "line": 35
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "_registry",
+              "line": 298
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "startup_permission",
+              "line": 350
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_acquire_storage",
+              "line": 880
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "acquire_storage",
+              "line": 840
+            },
+            {
+              "file": "raw_participants.py",
+              "function": "_scope",
+              "line": 703
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "wiring.py",
+              "function": "<lambda>",
+              "line": 1479
+            },
+            {
+              "file": "session.py",
+              "function": "_maybe_refresh_stale_default_console_settings",
+              "line": 3602
+            },
+            {
+              "file": "session.py",
+              "function": "_ensure_active_console_session_settings",
+              "line": 3555
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness_uncached",
+              "line": 9868
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness",
+              "line": 9859
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_console_provider_blocker_copy",
+              "line": 15002
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_transcript_guidance",
+              "line": 15129
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_transcript",
+              "line": 18234
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 18515
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_reconcile_console_after_attach",
+              "line": 16579
+            },
+            {
+              "file": "_callback.py",
+              "function": "_invoke",
+              "line": 58
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "llamafile",
+      "label": "dev",
+      "outcome": "passed",
+      "call_seconds": 37.4,
+      "session_seconds": 40.86,
+      "profiles": 5,
+      "final_observation_seconds": 42.875,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_close": 1
+      },
+      "slowest_completed_transaction": {
+        "function": "transaction",
+        "outcome": "returned",
+        "thread": 3476,
+        "elapsed_seconds": 0.439085,
+        "thread_cpu_seconds": 0.0625
+      },
+      "mount_observations": [
+        {
+          "seconds": 10.0,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 116
+          }
+        }
+      ],
+      "terminal_config_operations": []
+    },
+    {
+      "case": "llamafile",
+      "label": "candidate",
+      "outcome": "timeout",
+      "call_seconds": null,
+      "session_seconds": null,
+      "profiles": 6,
+      "final_observation_seconds": 60.016,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 470,
+        "user_directory": 23,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "slowest_completed_transaction": {
+        "function": "transaction",
+        "outcome": "returned",
+        "thread": 1480,
+        "elapsed_seconds": 3.379229,
+        "thread_cpu_seconds": 1.015625
+      },
+      "mount_observations": [
+        {
+          "seconds": 10.0,
+          "suspended_at": null
+        },
+        {
+          "seconds": 20.0,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "seconds": 30.0,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "seconds": 40.016,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "seconds": 50.016,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        },
+        {
+          "seconds": 60.016,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        }
+      ],
+      "terminal_config_operations": [
+        {
+          "function": "config_operation",
+          "thread": 5832,
+          "phase": "body_and_release",
+          "elapsed_seconds": 0.411265,
+          "frames": [
+            {
+              "file": "windows_files.py",
+              "function": "sid_string",
+              "line": 384
+            },
+            {
+              "file": "windows_files.py",
+              "function": "security",
+              "line": 472
+            },
+            {
+              "file": "windows_files.py",
+              "function": "_stat_handle",
+              "line": 721
+            },
+            {
+              "file": "windows_files.py",
+              "function": "stat",
+              "line": 714
+            },
+            {
+              "file": "raw_participants.py",
+              "function": "_check",
+              "line": 373
+            },
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 301
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "wiring.py",
+              "function": "<lambda>",
+              "line": 1479
+            },
+            {
+              "file": "session.py",
+              "function": "_maybe_refresh_stale_default_console_settings",
+              "line": 3602
+            },
+            {
+              "file": "session.py",
+              "function": "_ensure_active_console_session_settings",
+              "line": 3555
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness_uncached",
+              "line": 9868
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness",
+              "line": 9859
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_console_provider_blocker_copy",
+              "line": 15002
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_transcript_guidance",
+              "line": 15129
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_control_bar_under_config",
+              "line": 21546
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "<lambda>",
+              "line": 21483
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_run_console_config_sync",
+              "line": 21513
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_control_bar",
+              "line": 21482
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_identity_surfaces",
+              "line": 4237
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_dispatch_active_console_roleplay_refresh",
+              "line": 4648
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 18512
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_reconcile_console_after_attach",
+              "line": 16579
+            },
+            {
+              "file": "_callback.py",
+              "function": "_invoke",
+              "line": 58
+            }
+          ]
+        },
+        {
+          "function": "config_operation",
+          "thread": 5832,
+          "phase": "running",
+          "elapsed_seconds": 0.00343,
+          "frames": [
+            {
+              "file": "windows_files.py",
+              "function": "sid_string",
+              "line": 384
+            },
+            {
+              "file": "windows_files.py",
+              "function": "security",
+              "line": 472
+            },
+            {
+              "file": "windows_files.py",
+              "function": "_stat_handle",
+              "line": 721
+            },
+            {
+              "file": "windows_files.py",
+              "function": "stat",
+              "line": 714
+            },
+            {
+              "file": "raw_participants.py",
+              "function": "_check",
+              "line": 373
+            },
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 301
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "wiring.py",
+              "function": "<lambda>",
+              "line": 1479
+            },
+            {
+              "file": "session.py",
+              "function": "_maybe_refresh_stale_default_console_settings",
+              "line": 3602
+            },
+            {
+              "file": "session.py",
+              "function": "_ensure_active_console_session_settings",
+              "line": 3555
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness_uncached",
+              "line": 9868
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness",
+              "line": 9859
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_console_provider_blocker_copy",
+              "line": 15002
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_transcript_guidance",
+              "line": 15129
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_control_bar_under_config",
+              "line": 21546
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "<lambda>",
+              "line": 21483
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_run_console_config_sync",
+              "line": 21513
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_control_bar",
+              "line": 21482
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_identity_surfaces",
+              "line": 4237
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_dispatch_active_console_roleplay_refresh",
+              "line": 4648
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_native_console_chat_ui",
+              "line": 18512
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_reconcile_console_after_attach",
+              "line": 16579
+            },
+            {
+              "file": "_callback.py",
+              "function": "_invoke",
+              "line": 58
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

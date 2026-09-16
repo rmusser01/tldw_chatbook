@@ -8,6 +8,8 @@ Chatbook Importer
 Handles the import and validation of chatbooks into the application.
 """
 
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call, own_database
+
 import codecs
 import hashlib
 import heapq
@@ -219,6 +221,13 @@ class ImportTypeResult:
         }
 
 
+def _content_sources(values):
+    owner = values["self"]
+    if "db_paths" in values:
+        return (get_user_data_dir() / "temp" / "imports",)
+    return (*owner.db_paths.values(), owner.temp_dir, values.get("chatbook_path"))
+
+
 class ImportStatus:
     """Track import progress and results."""
 
@@ -396,6 +405,7 @@ class ImportStatus:
 class ChatbookImporter:
     """Service for importing chatbooks into the application."""
 
+    @content_call(_content_sources)
     def __init__(self, db_paths: Dict[str, str]):
         """
         Initialize the chatbook importer.
@@ -768,6 +778,7 @@ class ChatbookImporter:
                     if file_fd >= 0:
                         os.close(file_fd)
 
+    @content_call(_content_sources)
     def preview_chatbook(
         self, chatbook_path: Path
     ) -> Tuple[Optional[ChatbookManifest], Optional[str]]:
@@ -815,6 +826,7 @@ class ChatbookImporter:
             if extract_dir is not None:
                 shutil.rmtree(extract_dir, ignore_errors=True)
 
+    @content_call(_content_sources)
     def import_chatbook(
         self,
         chatbook_path: Path,
@@ -1088,6 +1100,7 @@ class ChatbookImporter:
             if extract_dir is not None:
                 shutil.rmtree(extract_dir, ignore_errors=True)
 
+    @content_call(_content_sources)
     def _import_conversations(
         self,
         extract_dir: Path,
@@ -2286,6 +2299,7 @@ class ChatbookImporter:
             citations=[item for item in citation_items if isinstance(item, Mapping)],
         )
 
+    @content_call(_content_sources)
     def _import_notes(
         self,
         extract_dir: Path,
@@ -2307,11 +2321,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(
+        db = own_database(CharactersRAGDB(
             db_path,
             "chatbook_importer",
             console_library_migration_seed=load_console_library_migration_seed(),
-        )
+        ))
         notes_dir = extract_dir / "content" / "notes"
         logger.info(f"ChatbookImporter._import_notes: Looking for notes in {notes_dir}")
 
@@ -2407,6 +2421,7 @@ class ChatbookImporter:
                     note_id,
                 )
 
+    @content_call(_content_sources)
     def _import_characters(
         self,
         extract_dir: Path,
@@ -2428,11 +2443,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(
+        db = own_database(CharactersRAGDB(
             db_path,
             "chatbook_importer",
             console_library_migration_seed=load_console_library_migration_seed(),
-        )
+        ))
         chars_dir = extract_dir / "content" / "characters"
         logger.info(
             f"ChatbookImporter._import_characters: Looking for characters in {chars_dir}"
@@ -2570,6 +2585,7 @@ class ChatbookImporter:
                     char_id,
                 )
 
+    @content_call(_content_sources)
     def _import_prompts(
         self,
         extract_dir: Path,
@@ -2604,7 +2620,7 @@ class ChatbookImporter:
             return
 
         try:
-            db = PromptsDatabase(db_path, "chatbook_importer")
+            db = own_database(PromptsDatabase(db_path, "chatbook_importer"))
         except Exception:
             for prompt_id in valid_prompt_ids:
                 status.record_processed(ContentType.PROMPT)
@@ -2691,6 +2707,7 @@ class ChatbookImporter:
                 )
         db.close_connection()
 
+    @content_call(_content_sources)
     def _import_media(
         self,
         extract_dir: Path,
@@ -2705,7 +2722,7 @@ class ChatbookImporter:
             status.add_error("Media database path not configured")
             return
 
-        db = MediaDatabase(db_path, "chatbook_importer")
+        db = own_database(MediaDatabase(db_path, "chatbook_importer"))
         media_dir = extract_dir / "content" / "media"
         metadata_dir = media_dir / "metadata"
 
@@ -2920,6 +2937,7 @@ class ChatbookImporter:
         validate_filename(fallback_filename)
         return kept_dir / fallback_filename
 
+    @content_call(_content_sources)
     def _import_kept_briefings(
         self,
         extract_dir: Path,
@@ -2956,11 +2974,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(
+        db = own_database(CharactersRAGDB(
             db_path,
             "chatbook_importer",
             console_library_migration_seed=load_console_library_migration_seed(),
-        )
+        ))
         kept_dir = extract_dir / "content" / "kept_briefings"
 
         for kept_id in kept_briefing_ids:

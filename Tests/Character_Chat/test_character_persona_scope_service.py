@@ -2952,6 +2952,9 @@ async def test_server_character_persona_service_from_config_denied_policy_does_n
 
 
 def test_app_wires_character_persona_services(monkeypatch):
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+
+    install_config_source(monkeypatch)
     from tldw_chatbook import app as app_module
 
     server_service = Mock()

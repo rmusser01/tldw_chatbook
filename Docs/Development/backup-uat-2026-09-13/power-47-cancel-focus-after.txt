@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Failed: capturing
+  backup_operation_failed
+
+  Archive classification: Partial — acknowledgement required to Create                                                                                       ▅
+  Writers pause while data is copied and resume before archive packaging.                                                                                    ▅
+  Availability: available
+  Volume /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power: 253056878 bytes required; 15030235136 bytes available
+  Supported credential coverage is checked during capture. Any unavailable scopes require a new explicit review.
+  external.models: intentionally_excluded — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/Downloads/tldw_models
+  server.data: intentionally_excluded
+  actor_packs.import_staging: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/actor_pack_imports
+  agents.history: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/tool_sandbox/.agent-runs
+  agents.history: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/tool_sandbox/agent-runs
+  agents.history: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/tool_sandbox/skill_script_output
+  audio.history: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/tldw_chatbook_audio_history.json
+  cache.model_catalog: intentionally_excluded —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/model_catalog_cache.json
+  chat.attachments: included — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db
+  chat.dictionaries: included_directory — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/chat_dicts
+  chat.dictionary_history: unused —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/tldw_chatbook_chat_dictionary_history.json
+  chat.grammars: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/tldw_chatbook_chat_grammars.json
+  chat.prompt_history: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/prompt_history.jsonl
+  chat.prompts: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/installed/tldw_chatbook/Chat/prompt_templates
+  chat.rag_context: unused —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/tldw_chatbook_chat_rag_context.json
+  chatbooks.archives: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/chatbooks
+  chatbooks.registry: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/tldw_chatbook_chatbooks.json
+  chunking.templates: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/chunking_templates
+  collections.archives: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/collections_archives
+  collections.archives: unused —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/collections_archives/3c9ea8a94ca5d823
+  collections.archives: unused —
+  /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/collections_archives/3c9ea8a94ca5d823/.lifecycle.lock
+  config: included — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.config/tldw_cli/config.toml
+  config.history: unused — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.config/tldw_cli/config.toml.bak
+  db.agent_runs: included — /private/tmp/chatbook-backup-uat-20260913-xtbqee8d/power/home/.local/share/tldw_cli/default_user/agent_runs.db
+
+  Review the displayed coverage. Backup pauses writers for capture, then resumes them before packaging.
+                 Review                              Create backup                         Cancel operation                              Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

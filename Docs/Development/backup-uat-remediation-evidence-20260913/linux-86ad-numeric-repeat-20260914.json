@@ -1,0 +1,23 @@
+{
+  "revision": "86ad9993dcffef710e9cd250665c1bb8314a67dc",
+  "collected": 78,
+  "passed": 77,
+  "failed": 1,
+  "skipped": 0,
+  "unfinished": 0,
+  "pytest_returncode": 1,
+  "failed_zero_based_public_ordinals": [
+    {
+      "ordinal": 49,
+      "nodeid": "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py::test_native_nested_persona_pack_survives_reopen_and_later_rollback"
+    }
+  ],
+  "driver_sha256": "9625c3500df9c258846f2d2c02d557fa83ae5604e640a6ed84d3b06f0794e2e6",
+  "method": "Only numeric pytest-hook status was returned. Failed positions map to the separately collected public local78-case selection. No remote diagnostic-log contents were read.",
+  "limits": [
+    "This repeat completed all78cases with77passes/1failure and no skipped/unfinished results.",
+    "All three mounted capture/resumed-write routes passed; prior intermittent failures remain recorded.",
+    "The remaining nested Persona reopen/later-rollback failure needs exception metadata diagnosis, still awaiting approval.",
+    "Product sources have not changed between this revision and current29baddc035; later commits changed only tests, scheduling and evidence."
+  ]
+}

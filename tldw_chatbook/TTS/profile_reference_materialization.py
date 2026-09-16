@@ -6,6 +6,8 @@ import asyncio
 import os
 import re
 import stat
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +43,7 @@ _OWNER_PATTERN: Final = re.compile(r"clone-v1-[0-9a-f]{32}\Z")
 _ASSET_PATTERN: Final = re.compile(r"asset-[0-9a-f]{32}\.wav\Z")
 _HANDLE_TOKEN = object()
 _T = TypeVar("_T")
+_ORIGINAL_OPEN = os.open
 
 
 class TTSCloneMaterializationError(RuntimeError):
@@ -62,6 +65,203 @@ class TTSCloneMaterializationError(RuntimeError):
         self.code = code
 
 
+@dataclass(eq=False)
+class _CloneOpenOutcome:
+    descriptor: int | None = None
+    rejected: bool = False
+
+
+def _open_clone_descriptor(*args, _outcome, **kwargs):
+    primitive = os.open
+    try:
+        fd = primitive(*args, **kwargs)
+    except OSError:
+        if primitive is _ORIGINAL_OPEN:
+            _outcome.rejected = True
+        raise
+    _outcome.descriptor = fd
+    return fd
+
+
+class _CloneNativeOperation:
+    """Concrete native outcomes; retained leases confer no IO permission."""
+
+    def __init__(self, materializer):
+        self.materializer = materializer
+        self.root = materializer._root
+        self.paths = {self.root}
+        self.parents = {}
+        self.pid = os.getpid()
+        self.thread = None
+        self.leases = []
+        self.descriptors = {}
+        self.pending = set()
+        self.failed_closes = set()
+        self.uncertain = False
+        self.residue = False
+        self.record = None
+        self.errors = []
+
+    def admit(self):
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        self.check()
+        self.materializer._check_source()
+        if self.root != self.materializer._root:
+            raise TTSCloneMaterializationError("unavailable")
+        lease = storage.acquire_storage(self.root)
+        lease.native_owner = self
+        self.leases.append(lease)
+
+    def check(self):
+        if (
+            self.pid != os.getpid()
+            or self.thread is not threading.current_thread()
+            or self not in self.materializer._native_operations
+        ):
+            raise TTSCloneMaterializationError("unavailable")
+
+    def check_root(self, root):
+        self.check()
+        if root != self.root:
+            raise TTSCloneMaterializationError("unavailable")
+
+    def select(self, parent, name):
+        self.check()
+        directory = self.parents.get(parent)
+        if directory is None or not (
+            directory == self.root
+            and _OWNER_PATTERN.fullmatch(name)
+            or directory.parent == self.root
+            and _OWNER_PATTERN.fullmatch(directory.name)
+            and (name == "owner.lock" or _ASSET_PATTERN.fullmatch(name))
+        ):
+            raise TTSCloneMaterializationError("unavailable")
+        self.paths.add(directory / name)
+
+    def check_record(self, record, *, cleanup=False):
+        self.check()
+        if cleanup:
+            valid = record is self.record and record.native is self
+        else:
+            valid = (
+                record.native in self.materializer._native_operations
+                and any(
+                    handle._record is record
+                    for handle in self.materializer._active.values()
+                )
+                and record.native.record is record
+            )
+        if not valid or record.asset_path.parent.parent != self.root:
+            raise TTSCloneMaterializationError("unavailable")
+        if not cleanup:
+            self.parents[record.owner_fd] = record.asset_path.parent
+            self.paths.add(record.asset_path)
+
+    def open(self, *args, **kwargs):
+        self.check()
+        if "dir_fd" in kwargs:
+            parent = self.parents.get(kwargs["dir_fd"])
+            if parent is None:
+                raise TTSCloneMaterializationError("unavailable")
+            selected = parent / args[0]
+        else:
+            selected = Path(args[0])
+        if selected not in self.paths:
+            raise TTSCloneMaterializationError("unavailable")
+        self.admit()
+        outcome = _CloneOpenOutcome()
+        self.pending.add(outcome)
+        try:
+            return _open_clone_descriptor(*args, _outcome=outcome, **kwargs)
+        finally:
+            if outcome.descriptor is not None:
+                self.descriptors[outcome.descriptor] = None
+                if args[1] & _DIRECTORY:
+                    self.parents[outcome.descriptor] = selected
+                self.pending.discard(outcome)
+            elif outcome.rejected:
+                self.pending.discard(outcome)
+
+    def open_directory(self, *args, **kwargs):
+        from tldw_chatbook.Utils import private_paths
+
+        self.admit()
+        outcome = private_paths._NativeOpenOutcome()
+        attempt = object()
+        self.pending.add(attempt)
+        try:
+            return private_paths._native_open(*args, _outcome=outcome, **kwargs)
+        finally:
+            if outcome.descriptor is not None:
+                self.descriptors[outcome.descriptor] = private_paths._native_close
+                self.pending.discard(attempt)
+            elif outcome.rejected:
+                self.pending.discard(attempt)
+
+    def close(self, fd):
+        self.check()
+        if fd in self.failed_closes:
+            raise TTSCloneMaterializationError("cleanup_failed")
+        if fd not in self.descriptors:
+            raise TTSCloneMaterializationError("cleanup_failed")
+        try:
+            # Preserve each helper's actual native attribution.
+            (self.descriptors[fd] or os.close)(fd)
+        except BaseException as error:
+            self.failed_closes.add(fd)
+            self.errors.append(error)
+            self.uncertain = True
+            raise
+        del self.descriptors[fd]
+        self.parents.pop(fd, None)
+
+    def finish(self):
+        self.check()
+        for fd in tuple(self.descriptors):
+            if fd not in self.failed_closes:
+                try:
+                    self.close(fd)
+                except BaseException:  # noqa: BLE001, S110 - error retained on native owner
+                    pass  # Actual error and uncertain ownership retained above.
+        if self.pending or self.descriptors or self.uncertain or self.residue:
+            return False
+        while self.leases:
+            try:
+                self.leases[-1].close()
+            except BaseException as error:  # noqa: BLE001 - preserve native control flow
+                self.uncertain = True
+                self.errors.append(error)
+                return False
+            self.leases.pop()
+        self.materializer._native_operations.discard(self)
+        return True
+
+
+def _checked_clone_native(native):
+    if type(native) is not _CloneNativeOperation:
+        raise TTSCloneMaterializationError("unavailable")
+    native.check()
+    return native
+
+
+def _clone_select(native, parent, name):
+    if native is not None:
+        _checked_clone_native(native).select(parent, name)
+
+
+def _clone_open(native, *args, **kwargs):
+    return (
+        os.open(*args, **kwargs)
+        if native is None
+        else _checked_clone_native(native).open(*args, **kwargs)
+    )
+
+
+def _clone_close(native, fd):
+    return os.close(fd) if native is None else _checked_clone_native(native).close(fd)
+
+
 @dataclass(slots=True)
 class _MaterializationRecord:
     owner_name: str
@@ -74,6 +274,7 @@ class _MaterializationRecord:
     owner_identity: tuple[int, int]
     asset_identity: tuple[int, int]
     lock_identity: tuple[int, int]
+    native: _CloneNativeOperation | None = None
 
 
 class TTSCloneReferenceMaterialization:
@@ -125,7 +326,11 @@ class TTSCloneReferenceMaterializer:
 
     def __init__(self, runtime_root: Path) -> None:
         self._root = Path(runtime_root)
+        self._configured_source = None
         self._closed = False
+        self._maintenance_admission_closed = False
+        self._owner_loop = None
+        self._native_operations: set[_CloneNativeOperation] = set()
         self._close_task: asyncio.Task[None] | None = None
         self._sweep_lock = asyncio.Lock()
         self._cleanup_lock = asyncio.Lock()
@@ -154,12 +359,14 @@ class TTSCloneReferenceMaterializer:
             BaseException: A caller control-flow signal after retained worker
                 cleanup reaches a terminal state.
         """
+        self._check_loop()
         call = cast(asyncio.Task[object] | None, asyncio.current_task())
         if call is not None:
             self._materialize_calls.add(call)
         record: _MaterializationRecord | None = None
         try:
-            if self._closed:
+            self._check_source()
+            if self._closed or self._maintenance_admission_closed:
                 raise TTSCloneMaterializationError("closed")
             if not _POSIX_SUPPORTED:
                 raise TTSCloneMaterializationError("unsupported")
@@ -167,7 +374,7 @@ class TTSCloneReferenceMaterializer:
                 raise TTSCloneMaterializationError("unavailable")
 
             await self._ensure_swept()
-            if self._closed:
+            if self._closed or self._maintenance_admission_closed:
                 raise TTSCloneMaterializationError("closed")
 
             worker = self._start_worker(
@@ -184,15 +391,27 @@ class TTSCloneReferenceMaterializer:
                 raise TTSCloneMaterializationError("unavailable") from None
             record = cast(_MaterializationRecord, result)
 
-            if cancelled is not None or self._closed:
+            if (
+                cancelled is not None
+                or self._closed
+                or self._maintenance_admission_closed
+            ):
                 cleanup = self._start_worker(_cleanup_materialization_sync, record)
                 _, _, cleanup_failure = await _await_retained_result(cleanup)
                 self._worker_tasks.discard(cleanup)
                 if cleanup_failure is not None:
-                    _abandon_record(record)
+                    raise cancelled or TTSCloneMaterializationError("cleanup_failed")
                 if cancelled is not None:
                     raise cancelled
                 raise TTSCloneMaterializationError("closed")
+
+            try:
+                self._check_source()
+            except TTSCloneMaterializationError:
+                cleanup = self._start_worker(_cleanup_materialization_sync, record)
+                await _await_retained_result(cleanup)
+                self._worker_tasks.discard(cleanup)
+                raise
 
             handle = TTSCloneReferenceMaterialization(
                 _HANDLE_TOKEN,
@@ -219,7 +438,7 @@ class TTSCloneReferenceMaterializer:
                 if _is_control_flow(failure):
                     raise failure
                 raise TTSCloneMaterializationError("unavailable") from None
-            if self._closed:
+            if self._closed or self._maintenance_admission_closed:
                 raise TTSCloneMaterializationError("closed")
             self._root, self._root_identity = cast(
                 tuple[Path, tuple[int, int]], prepared_root
@@ -239,6 +458,7 @@ class TTSCloneReferenceMaterializer:
 
     async def close(self) -> None:
         """Seal creation and retain cleanup until all owned work terminates."""
+        self._check_loop()
         if self._close_task is None:
             self.seal()
             self._close_task = asyncio.create_task(self._complete_close())
@@ -278,14 +498,13 @@ class TTSCloneReferenceMaterializer:
                     failed = True
                     if _is_control_flow(failure) and control_flow is None:
                         control_flow = failure
-                    _abandon_record(record)
-                    self._active.pop(handle._token, None)
         if control_flow is not None:
             raise control_flow
-        if failed:
+        if failed or self._native_operations:
             raise TTSCloneMaterializationError("cleanup_failed")
 
     async def _close_handle(self, handle: TTSCloneReferenceMaterialization) -> None:
+        self._check_loop()
         call = cast(asyncio.Task[object] | None, asyncio.current_task())
         if call is not None:
             self._handle_calls.add(call)
@@ -314,10 +533,13 @@ class TTSCloneReferenceMaterializer:
         self,
         handle: TTSCloneReferenceMaterialization,
     ) -> Path:
+        self._check_loop()
         call = cast(asyncio.Task[object] | None, asyncio.current_task())
         if call is not None:
             self._handle_calls.add(call)
         try:
+            if self._closed or self._maintenance_admission_closed:
+                raise TTSCloneMaterializationError("closed")
             async with self._cleanup_lock:
                 if not self.owns(handle):
                     raise TTSCloneMaterializationError("unavailable")
@@ -338,16 +560,89 @@ class TTSCloneReferenceMaterializer:
             if call is not None:
                 self._handle_calls.discard(call)
 
+    def _check_source(self):
+        from .profile_source import check_materializer_source
+
+        check_materializer_source(self)
+
+    def _check_loop(self):
+        loop = asyncio.get_running_loop()
+        if self._owner_loop is None:
+            self._owner_loop = loop
+        if self._owner_loop is not loop:
+            raise TTSCloneMaterializationError("unavailable")
+
+    def _maintenance_close_admission(self):
+        self._check_loop()
+        self._maintenance_admission_closed = True
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        self._check_loop()
+        self._maintenance_close_admission()
+        while self._materialize_calls or self._handle_calls or self._worker_tasks:
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(min(0.01, max(0, deadline - time.monotonic())))
+        # Maintenance never destroys an asset still owned by a response/consumer.
+        return not self._active and not self._native_operations
+
+    async def _maintenance_resume(self):
+        self._check_loop()
+        self._check_source()
+        if self._closed:
+            raise TTSCloneMaterializationError("closed")
+        self._maintenance_admission_closed = False
+
     def _start_worker(
         self,
         function: Callable[..., object],
         *args: object,
     ) -> asyncio.Task[object]:
-        task: asyncio.Task[object] = asyncio.create_task(
-            asyncio.to_thread(function, *args)
+        self._check_loop()
+        # Reserve before to_thread is queued, including cancelled/late creators.
+        cleanup = function is _cleanup_materialization_sync
+        native = args[0].native if cleanup else _CloneNativeOperation(self)
+        assert native is not None
+        self._native_operations.add(native)
+        task = asyncio.create_task(
+            asyncio.to_thread(self._run_native_worker, native, function, args, cleanup)
         )
         self._worker_tasks.add(task)
         return task
+
+    def _run_native_worker(self, native, function, args, cleanup):
+        native.thread = threading.current_thread()
+        result = None
+        failure = None
+        try:
+            if not cleanup:
+                # Two independent holds retain exclusion if release itself fails.
+                native.admit()
+                native.admit()
+            result = function(*args, _native=native)
+            return result
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            if failure is not None and not cleanup and native.record is not None:
+                try:
+                    _cleanup_materialization_sync(native.record, _native=native)
+                except BaseException as error:  # noqa: BLE001 - original body stays primary
+                    native.errors.append(error)
+                    # Keep the exact unpublished record and its native holds.
+                    cleanup = True
+            if not isinstance(result, _MaterializationRecord) and not (
+                cleanup and failure is not None and not native.uncertain
+            ):
+                prior_errors = len(native.errors)
+                retired = native.finish()
+                if failure is None:
+                    for error in native.errors[prior_errors:]:
+                        if not isinstance(error, Exception):
+                            raise error
+                if failure is None and not retired:
+                    raise TTSCloneMaterializationError("cleanup_failed")
 
 
 async def _await_retained_result(
@@ -370,7 +665,7 @@ async def _await_retained_result(
             break
     try:
         return cancellation, task.result(), None
-    except BaseException as error:
+    except BaseException as error:  # noqa: BLE001 - return original task control/error
         return cancellation, None, error
 
 
@@ -440,13 +735,19 @@ def _create_materialization_sync(
     root: Path,
     expected_root_identity: tuple[int, int] | None,
     wav_bytes: bytes,
+    *,
+    _native=None,
 ) -> _MaterializationRecord:
-    root_fd = os.open(root, _DIRECTORY_FLAGS)
+    if _native is not None:
+        _checked_clone_native(_native).check_root(root)
+    root_fd = _clone_open(_native, root, _DIRECTORY_FLAGS)
     owner_fd = -1
     lock_fd = -1
     owner_name = ""
+    owner_created = False
     root_locked = False
     asset_name = ""
+    owner_identity = lock_identity = asset_identity = None
     try:
         root_info = os.fstat(root_fd)
         if (
@@ -459,15 +760,18 @@ def _create_materialization_sync(
         root_locked = True
         for _ in range(16):
             owner_name = f"clone-v1-{token_hex(16)}"
+            _clone_select(_native, root_fd, owner_name)
             try:
                 os.mkdir(owner_name, _OWNER_DIRECTORY_MODE, dir_fd=root_fd)
+                owner_created = True
                 break
             except FileExistsError:
                 continue
         else:
             raise OSError("could not allocate owner")
 
-        owner_fd = os.open(owner_name, _DIRECTORY_FLAGS, dir_fd=root_fd)
+        owner_fd = _clone_open(_native, owner_name, _DIRECTORY_FLAGS, dir_fd=root_fd)
+        owner_identity = _identity(os.fstat(owner_fd))
         os.fchmod(owner_fd, _OWNER_DIRECTORY_MODE)
         owner_info = os.fstat(owner_fd)
         named_owner_info = os.stat(
@@ -480,12 +784,15 @@ def _create_materialization_sync(
         ):
             raise OSError("unsafe owner")
 
-        lock_fd = os.open(
+        _clone_select(_native, owner_fd, "owner.lock")
+        lock_fd = _clone_open(
+            _native,
             "owner.lock",
             _FILE_FLAGS | os.O_CREAT | os.O_EXCL,
             _OWNER_FILE_MODE,
             dir_fd=owner_fd,
         )
+        lock_identity = _identity(os.fstat(lock_fd))
         os.fchmod(lock_fd, _OWNER_FILE_MODE)
         _lock_exclusive_nonblocking(lock_fd)
         lock_info = os.fstat(lock_fd)
@@ -493,13 +800,16 @@ def _create_materialization_sync(
             raise OSError("unsafe lock")
 
         asset_name = f"asset-{token_hex(16)}.wav"
-        asset_fd = os.open(
+        _clone_select(_native, owner_fd, asset_name)
+        asset_fd = _clone_open(
+            _native,
             asset_name,
             _FILE_FLAGS | os.O_CREAT | os.O_EXCL,
             _OWNER_FILE_MODE,
             dir_fd=owner_fd,
         )
         try:
+            asset_identity = _identity(os.fstat(asset_fd))
             os.fchmod(asset_fd, _OWNER_FILE_MODE)
             view = memoryview(wav_bytes)
             while view:
@@ -519,13 +829,13 @@ def _create_materialization_sync(
             ) != _identity(named_asset_info):
                 raise OSError("unsafe asset")
         finally:
-            os.close(asset_fd)
+            _clone_close(_native, asset_fd)
         os.fsync(owner_fd)
         os.fsync(root_fd)
         _unlock(root_fd)
         root_locked = False
 
-        return _MaterializationRecord(
+        record = _MaterializationRecord(
             owner_name=owner_name,
             asset_name=asset_name,
             asset_path=root / owner_name / asset_name,
@@ -536,36 +846,68 @@ def _create_materialization_sync(
             owner_identity=_identity(owner_info),
             asset_identity=_identity(asset_info),
             lock_identity=_identity(lock_info),
+            native=_native,
         )
+        if _native is not None:
+            _native.record = record
+        return record
     except BaseException:
-        if owner_fd >= 0:
-            if asset_name:
+        # The failed creator still owns only its original entries. A renamed
+        # owner or substituted leaf is evidence to preserve, never a new target.
+        removed = not owner_created
+        if owner_identity is not None and _same_entry(
+            root_fd, owner_name, owner_identity
+        ):
+            for name, identity in (
+                (asset_name, asset_identity),
+                ("owner.lock", lock_identity),
+            ):
+                if (
+                    name
+                    and identity is not None
+                    and _same_entry(owner_fd, name, identity)
+                ):
+                    try:
+                        os.unlink(name, dir_fd=owner_fd)
+                    except OSError:
+                        pass
+            if _same_entry(root_fd, owner_name, owner_identity):
                 try:
-                    os.unlink(asset_name, dir_fd=owner_fd)
+                    os.rmdir(owner_name, dir_fd=root_fd)
+                    removed = True
                 except OSError:
                     pass
-            try:
-                os.unlink("owner.lock", dir_fd=owner_fd)
-            except OSError:
-                pass
-            os.close(owner_fd)
-        if lock_fd >= 0:
-            os.close(lock_fd)
-        if owner_name:
-            try:
-                os.rmdir(owner_name, dir_fd=root_fd)
-            except OSError:
-                pass
+        if not removed and _native is not None:
+            _native.residue = True
         if root_locked:
             try:
                 _unlock(root_fd)
             except OSError:
                 pass
-        os.close(root_fd)
+        for fd in (lock_fd, owner_fd, root_fd):
+            if fd >= 0:
+                try:
+                    _clone_close(_native, fd)
+                except BaseException:  # noqa: BLE001, S110 - preserve body and native owner
+                    pass  # Keep the original body signal; native owns the error.
         raise
 
 
-def _validate_materialization_sync(record: _MaterializationRecord) -> Path:
+def _same_entry(parent_fd, name, identity):
+    try:
+        return (
+            _identity(os.stat(name, dir_fd=parent_fd, follow_symlinks=False))
+            == identity
+        )
+    except OSError:
+        return False
+
+
+def _validate_materialization_sync(
+    record: _MaterializationRecord, *, _native=None
+) -> Path:
+    if _native is not None:
+        _checked_clone_native(_native).check_record(record)
     root_info = os.fstat(record.root_fd)
     named_root_info = os.stat(
         record.asset_path.parent.parent,
@@ -607,7 +949,9 @@ def _validate_materialization_sync(record: _MaterializationRecord) -> Path:
     ):
         raise OSError("owned materialization changed")
 
-    asset_fd = os.open(record.asset_name, _FILE_FLAGS, dir_fd=record.owner_fd)
+    asset_fd = _clone_open(
+        _native, record.asset_name, _FILE_FLAGS, dir_fd=record.owner_fd
+    )
     try:
         asset_info = os.fstat(asset_fd)
         named_asset_info = os.stat(
@@ -623,14 +967,28 @@ def _validate_materialization_sync(record: _MaterializationRecord) -> Path:
         ):
             raise OSError("owned materialization changed")
     finally:
-        os.close(asset_fd)
+        _clone_close(_native, asset_fd)
     return record.asset_path
 
 
-def _prepare_runtime_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
-    result = secure_private_directory(root, create=True, application_owned=True)
+def _prepare_runtime_root_sync(
+    root: Path, *, _native=None
+) -> tuple[Path, tuple[int, int]]:
+    if _native is not None:
+        _checked_clone_native(_native).check_root(root)
+    observers = (
+        {}
+        if _native is None
+        else {
+            "_open": _native.open_directory,
+            "_close": _native.close,
+        }
+    )
+    result = secure_private_directory(
+        root, create=True, application_owned=True, **observers
+    )
     selected = result.lexical_path
-    root_fd = os.open(selected, _DIRECTORY_FLAGS)
+    root_fd = _clone_open(_native, selected, _DIRECTORY_FLAGS)
     try:
         root_info = os.fstat(root_fd)
         named_info = os.stat(selected, follow_symlinks=False)
@@ -640,22 +998,29 @@ def _prepare_runtime_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
             raise OSError("unsafe runtime root")
         _lock_root_exclusive(root_fd)
         try:
-            _sweep_orphans(root_fd)
+            _sweep_orphans(root_fd, _native=_native)
         finally:
             _unlock(root_fd)
         return selected, _identity(root_info)
     finally:
-        os.close(root_fd)
+        _clone_close(_native, root_fd)
 
 
-def _sweep_orphans(root_fd: int) -> None:
+def _sweep_orphans(root_fd: int, *, _native=None) -> None:
+    if _native is not None:
+        native = _checked_clone_native(_native)
+        if native.parents.get(root_fd) != native.root:
+            raise TTSCloneMaterializationError("unavailable")
     for owner_name in os.listdir(root_fd):
         if _OWNER_PATTERN.fullmatch(owner_name) is None:
             continue
+        _clone_select(_native, root_fd, owner_name)
         owner_fd = -1
         lock_fd = -1
         try:
-            owner_fd = os.open(owner_name, _DIRECTORY_FLAGS, dir_fd=root_fd)
+            owner_fd = _clone_open(
+                _native, owner_name, _DIRECTORY_FLAGS, dir_fd=root_fd
+            )
             owner_info = os.fstat(owner_fd)
             named_info = os.stat(owner_name, dir_fd=root_fd, follow_symlinks=False)
             if (
@@ -687,7 +1052,8 @@ def _sweep_orphans(root_fd: int) -> None:
             )
             if not _owned_regular_file(named_lock_info):
                 continue
-            lock_fd = os.open("owner.lock", _FILE_FLAGS, dir_fd=owner_fd)
+            _clone_select(_native, owner_fd, "owner.lock")
+            lock_fd = _clone_open(_native, "owner.lock", _FILE_FLAGS, dir_fd=owner_fd)
             lock_info = os.fstat(lock_fd)
             if not _owned_regular_file(lock_info) or _identity(lock_info) != _identity(
                 named_lock_info
@@ -710,7 +1076,10 @@ def _sweep_orphans(root_fd: int) -> None:
                 )
                 if not _owned_regular_file(named_asset_info):
                     continue
-                asset_fd = os.open(asset_name, _FILE_FLAGS, dir_fd=owner_fd)
+                _clone_select(_native, owner_fd, asset_name)
+                asset_fd = _clone_open(
+                    _native, asset_name, _FILE_FLAGS, dir_fd=owner_fd
+                )
                 try:
                     asset_info = os.fstat(asset_fd)
                     if not _owned_regular_file(asset_info) or _identity(
@@ -722,7 +1091,7 @@ def _sweep_orphans(root_fd: int) -> None:
                         if not _private_regular_file(os.fstat(asset_fd)):
                             continue
                 finally:
-                    os.close(asset_fd)
+                    _clone_close(_native, asset_fd)
                 os.unlink(asset_name, dir_fd=owner_fd)
             os.unlink("owner.lock", dir_fd=owner_fd)
             os.fsync(owner_fd)
@@ -732,12 +1101,16 @@ def _sweep_orphans(root_fd: int) -> None:
             continue
         finally:
             if lock_fd >= 0:
-                os.close(lock_fd)
+                _clone_close(_native, lock_fd)
             if owner_fd >= 0:
-                os.close(owner_fd)
+                _clone_close(_native, owner_fd)
 
 
-def _cleanup_materialization_sync(record: _MaterializationRecord) -> None:
+def _cleanup_materialization_sync(
+    record: _MaterializationRecord, *, _native=None
+) -> None:
+    if _native is not None:
+        _checked_clone_native(_native).check_record(record, cleanup=True)
     root_info = os.fstat(record.root_fd)
     if _identity(root_info) != record.root_identity or not _private_directory(
         root_info
@@ -805,11 +1178,14 @@ def _cleanup_materialization_sync(record: _MaterializationRecord) -> None:
 
 
 def _abandon_record(record: _MaterializationRecord) -> None:
+    failure = None
     for descriptor in (record.lock_fd, record.owner_fd, record.root_fd):
         try:
-            os.close(descriptor)
-        except OSError:
-            pass
+            _clone_close(record.native, descriptor)
+        except BaseException as error:  # noqa: BLE001 - close independent owners then rethrow
+            failure = failure or error
+    if failure is not None:
+        raise failure
 
 
 __all__ = [

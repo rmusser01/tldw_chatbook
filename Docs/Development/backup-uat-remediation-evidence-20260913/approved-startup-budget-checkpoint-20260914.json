@@ -1,0 +1,46 @@
+{
+  "owner_approved": true,
+  "date": "2026-09-14",
+  "task": "TASK-32562",
+  "pr": 2642,
+  "source_revision": "9e5914fca140e762b66ec4a7beb77cf2af450ca0",
+  "import_limit": {
+    "old": 660,
+    "new": 686,
+    "dev_measured": 643,
+    "candidate_measured": 669
+  },
+  "ui_ready_limit": {
+    "old": 975,
+    "new": 1022,
+    "dev_measured": 975,
+    "candidate_measured": 1022
+  },
+  "snapshot_generator": "scripts/update_boot_budget_snapshots.py --only import-weight --only ui-ready",
+  "snapshot_force": false,
+  "targeted_guards": {
+    "passed": 11,
+    "failed": 0,
+    "seconds": 27.96
+  },
+  "lint": {
+    "ruff_existing": 2,
+    "bandit_existing": 39,
+    "new": 0
+  },
+  "timing_and_absent_family_guards": "unchanged",
+  "evidence": [
+    {
+      "path": "approved-boot-budget-review-20260914.md",
+      "sha256": "d4bfca6698adc1afd5c7f1b2bb26df3b99cfb11e253b56887f77ef6656508f0f"
+    },
+    {
+      "path": "approved-boot-budget-checks-20260914.json",
+      "sha256": "c26abd4ba906b39e51e368047c02cdd2cfaecceb60aa1ecfa58fd027a29d1912"
+    },
+    {
+      "path": "macos-9e5914-native-verification.json",
+      "sha256": "58a822ba8e36946441a2bde087816d431bfc55a0ddc7f137b50f2aeb8ce3191c"
+    }
+  ]
+}

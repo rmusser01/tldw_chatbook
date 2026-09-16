@@ -1,0 +1,377 @@
+{
+  "tested_revision": "290dff72fb6ff7fef4dc50f6941a03b9a2429967",
+  "production_revision": "6270d26f150f07035dee66b0296ed38cae50534b",
+  "dev_base": "657f70ffe7fbb92b637a89cc2961e8bf95ec6005",
+  "production_and_packaging_unchanged_after_review_fix_commit": true,
+  "macos_targeted_runs": {
+    "source_revision": "6270d26f150f07035dee66b0296ed38cae50534b",
+    "all_observed_failures_have_passing_corrective_evidence": true,
+    "runs": {
+      "backup-qodo-34nb4v7m": {
+        "sha256": "6746c018f32734af80657e0636db715cc2648b2ae6bdf9fbfafbd8604b3ab5ce",
+        "cases": 323,
+        "failures": [
+          [
+            "Tests.Backup_Recovery.test_file_inventory",
+            "test_remaining_installed_preferences_history_and_chatbooks_are_baseline"
+          ],
+          [
+            "Tests.Backup_Recovery.test_activation_openai_reconnect",
+            "test_actual_console_static_post_instance_call_keeps_awaited_native_scope[ordinary]"
+          ],
+          [
+            "Tests.Backup_Recovery.test_activation_openai_reconnect",
+            "test_actual_console_static_post_instance_call_keeps_awaited_native_scope[recovered]"
+          ]
+        ]
+      },
+      "backup-qodo-2hzm2ep4": {
+        "sha256": "2671309a46bafb19b88d768c51c93e5d42c2b7ab1eeb9e267e1efb687e11f965",
+        "cases": 97,
+        "failures": [
+          [
+            "Tests.Backup_Recovery.test_file_inventory",
+            "test_remaining_installed_preferences_history_and_chatbooks_are_baseline"
+          ]
+        ]
+      },
+      "backup-qodo-o4bt6yul": {
+        "sha256": "1506a7f5370470c8b4e4c4c3b88971759a28ee8316166ce7019d460cb90a54f4",
+        "cases": 2,
+        "failures": []
+      }
+    },
+    "unique_passing_cases_across_these_runs": 367,
+    "static_files_matching_commit": 21,
+    "ruff_new": 0,
+    "bandit": {
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    }
+  },
+  "macos_fixture_and_workflow_followup": {
+    "passed": 11,
+    "junit_sha256": "0ab5fc43e5e20a1d8b3187ac9e47d72c98205ef6321f752fbbe9951738e39d7f"
+  },
+  "macos_final_installed_f9_plain_journey": {
+    "passed": 1,
+    "duration_seconds": 70.39,
+    "junit_sha256": "2d5d5aeb7561856e22cdcf9a335b6f94c1769d7d64f7c942cce113ef286c6cb5"
+  },
+  "linux": {
+    "delta_sha256": "750717a0aef4fce82ea108c5910ef10815e941a23e312b7950e3202ddbfe0e9a",
+    "installed": [
+      {
+        "file_count": 2895,
+        "files_sha256": "ac69bccaa5dbd93f60d45a645e063afe6c8c0c16121d8ba1549287c96b7c786a",
+        "wheel_sha256": "ac5ebb5a5fea7e8e79c5392b6f83d7dc0b529ca506cd545d89a44ed17d6220db"
+      }
+    ],
+    "manifest_sha256": "dad890d3177efef25a968dd804f9cff971407c14a5990e1e0e7dd72602204e12",
+    "pytest_returncode": 0,
+    "qualified": true,
+    "runtime": {
+      "machine": "x86_64",
+      "python": "3.12.8",
+      "release": "6.12.107+deb13-amd64",
+      "system": "Linux"
+    },
+    "source_files": 16915,
+    "source_revision": "290dff72fb6ff7fef4dc50f6941a03b9a2429967",
+    "source_unchanged": true,
+    "status": {
+      "collected": 96,
+      "counts": {
+        "failed": 0,
+        "passed": 96,
+        "skipped": 0
+      },
+      "failed_ordinals": [],
+      "unfinished": 0
+    }
+  },
+  "linux_package_audit": {
+    "duration_seconds": 117.57,
+    "package_python_files_matching_manifest_wheel_and_install": 2506,
+    "raw_logs_remain_on_host": true,
+    "source_revision": "290dff72fb6ff7fef4dc50f6941a03b9a2429967"
+  },
+  "windows": {
+    "run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111695348",
+    "qualified": true,
+    "source_revision": "290dff72fb6ff7fef4dc50f6941a03b9a2429967",
+    "source_files_matching_git": 16915,
+    "files_with_native_crlf_conversion": 15697,
+    "source_archive_sha256": "1b577ba0b09d223f1945a696bed56f515f4bd8c5bf8073c41dc4c7b5a8d84894",
+    "indexed_artifacts_verified": 21,
+    "artifact_index_sha256": "464a1ab3cff6084afb30689337b7c5734da690d21249889fd76573c25252eeb6",
+    "native_identity": {
+      "machine": "AMD64",
+      "native_identity": {
+        "arch": "AMD64",
+        "filesystem": "NTFS",
+        "flags": 65472255,
+        "os": "Windows",
+        "python": "3.12.10",
+        "release": "2022Server"
+      },
+      "operations": {
+        "admission": [
+          true,
+          "supported_native_contract"
+        ],
+        "publish_directory": [
+          true,
+          "supported_native_contract"
+        ],
+        "publish_file": [
+          true,
+          "supported_native_contract"
+        ],
+        "publish_new": [
+          true,
+          "supported_native_contract"
+        ]
+      },
+      "os_name": "nt",
+      "platform": "Windows-2022Server-10.0.20348-SP0",
+      "python": "3.12.10",
+      "release": "2022Server",
+      "system": "Windows"
+    },
+    "phases": {
+      "native": {
+        "passed": 59,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 2.013,
+        "junit_sha256": "ca9f4bce5327433ce3eae87f184e504198c3c1192229e0fb130c1cda9e183418"
+      },
+      "product": {
+        "passed": 96,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 510.721,
+        "junit_sha256": "6ee8b21d84206c9917df1c49230c49db093984948910805003ad891a6b62ec30"
+      }
+    },
+    "installed": [
+      {
+        "wheel_sha256": "ab89569f76c179088e9c137d4faa61c5c1af367622201ea84d0b7ff5bc85b8f8",
+        "file_count": 2895,
+        "files_sha256": "7d533e828be0096fe08aba2658f5f128525bd17d36d7fc3a02c09ba727bd3a35",
+        "python_files_matching_native_git_export": 2506
+      }
+    ]
+  },
+  "static": {
+    "python_files": 24,
+    "ruff_existing": 43,
+    "ruff_new": 0,
+    "bandit": {
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    }
+  },
+  "qodo": {
+    "updated_at": "2026-09-16T14:56:26Z",
+    "bugs": 0,
+    "rule_violations": 0,
+    "cross_repo_conflicts": 0,
+    "resolved_discussions": 9,
+    "review_url": "https://github.com/rmusser01/tldw_chatbook/pull/2642#issuecomment-5646664245"
+  },
+  "pr_checks_at_recording": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704352/job/104846785625",
+      "name": "PR Fast Lane",
+      "startedAt": "2026-09-16T14:54:23Z",
+      "status": "IN_PROGRESS",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704593/job/104846787653",
+      "name": "macos-x86_64",
+      "startedAt": "2026-09-16T14:54:22Z",
+      "status": "IN_PROGRESS",
+      "workflowName": "Voice AEC wheels"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:54:18Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704459/job/104846787783",
+      "name": "platform-evidence",
+      "startedAt": "2026-09-16T14:54:19Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-19637 pinned workspace platform evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:54:18Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704419/job/104846787135",
+      "name": "Linux storage - Python ${{ matrix.python }}",
+      "startedAt": "2026-09-16T14:54:18Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-32011 one-off Linux storage evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:54:39Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704201/job/104846784945",
+      "name": "No duplicate backlog task IDs",
+      "startedAt": "2026-09-16T14:54:21Z",
+      "status": "COMPLETED",
+      "workflowName": "Backlog Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:54:50Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704537/job/104846785822",
+      "name": "CSS bundle reproduces from its sources",
+      "startedAt": "2026-09-16T14:54:22Z",
+      "status": "COMPLETED",
+      "workflowName": "CSS Bundle Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:59:49Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704316/job/104846794936",
+      "name": "UI latency guardrails",
+      "startedAt": "2026-09-16T14:54:23Z",
+      "status": "COMPLETED",
+      "workflowName": "Perf Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:55:16Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704284/job/104846786225",
+      "name": "GGUF import evidence - ubuntu-latest",
+      "startedAt": "2026-09-16T14:54:22Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.1 GGUF import evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:57:03Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704480/job/104846785968",
+      "name": "GGUF source evidence - ubuntu-latest",
+      "startedAt": "2026-09-16T14:54:23Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.2 GGUF source evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:55:24Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704284/job/104846785741",
+      "name": "GGUF import evidence - macos-latest",
+      "startedAt": "2026-09-16T14:54:29Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.1 GGUF import evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:57:34Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704480/job/104846785547",
+      "name": "GGUF source evidence - macos-latest",
+      "startedAt": "2026-09-16T14:54:27Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.2 GGUF source evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T15:03:56Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704593/job/104846786808",
+      "name": "macos-arm64",
+      "startedAt": "2026-09-16T14:54:29Z",
+      "status": "COMPLETED",
+      "workflowName": "Voice AEC wheels"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704593/job/104846786920",
+      "name": "windows-x86_64",
+      "startedAt": "2026-09-16T14:54:23Z",
+      "status": "IN_PROGRESS",
+      "workflowName": "Voice AEC wheels"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:56:24Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704284/job/104846786510",
+      "name": "GGUF import evidence - windows-latest",
+      "startedAt": "2026-09-16T14:54:22Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.1 GGUF import evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T15:04:13Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704480/job/104846786130",
+      "name": "GGUF source evidence - windows-latest",
+      "startedAt": "2026-09-16T14:54:22Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.2 GGUF source evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T15:03:36Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704593/job/104846786555",
+      "name": "linux-x86_64",
+      "startedAt": "2026-09-16T14:54:22Z",
+      "status": "COMPLETED",
+      "workflowName": "Voice AEC wheels"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T15:03:32Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35111704593/job/104846787167",
+      "name": "linux-aarch64",
+      "startedAt": "2026-09-16T14:54:23Z",
+      "status": "COMPLETED",
+      "workflowName": "Voice AEC wheels"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-16T14:54:54Z",
+      "conclusion": "NEUTRAL",
+      "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/2642",
+      "name": "cubic \u00b7 AI code reviewer",
+      "startedAt": "2026-09-16T14:54:49Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-09-16T14:54:20Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    }
+  ]
+}

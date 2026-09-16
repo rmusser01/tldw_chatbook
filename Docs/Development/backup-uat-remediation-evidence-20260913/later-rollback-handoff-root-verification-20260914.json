@@ -1,0 +1,17 @@
+{
+  "source_hashes": {
+    "tldw_chatbook/Backup_Recovery/recovery_restart.py": "893ebe229f366d243e372f4c4765512e329e55cd0c6ddf463bd299d76c74d809",
+    "tldw_chatbook/UI/Screens/backup_restore_screen.py": "c132f53fd29c2cc43bc3eb90ec6ecad342b1ee9a40423e00a63538a489a58aaa",
+    "tldw_chatbook/app.py": "3a70169bd3ceb27403a24697ca8a960f0eb973e2fc0146db4e15416cc0140fcb",
+    "Tests/Backup_Recovery/test_recovery_restart.py": "fd81f1c6425883caf82f601139eccdb8ac45e9eca6f4df3977f5539869b4317d",
+    "Tests/Backup_Recovery/test_recovery_restart_windows.py": "ffb4565001bde82b0f5005324ce05ca9b18e75e17a0c7fa7005314299a7f9c5d",
+    "Tests/Backup_Recovery/test_later_rollback_handoff.py": "345239f0c874d6c57ee7c00159cb2848094edfb46d320df10fdf75ebb709272f"
+  },
+  "wheel_sha256": "ca0ab1bb272e8ee67f13a83cbca28dd706b4a5dba0f84edd98ff1b16b74de35e",
+  "receipt_sha256": "c59f67e10b2765f3c0988a9d2606776ae7956555e01f05d8445167f967565694",
+  "installed_files_preserved_by_fixture": 2866,
+  "python_source_files_independently_matched": 2474,
+  "bandit_baseline": 30,
+  "bandit_current": 30,
+  "bandit_new": 0
+}
