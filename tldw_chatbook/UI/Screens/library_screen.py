@@ -27593,7 +27593,7 @@ class LibraryScreen(BaseAppScreen):
             retry = getattr(self.app_instance, "retry_library_ingest_job", None)
             if callable(retry):
                 retry(retry_job_id)
-        self.refresh(recompose=True)
+        self._update_library_ingest_option_group("audio_video")
 
     def _build_library_model_install_progress_widgets(
         self,

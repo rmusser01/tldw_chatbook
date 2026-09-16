@@ -1,0 +1,199 @@
+{
+  "native_result": {
+    "pid": 60938,
+    "steps": [
+      {
+        "size": [
+          170,
+          48
+        ],
+        "theme": "textual-dark",
+        "outcome": "cancel",
+        "entry": "row",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      },
+      {
+        "size": [
+          170,
+          48
+        ],
+        "theme": "textual-dark",
+        "outcome": "reject",
+        "entry": "row",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      },
+      {
+        "size": [
+          170,
+          48
+        ],
+        "theme": "textual-dark",
+        "outcome": "success",
+        "entry": "form",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      },
+      {
+        "size": [
+          170,
+          48
+        ],
+        "theme": "textual-dark",
+        "outcome": "success",
+        "entry": "row",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      },
+      {
+        "size": [
+          170,
+          48
+        ],
+        "theme": "textual-dark",
+        "outcome": "faster",
+        "entry": "row",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "theme": "textual-light",
+        "outcome": "cancel",
+        "entry": "row",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "theme": "textual-light",
+        "outcome": "reject",
+        "entry": "row",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "theme": "textual-light",
+        "outcome": "success",
+        "entry": "form",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "theme": "textual-light",
+        "outcome": "success",
+        "entry": "row",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "theme": "textual-light",
+        "outcome": "faster",
+        "entry": "row",
+        "draft_selection_and_identity_preserved": true,
+        "correct_focus_and_provider_routing": true
+      }
+    ],
+    "exclusive_profile": true,
+    "driver": "LinuxDriver",
+    "synthetic_registry_without_store": true,
+    "external_boundaries_replaced": [
+      "model admission/persistence",
+      "parse-pool dispatch"
+    ],
+    "passed": true,
+    "app_run_returned": true
+  },
+  "exit_code": 0,
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": "ok",
+      "counts": {
+        "messages": 0
+      }
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": "ok",
+      "counts": {
+        "Media": 0
+      }
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": "ok",
+      "counts": {
+        "ingest_jobs": 0
+      }
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": "ok",
+      "counts": {}
+    }
+  ],
+  "source_files": [
+    {
+      "name": "audio.wav",
+      "unchanged": true,
+      "sha256": "1ad151b37071e8ce559f5217d89279ca5dcbdcc392aa941a0d6f84a4e9a8f38e"
+    },
+    {
+      "name": "model.gguf",
+      "unchanged": true,
+      "sha256": "090df1e2c420d4fbf4c7d4be4190434b468e7d7d20c39d825548b35fbb6b9f07"
+    }
+  ],
+  "log_errors": [],
+  "default_profile_unchanged": true
+}

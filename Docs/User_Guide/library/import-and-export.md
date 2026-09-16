@@ -268,6 +268,12 @@ Resizing the terminal keeps the current Import control focused and visible,
 including metadata fields, options, queue Details and Recent imports. Your draft,
 text selection and open Recent imports history stay in place.
 
+Choosing a replacement GGUF keeps your next import draft in place. From a failed
+row, an accepted model selection retries that job; cancelling the picker or
+choosing an unusable model leaves it failed. If the retry removes the focused
+row action, focus returns to the source field. A newer focus move or navigation
+away from Import is respected when model validation finishes.
+
 **Consent for risky imports** — starting with "⚠" tooling warnings
 outstanding takes two presses, right at the Start button (task-3314
 retired the old "Some files may fail to import:" dialog). The first press
