@@ -3229,13 +3229,6 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "2ab02afa9cb484044feb",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/Screens/workflows_screen.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 1,
       "diagnostic_digest": "a063ccab9a0de255126a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/writing_screen.py",
@@ -3407,6 +3400,13 @@
       "diagnostic_digest": "1f08a6f6847df6b33271",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "5e4abbacb06a7839e4c2",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Workflows_Modules/console_context.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {

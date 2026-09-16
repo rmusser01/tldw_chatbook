@@ -14616,3 +14616,41 @@ right answer and the wrong answer coincide. Both produce a green suite that
 means nothing, and both are invisible unless you break the fix and watch the
 pin fail *for the reason you expect*. "It went red" is not enough; read the
 message.
+
+## A visible field and label do not prove the field's value paints (TASK-32601, 2026-09-14)
+
+The authoring-only Workflows port's first narrow-screen correction passed checks
+for a painted Prompt label and a hit-testable TextArea. The actual 60x20 app
+capture still showed an empty field: inherited vertical padding and borders left
+its four-row region with zero content rows. The populated reference was absent
+from raw Textual SVG too, so font conversion was not the cause. A feature-local
+compact padding correction restored the value without changing shared tokens.
+
+For compact editors, test nonempty content through the real app's stylesheet and
+ancestor hierarchy. Assert the label, expected value, focus and nonzero content
+area together; mounted widgets and hit tests alone miss clipped interior text.
+Keep raw compositor output alongside converted screenshots to distinguish layout
+failures from capture/font failures.
+
+## Test incremental edits after structural fallback (TASK-32601, 2026-09-15)
+
+The Workflows UAT label fix initially added an unguarded selected-step lookup to
+the incremental form refresh. Ordinary typing tests passed, but review removed
+the selected step through Advanced JSON and then edited the Overview name. The
+editor had fallen back to Overview while the controller retained the deleted ID;
+the next field edit raised `RuntimeError: coroutine raised StopIteration`.
+Normalize selection before rendering both regions and test the next edit after
+structural fallback, preserving identity metadata in the raw-edit fixture.
+
+## Valid JSON is not necessarily decodable extracted SQLite text (TASK-32601, 2026-09-16)
+
+PR2690 replaced full workflow projections with name-only SQLite summaries. Its
+420-test selection passed, but independent review created an admitted JSON name
+containing an escaped lone surrogate. Reading the full saved JSON still worked;
+`json_extract` turned the escape into text that Python's SQLite UTF-8 decoder
+rejected, failing the whole library even for an unrelated selected workflow.
+Two high/low-surrogate service cases and both mounted library layouts reproduced
+the failure. Name-only BLOB extraction and local `surrogatepass` decoding fixed
+it without changing saved bytes or the connection's text factory. When moving
+JSON reads into SQL, test previously admitted string boundaries at the real
+query boundary; valid JSON and ordinary Unicode coverage alone are insufficient.

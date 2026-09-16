@@ -815,7 +815,7 @@ def _split_spec(module: str) -> "css_builder.ScreenOwnedSplit":
 
 @pytest.mark.parametrize(
     "module",
-    ["features/_evals.tcss", "features/_scheduling.tcss"],
+    ["features/_evals.tcss", "features/_scheduling.tcss", "features/_workflows.tcss"],
 )
 def test_screen_owned_module_is_exactly_partitioned(module: str) -> None:
     """Every byte of a screen-owned module reaches exactly one output.

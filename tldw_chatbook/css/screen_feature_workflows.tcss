@@ -1,0 +1,195 @@
+/* ========================================
+ * GENERATED FILE - DO NOT EDIT DIRECTLY
+ * ========================================
+ * workflows-owned rules split out of features/_workflows.tcss
+ * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
+ * CSS_PATH, so these bytes are parsed on first visit instead of before
+ * first paint. Edit features/_workflows.tcss and re-run build_css.py.
+ * ======================================== */
+
+$ds-surface-panel: $panel;
+$ds-surface-raised: $surface;
+$ds-surface-inspector: $surface;
+$ds-grid-line: $surface-lighten-1;
+$ds-column-line: $surface-lighten-2;
+$ds-text-primary: $text;
+$ds-text-muted: $text-muted;
+$ds-text-disabled: $text-disabled;
+$ds-action-focus: $primary;
+$ds-focus-fg: $ds-text-primary;
+$ds-focus-bg: $block-cursor-blurred-background;
+$ds-focus-accent: $primary;
+$ds-input-focus-border: $primary;
+$ds-input-focus-bg: $ds-focus-bg;
+$ds-input-focus-accent: $primary;
+$ds-control-edge: $surface-lighten-2;
+$ds-status-ready: $success;
+$ds-status-running: $primary;
+$ds-status-info: $accent;
+$ds-status-warning: $warning;
+$ds-status-approval-required: $warning;
+$ds-status-blocked: $error;
+$ds-status-error: $error;
+$ds-status-error-readable: $text-error;
+$ds-text-placeholder: $text-muted;
+$ds-text-disabled-readable: $text-muted;
+$ds-status-paused: $warning;
+$ds-status-unsaved: $warning;
+$ds-status-recovered: $success;
+$ds-authority-local: $success;
+$ds-authority-server: $primary;
+$ds-authority-workspace: $accent;
+$ds-authority-remote-only: $warning;
+$ds-source-role-context: $accent;
+$ds-source-role-evidence: $accent;
+$ds-source-role-editable-target: $warning;
+$ds-source-role-output-seed: $secondary;
+$ds-active-fg: $text-primary;
+$ds-value-fg: $text-accent;
+
+$ds-chat-user-accent: $text-primary;
+$ds-chat-user-accent-dark: #8bd5ff;
+$ds-chat-user-accent-light: #004d6d;
+$ds-chat-assistant-accent-dark: #ffc473;
+$ds-chat-assistant-accent-light: #704000;
+$ds-chat-rp-speech-dark: #8bd5ff;
+$ds-chat-rp-speech-light: #004d6d;
+$ds-chat-rp-thought-dark: #2dd4bf;
+$ds-chat-rp-thought-light: #0b5d4a;
+$ds-chat-rp-action-dark: #d7b2ff;
+$ds-chat-rp-action-light: #5e3578;
+$ds-chat-rp-strong-dark: #fff0a6;
+$ds-chat-rp-strong-light: #665000;
+$ds-destination-header-height: 1;
+$ds-destination-compact-strip-height: 1;
+$ds-home-dashboard-grid-height: 18;
+$ds-home-control-button-height: 1;
+$ds-home-compact-row-height: 1;
+$ds-home-followup-row-height: 6;
+$ds-console-workspace-grid-height: 1fr;
+$ds-console-composer-height: 1;
+$ds-library-mode-chip-height: 1;
+$ds-library-mode-chip-min-width: 10;
+$ds-library-source-action-width: auto;
+$ds-library-source-action-min-width: 0;
+$ds-library-source-action-height: 1;
+$ds-library-source-browser-width: 31;
+
+$ds-space-0: 0;
+$ds-space-1: 1;
+$ds-space-2: 2;
+$ds-space-3: 3;
+$ds-space-inline: $ds-space-1;
+$ds-space-stack: $ds-space-1;
+$ds-space-section: $ds-space-2;
+$ds-space-inset: $ds-space-1;
+
+$ds-control-height: 3;
+$ds-control-height-compact: 1;
+$ds-textarea-min-height: 5;
+
+$ds-duration-fast: 0.2s;
+$ds-duration-medium: 0.3s;
+$ds-duration-slow: 0.5s;
+
+$ds-opacity-dim: 70%;
+
+$ds-text-strong: bold;
+$ds-text-emphasis: italic;
+
+$ds-hover-bg: $surface-lighten-1;
+$ds-hover-fg: $ds-text-primary;
+$ds-disabled-bg: $surface-darken-1;
+$ds-surface-sunken: $surface-darken-1;
+
+$ds-sidebar-width: 25%;
+$ds-sidebar-min-width: 35;
+$ds-sidebar-max-width: 80;
+
+
+.tldw-agentic-split-preamble-end { }
+
+/* Approved editor geometry: 28/27-column rails, 6-row fields and bounded dialogs.
+ * Shared visual values use ADR-150 tokens; geometry remains feature-local. */
+WorkflowsScreen #workflow-authoring { height: 1fr; min-height: 0; }
+    WorkflowsScreen #workflows-title { height: $ds-control-height-compact; color: $ds-action-focus; text-style: $ds-text-strong; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowsScreen #workflow-draft-status { height: auto; max-height: 2; padding: $ds-space-0 $ds-space-inset; background: $ds-surface-panel; }
+    WorkflowsScreen #workflow-action-bar, WorkflowsScreen #workflow-selectors { height: $ds-control-height-compact; padding: $ds-space-0 $ds-space-inset; margin-bottom: $ds-space-stack; }
+    WorkflowsScreen #workflow-panes { height: 1fr; min-height: 0; }
+    WorkflowsScreen #workflow-readiness { height: auto; max-height: 2; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowsScreen #workflows-unavailable { height: auto; padding: $ds-space-inset; }
+
+
+    WorkflowEditor#workflows-editor { width: 1fr; height: 1fr; min-width: 12; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowEditor #workflow-form { height: 1fr; min-height: $ds-control-height-compact; }
+    WorkflowEditor #workflow-general, WorkflowEditor #workflow-step-form { height: auto; }
+    WorkflowEditor .workflow-neighbors, WorkflowEditor .workflow-step-actions { height: $ds-control-height-compact; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; }
+    WorkflowEditor .workflow-field { height: auto; margin-bottom: $ds-space-stack; }
+    WorkflowEditor .workflow-field Label { height: auto; margin: $ds-space-0; }
+    WorkflowEditor .workflow-help { height: auto; color: $ds-text-muted; }
+    WorkflowEditor .workflow-linear-step { width: 100%; height: $ds-control-height; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; }
+    WorkflowEditor #workflow-editor-heading { color: $ds-action-focus; text-style: $ds-text-strong; height: $ds-control-height-compact; }
+    WorkflowEditor #workflow-scroll-hint { height: $ds-control-height-compact; color: $ds-text-muted; }
+    ChoiceModal .workflow-dialog-actions { height: $ds-control-height-compact; }
+    ChoiceModal #workflow-dialog-detail { height: 1fr; min-height: 2; max-height: 8; }
+    ChoiceModal #workflow-dialog-detail Static { height: auto; }
+
+
+    WorkflowLibrary#workflows-library { width: 28; min-width: 0; height: 1fr; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowLibrary#workflows-library OptionList { height: 1fr; min-height: $ds-control-height-compact; }
+    WorkflowLibrary#workflows-library Input { margin: $ds-space-0; }
+    WorkflowLibrary #workflow-library-pages { height: $ds-control-height-compact; }
+
+
+    WorkflowNavigator#workflows-navigator { width: 27; min-width: 0; height: 1fr; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowNavigator#workflows-navigator OptionList { height: 1fr; min-height: $ds-control-height-compact; }
+
+WorkflowsScreen #workflow-run:disabled {
+    background: $ds-disabled-bg;
+    color: $ds-text-disabled-readable;
+    opacity: 1;
+    text-style: $ds-text-strong;
+}
+WorkflowConsoleContext #workflows-run-status,
+WorkflowConsoleContext #workflows-console-unavailable { height: $ds-control-height-compact; width: 1fr; }
+WorkflowConsoleContext .workflow-console-actions { height: $ds-control-height-compact; }
+WorkflowEditor TextArea.workflow-expanded { height: 18; }
+WorkflowsScreen.workflow-short #workflow-action-bar,
+WorkflowsScreen.workflow-short #workflow-selectors { margin-bottom: $ds-space-0; }
+
+.workflow-compact {
+    height: $ds-control-height-compact;
+    min-width: 0;
+    width: auto;
+    margin: $ds-space-0;
+    border: none;
+    outline: none;
+}
+.workflow-compact:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+.workflow-compact:hover {
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+}
+.workflow-compact:disabled, .workflow-compact:disabled:hover {
+    background: $ds-disabled-bg;
+    color: $ds-text-disabled-readable;
+    opacity: 1;
+    text-style: $ds-text-strong;
+}
+WorkflowEditor .workflow-collapse {
+    padding: $ds-space-0;
+    border: none;
+    margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0;
+}
+WorkflowEditor .workflow-collapse-title {
+    height: $ds-control-height-compact;
+    padding: $ds-space-0;
+    border: none;
+}
+.workflow-step-chooser > Vertical { padding: $ds-space-0 $ds-space-inset; }
+.workflow-step-chooser #workflow-type-detail { max-height: $ds-control-height; }

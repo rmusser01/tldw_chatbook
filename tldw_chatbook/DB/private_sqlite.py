@@ -461,6 +461,11 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "Project template and demonstration databases are explicit exclusions.",
     ),
+    "workflows.local": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Workflows_DB",
+        _PRIVATE_OR_MEMORY,
+        "Workflow authoring owns private definitions, immutable revisions and drafts.",
+    ),
     "writing.local": SQLiteOwnerPolicy(
         "tldw_chatbook/Writing_Interop/local_writing_service",
         _PRIVATE_OR_MEMORY,

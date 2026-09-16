@@ -1,0 +1,134 @@
+{
+  "name": "Local file to reviewed note",
+  "version": 1,
+  "inputs": {
+    "note_title": "Reviewed file summary"
+  },
+  "steps": [
+    {
+      "id": "ingest",
+      "type": "media_ingest",
+      "retry": 0,
+      "timeout_seconds": 300,
+      "config": {
+        "sources": [
+          {
+            "uri": "{{ inputs.source_uri }}"
+          }
+        ],
+        "extraction": {
+          "extract_text": true
+        }
+      }
+    },
+    {
+      "id": "prepare",
+      "type": "prompt",
+      "retry": 0,
+      "timeout_seconds": 300,
+      "config": {
+        "template": "Summarize in three bullets: {{ ingest.text }}"
+      }
+    },
+    {
+      "id": "summarize",
+      "type": "llm",
+      "retry": 0,
+      "timeout_seconds": 300,
+      "config": {
+        "provider": "{{ inputs.summary_provider }}",
+        "model": "{{ inputs.summary_model }}",
+        "prompt": "{{ prepare.text }}",
+        "max_tokens": 512
+      }
+    },
+    {
+      "id": "review",
+      "type": "wait_for_human",
+      "retry": 0,
+      "timeout_seconds": 300,
+      "config": {
+        "instructions": "Review the summary before saving the note.",
+        "assigned_to_user_id": "{{ inputs.review_actor }}",
+        "timeout_seconds": 3600
+      }
+    },
+    {
+      "id": "save",
+      "type": "notes",
+      "retry": 0,
+      "timeout_seconds": 300,
+      "config": {
+        "action": "create",
+        "title": "{{ inputs.note_title }}",
+        "content": "{{ review.text }}"
+      }
+    }
+  ],
+  "metadata": {
+    "tldw_workflow": {
+      "format_version": 1,
+      "workflow_id": "ba9e62aa-9859-4d42-98dc-26e3b10cdba0",
+      "revision_id": "b42d45fb-dc91-4645-a6d9-a72c589282bd",
+      "parent_revision_ids": [],
+      "requirements": {
+        "source": {
+          "kind": "file",
+          "required": true,
+          "input_keys": [
+            "source_uri"
+          ]
+        },
+        "summary_model": {
+          "kind": "model",
+          "required": true,
+          "input_keys": [
+            "summary_provider",
+            "summary_model"
+          ]
+        },
+        "reviewer": {
+          "kind": "actor",
+          "required": true,
+          "input_keys": [
+            "review_actor"
+          ]
+        },
+        "destination": {
+          "kind": "notes",
+          "required": true,
+          "input_keys": []
+        }
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "source_uri": {
+            "type": "string"
+          },
+          "summary_provider": {
+            "type": "string"
+          },
+          "summary_model": {
+            "type": "string"
+          },
+          "review_actor": {
+            "type": "string"
+          },
+          "note_title": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "source_uri",
+          "summary_provider",
+          "summary_model",
+          "review_actor",
+          "note_title"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}
