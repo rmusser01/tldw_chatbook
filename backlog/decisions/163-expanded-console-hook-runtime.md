@@ -44,15 +44,25 @@ Package discovery and shared execution need separate module boundaries.
    require_context fields distinguish successful completion from mandatory
    nonempty context, including standalone user handlers. Dependency edges retain
    their narrower scope; explicit required handlers control their owning event.
-   Required post-event failure fences subsequent input/use without undoing settled
-   results. Disabling hooks cannot erase active requirements; required teardown,
-   approval-observation and Stop dependencies are invalid.
+   Required post-events establish pending admission checkpoints before completion
+   consumers can start the next model step or normal settlement. Validated effects
+   and checkpoint release commit together; failure preserves settled results and
+   blocks subsequent input/use. Disabling hooks cannot erase active requirements;
+   required teardown, approval-observation and Stop dependencies are invalid.
 5. Run input transformers in deterministic order, validate each proposal, freeze
-   final arguments, run guards, then perform full existing permission review.
-   Fresh dispatch checks bind approval to the actual call.
+   final arguments, run non-transforming validators and remaining optional context
+   handlers, then perform full existing permission review. Mixed transform/deny
+   handlers run once in the transformation phase and cannot establish a guard
+   guarantee about final arguments. Required final constraints use distinct qualified
+   guards; effect-free optional observers use their bounded queue. Fresh dispatch
+   checks bind approval to the actual call.
 6. MCP hooks use ordinary tool schemas, profiles, approval and cancellation.
    Causal-cycle detection never silently skips required guards. Observation of
-   an approval cannot recursively create another approval request.
+   an approval cannot recursively create another approval request. Retain typed
+   MCP results and reject tool/transport errors before interpreting effects;
+   normalize only qualified structured, single-text or empty-success forms.
+   Conflicting representations, unsupported shapes and overflow cannot become
+   pass decisions or merged effects.
 7. Stop continuation is one deduplicated scheduler proposal with chain/time
    limits and inherited budgets. User work, cancellation, revocation and update
    draining prevent stale automatic follow-up.
