@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Self
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Plugins.models import PackageInspection
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
 SCHEMA_VERSION = 2
@@ -413,6 +414,209 @@ class PluginRegistry:
         }:
             raise ValueError("invalid operation phase")
         return {"phase": row["phase"], "result": result}
+
+    def list_operations(self, *, limit: int, offset: int) -> tuple[dict, ...]:
+        """Return bounded operation hints; callers must authenticate each result."""
+        validate_page(limit, offset)
+        ids = self._connection.execute(
+            "SELECT operation_id FROM operations ORDER BY operation_id LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        return tuple(self.read_operation(row[0]) for row in ids)
+
+    def insert_installation(
+        self,
+        cursor: sqlite3.Cursor,
+        installation_id: str,
+        inspection: PackageInspection,
+        selection: tuple[str, ...],
+    ) -> None:
+        """Insert a fresh disabled installation inside the caller's transaction."""
+        self._require_write()
+        if not self._connection.in_transaction:
+            raise RuntimeError("installation requires owned transaction")
+        revision = inspection.effective_digest
+        cursor.execute(
+            "INSERT INTO installations VALUES (?, ?, 0)", (installation_id, revision)
+        )
+        cursor.execute(
+            "INSERT INTO revisions VALUES (?, ?, ?)",
+            (installation_id, revision, inspection.model_dump_json()),
+        )
+        for component in inspection.inventory.values():
+            cursor.execute(
+                "INSERT INTO components VALUES (?, ?, ?, ?)",
+                (
+                    installation_id,
+                    revision,
+                    component.component_id,
+                    component.model_dump_json(),
+                ),
+            )
+            cursor.execute(
+                "INSERT INTO selections VALUES (?, ?, ?, ?)",
+                (
+                    installation_id,
+                    revision,
+                    component.component_id,
+                    component.component_id in selection,
+                ),
+            )
+        cursor.execute(
+            "INSERT INTO revision_trust VALUES (?, ?, 0)", (installation_id, revision)
+        )
+        for scope in ("installation", "global_default"):
+            cursor.execute(
+                "INSERT INTO authority_generations VALUES (?, ?, '', 1, 0)",
+                (installation_id, scope),
+            )
+
+    def write_operation(
+        self, cursor: sqlite3.Cursor, result: dict, *, phase: str
+    ) -> None:
+        """Persist a validated hint after its authority snapshot was prepared."""
+        from .authority import OperationResult
+
+        self._require_write()
+        result = OperationResult.model_validate(result).model_dump(mode="json")
+        if phase not in {"committed", "complete", "recovery_required"}:
+            raise ValueError("invalid operation phase")
+        prior = self.read_operation(result["operation_id"])
+        if prior is not None and prior["result"] != result:
+            raise ValueError("operation identity conflict")
+        cursor.execute(
+            "INSERT INTO operations VALUES (?, ?, ?, ?) ON CONFLICT(operation_id) DO UPDATE SET phase=excluded.phase",
+            (
+                result["operation_id"],
+                result["installation_id"],
+                phase,
+                json.dumps(result),
+            ),
+        )
+
+    def restore_authority(
+        self, snapshot: dict, inspections: dict[tuple[str, str], PackageInspection]
+    ) -> None:
+        """Reconstruct exact authenticated authority, retaining all process evidence.
+
+        The coordinator authenticates the snapshot and retained bytes first.
+        Reprojection inside this transaction proves definitions and references
+        match. Unknown runtime provenance becomes explicit unresolved evidence;
+        an empty rebuilt process table never establishes successful cleanup.
+        """
+        from .authority import canonical_snapshot
+
+        snapshot = canonical_snapshot(snapshot)
+        with self.transaction() as cursor:
+            sources = cursor.execute("SELECT * FROM sources").fetchall()
+            for table in (
+                "sources",
+                "selections",
+                "activation",
+                "mappings",
+                "authority_generations",
+                "revision_trust",
+                "components",
+                "revisions",
+                "installations",
+                "tombstones",
+                "data_roots",
+            ):
+                # Closed internal table names, never user-provided identifiers.
+                cursor.execute(f"DELETE FROM {table}")
+            for row in snapshot["installations"]:
+                cursor.execute(
+                    "INSERT INTO installations VALUES (?, ?, ?)",
+                    tuple(
+                        row[key]
+                        for key in (
+                            "installation_id",
+                            "revision_digest",
+                            "activation_default",
+                        )
+                    ),
+                )
+            for row in snapshot["revisions"]:
+                identity = row["installation_id"], row["revision_digest"]
+                inspection = inspections[identity]
+                cursor.execute(
+                    "INSERT INTO revisions VALUES (?, ?, ?)",
+                    (*identity, inspection.model_dump_json()),
+                )
+                for component in inspection.inventory.values():
+                    cursor.execute(
+                        "INSERT INTO components VALUES (?, ?, ?, ?)",
+                        (
+                            *identity,
+                            component.component_id,
+                            component.model_dump_json(),
+                        ),
+                    )
+            columns = {
+                "selections": (
+                    "installation_id",
+                    "revision_digest",
+                    "component_id",
+                    "selected",
+                ),
+                "activation": ("installation_id", "workspace_id", "intent"),
+                "authority_generations": (
+                    "installation_id",
+                    "scope_kind",
+                    "workspace_id",
+                    "generation",
+                    "revoked",
+                ),
+                "revision_trust": ("installation_id", "revision_digest", "reviewed"),
+                "tombstones": ("installation_id", "generation", "operation_id"),
+                "data_roots": (
+                    "root_id",
+                    "installation_id",
+                    "workspace_id",
+                    "path",
+                    "generation",
+                    "deletion_fenced",
+                ),
+            }
+            for table, fields in columns.items():
+                placeholders = ",".join("?" for _ in fields)
+                for row in snapshot[table]:
+                    cursor.execute(
+                        f"INSERT INTO {table} VALUES ({placeholders})",
+                        tuple(row[key] for key in fields),
+                    )
+            for row in snapshot["mappings"]:
+                cursor.execute(
+                    "INSERT INTO mappings VALUES (?, ?, ?)",
+                    (row["installation_id"], row["mapping_id"], json.dumps(row)),
+                )
+            installation_ids = {
+                row["installation_id"] for row in snapshot["installations"]
+            }
+            for row in sources:
+                if row["installation_id"] in installation_ids:
+                    cursor.execute("INSERT INTO sources VALUES (?, ?, ?)", tuple(row))
+            if (
+                self.authority_projection(operation_result=snapshot["operation_result"])
+                != snapshot
+            ):
+                raise ValueError("retained definitions do not match complete authority")
+            for row in snapshot["installations"]:
+                if row["revision_digest"] is not None:
+                    cursor.execute(
+                        "INSERT INTO processes VALUES (?, ?, ?, NULL, ?, 'unknown:registry-reconstruction', 'unresolved', 'active_run', ?) ON CONFLICT(token) DO UPDATE SET state='unresolved'",
+                        (
+                            "recovery:" + row["installation_id"],
+                            snapshot["operation_result"]["operation_id"],
+                            row["installation_id"],
+                            row["revision_digest"],
+                            '{"reason":"registry_reconstructed","unknown_runtime_users":true}',
+                        ),
+                    )
+            if snapshot["operation_result"] is not None:
+                self.write_operation(
+                    cursor, snapshot["operation_result"], phase="committed"
+                )
 
     def close(self) -> None:
         """Release the database handle without deleting recovery evidence."""
