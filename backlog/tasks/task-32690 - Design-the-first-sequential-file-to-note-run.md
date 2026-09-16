@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:19'
-updated_date: '2026-09-16 04:23'
+updated_date: '2026-09-16 04:46'
 labels:
   - workflows
   - design
@@ -25,14 +25,15 @@ This task produces a reviewed design, not an implementation or runtime claim.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The approved five-step flow has explicit inputs outputs permission and cancellation behavior.
+- [x] #1 The approved five-step flow has explicit inputs outputs permission and cancellation behavior.
 - [x] #2 Reuse and exclusions are grounded in merged-dev and parked-source evidence without restoring withdrawn SQLite infrastructure.
-- [ ] #3 Execution lifetime and restart guarantees are explicitly selected by the user before implementation planning.
-- [ ] #4 The written design records ADR applicability and targeted automated and live acceptance evidence.
+- [x] #3 Execution lifetime and restart guarantees are explicitly selected by the user before implementation planning.
+- [x] #4 The written design records ADR applicability and targeted automated and live acceptance evidence.
+- [ ] #5 The user reviews the final written design before implementation planning begins.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes, amend existing ADR138 after the user selects the execution-lifetime contract; no new ADR number yet. ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md. Reason: the proposed staged execution delivery changes restart/recovery guarantees; ADR125 and ADR036 remain unchanged. 1. Inspect immutable merged-dev657f70ffe7 and parked8aa1987af9 source plus the latest server reference. 2. Separate reusable authoring, expression and domain-service paths from withdrawn execution ownership and recovery machinery. 3. Present session-bound versus restart-resumable execution, including concrete data-loss/uncertain-effect tradeoffs, and obtain the user decision. 4. Finalize the narrowly scoped design and approved ADR amendment, self-review exact boundaries and verification criteria, then request written-design approval before implementation planning.
+ADR required: yes; the user selected session-bound option A and the lifetime amendment is recorded in existing ADR-138. ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md. Reason: staged execution defers durable run/wait/recovery guarantees; ADR-125 and ADR-036 remain unchanged. 1. Inspect immutable merged-dev 657f70ffe7 and parked 8aa1987af9 source plus the server reference. 2. Separate reusable authoring, expression and domain-service paths from withdrawn execution ownership and recovery machinery. 3. Record the user-selected session-bound lifetime, including review-data loss and uncertain Note commits. 4. Specify the five operation subsets, captured authority, bounded model integration, off-loop Notes policy/transaction path, cancellation/drain ordering and targeted/live evidence; distinguish required qualification from existing API capability. 5. Self-review the written design and ADR amendment, verify documentation/task hygiene, then obtain written-design approval before implementation planning. This task remains design-only; no runtime implementation or production/live-profile tests.
 <!-- SECTION:PLAN:END -->

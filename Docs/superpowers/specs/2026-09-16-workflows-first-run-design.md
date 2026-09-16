@@ -1,13 +1,12 @@
 # First sequential workflow: execution design checkpoint
 
-Status: Draft. The five-step example is approved; the execution-lifetime choice
-below is not. No runtime implementation or restart guarantee is approved by this
-document. TASK-32690 remains In Progress until that choice and the final written
-design are reviewed.
+Status: Ready for written-design review. The five-step example and option A,
+session-bound execution, are approved by the user. Runtime implementation has
+not begun. TASK-32690 remains In Progress pending review of this written design.
 
-ADR required: yes, amend the delivery scope in existing ADR-138 after approval.
+ADR required: yes; the approved lifetime choice is recorded in existing ADR-138.
 ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
-Reason: session-bound delivery would defer ADR-138's durable run/wait/recovery
+Reason: session-bound delivery defers ADR-138's durable run/wait/recovery
 guarantees. It is not an assertion that those guarantees already work. ADR-125
 private SQLite behavior and ADR-036 service composition remain unchanged.
 
@@ -49,13 +48,19 @@ No local app, model, user profile, or server write was exercised.
 | Navigation | `NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTE_ID: note_id})` | Open the confirmed Note using the existing Library route. |
 
 The parked local adapter's literal-numeric-loopback check rejects `localhost`;
-do not import that restriction accidentally or relabel this endpoint as Ollama.
+run setup must explain this instead of relabeling the endpoint as Ollama.
 Configured custom endpoint identity and the `llama_cpp` transport family are
 different values. Keep the selected local target visible and bound to the run.
+For the user's `localhost:9099` selection, resolve and display its concrete
+loopback address before approval, and pin that numeric address for dispatch.
+Do not allow a non-loopback resolution, silently switch addresses after failure,
+follow redirects, use environment proxies, or inherit another provider's key.
+This first slice admits keyless loopback requests only. This preserves
+numeric-loopback dispatch; it does not grant general DNS egress.
 
-## Choice requiring user approval
+## Selected lifetime: A — session-bound first delivery
 
-### A. Session-bound first delivery — recommended
+The user selected A. Restart-resumable execution is not part of this delivery.
 
 One application-owned sequential run at a time in each app instance. Its
 immutable revision, progress, outputs, edited review and launch identity live
@@ -89,13 +94,15 @@ write response is uncertain, retain its ID and use the existing local read path
 to reconcile within the session. Do not generate a new ID or retry blindly. A
 missing/unverifiable receipt produces an explicit uncertain outcome. A crash may
 leave a committed Note with no workflow receipt; inspect Library before rerunning.
+Readback must match the captured destination, attempted ID, title and accepted
+content; finding an ID alone is not sufficient to claim this run's save succeeded.
 
-This option adds no run schema, database owner, lock file, PID record, helper
+This delivery adds no run schema, database owner, lock file, PID record, helper
 protocol, recovery scanner or persistent execution service. Existing SQLite
 utilities still operate normally for authoring and Notes; this is not a claim
 that the application uses no existing helper processes.
 
-### B. Include restart-resumable runs in this delivery
+### Deferred alternative: restart-resumable runs
 
 Persist review edits and run identity, recover a waiting review after restart,
 and reconcile uncertain effects durably. This retains the wider historical
@@ -104,27 +111,108 @@ against current dev, plus multiprocess and abrupt-exit evidence. Existing tables
 UUIDs, or an in-memory flag do not establish exclusive physical execution.
 
 Do not silently reintroduce the withdrawn implementation to obtain this behavior.
-If this option is selected, resolve its ownership design before any runtime port.
-The recommendation of A defers these guarantees; it does not demonstrate that B
-is impossible without new infrastructure.
+A later delivery must resolve its ownership design before implementation. Choosing
+A defers these guarantees; it does not demonstrate that restart recovery is
+impossible without new infrastructure.
 
 Restoring the complete parked runtime is not recommended: it couples this one
 example to obsolete service signatures and the excluded ownership machinery.
 
-## Implementation boundary after the choice
+## Step contracts
 
-For A, the intended shape is one lazy app-owned session coordinator, with a small
+| Step | Inputs and result | Authority and stop behavior |
+| --- | --- | --- |
+| `media_ingest` | One selected local UTF-8 `.txt`; exposes extracted `text`. No URL fetch, Media record, file modification or ingestion pipeline. | Approve the captured file read. Reject unsafe paths and oversized/invalid text before model dispatch. Cancellation discards a late result. |
+| `prompt` | Saved editable template plus earlier typed references; exposes rendered `text`. | Pure bounded evaluation, no code execution or effect approval. Unresolved references fail, never become guessed inputs. |
+| `llm` | Rendered prompt, captured `llama_cpp` endpoint, actual model and explicit output budget; exposes generated `text`. | Authorize sending this input to this endpoint. One request, no tools, fallback or automatic retry. Cancel/timeout blocks later steps and drains the owned request. |
+| `wait_for_human` | Generated text shown in an editable review; Accept exposes the exact edited `text`. | Only the captured local reviewer may respond. Reject/cancel/expiry ends the run without a Note. Accept is single-use and does not itself authorize a denied Note write. |
+| `notes` | Accepted text and nonempty title; exposes the confirmed created Note identity for Open Note. | Recheck local Note-create authority immediately before writing. One create ID, no update or remote destination. Reconcile uncertain completion; a confirmed commit remains saved even after cancellation. |
+
+These are declared local subsets, not claims that all server configurations of
+these step types work. Execution admission checks the entire definition before
+reading the file: only supported sequential operations and backward references,
+zero retries, no completion callbacks or undeclared effects. Unknown executable
+fields/configurations block Run with a reason; they remain losslessly editable
+and exportable. Display metadata is not an execution grant. Execution must never
+coerce an unsupported definition into the example.
+
+## Integration boundary
+
+The intended shape is one lazy app-owned session coordinator, with a small
 closed dispatcher for the five validated operation subsets and the existing
 editor/navigation surfaces. Reuse the bounded expression code and current
 domain services. Reuse parked tests for relevant behavior, not their ownership
 assumptions or broad source files. Do not build a generic provider/plugin/runtime
 framework, replace the SQLite factory, or copy the old run service wholesale.
 
-The implementation plan must pin the exact transport and off-loop Notes seam,
-finite input/output/request bounds, structured effect-time permission handling,
-and application shutdown order before code starts. Blocking service work must
-not be placed directly on Textual's event loop. These are unresolved integration
-details to finish after the lifetime decision, not implementation instructions.
+The boundaries below are requirements for implementation qualification, not
+assertions that current service signatures already satisfy them:
+
+- **Model:** keep request construction and transport in the existing LLM domain,
+  with one opt-in bounded local request path; no workflow-owned HTTP framework
+  or Console-run/trace dependency. The unmodified `chat_with_llama()` path is not
+  sufficient: it reads timeout/retry settings at dispatch, and Requests socket
+  inactivity timeouts are not absolute deadlines. Capture the effective settings,
+  enforce an absolute connect-through-body deadline, cap response bytes before
+  unbounded decoding, refuse redirects/proxies and retries, and redact private
+  payloads. Qualify this narrow seam before enabling Run; do not copy the parked
+  transport/socket ownership implementation wholesale.
+- **Notes:** use the app's existing `NotesScopeService.save_note()` with
+  `scope=LOCAL_NOTE`, the captured user, one `create_note_id`, and no Sync v2
+  profile or organization changes. Its local branch performs synchronous work:
+  invoke it through a retained local-only worker bridge, not on Textual's event
+  loop. Preserve its policy check and transaction; do not call the DB directly
+  to bypass them. Capture/recheck the actual destination through the existing
+  `NotesInteropService.notes_db(user_id)` owner, not just its mutable template.
+  A changed/unavailable destination stops the write/readback rather than routing
+  to the current selection. No new DB owner or raw database identity probe.
+- **Permissions:** use the existing permission resolver and structured gate
+  verdicts for file/model/Note effects; refresh authority at each effect, including
+  after a human wait. Missing or unreadable permission authority blocks execution.
+  Current `check_detailed()` alone does not establish that strict-read guarantee;
+  add only the necessary opt-in validation through the permission owner, without
+  changing ordinary callers' defaults. An Ask approval is bound to the run, step,
+  resolved effect and destination, not a portable flag or blanket workflow grant.
+  Off/kill-switch revocation wins over earlier approval. Keep review/UI callbacks
+  on the app loop and DB/file blocking work off it.
+- **Files:** reuse the existing path/private-file validation, reject visible
+  live-database/sidecar aliases before raw I/O, and require a stable selected file
+  and containing path during the read. Do not claim protection from concurrent
+  inode substitution or introduce another SQLite proof/helper protocol. File
+  contents go only to the approved model and Note, not persistent run logs.
+- **Shutdown:** first refuse new Run/Accept dispatches; settle authoring drafts
+  through their existing owner; cancel the session and retain/drain outstanding
+  file/model/Note work; then close dependent services through normal app teardown.
+  Navigation only detaches the view. Timeout/cancellation cannot free the run slot
+  while work remains live. A drain failure keeps an explicit stopping/error state;
+  it does not force-close a database still in use or announce successful shutdown.
+
+### Bounds and timing
+
+Retain the previously approved local admission defaults: at most 100 steps and
+2 MiB canonical definition, 10 MiB serialized run inputs, 1 MiB serialized output
+per step, 100 MiB aggregate outputs, 60 minutes cumulative active execution and
+100,000 input-plus-maximum-output token admission units. These counters live only
+in this session. The authoring store can preserve larger definitions without
+promising they are executable. No artifact spill, silent truncation or configurable
+limit-increase UI is included. Stricter domain/model limits win.
+
+Bound the source read and HTTP response body to 1 MiB each before decoding;
+rendered prompts and edited review results must also fit the per-step output cap.
+Use strict UTF-8 for the file. Reserve a conservative input estimate plus explicit
+`max_tokens` before a model call; the example uses 512 output tokens. A model
+context overflow fails visibly; do not shorten the prompt or switch models.
+
+`step.timeout_seconds` is the active-attempt deadline (the example uses 300 s).
+Require an explicit finite positive whole-second value for active attempts;
+missing/invalid values block admission rather than becoming unlimited.
+The model's captured finite positive request timeout cannot exceed that deadline;
+absent an explicit setting, use 120 s. For a human step,
+`config.timeout_seconds` is the separate response wait (the example uses 3600 s),
+not a 300 s model/worker deadline. Preserve the existing omitted/non-positive
+human-wait meaning of no response deadline. Track a finite wait from when review
+opens, not when the screen mounts; navigation never extends it. Expiry blocks
+Accept and downstream Note creation. Restarts restore neither waits nor counters.
 
 No automatic retry, fallback provider, PDF/RAG expansion, server publication,
 workflow synchronization, Console execution engine, background schedule, or
@@ -145,14 +233,20 @@ in ADR-138; they have not been deleted or moved to branching/parallel releases.
 - An isolated-profile live run against the user's llama.cpp at `localhost:9099`,
   with the actual selected model recorded and the resulting Note read back.
   Success is the reviewed Note, not merely a healthy endpoint or HTTP response.
-- For A, verify that a new app session never auto-resumes/replays a run. For B,
-  add the separately designed restart, competing-owner and uncertain-write tests.
+- Verify that a new app session never auto-resumes/replays a run, restores review
+  text, or modifies historical execution/ownership rows. Two app instances must
+  not share in-memory run authority; no cross-instance exclusion is claimed.
+- Qualify the opt-in model path against redirect/proxy refusal, no retry, body
+  bounds, slow-body absolute deadline and actual cleanup. Test unreadable/revoked
+  permission authority and changed Notes destination before any effect.
 - Targeted tests only, design-token/CSS checks if UI changes, unchanged performance
   budgets, and no new static-analysis debt. No whole-suite or host repair is
   authorized by this design task.
 
 ## Current checkpoint
 
-The approved five-step flow and source audit are captured here. The user must
-select A or B before finalizing the runtime design and any ADR amendment. The
-brainstorming design gate is still active; implementation planning has not begun.
+The user selected A, and ADR-138 records that staging decision. Review this
+written design before implementation planning. The model/Notes/permission seams
+must be qualified against these requirements; their existence is not evidence of
+correct execution. No runtime code, persistent run schema, live-model test or
+server-conformance claim is included in this design-only checkpoint.

@@ -5,6 +5,7 @@
 - Historical source task/design: TASK-32077 and Docs/superpowers/specs/2026-09-08-workflows-local-first-parity-design.md on preserved codex/workflows-local-file-to-note.
 - Current task: [TASK-32601](../tasks/task-32601%20-%20Restore-the-authoring-only-Workflows-editor-on-dev.md)
 - Current delivery: [Authoring-only dev port](../../Docs/superpowers/specs/2026-09-14-workflows-authoring-dev.md)
+- Next delivery design: [TASK-32690](../tasks/task-32690%20-%20Design-the-first-sequential-file-to-note-run.md), [session-bound file-to-note run](../../Docs/superpowers/specs/2026-09-16-workflows-first-run-design.md); lifetime choice approved, written design awaiting review.
 - Revision: the user approved the revised Chatbook contracts and safety defaults on 2026-09-08. The paired-server synchronization protocol still requires counterpart agreement and implementation; this acceptance does not assert server support.
 - Supersedes: N/A
 
@@ -120,6 +121,52 @@ reads reuse a prepared projection, never a new full parse per field. The measure
 for one projection; remove this multiplicative work before adding concurrency.
 If bounded remaining pure analysis exceeds 100 ms, use the existing worker seam
 and freshness checks; draft ownership and widget mutation remain on the app loop.
+
+## First execution delivery: session-bound (user approved, 2026-09-16)
+
+The user selected option A for the first local file -> prompt -> llama.cpp at
+`localhost:9099` -> editable human review -> Local Note delivery. This is an
+approved staging decision, not a claim that execution has shipped. The merged
+authoring-only delivery above remains unchanged until separately implemented.
+
+One application-owned in-memory run retains its immutable saved revision,
+captured resource/user identities, outputs and review text across screen
+navigation. Each app instance has its own run; a second instance is neither
+excluded by a workflow lock nor allowed to resume another instance's run.
+There is no automatic queue, resume, replay or cross-instance deduplication.
+
+Normal quit offers Stay or Cancel run and quit. Stop admitting new work, settle
+authoring drafts, cancel/drain physical operations, and only then close their
+dependent services. Cancelling an await does not prove its worker stopped or
+that llama.cpp stopped server-side generation. A late confirmed Note commit is
+reported as saved, never rolled back. Within the session use the same attempted
+Note ID for readback after an uncertain response; never blindly retry with a new
+ID. A crash can leave a Note without a workflow receipt; expose that limitation
+and require inspection before rerunning rather than claim exactly-once recovery.
+
+Review edits, intermediate outputs, counters and run history are not durable in
+this slice. Saved definitions, authoring drafts and committed domain Notes retain
+their existing durability. Disclose the distinction before Run and when quitting
+a pending review. Durable runs/waits/recovery remain deferred v1 work, not removed
+requirements or completed features. Branching remains v2; parallelism remains v3.
+
+For this delivery only, this staging decision supersedes the historical durable
+run-manifest/budget/wait and per-database execution-owner requirements below.
+Do not create persistent execution rows or mutate historical ownership/capacity
+records. Preserve migrations v1-v4. No new schema, SQLite connection owner, lock
+file, PID protocol, helper operation or recovery scanner is introduced. Existing
+SQLite utilities and Notes services retain their normal owners; ADR-125 and
+ADR-036 are unchanged. Historical parked implementation clarifications are not
+instructions to port obsolete service APIs or ownership machinery.
+
+This choice does not waive immutable snapshots, captured destinations,
+effect-time permissions, fail-closed unavailable authority, bounded local model
+requests, zero automatic retries, or physical operation settlement. The written
+design identifies gaps in current model/Notes/permission APIs that must be
+qualified before enabling Run. Its integration details await written-design
+review; no new transport or permission implementation is approved by this
+lifetime amendment alone. Restart-resumable option B requires a later explicit
+ownership/reconciliation design and evidence; it is not declared impossible.
 
 ## Context
 
