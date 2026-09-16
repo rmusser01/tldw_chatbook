@@ -399,6 +399,58 @@ def test_bound_context_holds_existing_lock_and_never_manufactures_db(notes_bridg
     assert "missing" not in bridge.owner._db_instances
 
 
+def test_bound_context_nonblocking_contention_preserves_owner_lock(notes_bridge):
+    bridge = notes_bridge
+    before = dict(bridge.owner._db_instances)
+    with bridge.owner._db_lock:
+        with (
+            pytest.raises(BlockingIOError, match="note_destination_busy"),
+            bridge.owner.bound_notes_db("reader", bridge.db, blocking=False),
+        ):
+            pytest.fail("a busy route must not be entered")
+        assert not bridge.owner._db_lock.acquire(blocking=False)
+        assert bridge.owner._db_instances == before
+    with bridge.owner.bound_notes_db("reader", bridge.db, blocking=False) as actual:
+        assert actual is bridge.db
+
+
+def test_bound_context_default_worker_waits_for_existing_owner(notes_bridge):
+    bridge = notes_bridge
+    started = threading.Event()
+
+    def worker():
+        started.set()
+        with bridge.owner.bound_notes_db("reader", bridge.db) as actual:
+            return actual
+
+    with bridge.owner._db_lock:
+        future = bridge.pool.submit(worker)
+        assert started.wait(5)
+        assert not future.done()
+    assert future.result(timeout=5) is bridge.db
+
+
+@pytest.mark.parametrize("blocking", [True, False])
+def test_bound_context_releases_on_body_error_and_changed_route(notes_bridge, blocking):
+    bridge = notes_bridge
+    with (
+        pytest.raises(RuntimeError, match="body failed"),
+        bridge.owner.bound_notes_db("reader", bridge.db, blocking=blocking),
+    ):
+        raise RuntimeError("body failed")
+    assert bridge.owner._db_lock.acquire(blocking=False)
+    bridge.owner._db_lock.release()
+    before = dict(bridge.owner._db_instances)
+    with (
+        pytest.raises(ValueError, match="note_destination_changed"),
+        bridge.owner.bound_notes_db("missing", bridge.db, blocking=blocking),
+    ):
+        pytest.fail("missing route must refuse without replacement")
+    assert bridge.owner._db_lock.acquire(blocking=False)
+    bridge.owner._db_lock.release()
+    assert bridge.owner._db_instances == before
+
+
 @pytest.mark.parametrize("phase", ["rollback", "before_commit", "after_commit"])
 def test_real_transaction_barriers_and_error_readback(notes_bridge, monkeypatch, phase):
     from tldw_chatbook.Workflows.local_steps import create_local_note

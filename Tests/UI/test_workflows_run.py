@@ -464,6 +464,191 @@ async def test_changed_destination_refuses_open_but_later_note_edits_are_legal(
         assert len(harness.rows()) == 1
 
 
+@pytest.mark.parametrize("cancel_second", [True, False])
+async def test_open_note_during_second_note_keeps_loop_and_stop_responsive(
+    tmp_path, harness, monkeypatch, cancel_second
+):
+    await configure_model()
+    app = WorkflowRunHarness(tmp_path, harness)
+    head = app.workflow_documents.list_workflows()[0]
+    document = json.loads(head.raw_json)
+    second = json.loads(json.dumps(document["steps"][-1]))
+    second["id"] = "save_again"
+    document["steps"].append(second)
+    app.workflow_documents.put_draft(
+        head.workflow_id, head.revision_id, json.dumps(document), 1
+    )
+    app.workflow_documents.save_revision(head.workflow_id, head.revision_id, 1)
+    entered, release = threading.Event(), threading.Event()
+    real_lock = harness.owner._db_lock
+    loop_thread = threading.get_ident()
+    blocking_loop_requests = []
+    worker_acquires = []
+
+    class GuardedLock:
+        """Keep the real mutex; reject the deadlocking acquire before it waits."""
+
+        def acquire(self, blocking=True):
+            on_loop = threading.get_ident() == loop_thread
+            if on_loop and blocking and real_lock.locked():
+                blocking_loop_requests.append(True)
+                raise RuntimeError("contended blocking acquire on app loop")
+            acquired = real_lock.acquire(blocking=blocking)
+            if acquired and not on_loop:
+                worker_acquires.append(True)
+                if len(worker_acquires) == 2:
+                    # Second real Note owns the mutex, before its inner authority
+                    # callback can synchronously wait for the application loop.
+                    entered.set()
+                    if not release.wait(30):
+                        real_lock.release()
+                        raise RuntimeError("test barrier watchdog expired")
+            return acquired
+
+        def release(self):
+            real_lock.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            self.release()
+
+    async with app.run_test(size=(110, 36)) as pilot:
+        await start_review(app, pilot, harness.setup.source)
+        app.screen.query_one("#workflow-review-text", TextArea).load_text(
+            "Exact accepted text é\nSecond line."
+        )
+        await pilot.pause()
+        monkeypatch.setattr(harness.owner, "_db_lock", GuardedLock())
+        try:
+            await pilot.click("#workflow-review-accept")
+            assert await asyncio.to_thread(entered.wait, 10)
+            await pilot.pause()
+            session = app._workflow_session
+            first = session.view()
+            assert first.step_id == "save_again" and first.note_id
+            assert harness.rows() == [
+                {
+                    "id": first.note_id,
+                    "title": "Reviewed file summary",
+                    "content": "Exact accepted text é\nSecond line.",
+                    "deleted": 0,
+                }
+            ]
+            button = app.screen.query_one("#workflow-open-note", Button)
+            assert not button.disabled
+            # Queue a real captured event; disabling its button cannot guard it.
+            queued = Button.Pressed(button)
+            queued.workflow_view = first
+            app.screen.query_one("#workflow-session").post_message(queued)
+            await pilot.pause()
+            assert not blocking_loop_requests, (
+                "Open Note requested a contended blocking acquire on the app loop"
+            )
+            assert isinstance(app.screen, WorkflowsScreen)
+            status = app.screen.query_one("#workflow-draft-status", Static)
+            status.scroll_visible(animate=False)
+            await pilot.pause()
+            assert "busy" in painted_text(app.screen).lower()
+            assert "try" in painted_text(app.screen).lower()
+            heartbeat = asyncio.Event()
+            app.call_later(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), 2)
+            # Quit/Stay remains interactive even with the worker physically held.
+            app.action_quit()
+            await pilot.pause()
+            assert app.screen.query_one("#cancel-button", Button).label.plain == "Stay"
+            await pilot.click("#cancel-button")
+            await pilot.pause()
+            assert not app._quit_in_progress and app.cleanup_calls == 0
+            assert not session._run_task.done()
+            if cancel_second:
+                assert await pilot.click("#workflow-cancel")
+                await pilot.pause()
+                assert session.view().state == "stopping"
+                assert not session._run_task.done()
+                assert len(harness.rows()) == 1
+        finally:
+            release.set()
+        final = await until(
+            session,
+            lambda v: v.state == ("cancelled" if cancel_second else "completed"),
+        )
+        await asyncio.wait_for(asyncio.shield(session._run_task), 5)
+        assert not real_lock.locked()
+        assert len(worker_acquires) == 2
+        rows = harness.rows()
+        assert len(rows) == (1 if cancel_second else 2)
+        assert len({row["id"] for row in rows}) == len(rows)
+        assert all(
+            row["content"] == "Exact accepted text é\nSecond line." for row in rows
+        )
+        assert (final.note_id == first.note_id) is cancel_second
+        await pilot.pause()
+        if not cancel_second:
+            # A queued first-result event must not open the newly displayed Note.
+            stale = Button.Pressed(button)
+            stale.workflow_view = first
+            app.screen.query_one("#workflow-session").post_message(stale)
+            await pilot.pause()
+            assert isinstance(app.screen, WorkflowsScreen)
+            assert app.library_app is None
+        # Explicit fresh retry opens exactly the currently confirmed result.
+        app.screen.query_one("#workflow-open-note", Button).press()
+        async with asyncio.timeout(15):
+            while not app.screen.query("#library-note-body"):
+                await pilot.pause()
+            while app.screen.query_one("#library-note-body", TextArea).text != (
+                "Exact accepted text é\nSecond line."
+            ):
+                await pilot.pause()
+        assert app.screen._notes_state.selected_note_id == final.note_id
+        assert len(harness.rows()) == len(rows)
+
+
+@pytest.mark.parametrize(
+    "change", ["scope", "user", "owner", "path", "client", "cache", "missing"]
+)
+async def test_queued_open_note_rechecks_destination(
+    tmp_path, harness, monkeypatch, change
+):
+    await configure_model()
+    app = WorkflowRunHarness(tmp_path, harness)
+    async with app.run_test(size=(110, 36)) as pilot:
+        await start_review(app, pilot, harness.setup.source)
+        await pilot.click("#workflow-review-accept")
+        view = await until(app._workflow_session, lambda v: v.state == "completed")
+        await pilot.pause()
+        destination = app._workflow_session.run_bindings(view.run_id).notes
+        queued = Button.Pressed(app.screen.query_one("#workflow-open-note", Button))
+        queued.workflow_view = view
+        with monkeypatch.context() as changed:
+            if change == "scope":
+                changed.setattr(app, "notes_scope_service", None)
+            elif change == "user":
+                changed.setattr(app, "notes_user_id", "other")
+            elif change == "owner":
+                changed.setattr(harness.scope, "local_notes_service", None)
+            elif change == "path":
+                changed.setattr(destination.db, "db_path_str", "other")
+            elif change == "client":
+                changed.setattr(destination.db, "client_id", "other")
+            elif change == "cache":
+                changed.setitem(harness.owner._db_instances, "reader", harness.template)
+            else:
+                changed.delitem(harness.owner._db_instances, "reader")
+            app.screen.query_one("#workflow-session").post_message(queued)
+            await pilot.pause()
+            assert isinstance(app.screen, WorkflowsScreen)
+            assert app.library_app is None
+            assert "destination changed" in str(
+                app.screen.query_one("#workflow-draft-status", Static).renderable
+            )
+        assert len(harness.rows()) == 1
+
+
 async def test_delayed_accept_message_cannot_accept_a_replacement_run(
     tmp_path, harness, monkeypatch
 ):

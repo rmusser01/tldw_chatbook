@@ -287,12 +287,18 @@ class WorkflowsScreen(BaseAppScreen):
                 raise ValueError
             # Check the existing public cached-route guard. No recapture or DB read:
             # later legitimate Note edits do not invalidate the confirmed save.
-            with destination.owner.bound_notes_db(destination.user_id, destination.db):
+            # A Note worker can hold this mutex while waiting for the app loop.
+            with destination.owner.bound_notes_db(
+                destination.user_id, destination.db, blocking=False
+            ):
                 self.app_instance.post_message(
                     NavigateToScreen(
                         TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTE_ID: view.note_id}
                     )
                 )
+        except BlockingIOError:
+            self._error = "Local Notes is busy. Try Open Note again when the current operation finishes."
+            self._show_status()
         except Exception:  # noqa: BLE001 - fail closed without exposing private destination details.
             self._error = "Saved Note destination changed or is unavailable. Return to its original Local Notes destination."
             self._show_status()

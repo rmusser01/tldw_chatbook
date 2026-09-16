@@ -219,18 +219,23 @@ class NotesInteropService:
 
     @contextmanager
     def bound_notes_db(
-        self, user_id: str, expected_db: CharactersRAGDB
+        self, user_id: str, expected_db: CharactersRAGDB, *, blocking: bool = True
     ) -> Iterator[CharactersRAGDB]:
         """Retain an existing cached route for one local Notes operation.
 
         Refuse changed/missing ownership without creating a replacement. Local
         operations inside this context use ``_get_db``'s cached fast path, since
-        the existing lock is nonreentrant.
+        the existing lock is nonreentrant. With ``blocking=False``, contention
+        raises ``BlockingIOError`` without entering or changing the cached route.
         """
-        with self._db_lock:
+        if not self._db_lock.acquire(blocking=blocking):
+            raise BlockingIOError("note_destination_busy")
+        try:
             if self._db_instances.get(user_id) is not expected_db:
                 raise ValueError("note_destination_changed")
             yield expected_db
+        finally:
+            self._db_lock.release()
 
     def add_internal_research_quick_note_owner_proof(
         self, user_id: str, note_id: str, owner_proof: str
