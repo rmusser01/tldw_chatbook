@@ -164,6 +164,41 @@ def test_symlink_lock_and_root_replacement_refuse(tmp_path):
 
 
 def test_replaced_lock_and_fork_inherited_owner_cannot_mutate(tmp_path):
+    # Native Console imports initialize CoreAudio threads outside Python's
+    # threading inventory. Keep this actual fork control in a fresh interpreter;
+    # do not suppress its multithreaded-fork warning or relax inherited ownership.
+    script = """
+import os, socket, sys
+from pathlib import Path
+socket.socket.connect = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("network refused"))
+import tldw_chatbook
+assert Path(tldw_chatbook.__file__).resolve().parents[1] == Path(sys.argv[2])
+assert os.environ["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
+from Tests.Plugins.test_runtime_owner import _replaced_lock_and_fork_control
+_replaced_lock_and_fork_control(Path(sys.argv[1]))
+print("inherited-owner-and-replaced-lock-refused")
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-W",
+            "error::DeprecationWarning",
+            "-c",
+            script,
+            str(tmp_path),
+            str(Path.cwd()),
+        ],
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "inherited-owner-and-replaced-lock-refused"
+
+
+def _replaced_lock_and_fork_control(tmp_path):
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
     owner = PluginRuntimeOwner(tmp_path)

@@ -115,3 +115,13 @@ Package discovery and shared execution need separate module boundaries.
 - [Expanded hook runtime design](../../Docs/superpowers/specs/2026-09-15-expanded-hook-runtime-design.md)
 - [Managed plugins design](../../Docs/superpowers/specs/2026-09-15-managed-plugins-design.md)
 - [Hook implementation plan](../../Docs/superpowers/plans/2026-09-15-expanded-hooks.md)
+
+### F8 saved-root lifetime handoff (2026-09-16)
+
+ADR-162's R18/R43 amendment owns exact-root grants and the separate protected
+clean/dirty checkpoint. H2/H6 and M4 register all grants before launch/access,
+retain them through idle connection and pending/active/reader lifetime, and report
+actual terminal evidence through PluginRuntimeOwner. Cancelled waiters and request
+completion do not release a surviving writer's grant. Graceful shutdown closes
+admission before drain and publishes the final clean checkpoint only after joined
+ownership settlement. No additional hook cleanup owner or permission gate is added.

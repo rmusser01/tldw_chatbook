@@ -234,7 +234,7 @@ async def test_uninstall_retains_data_processes_and_defers_files_for_survivor(
         def apply(cursor, review, retained):
             original(cursor, review, retained)
             cursor.execute(
-                "INSERT INTO data_roots VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO data_roots(root_id, installation_id, workspace_id, path, generation, deletion_fenced) VALUES (?, ?, ?, ?, ?, ?)",
                 ("saved", case.installation, "a", str(data), 1, 0),
             )
             coordinator._apply_review = original
