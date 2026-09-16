@@ -1,11 +1,11 @@
 ---
 id: TASK-32671
 title: Commit and recover reviewed plugin installation changes
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:18'
-updated_date: '2026-09-16 08:05'
+updated_date: '2026-09-16 08:24'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Review binds exact package/catalog digests, installation identity, interpretation, selection, workspace and authority inputs; stale reviews cannot commit.
-- [ ] #2 Publication follows prepared snapshot and intent, durable SQLite commit, post-commit certificate, secure marker, then projections; retries use the same operation identity.
-- [ ] #3 Crash recovery follows every specified evidence state in another process, preserving unrelated installations and refusing automatic promotion when commitment proof is missing.
-- [ ] #4 Full disks, missing responses and interrupted writes preserve old or fenced committed state without recreating grants or executing package code; recovery material cannot be pruned.
+- [x] #1 Review binds exact package/catalog digests, installation identity, interpretation, selection, workspace and authority inputs; stale reviews cannot commit.
+- [x] #2 Publication follows prepared snapshot and intent, durable SQLite commit, post-commit certificate, secure marker, then projections; retries use the same operation identity.
+- [x] #3 Crash recovery follows every specified evidence state in another process, preserving unrelated installations and refusing automatic promotion when commitment proof is missing.
+- [x] #4 Full disks, missing responses and interrupted writes preserve old or fenced committed state without recreating grants or executing package code; recovery material cannot be pruned.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,3 +51,17 @@ Reason: Direct implementation of accepted exact review, owned durable commit/cer
 10. R22: initial public review/commit serves new local installs with stable fresh installation identity and explicit current authority/config/mapping absence or values. Exact retries preserve operation identity; existing-ID overwrites/arbitrary authority JSON endpoints are refused. The common authenticated pipeline is extended by explicit trust/activation and later drain-bound revision reviews in their assigned increments; catalog binding arrives with marketplace sources. Embedded package overlays remain eligible for exact reinspection, while missing external catalog artifacts block recovery.
 11. R23: bound retained authenticated transition discovery to1,000, refusing a new prepare at capacity while preserving exact retry/recovery. Do not prune in this task; rolling eligible terminal transition/receipt retention is integrated with protected material in the assigned revision retention task.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented exact reviewed local installation and crash-safe authority publication through the existing plugin owner. Session-bound reviews cover package bytes, source/link provenance, interpretation, selection, workspace and current authenticated inputs; installs start disabled and untrusted. The guarded SQLite transaction prepares the complete protected snapshot before commit, then writes a separate certificate, advances the marker and publishes. Recovery validates exact marker ancestry and reconstructs all retained authority from verified material, preserving other installations and persistent unresolved process gates.
+
+Changes: Plugins/coordinator.py, recovery.py and review.py; narrow registry/store helpers; real persistent-worker and killed-owner tests; Plugins/README.md. Dedicated worker integration, typed activation/revision operations, mapping-owner validation and rolling retention continue in their assigned increments. No separate runtime/permission owner or schema migration was introduced.
+
+Validation: 296 targeted affected/neighbor tests passed in28.46s before final local self-review fixes;44 final feature tests passed in18.10s. Independent review found one ancestry gap; fixed with RED4failed/4passed, GREEN8passed and51 covering tests passed in19.75s. Counts overlap. Ruff, Black(py312), syntax and whitespace checks clean. Fresh scoped review confirms I1 addressed and no new issues. No full sweep.
+
+Qualification: real controlled SIGKILL at all six durable milestones and fresh-process recovery on local macOS/APFS with isolated file marker backend. Actual keychain, hardware power loss, other platforms and filesystems are not qualified. Children verified worktree import and configured scratch data roots; no production profile/keyring, network/package execution, inferred external grants or arbitrary PID signals.
+
+ADR required: yes. Implements backlog/decisions/162-managed-agent-plugins.md and163-expanded-console-hook-runtime.md, extending009-local-skill-trust-boundary.md. R19-R23 record bounded discovery, dedicated worker, conservative missing-process evidence, staged typed operation scope and capacity/retention handoff. No new ADR needed for the ancestry bug fix. Implementation commits a993777d7d and2c1a618233. Relevant existing isolation/evidence lessons applied; no new generalized lesson.
+<!-- SECTION:NOTES:END -->
