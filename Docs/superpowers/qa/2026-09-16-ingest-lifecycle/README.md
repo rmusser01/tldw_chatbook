@@ -2,12 +2,18 @@
 
 Baseline: `856cbf355d` on `feat/component-pattern-library`.
 
-**Incomplete.** The real app cannot start its local parse pool on this host:
-`multiprocessing` semaphore construction raises errno 28. The real-spawn test
-fails at the same allocation both inside and outside the sandbox. The volume
-has 75 GiB available and the reported semaphore limit is 10,000. This evidence
-does not identify which process or leaked resource owns the exhausted capacity.
-The task remains In Progress with all acceptance criteria unchecked.
+**Incomplete; semaphore blocker cleared on 2026-09-16 at 19:31 UTC.**
+A fresh isolated spawn-context Lock probe and the previously failing real
+spawn-pool parser test both passed outside the sandbox (one test in 0.70s).
+[Recovery check](semaphore-recheck.json) records this evidence. The full native
+Import success/restart journeys have not been rerun; all acceptance criteria
+remain unchecked and the task remains In Progress.
+
+At the earlier checkpoint, the real app could not start its local parse pool:
+`multiprocessing` semaphore construction raised errno 28 inside and outside the
+sandbox. The volume then had 75 GiB available and the reported semaphore limit
+was 10,000. Neither the exhausted resource owner nor the recovery cause was
+established; this recheck changed no host settings or unrelated processes.
 
 ## Completed evidence
 
@@ -34,8 +40,8 @@ blocker and failure/restart behavior. Their raw failures remain in ignored scrat
 registry/database restoration, duplicate resolution, local persistence,
 permanent failure, pool-creation failure, source entry and Recent imports.
 The runner tests use their existing controlled-pool harness; they are not proof
-that the real native pool succeeded. The separate real-spawn test remains
-blocked. No full suite ran.
+that the real native pool succeeded. The separate real-spawn test was blocked
+at that checkpoint; it passes in the recovery check above. No full suite ran.
 
 The module documentation now describes the implemented optional durable store,
 explicit retry after interruption, atomic retry lineage and supported local
@@ -67,19 +73,20 @@ default data location. Run `submit`, wait for its app process to exit, then run 
 process against the same profile and owned tmux session. Each phase writes a
 unique evidence directory; preserve separate process exit receipts.
 
-This runner expects the observed errno-28 failure. When host allocation recovers,
-it must fail its expectation; then execute the remaining successful lifecycle
-journeys from the task plan. Do not count that expectation failure as an app
-regression. The pending scope is real text/Markdown import and Open in Library,
+This runner expects the earlier errno-28 failure. Allocation now passes the
+recheck, so successful parsing should fail that old expectation; execute the
+remaining successful lifecycle journeys from the task plan instead. Do not count
+that expectation failure as an app regression. The pending scope is real
+text/Markdown import and Open in Library,
 duplicate imports without extra content, permission failure followed by a
 successful Retry, quitting during a real parse, and fresh-process interruption
 reconciliation followed by successful Retry.
 
-Resume after a host resource change or on a clean qualification host. The
-existing [semaphore diagnosis](../../reviews/2026-09-08-semaphore-allocation-diagnosis.md)
-explains the same host failure and the attribution limits. A coordinated Mac
-restart is a recovery option after saving other work; no reboot, global resource
-cleanup, kernel setting change or termination of unrelated processes was attempted.
+The allocation gate now passes, so the remaining native qualification can
+resume. The existing [semaphore diagnosis](../../reviews/2026-09-08-semaphore-allocation-diagnosis.md)
+explains the earlier host failure and the attribution limits. No reboot, global
+resource cleanup, kernel setting change or termination of unrelated processes
+was attempted during this qualification or recheck.
 
 ADR required: no. Existing lifecycle/UX contracts are governed by
 [ADR-014](../../../../backlog/decisions/014-library-ingest-service-authority-and-recovery.md),

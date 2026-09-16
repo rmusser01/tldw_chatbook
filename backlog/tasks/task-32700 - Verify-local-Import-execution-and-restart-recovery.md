@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 06:44'
-updated_date: '2026-09-16 07:04'
+updated_date: '2026-09-16 19:32'
 labels:
   - ui
   - ingestion
@@ -55,4 +55,6 @@ All AC remain unchecked and status remains In Progress. Pending after host resou
 Independent review found a missing pre-import isolation guard and overstrong persistence wording. Added a fail-closed profile guard, verified six regression cases red/green and the recorded run-003 profile, and clarified best-effort ordinary persistence. Total targeted passes: 82 (76 application checks + 6 runner guard checks). Native journeys were unchanged after adding the guard; no native rerun claimed. Production AST is unchanged excluding docstrings.
 
 Independent follow-up review approved both corrections with no remaining actionable findings. Checkpoint is ready to retain; native success criteria remain explicitly unqualified.
+
+2026-09-16 19:31 UTC recovery check: one fresh isolated multiprocessing.get_context("spawn").Lock() probe passed outside the sandbox. The previously failing Tests/Local_Ingestion/test_ingest_parse_worker.py::test_run_parse_job_through_real_spawn_pool also passed outside the sandbox (1 passed in 0.70s), including real worker parsing. The semaphore blocker is cleared at this check; no host settings or unrelated processes were changed, and the recovery cause remains unknown. Evidence: Docs/superpowers/qa/2026-09-16-ingest-lifecycle/semaphore-recheck.json. Full native success/restart journeys remain pending; retain In Progress and all AC unchecked.
 <!-- SECTION:NOTES:END -->
