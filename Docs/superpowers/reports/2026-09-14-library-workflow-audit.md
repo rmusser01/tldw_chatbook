@@ -2,10 +2,10 @@
 
 Current checkpoint (2026-09-16): the initial findings and subsequent bounded
 reviews have progressed through Prompts, Skills, Collections, Import and
-Conversations reading, Archive and Restore. Real local Import success/restart
-recovery and the caught Console sidebar startup error are now qualified and
-closed. The historical
-sections below retain their original scope limits; the latest continuation
+Conversations reading, Archive, Restore and Export. Real local Import
+success/restart recovery and the caught Console sidebar startup error are now
+qualified and closed. The historical sections below retain their original scope
+limits; the latest continuation
 record at the end links the completed follow-ups. This is not a whole-application
 completion claim, and integration into current `dev` still needs review.
 
@@ -705,8 +705,13 @@ The gaps left after TASK-32667 are closed in their bounded follow-ups:
   themes, including a fresh-process restore of the same saved identity. All
   four fixture messages and the current Console context remain unchanged;
   56 targeted tests pass. No production fix was needed.
+- [TASK-32704](../qa/2026-09-16-conversation-export/README.md) qualifies whole-source
+  and selected-row Conversations exports, destination cancellation/normalization,
+  explicit ZIP replacement and return to the query in both themes/sizes. Eight
+  written bundles match their advertised contents; 122 targeted checks pass after
+  reconciling stale tests. No production fix was needed.
 
-Next bounded journeys: Conversations Export and exact Resume. The later
+Next bounded journey: Conversations exact Resume. The later
 Search/RAG, Settings and other application destinations remain governed by the
 original review sequence; a completed slice
 does not qualify every action in its destination. Full-suite verification has

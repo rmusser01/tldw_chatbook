@@ -1,0 +1,47 @@
+{
+  "conversations": [
+    {
+      "id": "583cef86-437f-5614-a611-62b3ac863707",
+      "title": "Export audit Alpha",
+      "messages": [
+        {
+          "id": "abdfe8a1-10f5-4cc7-bcb4-7419023ec4ae",
+          "content": "Alpha User: exact [brackets], caf\u00e9 and newline.\nSecond line."
+        },
+        {
+          "id": "7ec4c105-4666-4855-b055-772c92269a47",
+          "content": "Alpha Assistant: exact [brackets], caf\u00e9 and newline.\nSecond line."
+        }
+      ]
+    },
+    {
+      "id": "1b854051-47b5-5467-a6e8-e21a52e10e13",
+      "title": "Export audit Beta",
+      "messages": [
+        {
+          "id": "2f9da641-ccf4-450c-920a-924fc82bc9e1",
+          "content": "Beta User: exact [brackets], caf\u00e9 and newline.\nSecond line."
+        },
+        {
+          "id": "c28a489b-fe4f-449a-bd96-9f889a498c59",
+          "content": "Beta Assistant: exact [brackets], caf\u00e9 and newline.\nSecond line."
+        }
+      ]
+    },
+    {
+      "id": "61b83b8e-2221-5ce8-a758-31af529b26be",
+      "title": "Export audit Gamma",
+      "messages": [
+        {
+          "id": "501f6bde-3159-467e-a088-a45802c59d2c",
+          "content": "Gamma User: exact [brackets], caf\u00e9 and newline.\nSecond line."
+        },
+        {
+          "id": "4b10d373-677d-41c2-afa3-f650e988a9e0",
+          "content": "Gamma Assistant: exact [brackets], caf\u00e9 and newline.\nSecond line."
+        }
+      ]
+    }
+  ],
+  "unrelated_note_id": "4c28d1c3-1390-4351-9f87-73bdeaed93ed"
+}
