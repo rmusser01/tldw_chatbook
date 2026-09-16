@@ -818,7 +818,7 @@ def _scope(
         if pending:
             raise bootstrap.RecoveryRequired("recovery_scope_uncertain")
         return (UNBOUND_NAMESPACE,)
-    from .effective_roots import effective_roots
+    from .bootstrap import effective_roots
 
     roots = effective_roots(
         binding["roots"],
@@ -1658,7 +1658,7 @@ class MaintenanceSession:
 
     def _refresh_roots(self):
         """Use held directory authority for a now-absent redundant alias."""
-        from .effective_roots import effective_roots
+        from .bootstrap import effective_roots
 
         self._check()
         roots = effective_roots(self._declared_roots, self._root_entries)
@@ -1807,7 +1807,7 @@ class MaintenanceSession:
                 not discovered and not _contains_capture_path(self._roots, source)
             ):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
-            from .effective_roots import effective_roots
+            from .bootstrap import effective_roots
 
             bound = _contains_capture_path(
                 (

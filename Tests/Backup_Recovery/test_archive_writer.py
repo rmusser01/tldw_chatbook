@@ -139,15 +139,61 @@ def test_racing_destination_is_never_overwritten(tmp_path, monkeypatch):
     destination = tmp_path / "new.tldw-backup.zip"
     publish = writer.publish_new
 
-    def race(source, target):
+    def race(source, target, **options):
         target.write_bytes(b"race-winner")
-        publish(source, target)
+        publish(source, target, **options)
 
     monkeypatch.setattr(writer, "publish_new", race)
     with pytest.raises(FileExistsError):
         write_archive(capture, destination, password=None, cancel=Event())
     assert destination.read_bytes() == b"race-winner"
     assert not list(tmp_path.glob(".backup-write-*"))
+
+
+@pytest.mark.parametrize("swapped_parent", ["destination", "staging"])
+@pytest.mark.parametrize("encrypted", [False, True])
+def test_publication_refuses_replaced_parent_after_final_review(
+    tmp_path, monkeypatch, swapped_parent, encrypted
+):
+    """Final native publication stays bound to both previously reviewed parents."""
+    import shutil
+
+    from tldw_chatbook.Backup_Recovery import archive_writer as writer
+
+    capture = captured(tmp_path)
+    parent = tmp_path / "destination"
+    parent.mkdir(mode=0o700)
+    destination = parent / (
+        "new.tldw-backup.zip.age" if encrypted else "new.tldw-backup.zip"
+    )
+    publish = writer.publish_new
+    substituted = []
+
+    def swap(source, target, **options):
+        displaced = tmp_path / "original-parent"
+        if swapped_parent == "destination":
+            parent.rename(displaced)
+            parent.mkdir(mode=0o700)
+            (displaced / source.parent.name).rename(source.parent)
+        else:
+            source.parent.rename(displaced)
+            source.parent.mkdir(mode=0o700)
+            shutil.copy2(displaced / source.name, source)
+        marker = source.parent / "unrelated-content"
+        marker.write_bytes(b"preserve replaced directory")
+        substituted.append(marker)
+        return publish(source, target, **options)
+
+    monkeypatch.setattr(writer, "publish_new", swap)
+    with pytest.raises(OSError, match="publication_parent_changed"):
+        write_archive(
+            capture,
+            destination,
+            password=b"test-only passphrase" if encrypted else None,
+            cancel=Event(),
+        )
+    assert not destination.exists()
+    assert substituted[0].read_bytes() == b"preserve replaced directory"
 
 
 @pytest.mark.parametrize("when", ["before", "after", "ambiguous"])
@@ -159,10 +205,10 @@ def test_publication_interruption_preserves_real_outcome(tmp_path, monkeypatch, 
     cancel = Event()
     publish = writer.publish_new
 
-    def interrupted(source, target):
+    def interrupted(source, target, **options):
         if when == "before":
             raise InterruptedError("cancelled")
-        publish(source, target)
+        publish(source, target, **options)
         cancel.set()
         if when == "ambiguous":
             raise OSError("durability-uncertain")
@@ -371,10 +417,10 @@ from tldw_chatbook.Backup_Recovery.models import Inventory
 root, manifest, target = map(Path, sys.argv[1:4])
 capture = CaptureResult(root, Inventory((), True, "scope", ()), manifest.read_bytes())
 publish = writer.publish_new
-def stop(source, destination):
+def stop(source, destination, **options):
     if sys.argv[4] == "before":
         os._exit(23)
-    publish(source, destination)
+    publish(source, destination, **options)
     os._exit(24)
 writer.publish_new = stop
 writer.write_archive(capture, target, password=None, cancel=Event())

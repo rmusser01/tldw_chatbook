@@ -488,11 +488,9 @@ def test_initial_registry_barrier_failure_retains_before_after_evidence(
 
     def fail_initial_barrier(fd):
         result = native_flush_directory(fd)
-        if (
-            (control / "registry.json").exists()
-            and admission_module.os.fstat(fd).st_ino
-            == admission_module.os.stat(control).st_ino
-        ):
+        if (control / "registry.json").exists() and admission_module.os.fstat(
+            fd
+        ).st_ino == admission_module.os.stat(control).st_ino:
             raise OSError(errno.EIO, "injected_initial_registry_barrier_failure")
         return result
 
@@ -663,3 +661,264 @@ def test_registry_write_cannot_reinitialize_a_disappeared_existing_generation(
             admission._write(parent, _Registry(version=1))
     assert not registry.exists()
     assert not (admission.control_root / "registry.pending.json").exists()
+
+
+@pytest.mark.parametrize("limit", ["_REGISTRY_LIMIT", "_INTENT_LIMIT"])
+def test_register_preintent_limit_failure_removes_only_new_locks_and_allows_retry(
+    registered, monkeypatch, limit
+):
+    from tldw_chatbook.Backup_Recovery import admission as admission_module
+
+    admission, source = registered
+    control = admission.control_root
+    before = (control / "registry.json").read_bytes()
+    established = {
+        path.name: admission_module.os.stat(path).st_ino for path in control.iterdir()
+    }
+    with monkeypatch.context() as patch:
+        patch.setattr(admission_module, limit, len(before) + 1)
+        with pytest.raises(AdmissionError, match="registry_too_large"):
+            admission.register("b", (source,))
+
+    assert (control / "registry.json").read_bytes() == before
+    assert {
+        path.name: admission_module.os.stat(path).st_ino for path in control.iterdir()
+    } == established
+    fresh = Admission(control)
+    fresh.register("b", (source,))
+    with fresh.normal(("a", "b")):
+        assert source.read_bytes() == b"original"
+
+
+@pytest.mark.parametrize(
+    "failure", ["second_open", "file_barrier", "directory_barrier"]
+)
+def test_register_partial_lock_failure_cleans_allocations_before_retry(
+    registered, monkeypatch, failure
+):
+    import errno
+
+    from tldw_chatbook.Backup_Recovery import admission as admission_module
+
+    admission, source = registered
+    control = admission.control_root
+    before = (control / "registry.json").read_bytes()
+    established = {path.name for path in control.iterdir()}
+    lease_name = admission._key("b", "lease")
+    native_open = admission_module.os.open
+    native_flush_file = admission_module.flush_file
+    native_flush_directory = admission_module.flush_directory
+    injected = []
+
+    def fail_second_open(name, flags, *args, **kwargs):
+        if name == lease_name and flags & os.O_CREAT:
+            injected.append(True)
+            raise OSError(errno.EIO, "injected_lock_failure")
+        return native_open(name, flags, *args, **kwargs)
+
+    def fail_file_barrier(fd):
+        result = native_flush_file(fd)
+        lease = control / lease_name
+        if (
+            lease.exists()
+            and admission_module.os.fstat(fd).st_ino
+            == admission_module.os.stat(lease).st_ino
+        ):
+            injected.append(True)
+            raise OSError(errno.EIO, "injected_lock_failure")
+        return result
+
+    def fail_directory_barrier(fd):
+        result = native_flush_directory(fd)
+        if (control / lease_name).exists() and not injected:
+            injected.append(True)
+            raise OSError(errno.EIO, "injected_lock_failure")
+        return result
+
+    with monkeypatch.context() as patch:
+        if failure == "second_open":
+            patch.setattr(admission_module.os, "open", fail_second_open)
+        elif failure == "file_barrier":
+            patch.setattr(admission_module, "flush_file", fail_file_barrier)
+        else:
+            patch.setattr(admission_module, "flush_directory", fail_directory_barrier)
+        with pytest.raises(OSError, match="injected_lock_failure"):
+            admission.register("b", (source,))
+
+    assert injected
+    assert (control / "registry.json").read_bytes() == before
+    assert {path.name for path in control.iterdir()} == established
+    fresh = Admission(control)
+    fresh.register("b", (source,))
+    with fresh.normal(("b",)):
+        assert source.read_bytes() == b"original"
+
+
+@pytest.mark.parametrize("foreign", ["preexisting", "replacement"])
+def test_register_failed_attempt_never_removes_foreign_lock(
+    registered, monkeypatch, foreign
+):
+    import errno
+
+    from tldw_chatbook.Backup_Recovery import admission as admission_module
+
+    admission, source = registered
+    control = admission.control_root
+    before = (control / "registry.json").read_bytes()
+    lease = control / admission._key("b", "lease")
+    replacement = control / "foreign"
+    replacement.write_bytes(b"foreign lock evidence")
+    replacement.chmod(0o600)
+    foreign_inode = admission_module.os.stat(replacement).st_ino
+    native_flush_file = admission_module.flush_file
+
+    def swap_then_fail(fd):
+        result = native_flush_file(fd)
+        if (
+            lease.exists()
+            and admission_module.os.fstat(fd).st_ino
+            == admission_module.os.stat(lease).st_ino
+        ):
+            admission_module.os.replace(replacement, lease)
+            raise OSError(errno.EIO, "injected_replaced_lock")
+        return result
+
+    with monkeypatch.context() as patch:
+        if foreign == "preexisting":
+            admission_module.os.replace(replacement, lease)
+            expected = FileExistsError
+        else:
+            patch.setattr(admission_module, "flush_file", swap_then_fail)
+            expected = OSError
+        with pytest.raises(expected):
+            admission.register("b", (source,))
+
+    assert (control / "registry.json").read_bytes() == before
+    assert lease.read_bytes() == b"foreign lock evidence"
+    assert admission_module.os.stat(lease).st_ino == foreign_inode
+    assert not (control / admission._key("b", "gate")).exists()
+    assert not (control / admission._key("b", "incompatible")).exists()
+    with pytest.raises(FileExistsError):
+        Admission(control).register("b", (source,))
+    assert lease.read_bytes() == b"foreign lock evidence"
+
+
+@pytest.mark.parametrize(
+    "failure", ["partial_intent", "intent_file", "intent_directory", "registry_barrier"]
+)
+def test_register_publication_failure_retains_locks_and_refuses_fresh_authority(
+    registered, monkeypatch, failure
+):
+    import errno
+
+    from tldw_chatbook.Backup_Recovery import admission as admission_module
+
+    admission, source = registered
+    control = admission.control_root
+    before = (control / "registry.json").read_bytes()
+    native_write = admission._write_new_record
+    native_flush_file = admission_module.flush_file
+    native_flush_directory = admission_module.flush_directory
+
+    def fail_partial_intent(parent, name, data):
+        if name == "registry.pending.json":
+            native_write(parent, name, b"{")
+            raise OSError(errno.EIO, "injected_publication_failure")
+        return native_write(parent, name, data)
+
+    def fail_file_barrier(fd):
+        result = native_flush_file(fd)
+        intent = control / "registry.pending.json"
+        if (
+            intent.exists()
+            and admission_module.os.fstat(fd).st_ino
+            == admission_module.os.stat(intent).st_ino
+        ):
+            raise OSError(errno.EIO, "injected_publication_failure")
+        return result
+
+    def fail_directory_barrier(fd):
+        result = native_flush_directory(fd)
+        if (control / "registry.pending.json").exists() and (
+            failure == "intent_directory"
+            or "b" in json.loads((control / "registry.json").read_text())["entries"]
+        ):
+            raise OSError(errno.EIO, "injected_publication_failure")
+        return result
+
+    if failure == "partial_intent":
+        monkeypatch.setattr(admission, "_write_new_record", fail_partial_intent)
+    elif failure == "intent_file":
+        monkeypatch.setattr(admission_module, "flush_file", fail_file_barrier)
+    else:
+        monkeypatch.setattr(admission_module, "flush_directory", fail_directory_barrier)
+    with pytest.raises(OSError, match="injected_publication_failure"):
+        admission.register("b", (source,))
+
+    assert all(
+        (control / admission._key("b", kind)).is_file()
+        for kind in ("gate", "lease", "incompatible")
+    )
+    assert (control / "registry.pending.json").exists()
+    assert _child_admission_result(control) == "registry_publication_recovery_required"
+    if failure == "registry_barrier":
+        assert json.loads((control / "registry.json").read_text())["entries"]["b"][
+            "roots"
+        ] == [str(source)]
+    else:
+        assert (control / "registry.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("failure", ["unlink", "cleanup_barrier"])
+def test_register_committed_cleanup_failure_retains_new_locks_and_mapping(
+    registered, monkeypatch, failure
+):
+    import errno
+
+    from tldw_chatbook.Backup_Recovery import admission as admission_module
+
+    admission, source = registered
+    control = admission.control_root
+    native_flush_directory = admission_module.flush_directory
+    native_unlink = admission_module.os.unlink
+    committed_barriers = []
+
+    def final_state():
+        return "b" in json.loads((control / "registry.json").read_text())["entries"]
+
+    def fail_cleanup_barrier(fd):
+        result = native_flush_directory(fd)
+        if final_state():
+            if (control / "registry.pending.json").exists():
+                committed_barriers.append(True)
+            elif failure == "cleanup_barrier":
+                assert committed_barriers
+                raise OSError(errno.EIO, "injected_cleanup_failure")
+        return result
+
+    def fail_unlink(name, *args, **kwargs):
+        if name == "registry.pending.json" and failure == "unlink":
+            assert committed_barriers
+            raise OSError(errno.EIO, "injected_cleanup_failure")
+        return native_unlink(name, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(admission_module, "flush_directory", fail_cleanup_barrier)
+        patch.setattr(admission_module.os, "unlink", fail_unlink)
+        with pytest.raises(OSError, match="injected_cleanup_failure"):
+            admission.register("b", (source,))
+
+    assert committed_barriers and final_state()
+    assert all(
+        (control / admission._key("b", kind)).is_file()
+        for kind in ("gate", "lease", "incompatible")
+    )
+    if failure == "unlink":
+        assert (
+            _child_admission_result(control) == "registry_publication_recovery_required"
+        )
+    else:
+        fresh = Admission(control)
+        fresh.register("b", (source,))
+        with fresh.normal(("a", "b")):
+            assert source.read_bytes() == b"original"

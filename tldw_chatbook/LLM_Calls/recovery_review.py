@@ -6,16 +6,16 @@ import json
 import stat
 import threading
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery.activation import (
@@ -29,6 +29,42 @@ from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
 from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 from tldw_chatbook.Utils.platform_files import os
+
+if TYPE_CHECKING:
+    import requests
+
+
+class _OpenAISelectors(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
+    api_base_url: str | None = None
+    api_key: str | None = None
+    api_key_env_var: str | None = None
+    credential_source: str | None = None
+
+
+class _APISelectors(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
+    openai: _OpenAISelectors = Field(default_factory=_OpenAISelectors)
+
+
+class _LegacySelectors(BaseModel):
+    model_config = ConfigDict(strict=True, extra="allow")
+    openai_api_key: str | None = None
+
+
+class _ProviderSelectors(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
+    api_settings: _APISelectors = Field(default_factory=_APISelectors)
+    API: _LegacySelectors = Field(default_factory=_LegacySelectors)
+
+
+def _provider_sections(raw):
+    """Validate only connection selectors, without revealing rejected values."""
+    try:
+        selected = _ProviderSelectors.model_validate(raw)
+    except ValidationError:
+        raise ProviderReconnectRequired() from None
+    return selected.api_settings.openai.model_dump(), selected.API.model_dump()
 
 
 class ProviderReconnectRequired(RuntimeError):
@@ -139,8 +175,7 @@ def _config(path):
 
 def _selection(path, auth_source=None, *, resolve=False):
     raw = _config(path)
-    modern = raw.get("api_settings", {}).get("openai", {})
-    legacy = raw.get("API", {})
+    modern, legacy = _provider_sections(raw)
     endpoint = modern.get("api_base_url") or "https://api.openai.com/v1"
     parsed = urlsplit(endpoint)
     if (
@@ -312,10 +347,8 @@ class _Operation:
         # Filename selection is nonsecret. Never read unrelated receipts or
         # resolve competing credentials to discover which source was reviewed.
         raw = _config(self.path)
-        env = (
-            raw.get("api_settings", {}).get("openai", {}).get("api_key_env_var")
-            or "OPENAI_API_KEY"
-        )
+        modern, _ = _provider_sections(raw)
+        env = modern.get("api_key_env_var") or "OPENAI_API_KEY"
         selections = {}
         for source in (
             "config:api_settings.openai.api_key",
@@ -506,9 +539,22 @@ class _OpenAIStream(Iterator):
             self.lock.release()
 
 
-def openai_call(function):
+def openai_call[**P, R](function: Callable[P, R]) -> Callable[P, R | _OpenAIStream]:
+    """Guard a synchronous OpenAI handler and its lazy generator iteration.
+
+    Args:
+        function: Handler to execute inside an admitted provider operation.
+
+    Returns:
+        A callable preserving arguments and eager results. Generator results are
+        wrapped so iteration acquires and retains its own guarded operation.
+
+    Raises:
+        ProviderReconnectRequired: The recovered connection lacks valid review.
+    """
+
     @wraps(function)
-    def call(*args, **kwargs):
+    def call(*args: P.args, **kwargs: P.kwargs) -> R | _OpenAIStream:
         path = bootstrap.effective_config_path()
         operation = _Operation(path)
         try:
@@ -523,8 +569,24 @@ def openai_call(function):
     return call
 
 
-def openai_post(session, url, **kwargs):
-    """Validate the actual resolved target and key immediately before native I/O."""
+def openai_post(
+    session: "requests.Session", url: str, **kwargs: Any
+) -> "requests.Response":
+    """Validate the resolved target and key immediately before native I/O.
+
+    Args:
+        session: Session transferred to the active operation for cleanup.
+        url: Actual request URL to compare with the reviewed endpoint.
+        **kwargs: Request options, including the resolved authorization header.
+
+    Returns:
+        The response, owned with the session by the active operation. Recovered
+        requests disable ambient authentication and automatic redirects.
+
+    Raises:
+        ProviderReconnectRequired: Admission, reviewed credentials, or the
+            response redirect policy cannot be verified.
+    """
     active = _current.get()
     if active is None or active[1] != _identity():
         raise ProviderReconnectRequired()
@@ -554,7 +616,7 @@ def recovered_settings():
     record = operation.records[0]
     endpoint, _, _, key = _selection(operation.path, record.auth_source, resolve=True)
     operation.check_request(endpoint + "/models", key)
-    legacy = raw.get("API", {})
+    _, legacy = _provider_sections(raw)
     parameters = {
         name: legacy.get("openai_" + suffix, default)
         for name, suffix, default in (

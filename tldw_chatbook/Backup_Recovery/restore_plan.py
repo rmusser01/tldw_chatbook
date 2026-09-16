@@ -722,9 +722,9 @@ def plan_restore(
     roots = {key: row for key, row in directories.items() if row.parent_id is None}
     shared_roots = _shared_directory_aliases(doc)
     accepted = {
-        f"profile:{profile}:{section}.{key}"
+        f"profile:{profile}:" + ".".join(location)
         for profile in doc.profile_ids
-        for section, key in CONFIG_LOCATION_KEYS
+        for location in CONFIG_LOCATION_KEYS
     }
     selectors = {key: value for key, value in destinations.items() if key in accepted}
     destinations = {

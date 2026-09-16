@@ -822,13 +822,14 @@ def test_generated_root_derivation_preserves_saved_file_boundary(tmp_path, relat
 
 
 @pytest.mark.parametrize("mode", ["isolated", "replace"])
-@pytest.mark.parametrize("optional", ["absent", "blank", "sentinel", "custom"])
+@pytest.mark.parametrize("optional", ["absent", "blank", "sentinel", "custom", "local"])
 def test_restore_keeps_unused_optional_selectors_optional(tmp_path, mode, optional):
     import tomllib
     from threading import Event
 
     import toml
 
+    from Tests.Backup_Recovery.test_file_inventory import VOICE_LOCATION_KEYS
     from tldw_chatbook.Backup_Recovery.models import (
         DISCOVERY_CONTEXT_KEY,
         DiscoveryContext,
@@ -847,13 +848,21 @@ def test_restore_keeps_unused_optional_selectors_optional(tmp_path, mode, option
                 "blank": "",
                 "sentinel": "~/.local/share/tldw_cli/tldw_chatbook_research.db",
                 "custom": "/archive/source/research.db",
+                "local": "/archive/source/research.db",
             }[optional]
         }
         data["app_tts"] = {
             "CHATTERBOX_VOICE_DIR": "/archive/source/voices"
-            if optional == "custom"
+            if optional in {"custom", "local"}
             else ""
         }
+        for location in VOICE_LOCATION_KEYS:
+            table = data if len(location) == 1 else data.setdefault(location[0], {})
+            table[location[-1]] = (
+                "/archive/source/voices"
+                if optional in {"custom", "local"}
+                else ""
+            )
 
     def config_only(doc, content):
         row = next(row for row in doc["files"] if row["owner_id"] == "config")
@@ -889,14 +898,19 @@ def test_restore_keeps_unused_optional_selectors_optional(tmp_path, mode, option
         if mode == "replace":
             config = parent / "existing" / "config.toml"
             config.parent.mkdir(mode=0o700)
-            config.write_text(
-                toml.dumps(
-                    {
-                        "general": {"users_name": "Existing"},
-                        "paths": {"data_dir": str(parent / "data")},
-                    }
-                )
-            )
+            local = {
+                "general": {"users_name": "Existing"},
+                "paths": {"data_dir": str(parent / "data")},
+            }
+            if optional == "local":
+                for location in VOICE_LOCATION_KEYS:
+                    table = (
+                        local if len(location) == 1 else local.setdefault(location[0], {})
+                    )
+                    table[location[-1]] = str(
+                        parent.joinpath("local-voices", *location)
+                    )
+            config.write_text(toml.dumps(local))
             choices.update(
                 profile_bases={},
                 target_configs={"source": config},
@@ -921,8 +935,20 @@ def test_restore_keeps_unused_optional_selectors_optional(tmp_path, mode, option
         )
         user_data_dir(restored).mkdir(parents=True, mode=0o700)
         adapters = {a.owner_id: a for a in install_adapters()}
-        if optional == "custom":
+        if optional in {"custom", "local"}:
             assert "/archive/source" not in Path(artifact["candidate"]).read_text()
+            for location in VOICE_LOCATION_KEYS:
+                table = restored if len(location) == 1 else restored[location[0]]
+                expected = (
+                    parent.joinpath("local-voices", *location)
+                    if mode == "replace" and optional == "local"
+                    else user_data_dir(restored).joinpath(*location)
+                )
+                assert table[location[-1]] == str(expected)
+                assert (
+                    dict(plan.selectors)["profile:source:" + ".".join(location)]
+                    == expected
+                )
         else:
             for owner in (
                 "notifications.client",
@@ -936,5 +962,35 @@ def test_restore_keeps_unused_optional_selectors_optional(tmp_path, mode, option
                 ), owner
             assert restored.get("database", {}) == data.get("database", {})
             assert restored.get("app_tts", {}) == data.get("app_tts", {})
+            for location in VOICE_LOCATION_KEYS:
+                old = data if len(location) == 1 else data.get(location[0], {})
+                new = restored if len(location) == 1 else restored.get(location[0], {})
+                assert new.get(location[-1]) == old.get(location[-1])
+                assert "profile:source:" + ".".join(location) not in dict(
+                    plan.selectors
+                )
     finally:
         service.close()
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        ("global_tts_settings", "CHATTERBOX_VOICE_DIR"),
+        ("global_tts_settings", "KOKORO_VOICE_BLENDS_DIR"),
+        ("local_chatterbox_default", "CHATTERBOX_VOICE_DIR"),
+        ("local_kokoro_default_onnx", "KOKORO_VOICE_BLENDS_DIR"),
+        ("local_kokoro_default_pytorch", "KOKORO_VOICE_BLENDS_DIR"),
+        ("local_higgs_default", "HIGGS_VOICE_SAMPLES_DIR"),
+        ("local_higgs_v2", "HIGGS_VOICE_SAMPLES_DIR"),
+        ("HIGGS_VOICE_SAMPLES_DIR",),
+    ],
+)
+def test_voice_selector_shape_rejects_nonstring_paths(location):
+    from tldw_chatbook.Backup_Recovery.destinations import _config_tables
+
+    data = {location[-1]: 42}
+    if len(location) == 2:
+        data = {location[0]: data}
+    with pytest.raises(ValueError, match="invalid_config_shape"):
+        _config_tables(data)

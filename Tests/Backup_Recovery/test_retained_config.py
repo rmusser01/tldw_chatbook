@@ -115,7 +115,7 @@ def retained_case(tmp_path, monkeypatch, request):
     return archive, target, selector, state, authority
 
 
-def retained_plan(case, **changes):
+def retained_plan(case, *, selectors=None, **changes):
     archive, target, selector, _, _ = case
     relation = restore_plan.RetainedConfig(
         "profile:profile:config",
@@ -126,7 +126,7 @@ def retained_plan(case, **changes):
     return restore_plan.plan_restore(
         archive,
         mode="replace",
-        destinations={"state-root": selector.parent},
+        destinations={"state-root": selector.parent, **(selectors or {})},
         target=target,
         retained_configs=(replace(relation, **changes),),
     )
@@ -197,6 +197,75 @@ def test_native_stage_keeps_support_out_of_publication(retained_case, tmp_path):
     assert publication._plan_digest(
         replace(plan, retained_configs=())
     ) != publication._plan_digest(plan)
+
+
+@pytest.mark.parametrize("retained_case", ["never-bound"], indirect=True)
+@pytest.mark.parametrize("changed", [False, True])
+def test_retained_voice_selectors_validate_local_paths_without_rewriting_config(
+    retained_case, tmp_path, changed
+):
+    import toml
+
+    from Tests.Backup_Recovery.test_file_inventory import VOICE_LOCATION_KEYS
+
+    archive, _, selector, state, authority = retained_case
+    data = {"general": {"users_name": "Local unchanged"}}
+    mapping = {}
+    for location in VOICE_LOCATION_KEYS:
+        path = selector.parent.joinpath("voices", *location)
+        table = data if len(location) == 1 else data.setdefault(location[0], {})
+        table[location[-1]] = str(path)
+        mapping["profile:profile:" + ".".join(location)] = path
+    selector.write_text(toml.dumps(data))
+    bind_profile(tmp_path / "bootstrap", selector, ("local",), authority.control_root)
+    before = selector.read_bytes(), selector.stat().st_ino
+    if changed:
+        mapping["profile:profile:HIGGS_VOICE_SAMPLES_DIR"] = selector.parent / "wrong"
+    plan = retained_plan(retained_case, selectors=mapping)
+
+    with authority.maintenance(("local", UNBOUND_NAMESPACE), 3) as session:
+        if changed:
+            with pytest.raises(ValueError, match="retained_config_selector_unverified"):
+                stage_restore(
+                    archive, plan, tmp_path / "work", Event(), session=session
+                )
+        else:
+            candidate = stage_restore(
+                archive, plan, tmp_path / "work", Event(), session=session
+            )
+            document = json.loads((candidate / "candidate.json").read_bytes())
+            assert [row["destination"] for row in document["artifacts"]] == [str(state)]
+    assert (selector.read_bytes(), selector.stat().st_ino) == before
+
+
+def test_retained_config_rejects_selector_with_extra_database_component(
+    retained_case,
+):
+    import tomllib
+
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Backup_Recovery.profile_paths import database_path
+    from tldw_chatbook.Backup_Recovery.staging import (
+        _document,
+        _retained_config_targets,
+    )
+
+    archive, _, selector, _, _ = retained_case
+    data = tomllib.loads(selector.read_text())
+    plan = replace(
+        retained_plan(retained_case),
+        selectors=(
+            (
+                "profile:profile:database.prompts_db_path.extra",
+                database_path(data, "prompts_db_path"),
+            ),
+        ),
+    )
+    owners = {owner.owner_id: owner for owner in install_adapters()}
+    with pytest.raises(ValueError, match="invalid_config_selector"):
+        _retained_config_targets(
+            data, "profile", selector, _document(archive), plan, owners
+        )
 
 
 @pytest.mark.parametrize("kind", ["invalid", "public", "stale"])

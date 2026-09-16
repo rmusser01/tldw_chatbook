@@ -10,6 +10,9 @@ from dataclasses import replace
 import pytest
 
 from Tests.Backup_Recovery.test_file_inventory import (
+    VOICE_LOCATION_KEYS,
+)
+from Tests.Backup_Recovery.test_file_inventory import (
     installed_model as installed_model,  # noqa: PLC0414 - installed native model fixture
 )
 from tldw_chatbook.Backup_Recovery import bootstrap
@@ -113,6 +116,53 @@ def test_nonlocation_settings_change_preserves_unselected_database(preserved_cas
     with _preview_reads():
         check(plan, final, selector)
     assert (store.read_bytes(), selector.read_bytes()) == before
+
+
+@pytest.mark.parametrize(
+    "location", VOICE_LOCATION_KEYS, ids=lambda row: ".".join(row)
+)
+def test_local_voice_selector_keeps_unselected_audio_reachable(
+    preserved_case, location
+):
+    from tldw_chatbook.Backup_Recovery.config_adapter import remap_config_locations
+
+    plan, data, selector, _, _ = preserved_case
+    voice_root = selector.parent / "saved-voices"
+    voice_root.mkdir(mode=0o700)
+    voice = voice_root / "reference.wav"
+    voice.write_bytes(b"local voice sample")
+    voice.chmod(0o600)
+    table = data if len(location) == 1 else data.setdefault(location[0], {})
+    table[location[-1]] = str(voice_root)
+    configured = {
+        **data,
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(
+            selector, plan.target.items[0].logical_id.split(":")[1]
+        ),
+    }
+    owner = next(
+        owner for owner in install_adapters() if owner.owner_id == "tts.voices"
+    )
+    with _preview_reads():
+        voices = tuple(
+            item
+            for item in owner.discover(configured)
+            if item.status in {"included", "included_directory"}
+        )
+    assert voice in {item.path for item in voices}
+    plan = replace(
+        plan,
+        target=replace(plan.target, items=plan.target.items + voices),
+        preserve=plan.preserve + tuple((item.logical_id, item.path) for item in voices),
+    )
+    imported = deepcopy(data)
+    table = imported if len(location) == 1 else imported[location[0]]
+    table[location[-1]] = "/archive/source/voices"
+    final = remap_config_locations(imported, {".".join(location): voice_root})
+
+    with _preview_reads():
+        check(plan, final, selector)
+    assert voice.read_bytes() == b"local voice sample"
 
 
 def test_explicit_locator_can_preserve_database_across_username_change(preserved_case):

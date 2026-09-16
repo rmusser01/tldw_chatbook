@@ -6,11 +6,17 @@ from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 _SETUP = r"""
 import os,sys,json,asyncio,threading,time
+import toml
 from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
 install()
 selector=Path(os.environ['TLDW_CONFIG_PATH']);base=selector.parent.parent;data=base/'data'
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+str(data)+'"\n[api_settings.openai]\napi_key="owned-test-key"\napi_base_url="https://api.openai.com/v1"\n[openai_api]\napi_key="owned-test-key"\napi_base_url="https://api.openai.com/v1"\n[providers]\nOpenAI=["gpt-4o-mini"]\n')
+selector.write_text(toml.dumps({
+ 'general':{'users_name':'test'}, 'paths':{'data_dir':str(data)},
+ 'api_settings':{'openai':{'api_key':'owned-test-key','api_base_url':'https://api.openai.com/v1'}},
+ 'openai_api':{'api_key':'owned-test-key','api_base_url':'https://api.openai.com/v1'},
+ 'providers':{'OpenAI':['gpt-4o-mini']},
+}))
 selector.chmod(0o600)
 from tldw_chatbook.LLM_Calls import LLM_API_Calls as calls
 from tldw_chatbook.Backup_Recovery import bootstrap,storage_admission as storage
@@ -44,7 +50,7 @@ class Session:
  def close(self):effects.append('session-close')
  def mount(self,*args):pass
  def post(self,url,**kwargs):effects.append(('post',url,kwargs));return Response()
-calls.requests.Session=Session
+calls.create_default_session=Session
 message=[{'role':'user','content':'hello'}]
 """
 
@@ -95,6 +101,50 @@ print('retired and reopened')
 
 def test_reviewed_openai_uses_actual_handler_and_selected_connection(tmp_path):
     _run(tmp_path, "review", "local", script=_REVIEW)
+
+
+_MALFORMED_CONFIG = (
+    _SETUP
+    + r"""
+import toml,tomllib
+from tldw_chatbook.LLM_Calls import recovery_review as recovery
+restored()
+raw=tomllib.loads(selector.read_text())
+route=sys.argv[1]
+if route=='api_settings':raw['api_settings']=1
+elif route=='openai':raw['api_settings']['openai']=False
+elif route=='API':raw['API']='private-invalid-table'
+elif route=='legacy_key':raw['API']={'openai_api_key':['private-invalid-key']}
+else:raw['api_settings']['openai'][route]=['private-invalid-selector']
+selector.write_text(toml.dumps(raw))
+for call in (lambda:recovery._selection(selector), recovery.prepare_openai_reconnect,
+             lambda:calls.chat_with_openai(message,model='gpt-4o-mini',streaming=False)):
+ try:call()
+ except recovery.ProviderReconnectRequired as error:
+  assert str(error)=='provider_reconnect_required'
+  assert error.__cause__ is None
+ else:raise AssertionError('malformed recovered provider selectors were accepted')
+assert not effects and not blocked_attempts()
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "api_settings",
+        "openai",
+        "API",
+        "legacy_key",
+        "api_base_url",
+        "api_key",
+        "api_key_env_var",
+        "credential_source",
+    ],
+)
+def test_malformed_recovered_provider_config_refuses_before_effects(tmp_path, route):
+    _run(tmp_path, route, "local", script=_MALFORMED_CONFIG)
 
 
 _REFUSAL = (
@@ -250,6 +300,8 @@ _HOSTED = (
     _SETUP
     + r"""
 from tldw_chatbook.LLM_Calls.hosted_chat import owned_json_post,HostedHTTPTransportConfig
+from tldw_chatbook.LLM_Calls import hosted_chat
+hosted_chat.create_default_session=Session
 from tldw_chatbook.Backup_Recovery.control_records import bind_profile
 bind_profile(root,selector,('profile',),root/'admission')
 result=owned_json_post(config=HostedHTTPTransportConfig(provider='moonshot',base_url='https://api.moonshot.ai/v1',api_key='test-owned',timeout=1,retries=0,retry_delay=0),route='chat/completions',payload={},streaming=True)
@@ -404,13 +456,13 @@ def no_secret(*args,**kwargs):
  return select(*args,**kwargs)
 recovery._selection=no_secret
 def no_client(*args,**kwargs):raise AssertionError('damaged history constructed client')
-calls.requests.Session=no_client
+calls.create_default_session=no_client
 try:
  if stage=='prepare':recovery.prepare_openai_reconnect(auth_source='env:OPENAI_API_KEY')
  elif stage=='confirm':recovery.confirm_openai_reconnect(review)
  else:
   with recovery._using(operation):
-   recovery.openai_post(calls.requests.Session(),'https://api.openai.com/v1/chat/completions',headers={'Authorization':'Bearer owned-test-key'})
+   recovery.openai_post(calls.create_default_session(),'https://api.openai.com/v1/chat/completions',headers={'Authorization':'Bearer owned-test-key'})
 except (recovery.ProviderReconnectRequired,bootstrap.RecoveryRequired):pass
 else:raise AssertionError('damaged paired history authorized provider')
 finally:
@@ -443,10 +495,13 @@ def test_actual_isolated_paired_damage_refuses_before_provider_effects(
 
 
 _CONSOLE = (
-    _SETUP
+    _SETUP.replace(
+        "root=bootstrap.default_bootstrap_root()",
+        "from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway,ConsoleProviderResolution\n"
+        "root=bootstrap.default_bootstrap_root()",
+    )
     + r"""
 from tldw_chatbook.LLM_Calls import recovery_review as recovery
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway,ConsoleProviderResolution
 restored();recovery.confirm_openai_reconnect(recovery.prepare_openai_reconnect())
 entered=threading.Event();release=threading.Event();settled=threading.Event();errors=[]
 original_post=Session.post
@@ -462,7 +517,7 @@ async def run():
  resolution=ConsoleProviderResolution(provider='OpenAI',execution_key='openai',readiness_key='openai',base_url='https://api.openai.com/v1',model='gpt-4o-mini',ready=True,api_key='owned-test-key')
  from tldw_chatbook.Chat.console_prepared_request import build_console_request,prepare_provider_request,resolve_request_capacity
  request=prepare_provider_request(build_console_request(message),wire_style='single_preamble',model=resolution.model,provider=resolution.provider,capacity=resolve_request_capacity(context_window_tokens=None),count_fn=lambda messages,model:10)
- stream=gateway._stream_generic_chat(resolution,request)
+ stream=gateway._stream_generic_chat(resolution,request,capture_off_admission=gateway._capture_off_admission(None))
  task=asyncio.create_task(anext(stream))
  assert await asyncio.to_thread(entered.wait,3)
  task.cancel()
@@ -767,7 +822,7 @@ class NativeSession(requests.sessions.Session):
  def mount(self,prefix,adapter):super().mount(prefix,OfflineAdapter())
 def unreviewed_netrc(*args,**kwargs):raise AssertionError('ambient netrc auth resolution')
 requests.sessions.get_netrc_auth=unreviewed_netrc
-requests.Session=NativeSession
+calls.create_default_session=NativeSession
 result=calls.chat_with_openai(message,model='gpt-4o-mini')
 assert result['choices'][0]['message']['content']=='answer'
 assert len(prepared)==1 and prepared[0].headers['Authorization']=='Bearer owned-test-key'
@@ -782,11 +837,14 @@ def test_actual_requests_preparation_never_resolves_unreviewed_netrc_auth(tmp_pa
 
 
 _DESCRIPTOR = (
-    _SETUP
+    _SETUP.replace(
+        "root=bootstrap.default_bootstrap_root()",
+        "from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway\n"
+        "root=bootstrap.default_bootstrap_root()",
+    )
     + r"""
 import httpx
 from tldw_chatbook.Backup_Recovery.control_records import bind_profile
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.LLM_Calls.recovery_review import ProviderReconnectRequired
 route=sys.argv[1]
 if route=='recovered':restored()

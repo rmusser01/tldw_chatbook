@@ -7,7 +7,11 @@ from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 
 from . import archive_reader
-from .config_adapter import CONFIG_LOCATION_KEYS, remap_config_locations
+from .config_adapter import (
+    CONFIG_LOCATION_KEYS,
+    config_location,
+    remap_config_locations,
+)
 from .owner_registry import install_adapters
 from .profile_paths import (
     DATABASE_PATHS,
@@ -112,10 +116,8 @@ def destination_slots(doc):
 
 def _config_tables(data):
     """Reject scalar tables before reading installed configuration selectors."""
-    for section, key in CONFIG_LOCATION_KEYS:
-        table = data.get(section, {})
-        if type(table) is not dict or key in table and not isinstance(table[key], str):
-            raise ValueError("invalid_config_shape")
+    for location in CONFIG_LOCATION_KEYS:
+        config_location(data, location)
     for path in (
         ("general",),
         ("AppRAGSearchConfig",),
@@ -344,9 +346,9 @@ def resolve_destinations(
                 }
             )
             mapping = {
-                section + "." + key: user_root / section / key
-                for section, key in CONFIG_LOCATION_KEYS
-                if section != "database" and data.get(section, {}).get(key)
+                ".".join(location): user_root.joinpath(*location)
+                for location in CONFIG_LOCATION_KEYS
+                if location[0] != "database" and config_location(data, location)
             }
             mapping.update(
                 {"paths.data_dir": data_target, "Paths.data_dir": data_target}
@@ -441,10 +443,12 @@ def resolve_destinations(
             user_root = user_data_dir(local)
             base = config_target.parent
             mapping = {
-                section + "." + key: user_root / section / key
-                for section, key in CONFIG_LOCATION_KEYS
-                if section != "database"
-                and (data.get(section, {}).get(key) or local.get(section, {}).get(key))
+                ".".join(location): user_root.joinpath(*location)
+                for location in CONFIG_LOCATION_KEYS
+                if location[0] != "database"
+                and (
+                    config_location(data, location) or config_location(local, location)
+                )
             }
             mapping.update(
                 {"paths.data_dir": data_target, "Paths.data_dir": data_target}
@@ -465,15 +469,13 @@ def resolve_destinations(
                     is not None
                 ):
                     mapping["database." + setting] = database_path(local, setting)
-            for section, key in CONFIG_LOCATION_KEYS:
+            for location in CONFIG_LOCATION_KEYS:
                 if (
-                    section != "database"
-                    and key != "data_dir"
-                    and local.get(section, {}).get(key)
+                    location[0] != "database"
+                    and location[-1] != "data_dir"
+                    and (value := config_location(local, location))
                 ):
-                    mapping[section + "." + key] = (
-                        Path(local[section][key]).expanduser().absolute()
-                    )
+                    mapping[".".join(location)] = Path(value).expanduser().absolute()
         configured = local if retain_config else remap_config_locations(data, mapping)
         configured.setdefault("general", {})["users_name"] = names[profile]
         # A non-remappable imported projection selector cannot become authority.

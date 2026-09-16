@@ -43,6 +43,32 @@ def test_config_secret_is_removed_without_mutating_source():
     assert original["API"]["openai_api_key"] == "synthetic-secret-sentinel"
 
 
+@pytest.mark.parametrize("owner", ["config", "config.history"])
+@pytest.mark.parametrize("prefix", ["https:", ""])
+def test_excluded_url_credentials_are_removed_from_staged_config(
+    tmp_path, owner, prefix
+):
+    """Network-path endpoints receive the same credential exclusion as HTTPS."""
+    content = {
+        "connection": {
+            "endpoint": prefix
+            + "//user:synthetic-password@host/path?token=synthetic-token&keep=yes#fragment"
+        }
+    }
+    staging, path = config_file(tmp_path, content)
+
+    assert (
+        process_credentials(
+            staging, inventory(path, owner), mode="exclude", encrypted=False
+        )
+        == ()
+    )
+
+    result = toml.loads(path.read_text())
+    assert result["connection"]["endpoint"] == prefix + "//host/path?keep=yes#fragment"
+    assert "synthetic-password" in content["connection"]["endpoint"]
+
+
 def test_semantic_aliases_headers_arrays_and_encrypted_blobs():
     original = {
         "API": {"OPENAI_API_KEY_fallback": "secret"},

@@ -195,7 +195,12 @@ def write_archive(
     reader._space(destination.parent, expanded * (5 if password is not None else 3))
     operation = destination.parent / (".backup-write-" + uuid4().hex)
     create_private_directory(operation)
+    operation_identity = None
+    cleanup_operation = True
     try:
+        with pinned_directory(operation) as descriptor:
+            info = os.fstat(descriptor)
+            operation_identity = (info.st_dev, info.st_ino)
         output = operation / "archive.zip"
         high = _package(capture, doc, output, cancel, limits)
         if high:
@@ -235,10 +240,29 @@ def write_archive(
         if _output(capture, destination) != parent_identity:
             raise ValueError("output_parent_changed")
         reader._check(cancel)
-        publish_new(output, destination)
+        publish_new(
+            output,
+            destination,
+            parent_identities=(operation_identity, parent_identity),
+        )
         # A late cancellation never retracts or conceals durable publication.
         return SealedArchive(destination, digest, verified.manifest_bytes)
+    except (OSError, ValueError) as error:
+        if str(error) in {"publication_parent_changed", "output_parent_changed"}:
+            # A known substitution removes authority to clean up this path.
+            cleanup_operation = False
+        raise
     finally:
         # The destination is never cleaned up, even if native rename succeeded
         # and its subsequent durability barrier reported an ambiguous failure.
-        shutil.rmtree(operation)
+        if cleanup_operation and operation_identity is not None:
+            with (
+                pinned_directory(destination.parent) as parent,
+                pinned_directory(operation) as staging,
+            ):
+                parent_info, staging_info = os.fstat(parent), os.fstat(staging)
+                if (parent_info.st_dev, parent_info.st_ino) == parent_identity and (
+                    staging_info.st_dev,
+                    staging_info.st_ino,
+                ) == operation_identity:
+                    shutil.rmtree(operation)

@@ -62,20 +62,54 @@ CONFIG_LOCATION_KEYS = tuple(("database", row[1]) for row in DATABASE_PATHS) + (
     ("app_tts", "CHATTERBOX_VOICE_DIR"),
     ("app_tts", "KOKORO_VOICE_BLENDS_DIR"),
     ("HiggsSettings", "voice_samples_dir"),
+    ("global_tts_settings", "CHATTERBOX_VOICE_DIR"),
+    ("global_tts_settings", "KOKORO_VOICE_BLENDS_DIR"),
+    ("local_chatterbox_default", "CHATTERBOX_VOICE_DIR"),
+    ("local_kokoro_default_onnx", "KOKORO_VOICE_BLENDS_DIR"),
+    ("local_kokoro_default_pytorch", "KOKORO_VOICE_BLENDS_DIR"),
+    ("local_higgs_default", "HIGGS_VOICE_SAMPLES_DIR"),
+    ("local_higgs_v2", "HIGGS_VOICE_SAMPLES_DIR"),
+    ("HIGGS_VOICE_SAMPLES_DIR",),
 )
+
+
+def config_location(
+    config: Mapping[str, object], location: tuple[str, ...]
+) -> str | None:
+    """Read an exact installed location, rejecting malformed tables or values.
+
+    Args:
+        config: Parsed configuration containing installed storage selectors.
+        location: Exact path tuple from the installed selector catalogue.
+
+    Returns:
+        The configured path string, or None when the selector is absent.
+
+    Raises:
+        ValueError: The selector is unknown or its table/value shape is invalid.
+    """
+    if location not in CONFIG_LOCATION_KEYS:
+        raise ValueError("invalid_config_selector")
+    table = config
+    for key in location[:-1]:
+        table = table.get(key, {})
+        if type(table) is not dict:
+            raise ValueError("invalid_config_shape")
+    key = location[-1]
+    if key in table and not isinstance(table[key], str):
+        raise ValueError("invalid_config_shape")
+    return table.get(key)
 
 
 def remap_config_locations(
     config: Mapping[str, object], mapping: Mapping[str, Path]
 ) -> dict:
-    """Map exact installed ``section.key`` selector names to new local paths.
+    """Map exact installed dot-joined selector names to new local paths.
 
     Unknown names and conflicting lower/uppercase data-dir aliases refuse.
     Original path strings are values, never mapping keys or substring targets.
     """
-    accepted = {
-        section + "." + key: (section, key) for section, key in CONFIG_LOCATION_KEYS
-    }
+    accepted = {".".join(location): location for location in CONFIG_LOCATION_KEYS}
     if any(
         key not in accepted or not isinstance(value, Path)
         for key, value in mapping.items()
@@ -89,11 +123,13 @@ def remap_config_locations(
         raise ValueError("ambiguous_relocation_mapping")
     result = deepcopy(dict(config))
     for selector, target in mapping.items():
-        section, key = accepted[selector]
-        values = result.setdefault(section, {})
-        if type(values) is not dict:
-            raise ValueError("invalid_config_selector")
-        values[key] = str(target)
+        location = accepted[selector]
+        values = result
+        for key in location[:-1]:
+            values = values.setdefault(key, {})
+            if type(values) is not dict:
+                raise ValueError("invalid_config_selector")
+        values[location[-1]] = str(target)
     return result
 
 

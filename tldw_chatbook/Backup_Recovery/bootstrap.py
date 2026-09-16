@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -316,6 +316,28 @@ def _registry(root: Path) -> dict | None:
         return result["entries"]
 
 
+def effective_roots(
+    roots: Iterable[str | Path], entries: Iterable[Mapping[str, object]]
+) -> tuple[Path, ...]:
+    """Defer absent-alias proof until an enrolled root is actually absent.
+
+    Args:
+        roots: Declared paths from the selected namespace set.
+        entries: Registry entries from that same namespace set.
+
+    Returns:
+        Existing roots unchanged, or roots qualified by the native absence proof.
+        Consumers still perform their ordinary strict identity validation.
+    """
+    roots = tuple(dict.fromkeys(Path(root) for root in roots))
+    entries = tuple(entries)
+    if all(os.path.lexists(root) for root in roots):
+        return roots
+    from .effective_roots import effective_roots as prove_absence
+
+    return prove_absence(roots, entries)
+
+
 def _binding(
     selector: Path, profiles: list[dict], registry: dict | None
 ) -> dict | None:
@@ -334,8 +356,6 @@ def _binding(
         raise ValueError("binding_mapping_changed")
     # Declared mapping equality stays exact. Omit only absent aliases covered
     # by this profile's already enrolled and physically verified directory.
-    from .effective_roots import effective_roots
-
     entries = tuple(registry[name] for name in match["namespaces"])
     for raw in effective_roots(roots, entries):
         path = Path(raw).resolve(strict=True)

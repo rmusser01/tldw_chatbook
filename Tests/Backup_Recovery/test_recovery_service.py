@@ -344,6 +344,47 @@ def test_service_real_isolated_restore_survives_worker_shutdown(tmp_path, route)
     _run(tmp_path, route, "service", script=_SERVICE_ISOLATED)
 
 
+@pytest.mark.parametrize("failure", ("target_drift", "cancelled"))
+def test_failed_replacement_staging_cleans_inspection_without_journal(
+    tmp_path, monkeypatch, failure
+):
+    from tldw_chatbook.Backup_Recovery import staging
+
+    with replacement_case(tmp_path, monkeypatch, prepared=False) as case:
+        _, original, _, _, source, selector = case
+        service = RecoveryService(tmp_path / "control")
+        try:
+            inspection = service.start_inspection(tmp_path / "replacement.zip", password=None)
+            assert service.wait(inspection, timeout=15)["state"] == "succeeded"
+            workspace = service._workspaces[inspection][0]
+            assert service.inspection(inspection).path.is_file()
+            plan = service.preview_restore(
+                inspection, mode="replace",
+                destinations=dict((*original.destinations, *original.selectors)),
+                target=original.target, profile_names=dict(original.profile_names),
+            )
+            if failure == "target_drift":
+                selector.write_bytes(selector.read_bytes() + b"\n# changed after review\n")
+            else:
+                stage = staging.stage_restore
+
+                def cancelled(archive, plan, work, cancel, **options):
+                    cancel.set()
+                    return stage(archive, plan, work, cancel, **options)
+
+                monkeypatch.setattr(staging, "stage_restore", cancelled)
+            before = {path: path.read_bytes() for path in (source, selector)}
+            operation = service.start_restore(inspection, plan, rollback_password=b"rollback")
+            state = service.wait(operation, timeout=40)
+            assert state["state"] == ("cancelled" if failure == "cancelled" else "failed"), dict(state)
+            assert not service.pending_operations()
+            assert not service.recovery_copies()
+            assert all(path.read_bytes() == data for path, data in before.items())
+        finally:
+            service.close()
+        assert not workspace.exists()
+
+
 @pytest.mark.parametrize("established", (False, True))
 def test_service_replaces_real_stored_data_and_retains_verified_originals(
     tmp_path, monkeypatch, helper_resource_root, established

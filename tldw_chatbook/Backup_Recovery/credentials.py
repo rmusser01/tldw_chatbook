@@ -533,7 +533,7 @@ def _sanitize_url(value):
     if not isinstance(value, str):
         raise TypeError("unsupported_credential_format")
     parsed = urlsplit(value)
-    if not parsed.scheme or not parsed.netloc:
+    if not parsed.netloc:
         return value
     host = parsed.netloc.rsplit("@", 1)[-1]
     query = [

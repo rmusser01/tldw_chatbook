@@ -23,6 +23,7 @@ on:
           - native-close-diagnostic
           - selectable-groups
           - selectable-groups-diagnostic
+          - qodo-review
         default: full
 
 # Comprehensive tests run on main pushes or explicit dispatch. Pull requests
@@ -417,7 +418,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        selection: ${{ fromJSON(inputs.backup_platform_selection == 'full' && '["plain","encrypted","encrypted-credentials","roundtrip","replacement-persona","replacement-default-evals","rollback","support","selectable-groups"]' || inputs.backup_platform_selection == 'replacement-diagnostic' && '["replacement-persona","replacement-default-evals"]' || inputs.backup_platform_selection == 'encrypted-diagnostic' && '["encrypted"]' || inputs.backup_platform_selection == 'support-diagnostic' && '["support-diagnostic"]' || inputs.backup_platform_selection == 'native-close-diagnostic' && '["native-close-diagnostic"]' || inputs.backup_platform_selection == 'selectable-groups-diagnostic' && '["selectable-groups-diagnostic"]' || inputs.backup_platform_selection == 'selectable-groups' && '["selectable-groups"]' || '["restore-diagnostic"]') }}
+        selection: ${{ fromJSON(inputs.backup_platform_selection == 'full' && '["plain","encrypted","encrypted-credentials","roundtrip","replacement-persona","replacement-default-evals","rollback","support","selectable-groups"]' || inputs.backup_platform_selection == 'replacement-diagnostic' && '["replacement-persona","replacement-default-evals"]' || inputs.backup_platform_selection == 'encrypted-diagnostic' && '["encrypted"]' || inputs.backup_platform_selection == 'support-diagnostic' && '["support-diagnostic"]' || inputs.backup_platform_selection == 'native-close-diagnostic' && '["native-close-diagnostic"]' || inputs.backup_platform_selection == 'selectable-groups-diagnostic' && '["selectable-groups-diagnostic"]' || inputs.backup_platform_selection == 'qodo-review' && '["qodo-review"]' || inputs.backup_platform_selection == 'selectable-groups' && '["selectable-groups"]' || '["restore-diagnostic"]') }}
 
     steps:
     - name: Enable long paths for Windows checkout

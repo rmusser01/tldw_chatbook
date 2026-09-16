@@ -34,6 +34,7 @@ def test_empty_directory_is_an_inventory_item(tmp_path):
 def test_directory_metadata_is_versioned_and_preserves_mode_and_mtime(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir(mode=0o750)
+    empty.chmod(0o750)
     os.utime(empty, ns=(1700000000000000000, 1700000000123456789))
     items = inventory_tree(tmp_path, owner="test.files", external=True)
     entry = next(item for item in items if item.path == empty)
@@ -397,6 +398,46 @@ def test_tts_capture_preserves_real_profile_reference_bytes(tmp_path, monkeypatc
             assert adapter.validate(candidate) == ("tts_reference_digest_mismatch",)
 
 
+VOICE_LOCATION_KEYS = (
+    ("global_tts_settings", "CHATTERBOX_VOICE_DIR"),
+    ("global_tts_settings", "KOKORO_VOICE_BLENDS_DIR"),
+    ("local_chatterbox_default", "CHATTERBOX_VOICE_DIR"),
+    ("local_kokoro_default_onnx", "KOKORO_VOICE_BLENDS_DIR"),
+    ("local_kokoro_default_pytorch", "KOKORO_VOICE_BLENDS_DIR"),
+    ("local_higgs_default", "HIGGS_VOICE_SAMPLES_DIR"),
+    ("local_higgs_v2", "HIGGS_VOICE_SAMPLES_DIR"),
+    ("HIGGS_VOICE_SAMPLES_DIR",),
+)
+
+
+def test_config_voice_mapping_changes_only_installed_exact_selectors(tmp_path):
+    from copy import deepcopy
+
+    from tldw_chatbook.Backup_Recovery.config_adapter import remap_config_locations
+
+    source = {"unknown": {"HIGGS_VOICE_SAMPLES_DIR": "/old/voice"}}
+    for location in VOICE_LOCATION_KEYS:
+        table = source if len(location) == 1 else source.setdefault(location[0], {})
+        table[location[-1]] = "/old/voice"
+    source["notes"] = {"template": "Keep /old/voice in this prose"}
+    original = deepcopy(source)
+    mapping = {
+        ".".join(location): tmp_path.joinpath(*location)
+        for location in VOICE_LOCATION_KEYS
+    }
+
+    remapped = remap_config_locations(source, mapping)
+
+    for location in VOICE_LOCATION_KEYS:
+        table = remapped if len(location) == 1 else remapped[location[0]]
+        assert table[location[-1]] == str(tmp_path.joinpath(*location))
+    assert source == original
+    assert remapped["unknown"] == original["unknown"]
+    assert remapped["notes"] == original["notes"]
+    with pytest.raises(ValueError, match="invalid_relocation_mapping"):
+        remap_config_locations(source, {"unknown.HIGGS_VOICE_SAMPLES_DIR": tmp_path})
+
+
 def test_config_mapping_keys_are_installed_selectors_and_prose_is_untouched(tmp_path):
     from tldw_chatbook.Backup_Recovery.config_adapter import (
         managed_secret_locations,
@@ -457,7 +498,7 @@ def test_current_history_config_captures_without_secret_decryption(
     assert (stage / "config").read_bytes() == source.read_bytes()
 
 
-def test_file_factories_return_actual_custom_assets_and_pending_participants(tmp_path):
+def test_file_factories_return_actual_supported_custom_assets(tmp_path):
     from tldw_chatbook.Backup_Recovery.config_adapter import (
         recovery_adapters as config_adapters,
     )
@@ -492,11 +533,11 @@ def test_file_factories_return_actual_custom_assets_and_pending_participants(tmp
     )
     for path in (skill, artwork, template):
         assert any(item.path == path and item.status == "included" for item in entries)
-    assert any(
+    assert not any(
         item.logical_id.endswith(":participant_pending")
-        and item.status == "unsupported"
         for item in entries
     )
+    # This fixture supplies only three owner factories, not a complete profile.
     assert not classify_entries(entries).complete
 
 
@@ -783,14 +824,18 @@ def test_tts_reference_cohort_requires_actual_matching_physical_identity(tmp_pat
     items = tuple(item for adapter in adapters for item in adapter.discover(config))
     merged, issues = _merge_chachanotes_cohort(items, cohort="tts")
     assert issues == ()
-    assert merged[0].shared_group == merged[1].shared_group
+    by_id = {item.logical_id: item for item in merged}
+    profile = by_id["profile:p:tts.profile_store"]
+    references = by_id["profile:p:tts.references"]
+    assert profile.shared_group == references.shared_group
+    assert by_id["profile:p:tts.profile_store:lock"].shared_group is None
     assert (
         "profile:p:tts.profile_store"
         in next(item for item in items if item.owner == "tts.references").dependencies
     )
     other = tmp_path / "other.db"
     open_profile_store(other).close()
-    mismatched = (items[0], replace(items[1], path=other))
+    mismatched = (profile, replace(references, path=other))
     assert _merge_chachanotes_cohort(mismatched, cohort="tts")[1] == (
         "shared_identity_mismatch",
     )
@@ -1321,7 +1366,6 @@ async def test_remaining_installed_preferences_history_and_chatbooks_are_baselin
 
     from Tests.Backup_Recovery.test_core_owners import application_authority
     from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
-    from tldw_chatbook.Chat.prompt_history import PromptHistory
     from tldw_chatbook.Chatbooks.local_chatbook_service import LocalChatbookService
 
     data = tmp_path / "data" / "Ada"
@@ -1330,7 +1374,9 @@ async def test_remaining_installed_preferences_history_and_chatbooks_are_baselin
     selector.parent.mkdir()
     selector.write_text("")
     history = data / "prompt_history.jsonl"
-    await PromptHistory(history).append("private retained prompt")
+    # Seed retained on-disk history for this custom profile. The live writer
+    # correctly refuses paths outside the process's selected profile.
+    history.write_text('{"input":"private retained prompt","timestamp":1}\n')
     state = selector.parent / "ui_state.toml"
     state.write_text('[sidebar]\nsearch_query="retained"\n')
     emojis = selector.parent / "recent_emojis.json"
@@ -1390,6 +1436,19 @@ async def test_remaining_installed_preferences_history_and_chatbooks_are_baselin
     assert (
         len([i for i in adapters["chatbooks.registry"].discover(config) if i.path]) == 1
     )
+    # Check cross-owner references before the per-owner capture fixtures bind
+    # authority to only one file at a time.
+    registry_item = next(
+        i for i in adapters["chatbooks.registry"].discover(config) if i.path == registry
+    )
+    archive_item = next(
+        i for i in adapters["chatbooks.archives"].discover(config) if i.path == archive
+    )
+    assert set(registry_item.dependencies) == {
+        "profile:p:config",
+        "profile:p:db.prompts.primary",
+        archive_item.logical_id,
+    }
     stage = tmp_path / "stage"
     stage.mkdir(mode=0o700)
     for owner, path in expected.items():
@@ -1402,17 +1461,6 @@ async def test_remaining_installed_preferences_history_and_chatbooks_are_baselin
                 item = next(i for i in adapter.discover(config) if i.path == path)
                 adapter.capture(item, stage / owner, Event())
                 assert (stage / owner).read_bytes() == path.read_bytes()
-    registry_item = next(
-        i for i in adapters["chatbooks.registry"].discover(config) if i.path == registry
-    )
-    archive_item = next(
-        i for i in adapters["chatbooks.archives"].discover(config) if i.path == archive
-    )
-    assert set(registry_item.dependencies) == {
-        "profile:p:config",
-        "profile:p:db.prompts.primary",
-        archive_item.logical_id,
-    }
 
 
 def test_chatbook_scratch_has_exact_producers_cleanup_and_unknown_sibling_refusal(

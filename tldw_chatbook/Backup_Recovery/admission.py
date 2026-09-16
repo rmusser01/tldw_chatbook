@@ -64,6 +64,7 @@ class _WriteIntent(BaseModel):
 _REGISTRY_LIMIT = 1048576
 _INTENT_LIMIT = 2 * _REGISTRY_LIMIT + 65536
 _INTENT_NAME = "registry.pending.json"
+_LOCK_POLL_INTERVAL_SECONDS = 0.01
 _local = threading.local()
 
 
@@ -126,7 +127,9 @@ class Admission:
             yield fd
 
     @staticmethod
-    def _create_lock(parent: int, name: str) -> None:
+    def _create_lock(
+        parent: int, name: str, *, created: dict[str, int] | None = None
+    ) -> None:
         fd = os.open(
             name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -134,10 +137,46 @@ class Admission:
             dir_fd=parent,
         )
         try:
+            if created is not None:
+                # Keep the native object held before either barrier can fail.
+                created[name] = fd
             flush_file(fd)
         finally:
-            os.close(fd)
+            if created is None or created.get(name) != fd:
+                os.close(fd)
         flush_directory(parent)
+
+    def _discard_unpublished_locks(
+        self, parent: int, before: _Registry, created: dict[str, int]
+    ) -> None:
+        """Retire this attempt's private locks only before authority publication."""
+        try:
+            if self._read(parent) != before:
+                return
+        except (AdmissionError, OSError):
+            # An intent, unreadable state or changed generation retains evidence.
+            return
+        removed = False
+        try:
+            for name, fd in created.items():
+                held = os.fstat(fd)
+                try:
+                    current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if (held.st_dev, held.st_ino) != (current.st_dev, current.st_ino) or any(
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077
+                    for info in (held, current)
+                ):
+                    continue
+                os.unlink(name, dir_fd=parent)
+                removed = True
+        finally:
+            if removed:
+                flush_directory(parent)
 
     @staticmethod
     def _open(parent: int, name: str, flags: int) -> int:
@@ -175,7 +214,7 @@ class Admission:
                         fcntl.flock(fd, mode | fcntl.LOCK_NB)
                         break
                     except BlockingIOError:
-                        time.sleep(0.01)
+                        time.sleep(_LOCK_POLL_INTERVAL_SECONDS)
             yield fd
         finally:
             os.close(fd)
@@ -360,14 +399,15 @@ class Admission:
         if recovery_journal is None and not any(
             entry.pending or entry.proposed for entry in registry.entries.values()
         ):
-            from .bootstrap import _records
-            from .effective_roots import check_redundant_profiles, effective_roots
+            from .bootstrap import _records, effective_roots
 
             declared = {
                 Path(root) for entry in registry.entries.values() for root in entry.roots
             }
             entries = tuple(entry.model_dump() for entry in registry.entries.values())
             if declared - set(effective_roots(declared, entries)):
+                from .effective_roots import check_redundant_profiles
+
                 # Only complete fixed records prove every referencing profile
                 # already owns the independent native directory namespace.
                 _, profiles = _records(self.control_root.parent)
@@ -484,7 +524,8 @@ class Admission:
             self._directory() as parent,
             self._lock(parent, "registry.lock", fcntl.LOCK_EX),
         ):
-            registry = self._read(parent)
+            before = self._read(parent)
+            registry = before.model_copy(deep=True)
             tokens = self._tokens(roots)
             if namespace in registry.entries:
                 if registry.entries[namespace].roots != [str(r) for r in roots]:
@@ -510,9 +551,19 @@ class Admission:
                         fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError:
                         raise AdmissionError("namespace_busy") from None
-                for kind in ("gate", "lease", "incompatible"):
-                    self._create_lock(parent, self._key(namespace, kind))
-                self._write(parent, registry)
+                created: dict[str, int] = {}
+                try:
+                    for kind in ("gate", "lease", "incompatible"):
+                        self._create_lock(
+                            parent, self._key(namespace, kind), created=created
+                        )
+                    self._write(parent, registry)
+                except BaseException:
+                    self._discard_unpublished_locks(parent, before, created)
+                    raise
+                finally:
+                    for fd in created.values():
+                        stack.callback(os.close, fd)
 
     @contextmanager
     def _admit(
@@ -592,7 +643,7 @@ class Admission:
                 except BlockingIOError:
                     trial.close()
                     if blocked_request is None:
-                        time.sleep(0.01)
+                        time.sleep(_LOCK_POLL_INTERVAL_SECONDS)
                     else:
                         # Wait on one held native descriptor without registry
                         # authority or repeated filesystem/ACL reconstruction.
@@ -702,7 +753,7 @@ class Admission:
 
     @staticmethod
     def _effective_publication_roots(registry, group, recovery_journal):
-        from .effective_roots import effective_roots
+        from .bootstrap import effective_roots
 
         roots = tuple(Path(root) for name in group for root in registry.entries[name].roots)
         if recovery_journal is not None:

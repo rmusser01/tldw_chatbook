@@ -707,10 +707,8 @@ class RecoveryService:
                 if not available:
                     raise ValueError(reason)
                 self._update(operation, phase="staging")
-                # Candidate and publication evidence outlive the view and worker.
                 with self._lock:
                     work, _ = self._workspaces[inspection_id]
-                    self._retained_workspaces.add(inspection_id)
                 authority = admission_authority(bootstrap.default_bootstrap_root())
                 names = (UNBOUND_NAMESPACE,)
                 if plan.retained_configs or "settings" in plan.effective_groups:
@@ -732,6 +730,10 @@ class RecoveryService:
                         session=session,
                     )
                 self._update(operation, phase="replacing")
+                # Retain evidence only once replacement can create a journal.
+                # Failed or cancelled staging leaves no durable handoff.
+                with self._lock:
+                    self._retained_workspaces.add(inspection_id)
                 try:
                     journal_operation = replace(
                         plan,

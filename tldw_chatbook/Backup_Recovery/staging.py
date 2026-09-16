@@ -308,6 +308,7 @@ def _items(doc, plan):
 
 def _retained_config_targets(data, profile, config_target, doc, plan, owners):
     """Check current retained selectors against the exact reviewed destinations."""
+    from .config_adapter import CONFIG_LOCATION_KEYS, config_location
     from .profile_paths import data_base, database_path
 
     _config_targets(data, profile, config_target, doc, plan, owners)
@@ -323,13 +324,15 @@ def _retained_config_targets(data, profile, config_target, doc, plan, owners):
     for selector, destination in plan.selectors:
         if not selector.startswith(prefix):
             continue
-        section, name = selector[len(prefix) :].split(".", 1)
-        if section == "database":
-            expected = database_path(data, name)
-        elif section in {"paths", "Paths"} and name == "data_dir":
+        location = tuple(selector[len(prefix) :].split("."))
+        if location not in CONFIG_LOCATION_KEYS:
+            raise ValueError("invalid_config_selector")
+        if location[0] == "database":
+            expected = database_path(data, location[1])
+        elif location in {("paths", "data_dir"), ("Paths", "data_dir")}:
             expected = data_base(data)
         else:
-            value = data.get(section, {}).get(name)
+            value = config_location(data, location)
             if not value:
                 raise ValueError("retained_config_selector_unverified")
             expected = Path(value).expanduser().absolute()
