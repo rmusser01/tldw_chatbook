@@ -87,6 +87,21 @@ existing boundaries, with no new loading, storage, runtime or sync infrastructur
    policy constant. Verify targeted suites/static checks, obtain scoped review,
    push, reply to each finding, and wait for exact-head checks before merge.
 
+### Final-head Qodo follow-up (2026-09-16 UTC)
+
+ADR required: amend existing ADR-138 only if the library read contract changes.
+ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
+Reason: retain existing ownership and paging limits while eliminating unnecessary
+full-document reads/projections for names; no schema or runtime infrastructure.
+
+1. Verify final-head Qodo findings 4021531211/1225/1230/1239. Document/type the
+   three specified widget modules and move the standard-library catalog import.
+2. Measure library-name projection, reproduce excess parsing with real stored
+   pages, then use bounded name/identity-only reads for both library surfaces.
+   Preserve Unicode search, stable pagination, exact selection and raw documents.
+3. Run targeted store/controller/paging/editor and import/CSS guards, review the
+   changes, reply to each finding and refresh exact-head review/checks before merge.
+
 ## ID provenance
 
 The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans already contained IDs through 32600. Only this newly created file/header was moved to the checked-free TASK-32601 before implementation. No existing task was renumbered.
@@ -95,6 +110,29 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Final-head Qodo follow-up (2026-09-16 UTC): four fresh findings on 2e76d7bdf2
+held merge despite its passing required/UI checks. Library pages now read only
+bounded display-name/identity tuples through the existing document service;
+both main and compact mounted regressions prove zero full-document projections
+after reproducing 20/21 per page. Exact heads, Unicode search, stale-result guards
+and raw legacy content remain preserved. Added widget public contracts/types and
+moved deepcopy to the standard-library import block. No new storage/runtime
+infrastructure; ADR-138 documents the summary contract. Fresh targeted results:
+420 domain/storage/UI tests, 13 import/CSS checks, all seven preflight guards,
+plus scoped Ruff/format/diff checks pass. Separate 166- and 20-test selections
+overlap and are not additional suite totals. Detailed evidence and qualifications:
+Docs/UAT/2026-09-15-workflows-qodo-remediation.md. Independent review and new-head
+GitHub review/checks were held for the independently reproduced escaped-surrogate
+name failure. The local extraction/decoding correction preserves admitted names
+and exact saved bytes; six new cases cover service and both mounted layouts.
+The reviewer verified that correction and reported no remaining blockers. A
+subsequent 425-pass/1-failure run exposed an incomplete-field test reading hit
+coordinates during focus-scroll animation; instrumentation confirmed it, and
+the test now awaits scheduled animation completion. Final corrected-tree targeted
+rerun: 426 passed in 140.11s; all seven preflight guards and ten changed Python
+files' Ruff/format checks pass. New-head GitHub gates remain pending; AC7 remains
+open until verified merge.
+
 Final integration checkpoint: dev advanced to 67bfde41d1 while review ran.
 Rebased all 17 patches, preserving both independent lessons appends; all code
 patches are identical by range-diff. Qodo's e5fde9a080 review resolved all

@@ -499,3 +499,43 @@ Original7andsecond7threadsallreplied/resolved. LatestmanualQodorequest5690239253
 completedone5;requestfreshafterfinalrebasedpush. Needexplicitforcelease=e5head,
 verifyMERGEABLE,exact-headUIlatency/requiredDerivedchecksandfreshQodo,thenmerge
 normallywithmatch-headguard. Currentlocaldocsrecordallthis;noMERGEDclaimyet.
+
+### Final-head four-finding round (2026-09-16 UTC)
+
+2e76d7bdf245079a2ccbe2aef2430dfd13e04284 passed required Derived, PR Fast Lane
+and UI latency; dev remains67bfde41d196dd64a4df45f4cb5059e191da4d21. Qodo review
+5217368702 adds4021531211/1225/1230/1239. Jason completed doc/type/import-only
+widget/catalog changes (20 tests, AST executable equivalence, scoped Ruff) and
+is closed. Main reproduced20/21projections per512KiBdocumentpage, replaced full
+revision loading/projection with bounded name/identity SQL tuples in existing
+service; bothmain/compact regressions now0projections. No schema/cache/runtime.
+ADR138 amended; task32601 plan/notes and UAT updated. Fresh166summary/service/UI
+passes, combined420Workflows/storage/editor/paging/projection/stylesheet passes,
+13import/bootCSSfastpath passes,7preflightchecks pass,10changedPythonRuff/format
+clean. BootCSS767424<768000,selector272<274,limitsunchanged. Tests explicitly
+retain Unicodecasefold/batches/offset/exacthead/stalequeries/1000levelrawlegacy.
+
+Averroes resumed for new read-only review against2e76 workingtree; pendingverdict.
+Uncommitted tracked changes belongtothisround; newtestworkflow_summaries.pyowned.
+Preserveuntracked.uat-workflows-9NUT5t. Needcommit/pushthenreply+resolve4threads:
+1211=PRRT_kwDOOcyyl86iv7SI,1225=PRRT_kwDOOcyyl86iv7SU,
+1230=PRRT_kwDOOcyyl86iv7SY,1239=PRRT_kwDOOcyyl86iv7Sj.
+Request/agentic_review andexactnewheadCI. Updateheartbeatpromptafterpush.
+NoMERGEDclaim. Existingwarningsrecorded;nofullsweep,noLLM,noSQLiteinfra.
+
+Averroes caught admitted lone-surrogate JSON names breaking SQLite TEXT decode.
+Main reproduced4failures(high/lowservice+main/compact),2controls(NUL/emoji)passed.
+SQL nowcastsstringnamesonlytoBLOB;localUTF8surrogatepasspreservesPythonJSONstrings,
+nonstringformatting,savedbytesandconnectiontext_factory.172summary/service/UI
+pass;reviewer independentlyclosedfinding(nootherblockers),agentclosed. Newlesson
+recordsrealincident. Combinedrerun425pass1fail:existingincomplete-fieldhitcheck
+ranmidfocusanimation. Isolateduntouchedtestpassed;instrumentationobservedscroll
+15.74target19,afterwait19/19. Added2wait_for_scheduled_animations callsintestonly;
+removedinstrumentation. All10PythonRuff/formatclean,correctedproductionpreflight
+7pass. Final426selectionrunningbeforecommit. Task/UATrecordallfailedandpassedruns.
+
+Final correction verification nowcomplete:426passed140.11s;all7preflightpass;
+10PythonRuff/formatanddiffclean. Reviewerclosed,noCritical/Importantremaining.
+Readycommit/push,4inlineevidencereplies+resolve,/agentic_reviewthenexactheadgates.
+Currentbase67bfunchanged;no rebaseneeded. Finalsamplelibrary6.87ms/71.23ms0projects,
+500stepedit37.58msheartbeat49.09ms. NoMERGEDclaim;AC7open.

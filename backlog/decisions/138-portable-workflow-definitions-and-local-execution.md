@@ -75,6 +75,17 @@ change a draft's identity or disable recovery/export. Reads run through existing
 workers and SQLite transactions; no schema, connection owner or storage subsystem
 is added. Offset pages are a live view, not a snapshot across external writes.
 
+Library-only consumers use `list_workflow_summaries` (2026-09-16 review follow-up):
+bounded `(display_name, workflow_id, revision_id)` tuples extracted by SQLite,
+not full revision bodies projected in Python for names. The same page limits,
+stable identity ordering and Unicode casefold search apply; the selected head
+and explicit revision reads retain their full-definition contracts. A summary
+name is display data, not an admission/validity badge. Legacy saved definitions
+beyond the authoring limits remain selectable without rewriting their bytes;
+the existing database JSON-object constraint remains authoritative. Search uses
+the same display name as the list. No schema, cache, connection owner or loader
+is added.
+
 New structural admission also limits definitions to 500 steps, 64 container levels
 and 100,000 value/container nodes, including opaque subtrees. The 16 MiB raw-text
 limit is unchanged. These are local authoring bounds, not server schema claims.

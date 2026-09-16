@@ -39,7 +39,7 @@ class WorkflowsController:
             raise ValueError("Workflow document and draft owners must match")
         self.documents = documents
         self.drafts = drafts
-        self.workflows: tuple[Revision, ...] = ()
+        self.library_rows: tuple[tuple[str, str, str], ...] = ()
         self.library_offset = 0
         self.library_query = ""
         self.library_has_next = False
@@ -92,8 +92,8 @@ class WorkflowsController:
                 self.drafts.current.workflow_id,
                 self.drafts.current.base_revision_id,
             )
-        if selection is None and self.workflows:
-            selection = (self.workflows[0].workflow_id, self.workflows[0].revision_id)
+        if selection is None and self.library_rows:
+            selection = self.library_rows[0][1:]
         if selection:
             await self.select_workflow(*selection)
 
@@ -120,14 +120,14 @@ class WorkflowsController:
         """
         request = self._library_request = (offset, query, object())
         rows = await asyncio.to_thread(
-            self.documents.list_workflows,
+            self.documents.list_workflow_summaries,
             page_size=PAGE_SIZE + 1,
             offset=offset,
             query=query,
         )
         if request is not self._library_request:
             return
-        self.workflows = rows[:PAGE_SIZE]
+        self.library_rows = rows[:PAGE_SIZE]
         self.library_has_next = len(rows) > PAGE_SIZE
         self.library_offset, self.library_query = offset, query
 

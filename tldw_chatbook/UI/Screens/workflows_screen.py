@@ -317,27 +317,11 @@ class WorkflowsScreen(BaseAppScreen):
     def on_resize(self):
         self.call_after_refresh(self._layout_panes)
 
-    def _library_rows(self, revisions):
-        rows = []
-        for revision in revisions:
-            try:
-                label = str(
-                    self.controller.documents.project(revision.raw_json).get(
-                        "name", "Untitled workflow"
-                    )
-                )
-            except InvalidDraft:
-                label = "Raw inspection · " + revision.workflow_id
-            rows.append((label, revision.workflow_id, revision.revision_id))
-        return tuple(rows)
-
     async def _show_library(self):
         controller = self.controller
-        revisions = controller.workflows
-        rows = await asyncio.to_thread(self._library_rows, revisions)
-        if self.is_mounted and revisions is controller.workflows:
+        if self.is_mounted:
             self.query_one(WorkflowLibrary).show_rows(
-                rows,
+                controller.library_rows,
                 offset=controller.library_offset,
                 has_next=controller.library_has_next,
             )
@@ -1095,12 +1079,11 @@ class WorkflowsScreen(BaseAppScreen):
         elif identifier == "workflow-library-selector":
 
             def library(offset, query):
-                page = self.controller.documents.list_workflows(
+                page = self.controller.documents.list_workflow_summaries(
                     page_size=PAGE_SIZE + 1, offset=offset, query=query
                 )
                 return tuple(
-                    (label + " · Local", wid + ":" + rid)
-                    for label, wid, rid in self._library_rows(page)
+                    (label + " · Local", wid + ":" + rid) for label, wid, rid in page
                 )
 
             def chosen(wid):

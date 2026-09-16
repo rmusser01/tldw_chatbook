@@ -302,6 +302,7 @@ async def test_incomplete_field_is_repairable_across_fresh_screens(
         await pilot.pause()
         assert harness.workflow_drafts.current.error
         assert not field.disabled
+        await pilot.wait_for_scheduled_animations()
         assert_hit(screen, field)
         assert all(
             widget.disabled
@@ -336,6 +337,7 @@ async def test_incomplete_field_is_repairable_across_fresh_screens(
             )
             == replacement
         )
+        await pilot.wait_for_scheduled_animations()
         assert_hit(fresh, field)
 
 
@@ -786,17 +788,17 @@ async def test_load_failure_is_visible_and_retry_keeps_the_document_owner(
     tmp_path, monkeypatch
 ):
     harness = WorkflowEditorHarness(tmp_path)
-    read = harness.workflow_documents.list_workflows
+    read = harness.workflow_documents.list_workflow_summaries
 
-    def fail():
+    def fail(**kwargs):
         raise OSError("private storage path")
 
-    monkeypatch.setattr(harness.workflow_documents, "list_workflows", fail)
+    monkeypatch.setattr(harness.workflow_documents, "list_workflow_summaries", fail)
     async with harness.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
         assert "Definitions could not be loaded" in painted_text(harness.screen)
         assert "private storage path" not in painted_text(harness.screen)
-        monkeypatch.setattr(harness.workflow_documents, "list_workflows", read)
+        monkeypatch.setattr(harness.workflow_documents, "list_workflow_summaries", read)
         assert await pilot.click("#workflow-retry-save")
         await pilot.pause()
         await harness.workers.wait_for_complete()

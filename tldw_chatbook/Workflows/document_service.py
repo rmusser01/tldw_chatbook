@@ -884,31 +884,11 @@ class DocumentService:
             raise TypeError("Workflow search must be text")
         with self._db.transaction(write=False) as cursor:
             if query:
-                identities = []
-                scanned = matched = 0
-                folded = query.casefold()
-                while len(identities) < page_size:
-                    rows = cursor.execute(
-                        "SELECT h.workflow_id, h.revision_id, "
-                        "CASE WHEN json_type(r.definition_json, '$.name') IS NULL "
-                        "THEN 'Untitled workflow' ELSE json_extract(r.definition_json, '$.name') END AS name "
-                        "FROM workflow_heads h JOIN workflow_revisions r "
-                        "ON r.revision_id = h.revision_id ORDER BY h.workflow_id LIMIT ? OFFSET ?",
-                        (MAX_PAGE_SIZE, scanned),
-                    ).fetchall()
-                    if not rows:
-                        break
-                    scanned += len(rows)
-                    for row in rows:
-                        if folded not in str(row["name"]).casefold():
-                            continue
-                        if matched >= offset:
-                            identities.append((row["workflow_id"], row["revision_id"]))
-                        matched += 1
-                        if len(identities) == page_size:
-                            break
                 return tuple(
-                    _get_revision(cursor, *identity) for identity in identities
+                    _get_revision(cursor, workflow_id, revision_id)
+                    for _, workflow_id, revision_id in self._workflow_summaries(
+                        cursor, page_size, offset, query
+                    )
                 )
             return tuple(
                 _revision(row)
@@ -918,6 +898,80 @@ class DocumentService:
                     (page_size, offset),
                 ).fetchall()
             )
+
+    def list_workflow_summaries(
+        self, *, page_size: int = PAGE_SIZE, offset: int = 0, query: str = ""
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Read only display names and identities for a bounded library page.
+
+        Args:
+            page_size: Maximum number of matching heads, from 1 to 100.
+            offset: Nonnegative SQLite integer offset within matching heads.
+            query: Unicode casefold substring of the displayed name, or empty.
+
+        Returns:
+            Tuples of name, workflow ID and revision ID, ordered by workflow ID.
+            Names are display data, not validation results. Legacy definitions
+            beyond authoring limits remain listed; saved bytes stay untouched.
+
+        Raises:
+            ValueError: Paging bounds are invalid, including boolean bounds.
+            TypeError: The search query is not text.
+        """
+        self._check_page(page_size, offset)
+        if not isinstance(query, str):
+            raise TypeError("Workflow search must be text")
+        with self._db.transaction(write=False) as cursor:
+            return self._workflow_summaries(cursor, page_size, offset, query)
+
+    @staticmethod
+    def _workflow_summaries(
+        cursor: sqlite3.Cursor, page_size: int, offset: int, query: str
+    ) -> tuple[tuple[str, str, str], ...]:
+        sql = (
+            "SELECT CASE WHEN json_type(r.definition_json, '$.name') IS NULL "
+            "THEN 'Untitled workflow' "
+            "WHEN json_type(r.definition_json, '$.name') = 'text' "
+            "THEN CAST(json_extract(r.definition_json, '$.name') AS BLOB) "
+            "ELSE json_extract(r.definition_json, '$.name') "
+            "END AS name, h.workflow_id, h.revision_id "
+            "FROM workflow_heads h JOIN workflow_revisions r "
+            "ON r.revision_id = h.revision_id ORDER BY h.workflow_id LIMIT ? OFFSET ?"
+        )
+
+        def display_name(row: sqlite3.Row) -> str:
+            # SQLite permits escaped lone surrogates in saved JSON. Preserve
+            # those names without changing the connection's text factory.
+            value = row["name"]
+            return (
+                value.decode("utf-8", errors="surrogatepass")
+                if isinstance(value, bytes)
+                else str(value)
+            )
+
+        if not query:
+            return tuple(
+                (display_name(row), row["workflow_id"], row["revision_id"])
+                for row in cursor.execute(sql, (page_size, offset)).fetchall()
+            )
+        summaries = []
+        scanned = matched = 0
+        folded = query.casefold()
+        while len(summaries) < page_size:
+            rows = cursor.execute(sql, (MAX_PAGE_SIZE, scanned)).fetchall()
+            if not rows:
+                break
+            scanned += len(rows)
+            for row in rows:
+                name = display_name(row)
+                if folded not in name.casefold():
+                    continue
+                if matched >= offset:
+                    summaries.append((name, row["workflow_id"], row["revision_id"]))
+                matched += 1
+                if len(summaries) == page_size:
+                    break
+        return tuple(summaries)
 
     def put_draft(
         self,

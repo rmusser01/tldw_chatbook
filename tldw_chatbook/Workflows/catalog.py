@@ -1,5 +1,6 @@
 """Five explicit local operation subsets; preservation is not adapter support."""
 
+from copy import deepcopy
 from dataclasses import dataclass
 
 CONTRACT_REVISION = "local-file-to-note/1"
@@ -263,8 +264,6 @@ def output_types(step_type: str) -> tuple[tuple[str, str], ...]:
 
 def new_step(step_type: str) -> dict:
     """Create only one of the five authorable subsets; missing setup stays blank."""
-    from copy import deepcopy
-
     configs = {
         "media_ingest": {
             "sources": [{"uri": ""}],

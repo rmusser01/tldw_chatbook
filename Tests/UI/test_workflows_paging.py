@@ -15,6 +15,63 @@ from Tests.Workflows.test_document_complexity import definition, nested_raw
 from tldw_chatbook.UI.Workflows_Modules.editor import WorkflowEditor
 
 
+@pytest.mark.parametrize("compact", [False, True])
+async def test_library_names_do_not_project_full_definitions(
+    tmp_path, monkeypatch, compact
+):
+    """Re-projecting every saved body for its name wastes page CPU and memory."""
+    harness = WorkflowEditorHarness(tmp_path, seed=False)
+    revisions = seed_library(harness)
+    with harness.db.transaction() as cursor:
+        for revision in revisions:
+            raw = json.loads(revision.raw_json)
+            raw["opaque"] = "x" * (512 * 1024)
+            cursor.execute(
+                "UPDATE workflow_revisions SET definition_json=? WHERE revision_id=?",
+                (json.dumps(raw), revision.revision_id),
+            )
+    async with harness.run_test(size=(110 if compact else 160, 48)) as pilot:
+        screen = harness.screen
+        await settled(pilot, lambda: screen._loaded)
+        await harness.workers.wait_for_complete()
+        calls = []
+        project = harness.workflow_documents.project
+
+        def counted(raw):
+            calls.append(len(raw))
+            return project(raw)
+
+        monkeypatch.setattr(harness.workflow_documents, "project", counted)
+        started = perf_counter()
+        if compact:
+            screen.query_one("#workflow-library-selector", Button).press()
+            await settled(
+                pilot,
+                lambda: (
+                    harness.screen is not screen
+                    and not harness.screen.query_one(
+                        "#workflow-dialog-choices"
+                    ).disabled
+                ),
+            )
+            listing = harness.screen.query_one("#workflow-dialog-choices", OptionList)
+        else:
+            await screen.controller.load_library()
+            await screen._show_library()
+            listing = screen.query_one("#workflow-library-list", OptionList)
+        labels = [str(listing.get_option_at_index(i).prompt) for i in range(20)]
+        assert all(f"Workflow {index:02}" in labels[index] for index in range(20))
+        print(
+            {
+                "compact": compact,
+                "page_seconds": perf_counter() - started,
+                "project_calls": len(calls),
+                "projected_bytes": sum(calls),
+            }
+        )
+        assert calls == [], "Library names must not decode/project entire revisions"
+
+
 def seed_library(harness, count=23):
     return [
         harness.workflow_documents.create(
@@ -35,6 +92,39 @@ def seed_library(harness, count=23):
         )
         for index in range(count)
     ]
+
+
+@pytest.mark.parametrize("compact", [False, True])
+async def test_admitted_surrogate_name_cannot_block_library_or_selection(
+    tmp_path, compact
+):
+    harness = WorkflowEditorHarness(tmp_path, seed=False)
+    ordinary = seed_library(harness, 1)[0]
+    unusual = harness.workflow_documents.create(r'{"name":"\ud800","steps":[]}')
+    async with harness.run_test(size=(110 if compact else 160, 48)) as pilot:
+        screen = harness.screen
+        await settled(pilot, lambda: screen._loaded)
+        await screen.controller.load((ordinary.workflow_id, ordinary.revision_id))
+        assert screen.controller.head == ordinary
+        if compact:
+            screen.query_one("#workflow-library-selector", Button).press()
+            await settled(
+                pilot,
+                lambda: (
+                    harness.screen is not screen
+                    and not harness.screen.query_one(
+                        "#workflow-dialog-choices"
+                    ).disabled
+                ),
+            )
+            listing = harness.screen.query_one("#workflow-dialog-choices", OptionList)
+        else:
+            await screen._show_library()
+            listing = screen.query_one("#workflow-library-list", OptionList)
+        assert listing.option_count == 2
+        assert "Workflow 00" in str(listing.get_option_at_index(0).prompt)
+        assert "\ud800" in str(listing.get_option_at_index(1).prompt)
+        assert harness.workflow_documents.get_head(unusual.workflow_id) == unusual
 
 
 async def settled(pilot, predicate):
@@ -67,7 +157,7 @@ async def test_slow_old_search_cannot_replace_newer_library_results(
     async with harness.run_test(size=(160, 48)) as pilot:
         controller = harness.screen.controller
         await settled(pilot, lambda: harness.screen._loaded)
-        read = harness.workflow_documents.list_workflows
+        read = harness.workflow_documents.list_workflow_summaries
         started, release = Event(), Event()
 
         def delayed(**kwargs):
@@ -76,7 +166,9 @@ async def test_slow_old_search_cannot_replace_newer_library_results(
                 assert release.wait(5)
             return read(**kwargs)
 
-        monkeypatch.setattr(harness.workflow_documents, "list_workflows", delayed)
+        monkeypatch.setattr(
+            harness.workflow_documents, "list_workflow_summaries", delayed
+        )
         old = asyncio.create_task(controller.load_library(query="Workflow 00"))
         try:
             assert await asyncio.to_thread(started.wait, 3)
@@ -84,7 +176,9 @@ async def test_slow_old_search_cannot_replace_newer_library_results(
         finally:
             release.set()
         await old
-        assert controller.workflows == (revisions[-1],)
+        assert controller.library_rows == (
+            ("Workflow 22", revisions[-1].workflow_id, revisions[-1].revision_id),
+        )
         assert controller.library_query == "Workflow 22"
 
 

@@ -150,3 +150,15 @@ Critical/Important findings; full report:
 All task ACs and the approved scoped DoD are satisfied; TASK-32601 was marked Done
 via CLI. Historical whole-file failures remain nonzero, and capture cleanup is a
 tracked nonblocking follow-up. No merge, push, runtime or infrastructure work.
+
+## Separately approved PR integration follow-up
+
+The subsequent user request authorizes rebasing PR2690 onto dev, resolving Qodo
+comments and merging after exact-head verification. TASK-32601's Implementation
+Plan records the integration and final-head review rounds. ADR required: no new
+ADR; the existing `backlog/decisions/138-portable-workflow-definitions-and-local-execution.md`
+now specifies bounded name/identity-only library summaries through the same
+document service, preserving exact saved-head reads and SQLite ownership.
+The implementation and measured verification are recorded in
+`Docs/UAT/2026-09-15-workflows-qodo-remediation.md`. Earlier no-push/no-merge notes
+above describe their historical authorization checkpoints, not this follow-up.

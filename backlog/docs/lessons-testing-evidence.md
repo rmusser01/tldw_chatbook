@@ -14641,3 +14641,16 @@ editor had fallen back to Overview while the controller retained the deleted ID;
 the next field edit raised `RuntimeError: coroutine raised StopIteration`.
 Normalize selection before rendering both regions and test the next edit after
 structural fallback, preserving identity metadata in the raw-edit fixture.
+
+## Valid JSON is not necessarily decodable extracted SQLite text (TASK-32601, 2026-09-16)
+
+PR2690 replaced full workflow projections with name-only SQLite summaries. Its
+420-test selection passed, but independent review created an admitted JSON name
+containing an escaped lone surrogate. Reading the full saved JSON still worked;
+`json_extract` turned the escape into text that Python's SQLite UTF-8 decoder
+rejected, failing the whole library even for an unrelated selected workflow.
+Two high/low-surrogate service cases and both mounted library layouts reproduced
+the failure. Name-only BLOB extraction and local `surrogatepass` decoding fixed
+it without changing saved bytes or the connection's text factory. When moving
+JSON reads into SQL, test previously admitted string boundaries at the real
+query boundary; valid JSON and ordinary Unicode coverage alone are insufficient.

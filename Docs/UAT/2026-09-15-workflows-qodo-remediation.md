@@ -186,3 +186,96 @@ returned `Draft`.
 All posted original and second-round inline discussions have evidence-backed
 replies and are resolved. The final documentation reply, refreshed exact-head
 review/checks and requested merge are still to be confirmed on GitHub.
+
+## Final-head library summaries and widget contracts (2026-09-16 UTC)
+
+Head `2e76d7bdf245079a2ccbe2aef2430dfd13e04284` passed PR Fast Lane,
+the required derived-artifact job and UI latency guardrails. Qodo review
+`5217368702` nevertheless raised four new findings, so merge was held.
+
+| Qodo comment | Verified resolution |
+| --- | --- |
+| 4021531211 | Google-style public contracts now cover the library, navigator and reference-picker APIs. |
+| 4021531225 | Public widget constructors, events and paging signatures declare their existing row shape, argument and return types. |
+| 4021531230 | `deepcopy` is a module-level standard-library import in catalog.py. |
+| 4021531239 | Both library views read bounded name/identity-only rows through the existing document service, without fetching or projecting complete revisions merely for labels. |
+
+The two new mounted regressions first failed with 20/21 full-document projections
+and approximately 10/10.5 MiB processed per page of 512-KiB sample definitions.
+Both now make **zero projections**. The same initial sample's main-page load
+fell from 18.38ms to 7.25ms; the final combined run measured 10.65ms (main) and
+76.92ms (compact, including the UI wait). These samples are not worst-case bounds.
+SQLite still inspects JSON to extract names; full definitions no longer cross
+the query boundary for these pages. Search still scans bounded batches to retain
+Unicode casefold matching and matching-row offsets.
+
+`list_workflow_summaries` returns the existing `(name, workflow_id, revision_id)`
+row shape. It shares the existing search logic, bounds, owner and read transaction;
+no schema, connection, cache, index or runtime was introduced. Exact head reads
+are unchanged. Summary names are display data, not authoring-validation badges.
+Legacy 1,000-level and opaque-number content remains selectable without rewriting
+saved bytes. Malformed/deeper-than-SQLite JSON fixtures were rejected by the
+existing database CHECK and removed from the test design, not supported by
+bypassing that constraint. ADR-138 records this narrow contract amendment.
+
+Verification (overlapping targeted selections, not a full sweep):
+
+- Summary service, mounted paging and document service: **166 passed**, 17.71s.
+- Complete Workflows domain, authoring storage, editor, paging, projection and
+  first-route stylesheet selection: **420 passed**, 156.76s. The 500-step edit
+  measured 41.23ms with a 54.27ms maximum heartbeat gap.
+- Widget/catalog implementer selection: **20 passed**, 22.51s. An AST comparison
+  ignoring documentation, annotations and relocated imports found the four
+  widget/catalog files' executable syntax unchanged.
+- App-import weight, boot CSS bytes and Textual CSS fastpath: **13 passed**,
+  27.64s. Boot remains **767,424/768,000 bytes**, selectors **272/274**.
+- All ten changed/new Python files pass scoped Ruff check and format; diff-check
+  passes. Existing source-attributed shared-file static debt is unchanged.
+- All seven `scripts/preflight.sh` derived-artifact checks pass again.
+
+Existing Requests dependency, old Kokoro temporary-cleanup, boot headroom and
+datetime deprecation warnings remain. The optional transformers probe reports
+joblib's resource-exhaustion serial fallback; that check exits successfully.
+No unrelated files were deleted. GitHub results on the next pushed head, the
+independent review disposition and the merge must still be verified separately.
+
+### Independent-review correction: admitted Unicode names
+
+The reviewer reproduced an admitted escaped lone surrogate in a workflow name
+causing SQLite's default UTF-8 text decoder to reject the entire summary page,
+including when an unrelated normal workflow was explicitly selected. Two new
+service cases (high/low surrogates) and both mounted library layouts failed
+before the correction; embedded NUL and emoji controls already passed.
+
+Only extracted string names now cross the query boundary as BLOB values and are
+decoded locally with UTF-8 `surrogatepass`, matching the existing JSON decoder's
+admitted strings. Non-string and missing-name formatting, saved bytes, connection
+text factories and storage contracts are unchanged. Both exact summary search
+and existing full-revision search retain these names. The corrected summary,
+paging and document-service selection passed **172 tests**, 18.61s. Ruff's
+duplicate-parameter detector conflates literal lone surrogates, so the regression
+names explicitly use distinct `chr` code points; no suppression was added.
+
+The same independent reviewer closed the finding after verifying all four service
+cases, both original controller-load reproductions and eleven adjacent string/
+non-string cases. No remaining Critical/Important findings; the scoped code review
+is ready for commit/push, conditional on final verification and exact-head CI/Qodo.
+
+The next combined run had **425 passed, 1 failed**: the existing incomplete-field
+screen test hit-tested the max-token field before its focus-scroll animation
+finished. Its isolated rerun passed without a production change. Instrumentation
+then observed `scroll_y=15.74` with target `19` before the assertion; waiting for
+scheduled animations produced `19/19` and a visible field. The test now awaits
+that existing animation contract at both hit checks, as neighboring view-state
+tests already do. All three incomplete-field variants passed the diagnostic run;
+temporary instrumentation was removed. No UI timing, layout or scroll policy
+was changed to satisfy the test.
+
+Final corrected-tree verification: the complete targeted selection passed
+**426 tests**, 140.11s, including real app/file-picker/lifecycle paths and all
+new summary/Unicode regressions. All seven preflight guards pass on the corrected
+production code; all ten changed/new Python files pass Ruff and formatting.
+The final sample measured 6.87ms main / 71.23ms compact library loads, both with
+zero full-document projections; 500-step raw editing was 37.58ms with a 49.09ms
+maximum heartbeat gap. Independent review is closed with no blockers. These
+results qualify pushing the fixes, not merging before new-head CI/Qodo completes.
