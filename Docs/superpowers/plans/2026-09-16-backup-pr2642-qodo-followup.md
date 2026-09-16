@@ -76,3 +76,13 @@ contracts missing the new long-path step; both contracts are corrected. The
 separate Windows source-evidence workflow now uses the existing verified private
 source-copy helper and a bounded 180s full-app deadline. Production code is
 unchanged by these fixture/workflow corrections.
+
+Commit `948f6bab8a` passed all 96 Linux cases in 117.28s with verified source and
+installed package identity. Windows repeat 35109868161 passed the corrected
+foreign-file case; its sole product failure was a test reader racing the real
+consent-save callback. The fixture now observes completion of that original async
+callback before checking both persisted consent values. The installed macOS F9
+plain journey passes in 70.39s; independent review is clean. The current 24 changed
+Python files parse, with 43 existing Ruff findings, zero new, and zero Bandit
+findings. Native repeat is pending. The separate GGUF source workflow
+35109812051 passes on all three operating systems.

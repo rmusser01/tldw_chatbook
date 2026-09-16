@@ -4,7 +4,7 @@ title: Migrate local backup and restore to selectable data groups
 status: In Progress
 assignee: []
 created_date: 2026-09-15 14:51
-updated_date: 2026-09-16 14:37
+updated_date: 2026-09-16 14:53
 labels:
 - backup
 - recovery
@@ -93,6 +93,7 @@ PR2642 rebase/Qodo follow-up: nine current review findings verified. Exact-tree 
 Local final correction verification: finite review/installed journey plus Console cases passed 96 cases; remaining inventory test retained dependency assertions but moved them before per-file authority narrowing, then passed the focused 2-case rerun. Initial broad touched-file run had 320 passing cases; all three observed fixture failures now resolved without production guard changes. Final scoped static audit y1lmy5og again confirms 21 parseable files, zero new Ruff findings and zero Bandit findings. Independent review clean. Ready to publish review fixes and run their exact committed source on native Linux/Windows.
 6270d26f15 published. Qodo reviewed current source at 14:20:14 UTC: zero bugs/rule violations/cross-repo conflicts; all nine threads resolved. Native Linux: 96/96 pass in117.61s, no skips, all16915sourcefiles unchanged, all2506Pythonfiles match manifest/wheel/install. Windows run35107557433:59native pass and95/96product pass; sole failure is fault-injection fixture using legacy replace onto held destination. Corrected to two native renames and exact injected-error matching, preserving held-vs-foreign identity assertions; independently reviewed and locally30tests pass. FastLane1128pass/2fail: workflow shape contracts need longpaths-step updates. WindowsGGUFsource full-app cases also reach60stimeout and read package-local config from untrusted checkout ancestry; preparing private tracked-source fixture and bounded Windows timeout, with production guards unchanged.
 Windows fixture/CI corrections ready: foreign-lock substitution uses two native renames while retaining held original identity and exact injected exception; source-evidence workflow uses existing private tracked-source copy and editable installation there, plus180s Windows-only full-app deadline. Exact node lists, exact tested commit, runtime guards and20minjoblimit retained. Updated both pre-existing workflow shape contracts. Focused final11tests pass. Independent admission-fixture review clean; workflow YAML/embeddedPython parse and Ruff checks pass. Production and packaging unchanged from6270d26f15; corrective nativeWindows andCI repeats pending.
+2026-09-16 follow-up: source evidence workflow 35109812051 passes all three operating systems. Linux commit 948f6bab8a passes 96/96 in 117.28s with full source and installed wheel verification. Windows repeat 35109868161 passes corrected foreign-lock injection but reports 95/96 product cases: the real F9 consent-save callback was still writing when the test polled config. The fixture now observes completion of the original awaited callback before reading persisted consent; assertions and real writes remain unchanged. Independent review clean; installed macOS F9 plain journey passes (70.39s). Latest static comparison: 24 changed Python files parse, 43 existing Ruff findings and zero new, Bandit zero findings. Commit/publish fixture correction and repeat native checks before merge.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

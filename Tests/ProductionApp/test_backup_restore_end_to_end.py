@@ -134,6 +134,12 @@ if credentials:
 stop_diagnostics=observe_threads(fixture/'ui-stacks.log',interval=30)
 async def main():
  app=TldwCli()
+ consent_finished=asyncio.Event()
+ actual_consent=app._handle_model_catalog_consent
+ async def observed_consent(allowed):
+  await actual_consent(allowed)
+  consent_finished.set()
+ app._handle_model_catalog_consent=observed_consent
  app.app_config['_first_run']=False
  app.app_config.setdefault('first_run',{})['setup_completed']=True
  note=app.chachanotes_db.add_note('UI captured note','Captured through F9')
@@ -198,8 +204,12 @@ async def main():
   await ready(lambda:bool(app.screen.query('#model-catalog-consent-deny')))
   await press('#model-catalog-consent-deny')
   await ready(lambda:not app.screen.query('#model-catalog-consent-deny'))
-  await ready(lambda:tomllib.loads(selector.read_text()).get('model_catalog',{}).get('refresh_consent_recorded') is True)
-  assert tomllib.loads(selector.read_text())['model_catalog']['auto_refresh_enabled'] is False
+  # The real callback awaits its config worker. Observing completion avoids
+  # racing Windows file publication with a separate polling reader.
+  await ready(consent_finished.is_set)
+  consent_config=tomllib.loads(selector.read_text())['model_catalog']
+  assert consent_config['refresh_consent_recorded'] is True
+  assert consent_config['auto_refresh_enabled'] is False
   if credentials:
    # The ordinary startup retention pass creates Agent Runs storage. Complete
    # that real pass before reviewing this longer credential journey; otherwise
