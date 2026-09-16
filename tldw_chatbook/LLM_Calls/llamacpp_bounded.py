@@ -166,7 +166,14 @@ def resolve_llama_loopback_url(selected_url: str) -> str:
     addresses = [answer[4][0] for answer in answers]
     if not addresses or not all(_numeric_loopback(address) for address in addresses):
         raise BoundedLlamaError("invalid_endpoint")
-    host = str(ip_address(addresses[0]))
+    # Validate every answer before preferring IPv4: localhost services commonly
+    # bind IPv4 only even when the resolver lists ::1 first. This is setup-only
+    # selection, never a probe or a dispatch fallback.
+    selected = next(
+        (address for address in addresses if ip_address(address).version == 4),
+        addresses[0],
+    )
+    host = str(ip_address(selected))
     authority = f"[{host}]" if ":" in host else host
     if parsed.port is not None:
         authority += f":{parsed.port}"
@@ -255,6 +262,36 @@ async def _settle_cleanup(
         raise BoundedLlamaError("cleanup")
     if cancelled:
         raise asyncio.CancelledError
+
+
+async def _await_transport(operation: asyncio.Task[bytes], deadline: float) -> bytes:
+    # Only this waiter owns the deadline. HTTPCore may remove a connection from
+    # its pool before its physical close finishes, so retain the send/read task
+    # itself, not just the final response/client cleanup.
+    cancelled = False
+    try:
+        async with asyncio.timeout_at(deadline):
+            return await asyncio.shield(operation)
+    except TimeoutError:
+        pass
+    except asyncio.CancelledError:
+        cancelled = True
+
+    # The deadline is now disarmed. Forward exactly one cancellation, then drain
+    # through any further caller cancellations without interrupting inner close.
+    operation.cancel()
+    settled = asyncio.gather(operation, return_exceptions=True)
+    while not settled.done():
+        try:
+            await asyncio.shield(settled)
+        except asyncio.CancelledError:
+            cancelled = True
+    outcome = settled.result()[0]
+    if isinstance(outcome, Exception):
+        raise outcome
+    if cancelled:
+        raise asyncio.CancelledError
+    raise BoundedLlamaError("deadline")
 
 
 def _parse_answer(body: bytes) -> LlamaResult:
@@ -355,29 +392,34 @@ async def complete_llama_bounded(
         )
         response = None
         error_code = None
+
+        async def send_and_read() -> bytes:
+            nonlocal response
+            outgoing = client.build_request(
+                "POST",
+                request.dispatch_url,
+                content=encoded,
+                headers={
+                    "Accept-Encoding": "identity",
+                    "Content-Type": "application/json",
+                    # Keep the connection owned by the pool until its close
+                    # settles, including an interrupted EOF auto-close.
+                    "Connection": "close",
+                },
+                timeout=None,
+            )
+            response = await client.send(outgoing, stream=True)
+            if not 200 <= response.status_code < 300:
+                raise BoundedLlamaError("http_status")
+            body = await read_bounded_model_response(response)
+            if body is None:
+                raise BoundedLlamaError("response_too_large")
+            return body
+
         try:
-            async with asyncio.timeout_at(deadline):
-                outgoing = client.build_request(
-                    "POST",
-                    request.dispatch_url,
-                    content=encoded,
-                    headers={
-                        "Accept-Encoding": "identity",
-                        "Content-Type": "application/json",
-                        # Keep the connection owned by the pool until its close
-                        # settles, including an interrupted EOF auto-close.
-                        "Connection": "close",
-                    },
-                    timeout=None,
-                )
-                response = await client.send(outgoing, stream=True)
-                if not 200 <= response.status_code < 300:
-                    raise BoundedLlamaError("http_status")
-                body = await read_bounded_model_response(response)
-                if body is None:
-                    raise BoundedLlamaError("response_too_large")
-        except TimeoutError:
-            error_code = "deadline"
+            body = await _await_transport(
+                asyncio.create_task(send_and_read()), deadline
+            )
         except UnsupportedModelResponseEncoding:
             error_code = "response_encoding"
         except (httpx.HTTPError, OSError):

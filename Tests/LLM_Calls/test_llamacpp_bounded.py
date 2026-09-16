@@ -216,7 +216,6 @@ def test_localhost_setup_pins_one_address(address, monkeypatch):
         calls.append((host, port))
         return [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port)),
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.2", port)),
         ]
 
     monkeypatch.setattr(socket, "getaddrinfo", resolve)
@@ -229,7 +228,13 @@ def test_localhost_setup_pins_one_address(address, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "addresses", [[], ["127.0.0.1", "192.0.2.1"], ["::ffff:127.0.0.1"]]
+    "addresses",
+    [
+        [],
+        ["127.0.0.1", "192.0.2.1"],
+        ["::1", "127.0.0.1", "192.0.2.1"],
+        ["::ffff:127.0.0.1"],
+    ],
 )
 def test_localhost_setup_refuses_any_nonloopback_answer(addresses, monkeypatch):
     from tldw_chatbook.LLM_Calls.llamacpp_bounded import (
@@ -633,10 +638,14 @@ async def test_cancelled_body_closes_real_connection_before_return():
 
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("trigger", ["success", "deadline", "cancel"])
+@pytest.mark.parametrize("cancel_during_cleanup", [False, True])
 async def test_held_cleanup_retains_operation_through_repeated_cancellation(
-    trigger, monkeypatch
+    trigger, cancel_during_cleanup, monkeypatch
 ):
-    from tldw_chatbook.LLM_Calls.llamacpp_bounded import complete_llama_bounded
+    from tldw_chatbook.LLM_Calls.llamacpp_bounded import (
+        BoundedLlamaError,
+        complete_llama_bounded,
+    )
 
     started, cleanup_started, release, cleaned = (asyncio.Event() for _ in range(4))
     original_close = httpx.AsyncClient.aclose
@@ -670,14 +679,26 @@ async def test_held_cleanup_retains_operation_through_repeated_cancellation(
             if trigger == "cancel":
                 task.cancel()
             await asyncio.wait_for(cleanup_started.wait(), 1)
-            for _ in range(2):
-                task.cancel()
-                await asyncio.sleep(0)
-                assert not task.done()
-                assert not cleaned.is_set()
+            # The request deadline covers the body, not final cleanup; a body
+            # completed in time must still succeed after delayed final cleanup.
+            await asyncio.wait({task}, timeout=0.2)
+            assert not task.done()
+            assert not cleaned.is_set()
+            if cancel_during_cleanup:
+                for _ in range(2):
+                    task.cancel()
+                    await asyncio.sleep(0)
+                    assert not task.done()
+                    assert not cleaned.is_set()
             release.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
+            if cancel_during_cleanup or trigger == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            elif trigger == "deadline":
+                with pytest.raises(BoundedLlamaError, match="^deadline$"):
+                    await task
+            else:
+                assert (await task)["text"] == "review me"
             assert cleaned.is_set()
         finally:
             release.set()
@@ -970,3 +991,178 @@ async def test_invalid_model_retains_no_unicode_exception_payload():
         )
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("addresses", [("::1", "127.0.0.1"), ("127.0.0.1", "::1")])
+def test_localhost_dual_stack_setup_prefers_ipv4_without_probing(
+    addresses, monkeypatch
+):
+    from tldw_chatbook.LLM_Calls.llamacpp_bounded import resolve_llama_loopback_url
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (
+                socket.AF_INET6 if ":" in address else socket.AF_INET,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                (address, 9099),
+            )
+            for address in addresses
+        ],
+    )
+    # The ordinary no-network fixture prohibits probing either answer here.
+    assert (
+        resolve_llama_loopback_url("localhost:9099")
+        == "http://127.0.0.1:9099/v1/chat/completions"
+    )
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("phase", ["headers", "body"])
+@pytest.mark.parametrize("trigger", ["caller", "request_deadline", "attempt_deadline"])
+@pytest.mark.parametrize("late_cancellation", [False, True])
+async def test_repeated_cancellation_retains_internal_physical_close(
+    phase, trigger, late_cancellation, monkeypatch
+):
+    from httpcore._backends.anyio import AnyIOStream
+
+    from tldw_chatbook.LLM_Calls.llamacpp_bounded import (
+        BoundedLlamaError,
+        complete_llama_bounded,
+    )
+
+    waiting, closing, release, peer_closed = (asyncio.Event() for _ in range(4))
+    streams = []
+    read_count = 0
+    original_read, original_close = AnyIOStream.read, AnyIOStream.aclose
+
+    async def observed_read(stream, *args, **kwargs):
+        nonlocal read_count
+        read_count += 1
+        if phase == "headers" or read_count >= 2:
+            waiting.set()
+        return await original_read(stream, *args, **kwargs)
+
+    async def held_close(stream):
+        streams.append(stream)
+        closing.set()
+        await release.wait()
+        await original_close(stream)
+
+    async def peer(reader, writer):
+        if phase == "body":
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n ")
+            await writer.drain()
+        assert await reader.read() == b""
+        peer_closed.set()
+
+    monkeypatch.setattr(AnyIOStream, "read", observed_read)
+    monkeypatch.setattr(AnyIOStream, "aclose", held_close)
+    async with _listener(peer) as (origin, requests):
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (0.2 if trigger == "attempt_deadline" else 0.4)
+        task = asyncio.create_task(
+            complete_llama_bounded(
+                _request(
+                    origin,
+                    request_timeout_seconds=0.2
+                    if trigger == "request_deadline"
+                    else 0.4,
+                ),
+                deadline_at=deadline,
+            )
+        )
+        try:
+            await asyncio.wait_for(waiting.wait(), 1)
+            if trigger == "caller":
+                task.cancel()
+            await asyncio.wait_for(closing.wait(), 1)
+            if late_cancellation:
+                task.cancel()
+            # Give the cancellation its full cleanup path without cancelling the
+            # observed task through the observer. Also cross the attempt deadline.
+            await asyncio.wait({task}, timeout=max(0, deadline - loop.time()) + 0.05)
+            if late_cancellation:
+                task.cancel()
+            await asyncio.wait({task}, timeout=0.05)
+            observed = {
+                "returned_before_release": task.done(),
+                "peer_closed_before_release": peer_closed.is_set(),
+                "close_calls": len(streams),
+            }
+            assert observed == {
+                "returned_before_release": False,
+                "peer_closed_before_release": False,
+                "close_calls": 1,
+            }
+            release.set()
+            if trigger == "caller" or late_cancellation:
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                with pytest.raises(BoundedLlamaError, match="^deadline$"):
+                    await task
+            await asyncio.wait_for(peer_closed.wait(), 1)
+            assert len(requests) == 1
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            for stream in streams:
+                await original_close(stream)
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("trigger", ["caller", "deadline"])
+async def test_stopped_transport_keeps_cleanup_failure_observable(trigger, monkeypatch):
+    from tldw_chatbook.LLM_Calls.llamacpp_bounded import (
+        BoundedLlamaError,
+        complete_llama_bounded,
+    )
+
+    started, closing, release, peer_closed = (asyncio.Event() for _ in range(4))
+    original_close = httpx.AsyncClient.aclose
+
+    async def failed_close(client):
+        await original_close(client)
+        closing.set()
+        await release.wait()
+        raise RuntimeError("CLEANUP-DETAIL-CANARY")
+
+    async def peer(reader, writer):
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n ")
+        await writer.drain()
+        started.set()
+        assert await reader.read() == b""
+        peer_closed.set()
+
+    monkeypatch.setattr(httpx.AsyncClient, "aclose", failed_close)
+    async with _listener(peer) as (origin, _):
+        task = asyncio.create_task(
+            complete_llama_bounded(
+                _request(origin, request_timeout_seconds=0.15),
+                deadline_at=asyncio.get_running_loop().time() + 3,
+            )
+        )
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            if trigger == "caller":
+                task.cancel()
+            await asyncio.wait_for(closing.wait(), 1)
+            task.cancel()
+            await asyncio.wait({task}, timeout=0.05)
+            assert not task.done()
+            release.set()
+            with pytest.raises(BoundedLlamaError, match="^cleanup$") as caught:
+                await task
+            await asyncio.wait_for(peer_closed.wait(), 1)
+            assert "CLEANUP-DETAIL-CANARY" not in "".join(
+                traceback.format_exception(caught.value)
+            )
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
