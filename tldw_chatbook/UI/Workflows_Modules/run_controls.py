@@ -204,35 +204,41 @@ class WorkflowRunSetup(ModalScreen[tuple[dict[str, Any], RunSetup] | None]):
                 EnhancedFileOpen(filters=["*.txt"], context="workflow_source"), selected
             )
         elif event.button.id == "workflow-setup-review":
+            error = self.query_one("#workflow-setup-error", Static)
             try:
                 values = json.loads(self.query_one("#workflow-inputs", TextArea).text)
-                if not isinstance(values, dict):
-                    raise TypeError
-                values["note_title"] = self.query_one(
-                    "#workflow-note-title", Input
-                ).value
-                selected = self.models[
-                    self.query_one("#workflow-model-choice", Select).value
-                ]
-                model = ModelSelection(
-                    selected.provider_id,
-                    selected.selected_url,
-                    self.query_one("#workflow-model", Input).value,
-                    selected.request_timeout_seconds,
-                    selected.sampling,
-                )
-                source = Path(self.query_one("#workflow-source", Input).value)
-                if (
-                    not source.is_absolute()
-                    or not model.model.strip()
-                    or not values["note_title"].strip()
-                ):
-                    raise ValueError
-            except (ValueError, TypeError):
-                self.query_one("#workflow-setup-error", Static).update(
-                    "Choose an absolute file path, a model and Note title; inputs must be a JSON object."
+            except ValueError:
+                error.update("Inputs JSON is invalid. Use valid JSON, e.g. {}.")
+                return
+            if not isinstance(values, dict):
+                error.update(
+                    "Inputs must be a JSON object, e.g. {}, not a list or scalar."
                 )
                 return
+            source = Path(self.query_one("#workflow-source", Input).value)
+            if not source.is_absolute():
+                error.update(
+                    "Source must be an absolute file path. Choose a local UTF-8 .txt file."
+                )
+                return
+            model_id = self.query_one("#workflow-model", Input).value
+            if not model_id.strip():
+                error.update("Model ID is required. Enter the actual model ID.")
+                return
+            values["note_title"] = self.query_one("#workflow-note-title", Input).value
+            if not values["note_title"].strip():
+                error.update("Note title is required. Enter a non-empty title.")
+                return
+            selected = self.models[
+                self.query_one("#workflow-model-choice", Select).value
+            ]
+            model = ModelSelection(
+                selected.provider_id,
+                selected.selected_url,
+                model_id,
+                selected.request_timeout_seconds,
+                selected.sampling,
+            )
             self.dismiss(
                 (values, RunSetup(source, model, self.actor, self.protected_paths))
             )
@@ -305,6 +311,7 @@ class WorkflowRunPanel(Vertical):
                     )
             with VerticalScroll(id="workflow-session-content"):
                 yield Static("", id="workflow-session-identity", markup=False)
+                yield Static("", id="workflow-effect-summary", markup=False)
                 yield Static("", id="workflow-effect-text", markup=False)
                 yield Static("", id="workflow-review-instructions", markup=False)
                 yield TextArea("", id="workflow-review-text", classes="form-textarea")
@@ -351,6 +358,25 @@ class WorkflowRunPanel(Vertical):
             view.review_instructions or ""
         )
         effect = view.pending_effect
+        summary = ""
+        if effect:
+            payload = json.loads(effect.payload_json)
+            if effect.kind == "file":
+                summary = f"Read this local UTF-8 file\n{payload['source']}"
+            elif effect.kind == "model":
+                summary = (
+                    "Send input to local model\n"
+                    f"{payload['config']['provider']} / {payload['config']['model']}\n"
+                    f"{payload['dispatch_url']}"
+                )
+            elif effect.kind == "note":
+                summary = (
+                    f"Create a Local Note: {payload['config']['title']}\n"
+                    f"{payload['db_path']}\nUser: {payload['user']}"
+                )
+        summary_widget = self.query_one("#workflow-effect-summary", Static)
+        summary_widget.display = effect is not None
+        summary_widget.update(summary)
         self.query_one("#workflow-effect-text", Static).update(
             effect.payload_json if effect else ""
         )

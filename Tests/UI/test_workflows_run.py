@@ -659,34 +659,77 @@ async def test_delayed_accept_does_not_accept_changed_review(
 
 
 @pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
+@pytest.mark.parametrize(
+    ("kind", "permission", "action"),
+    [
+        ("file", "workflow_read_file", "Read this local UTF-8 file"),
+        ("model", "workflow_local_model", "Send input to local model"),
+        ("note", "create_note", "Create a Local Note"),
+    ],
+)
 async def test_capture_effect_ask_with_focused_approval(
-    tmp_path, harness, size, monkeypatch
+    tmp_path, harness, size, monkeypatch, kind, permission, action
 ):
     monkeypatch.delenv("NO_COLOR", raising=False)
     await configure_model()
-    harness.set_permission("workflow_read_file", "ask")
+    harness.set_permission(permission, "ask")
     app = WorkflowRunHarness(tmp_path, harness)
     async with app.run_test(size=size) as pilot:
         await open_setup(app, pilot, harness.setup.source)
         await pilot.click("#workflow-start")
+        if kind == "note":
+            await until(app._workflow_session, lambda v: v.state == "review")
+            await pilot.pause()
+            await pilot.click("#workflow-review-accept")
         view = await until(app._workflow_session, lambda v: v.state == "approval")
         await pilot.pause()
         approve = app.screen.query_one("#workflow-effect-approve", Button)
         approve.focus()
         effect = app.screen.query_one("#workflow-effect-text", Static)
-        effect.scroll_visible(animate=False)
+        summary = app.screen.query_one("#workflow-effect-summary", Static)
+        summary.scroll_visible(animate=False, top=True)
         await pilot.pause()
         assert app.focused is approve
         assert_hit(app.screen, approve)
         assert_hit(app.screen, app.screen.query_one("#workflow-effect-reject"))
         assert str(effect.renderable) == view.pending_effect.payload_json
-        assert "source.txt" in painted_text(app.screen)
-        assert str(harness.setup.source) in "".join(painted_text(app.screen).split())
+        assert view.pending_effect.kind == kind
+        assert action in painted_text(app.screen)
+        destination = (
+            str(harness.setup.source)
+            if kind == "file"
+            else "http://127.0.0.1:9099/v1/chat/completions"
+            if kind == "model"
+            else app._workflow_session.run_bindings(view.run_id).notes.db_path
+        )
+        region = summary.content_region.intersection(
+            app.screen.query_one("#workflow-session-content").content_region
+        )
+        painted_summary = "".join(
+            row[region.x : region.right].strip()
+            for row in painted_text(app.screen).splitlines()[region.y : region.bottom]
+        )
+        assert str(destination) in painted_summary
+        if kind == "model":
+            assert "llama_cpp / actual-model" in str(summary.renderable)
+        elif kind == "note":
+            assert "Reviewed file summary" in str(summary.renderable)
+            assert "reader" in str(summary.renderable)
         assert "Approve once" in painted_text(app.screen)
-        capture(app, size, "ask-file-focused", svg_only=True)
+        if kind == "file":
+            capture(app, size, "ask-file-focused", svg_only=True)
+        effect.scroll_visible(animate=False, top=True)
+        await pilot.pause()
+        assert '"config"' in painted_text(app.screen)
+        assert app._workflow_session.view().pending_effect == view.pending_effect
+        assert not app._workflow_session.answer_effect(
+            view.run_id, view.step_id, str(summary.renderable), approve=True
+        )
+        assert app._workflow_session.view().pending_effect == view.pending_effect
         await pilot.click("#workflow-effect-reject")
         await until(app._workflow_session, lambda v: v.state == "rejected")
-        assert harness.requests == [] and harness.rows() == []
+        assert len(harness.requests) == (1 if kind == "note" else 0)
+        assert harness.rows() == []
 
 
 @pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
@@ -713,7 +756,8 @@ async def test_capture_recoverable_setup_error(tmp_path, harness, size, monkeypa
             harness.setup.source
         )
         assert "{invalid}" in painted_text(app.screen)
-        assert "inputs must be a JSON object" in painted_text(app.screen)
+        assert "Inputs JSON is invalid" in painted_text(app.screen)
+        assert "Use valid JSON" in painted_text(app.screen)
         assert app.focused is inputs
         assert_hit(app.screen, inputs)
         capture(app, size, "error-setup-focused", svg_only=True)
@@ -729,6 +773,60 @@ async def test_capture_recoverable_setup_error(tmp_path, harness, size, monkeypa
             while not app.screen.query("#workflow-start"):
                 await pilot.pause()
         await pilot.click("#workflow-start-cancel")
+        assert harness.requests == [] and harness.rows() == []
+
+
+@pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
+@pytest.mark.parametrize(
+    ("field", "value", "problem", "correction"),
+    [
+        ("workflow-inputs", "{invalid}", "Inputs JSON is invalid", "Use valid JSON"),
+        ("workflow-inputs", "[]", "Inputs must be a JSON object", "not a list"),
+        ("workflow-source", "relative.txt", "Source must be an absolute", "Choose"),
+        ("workflow-model", " ", "Model ID is required", "Enter the actual model ID"),
+        (
+            "workflow-note-title",
+            " ",
+            "Note title is required",
+            "Enter a non-empty title",
+        ),
+    ],
+)
+async def test_setup_error_identifies_field_and_preserves_inputs(
+    tmp_path, harness, size, field, value, problem, correction
+):
+    await configure_model()
+    app = WorkflowRunHarness(tmp_path, harness)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        await pilot.click("#workflow-run")
+        await pilot.pause()
+        values = {
+            "workflow-source": str(harness.setup.source),
+            "workflow-model": "actual-model",
+            "workflow-note-title": "Retained title [literal]",
+            "workflow-inputs": '{"keep": "retained input"}',
+        }
+        values[field] = value
+        for identifier, text in values.items():
+            widget = app.screen.query_one("#" + identifier)
+            if isinstance(widget, TextArea):
+                widget.load_text(text)
+            else:
+                widget.value = text
+        await pilot.click("#workflow-setup-review")
+        await pilot.pause()
+        error = app.screen.query_one("#workflow-setup-error", Static)
+        error.scroll_visible(animate=False)
+        await pilot.pause()
+        assert problem in painted_text(app.screen)
+        assert correction in painted_text(app.screen)
+        for identifier, text in values.items():
+            widget = app.screen.query_one("#" + identifier)
+            assert (
+                widget.text if isinstance(widget, TextArea) else widget.value
+            ) == text
+        assert not app.screen.query("#workflow-start")
         assert harness.requests == [] and harness.rows() == []
 
 

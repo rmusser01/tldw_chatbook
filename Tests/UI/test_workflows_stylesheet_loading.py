@@ -50,7 +50,7 @@ async def test_first_workflows_entry_loads_styles_and_paints_dialog(
         context = screen.query_one("#workflows-console-unavailable")
         assert context.region.height == 1
         assert_hit(screen, context)
-        assert "No active workflow run" in painted_text(screen)
+        assert "No existing Console handoff" in painted_text(screen)
 
         assert await pilot.click("#workflow-more")
         await pilot.pause()
