@@ -262,6 +262,16 @@ async def test_a_database_only_note_says_so_and_claims_no_file():
         # AC#2: no file, so no path and no write time are invented.
         assert "/" not in line and "written" not in line
 
+        # AC#1: it is part of the shared header, so the answer is on screen
+        # in Preview and Info too -- which is what the User Guide's
+        # "Edit, Preview, and Info" table says it is.
+        for control in ("#library-note-preview", "#library-note-context"):
+            screen.query_one(control, Button).press()
+            await pilot.pause()
+            await pilot.pause()
+            assert _location_row(screen).display is True, control
+            assert str(_location_row(screen).renderable) == line, control
+
 
 async def test_a_synced_note_names_its_file_and_when_it_was_written(tmp_path):
     """task-32640 AC#2/AC#4: the path from the live binding, the time from
