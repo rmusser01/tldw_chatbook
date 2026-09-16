@@ -1,6 +1,7 @@
 """The app owns workflow loss and physical drain even off the Workflows screen."""
 
 import asyncio
+import json
 import threading
 from types import SimpleNamespace
 
@@ -68,7 +69,9 @@ async def test_quit_flush_cancellation_reopens_unaccepted_fence(harness):
         entered.set()
         await asyncio.Event().wait()
 
-    app._workflow_authoring = SimpleNamespace(flush=flush)
+    app._workflow_authoring = SimpleNamespace(
+        prepare_quit=flush, abort_quit=lambda: None
+    )
     waiter = asyncio.create_task(app._confirm_and_quit())
     await asyncio.wait_for(entered.wait(), 5)
     waiter.cancel()
@@ -89,7 +92,9 @@ async def test_failed_flush_preserves_review_and_normal_close_drains_first(harne
     async def failed():
         raise OSError("draft write refused")
 
-    app._workflow_authoring = SimpleNamespace(flush=failed)
+    app._workflow_authoring = SimpleNamespace(
+        prepare_quit=failed, abort_quit=lambda: None
+    )
     await app._confirm_and_quit()
     assert app.cleanup_calls == 0 and not app._shutting_down
     assert harness.session.update_review(run_id, "review", "still editable")
@@ -136,6 +141,7 @@ async def test_cancelled_accepted_close_retains_physical_writer_and_fence(
         await until(h.session, lambda v: v.state == "stopping")
         assert console_runtime.accepts_raw_cli_refusal_callbacks
         assert console_runtime.voice_promotion_owner.status.quit_fenced
+        assert not h.session.reopen_after_drained_quit()
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
@@ -178,28 +184,41 @@ async def test_failed_physical_drain_never_enters_exit_cleanup(
     assert app.cleanup_calls == 0 and not app._shutting_down
     assert any("physical drain failed" in text for text, _ in app.notifications)
     assert_console_reopened(console_runtime)
+    assert not harness.session.reopen_after_drained_quit()
 
 
-async def test_failed_authoring_close_keeps_console_usable(harness, console_runtime):
-    _, _, _ = await launch(harness)
+async def test_failed_authoring_prepare_keeps_console_and_review_usable(
+    tmp_path, harness, console_runtime, monkeypatch
+):
+    from tldw_chatbook.Workflows.authoring import WorkflowAuthoring
+
+    authoring = WorkflowAuthoring(lambda: tmp_path / "failed-prepare.sqlite3")
+    await authoring.create("Retained")
+    write = authoring.documents.put_draft
+
+    def failed(*args, **kwargs):
+        raise OSError("draft persistence refused")
+
+    monkeypatch.setattr(authoring.documents, "put_draft", failed)
+    pending = authoring.drafts.update('{"unfinished":')
+    _, _, run_id = await launch(harness)
     await until(harness.session, lambda v: v.state == "review")
     app = WorkflowQuitHarness(harness.session)
     app.console_runtime = console_runtime
     app.decision = True
 
-    async def flush():
-        pass
-
-    async def close():
-        assert harness.session.view().state == "cancelled"
-        raise OSError("authoring close refused")
-
-    app._workflow_authoring = SimpleNamespace(flush=flush, close=close)
-    await app._confirm_and_quit()
-
-    assert app.cleanup_calls == 0 and not app._shutting_down
-    assert any("draft could not be saved" in text for text, _ in app.notifications)
-    assert_console_reopened(console_runtime)
+    app._workflow_authoring = authoring
+    try:
+        await app._confirm_and_quit()
+        assert app.cleanup_calls == 0 and not app._shutting_down
+        assert any("safe shutdown" in text for text, _ in app.notifications)
+        assert_console_reopened(console_runtime)
+        assert authoring.drafts.current == pending
+        assert harness.session.update_review(run_id, "review", "Still editable")
+        authoring.drafts.update('{"unfinished": ')
+    finally:
+        monkeypatch.setattr(authoring.documents, "put_draft", write)
+        await authoring.close()
 
 
 async def test_confirmation_changes_do_not_cancel_newer_review(harness):
@@ -236,3 +255,100 @@ async def test_production_composition_is_lazy_single_owner(harness):
     assert owner.view() is None
     assert app._workflow_authoring is None
     await app._shutdown_workflow_session()
+
+
+@pytest.mark.parametrize("cancel_waiter", [False, True])
+@pytest.mark.parametrize("waiting_state", ["review", "approval"])
+async def test_reconfirmation_abort_restores_same_workflow_owners(
+    tmp_path, harness, console_runtime, cancel_waiter, waiting_state
+):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleLifecycleImpact
+    from tldw_chatbook.Workflows.authoring import WorkflowAuthoring
+    from tldw_chatbook.Workflows.models import DraftWriteFailed
+    from tldw_chatbook.Workflows.session import SessionError
+
+    authoring = WorkflowAuthoring(lambda: tmp_path / "authoring.sqlite3")
+    await authoring.create("Before quit")
+    drafts, documents = authoring.drafts, authoring.documents
+    raw = json.loads(drafts.current.raw_text)
+    raw["description"] = "Retained before quit"
+    pending = drafts.update(json.dumps(raw))
+    if waiting_state == "approval":
+        harness.set_permission("workflow_read_file", "ask")
+    _, old_ticket, old_run = await launch(harness)
+    old_view = await until(harness.session, lambda v: v.state == waiting_state)
+    app = WorkflowQuitHarness(harness.session)
+    app.console_runtime = console_runtime
+    app._workflow_authoring = authoring
+    app.decision = True
+    impact = ConsoleLifecycleImpact(1, 0, 0, 0, 0)
+    console_runtime.set_chat_controller(
+        SimpleNamespace(lifecycle_impact=lambda: impact)
+    )
+
+    def workflow_changed():
+        nonlocal impact
+        if harness.session.view().state == "cancelled":
+            impact = ConsoleLifecycleImpact(2, 1, 0, 0, 0)
+
+    release = harness.session.subscribe(workflow_changed)
+    reconfirming = asyncio.Event()
+
+    async def reconfirm(dialog):
+        assert "Live agent runs: 1" in dialog.message
+        with pytest.raises(DraftWriteFailed):
+            drafts.update(pending.raw_text + " ")
+        reconfirming.set()
+        if cancel_waiter:
+            await asyncio.Event().wait()
+        return False
+
+    app._await_console_quit_confirmation = reconfirm
+    waiter = asyncio.create_task(app._confirm_and_quit())
+    try:
+        await asyncio.wait_for(reconfirming.wait(), 5)
+        if cancel_waiter:
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+        else:
+            await waiter
+        assert app.cleanup_calls == 0 and not app._quit_in_progress
+        assert_console_reopened(console_runtime)
+        assert app._workflow_authoring is authoring
+        assert app._workflow_session is harness.session
+        assert harness.session.view().state == "cancelled"
+        assert not harness.session.answer_review(old_run, "review", accept=True)
+        if old_view.pending_effect:
+            assert not harness.session.answer_effect(
+                old_run,
+                old_view.step_id,
+                old_view.pending_effect.payload_json,
+                approve=True,
+            )
+        with pytest.raises(SessionError):
+            harness.session.start(old_ticket)
+        await authoring.open()
+        assert authoring.drafts is drafts and authoring.documents is documents
+        assert drafts.current.raw_text == pending.raw_text
+        created = await authoring.create("After aborted quit")
+        document = session_tests.file_definition()
+        document["metadata"]["tldw_workflow"].update(
+            workflow_id=created.workflow_id, revision_id=created.revision_id
+        )
+        drafts.update(json.dumps(document))
+        saved = await drafts.save_revision()
+        assert documents.get_head(created.workflow_id) == saved
+        harness.set_permission("workflow_read_file", "allow")
+        ticket = await harness.session.prepare(saved, {}, harness.setup)
+        new_run = harness.session.start(ticket)
+        assert new_run != old_run
+        await until(harness.session, lambda v: v.state == "review")
+        assert harness.rows() == []
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+        release()
+        console_runtime.set_chat_controller(None)
+        await authoring.close()

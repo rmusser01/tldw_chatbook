@@ -38,10 +38,12 @@ class WorkflowAuthoring:
         self._closing: asyncio.Task | None = None
         self._pending: set[asyncio.Task] = set()
         self._closed = False
+        self._quit_preparing = False
+        self._quit_task: asyncio.Task | None = None
 
     async def open(self) -> None:
         """Initialize once; a cancelled waiter cannot abandon construction."""
-        if self._closed or self._closing:
+        if self._closed or self._closing or self._quit_preparing:
             raise DraftWriteFailed("Workflow authoring is closing or closed")
         if self._opening is None or (
             self._opening.done() and self._opening.exception() is not None
@@ -56,7 +58,7 @@ class WorkflowAuthoring:
         self.drafts = DraftSession(self.documents)
 
     async def _retain(self, operation: Coroutine[Any, Any, _T]) -> _T:
-        if self._closed or self._closing:
+        if self._closed or self._closing or self._quit_preparing:
             operation.close()
             raise DraftWriteFailed("Workflow authoring is closing or closed")
         task = asyncio.create_task(operation)
@@ -86,6 +88,34 @@ class WorkflowAuthoring:
         if self.drafts and self.drafts.current:
             await self.drafts.flush()
 
+    async def prepare_quit(self) -> None:
+        """Retain fallible persistence behind reversible admission fences.
+
+        Keep the same document, draft and database owners available for abort.
+        A cancelled waiter cannot abandon the accepted preparation operation.
+        """
+        if self._closed or self._closing:
+            raise DraftWriteFailed("Workflow authoring is closing or closed")
+        self._quit_preparing = True
+        if self._quit_task is None or self._quit_task.done():
+            self._quit_task = asyncio.create_task(self._prepare_quit())
+            self._quit_task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
+        await asyncio.shield(self._quit_task)
+
+    async def _prepare_quit(self) -> None:
+        await self.flush()
+        # A cancelled waiter may already have aborted while flush was retained.
+        if self._quit_preparing and self.drafts:
+            await self.drafts.prepare_quit()
+
+    def abort_quit(self) -> None:
+        """Reopen this graph after an uncommitted quit, without replacing it."""
+        self._quit_preparing = False
+        if self.drafts:
+            self.drafts.abort_quit()
+
     async def close(self) -> None:
         """Drain before DB close; a failed flush leaves the buffer retryable."""
         if self._closed:
@@ -105,6 +135,10 @@ class WorkflowAuthoring:
         await asyncio.shield(self._closing)
 
     async def _close(self) -> None:
+        if self._quit_task:
+            await asyncio.shield(
+                asyncio.gather(self._quit_task, return_exceptions=True)
+            )
         if self._opening:
             try:
                 await asyncio.shield(self._opening)

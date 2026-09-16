@@ -259,6 +259,64 @@ async def test_exchange_keeps_opaque_metadata_step_id_and_saved_revision(
         await owner.close()
 
 
+async def test_quit_preparation_fences_same_draft_without_closing_database(tmp_path):
+    owner = WorkflowAuthoring(lambda: tmp_path / "prepared.sqlite3")
+    try:
+        revision = await owner.create("Retained")
+        drafts, documents = owner.drafts, owner.documents
+        pending = drafts.update('{"unfinished":')
+        await owner.prepare_quit()
+        assert drafts.current.raw_text == pending.raw_text
+        assert documents.get_head(revision.workflow_id) == revision
+        with pytest.raises(DraftWriteFailed):
+            await owner.create("Must not be admitted")
+        with pytest.raises(DraftWriteFailed):
+            drafts.update("{}")
+        with pytest.raises(DraftWriteFailed):
+            await drafts.save_revision()
+        owner.abort_quit()
+        await owner.open()
+        assert owner.documents is documents and owner.drafts is drafts
+        drafts.update(revision.raw_json)
+        await drafts.save_revision()
+        await owner.create("After abort")
+    finally:
+        await owner.close()
+
+
+async def test_cancelled_quit_preparation_retains_flush_without_late_refence(
+    tmp_path, monkeypatch
+):
+    owner = WorkflowAuthoring(lambda: tmp_path / "prepare-cancel.sqlite3")
+    await owner.create("Retained")
+    entered, release = Event(), Event()
+    write = owner.documents.put_draft
+
+    def held(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return write(*args, **kwargs)
+
+    monkeypatch.setattr(owner.documents, "put_draft", held)
+    owner.drafts.update('{"unfinished":')
+    waiter = asyncio.create_task(owner.prepare_quit())
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        owner.abort_quit()
+        owner.drafts.update('{"unfinished": ')
+        release.set()
+        await owner.flush()
+        # The retained preparation may settle after abort; it must not fence anew.
+        await owner.create("After cancelled preparation")
+    finally:
+        release.set()
+        await asyncio.gather(waiter, return_exceptions=True)
+        await owner.close()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX file identity and aliases")
 @pytest.mark.parametrize("operation", ["import", "export"])
 @pytest.mark.parametrize(
@@ -517,7 +575,12 @@ async def test_real_app_create_edit_navigate_quit_and_restart(real_authoring_app
         app.action_quit()
         await pilot.pause()
         assert app._shutting_down
-        assert app._workflow_authoring._closed
+        # Persistence is the reversible guard; resource close belongs to teardown.
+        assert (
+            app.workflow_documents.get_draft(revision.workflow_id, revision.revision_id)
+            == pending
+        )
+    assert app._workflow_authoring._closed
     reopened = WorkflowsDB(path)
     try:
         documents = DocumentService(reopened)

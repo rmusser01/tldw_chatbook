@@ -20305,6 +20305,8 @@ class TldwCli(
         promotion_permit_consumed = False
         workflow_owner = getattr(self, "_workflow_session", None)
         workflow_close_accepted = False
+        workflow_close_settled = False
+        workflow_authoring = None
         try:
             try:
                 begin_quit = getattr(promotion_owner, "begin_quit", None)
@@ -20369,7 +20371,7 @@ class TldwCli(
                     workflow_owner.begin_close()
                 workflow_authoring = getattr(self, "_workflow_authoring", None)
                 if workflow_authoring is not None:
-                    await workflow_authoring.flush()
+                    await workflow_authoring.prepare_quit()
                 prepare_for_quit = getattr(current_screen, "prepare_for_quit", None)
                 if callable(prepare_for_quit):
                     preparation = prepare_for_quit()
@@ -20395,23 +20397,13 @@ class TldwCli(
                 try:
                     workflow_close_accepted = True
                     await workflow_owner.close()
+                    workflow_close_settled = True
                 except Exception:  # noqa: BLE001 - failed physical drain must never enter unconditional exit cleanup.
                     self.notify(
                         "Workflow is stopping; physical drain failed. Staying in Chatbook.",
                         severity="error",
                     )
                     return
-            if workflow_authoring is not None:
-                try:
-                    await workflow_authoring.close()
-                except (OSError, RuntimeError, sqlite3.Error):
-                    self._quit_in_progress = False
-                    self.notify(
-                        "Workflow draft could not be saved; staying in Chatbook. Retry.",
-                        severity="warning",
-                    )
-                    return
-
             fence_console = getattr(runtime, "begin_dispose", None)
             from .Chat.console_chat_models import ConsoleLifecycleRevisionChanged
 
@@ -20468,12 +20460,18 @@ class TldwCli(
                 False,
             ):
                 self._quit_in_progress = False
+            if workflow_authoring is not None and not getattr(
+                self, "_shutting_down", False
+            ):
+                workflow_authoring.abort_quit()
             workflow_owner = getattr(self, "_workflow_session", None)
             if workflow_owner is not None and not getattr(
                 self, "_shutting_down", False
             ):
                 self._quit_in_progress = False
-                if not workflow_close_accepted:
+                if workflow_close_settled:
+                    workflow_owner.reopen_after_drained_quit()
+                elif not workflow_close_accepted:
                     # Publish reopened controls only after the app quit flag clears.
                     workflow_owner.abort_close()
 

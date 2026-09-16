@@ -802,6 +802,27 @@ class WorkflowSession:
             self._close_task = asyncio.create_task(self._drain())
         await asyncio.shield(self._close_task)
 
+    def reopen_after_drained_quit(self) -> bool:
+        """Permit a new run only after successful, physically settled quit drain.
+
+        Never resume a cancelled run or restore its approvals/setup ticket.
+        Unfinished or failed drain remains fenced, including cancelled waiters.
+        """
+        task = self._close_task
+        if (
+            task is None
+            or not task.done()
+            or task.cancelled()
+            or task.exception() is not None
+            or self._drain_error
+        ):
+            return False
+        self._close_task = None
+        self._fenced = False
+        self._wake.set()
+        self._publish()
+        return True
+
     async def _drain(self) -> None:
         pending = list(self._captures)
         if self._run_task is not None:

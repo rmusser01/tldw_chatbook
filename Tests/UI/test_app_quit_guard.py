@@ -533,6 +533,7 @@ async def test_console_revision_is_rechecked_after_workflow_drain(decision):
         view=lambda: None,
         begin_close=lambda: app.events.append("workflow-fence"),
         abort_close=lambda: None,
+        reopen_after_drained_quit=lambda: True,
         close=drain,
     )
 
