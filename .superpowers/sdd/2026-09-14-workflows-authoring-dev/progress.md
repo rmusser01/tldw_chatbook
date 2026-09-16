@@ -603,3 +603,28 @@ Independentreview nowcomplete:noCritical/Important/Minor;readyforpush.
 Reviewer separatelyverified declarations/ownerIDs/loadbeforeconstruction,
 generatedpartition,bytecensus and mountedfixturestyle/geometryparity at3sizes.
 Main182full-app/adjacentchecks remain actualapp evidence. Readycommit+leasedpush.
+
+### Creation and public-contract review (2026-09-16 UTC)
+
+Pushed92723d5045 ondev65a143; Qodo5217985076 added5findings:
+4022051681/1690/1696/1704/1712. Nameboundary,SVGoptionalguard,pagingannotation,
+catalogdocs,authoring/exchangedocs. Allnowaddresseduncommitted. SharedPydantic
+WorkflowNameInput+validate_workflow_name:256rawPythonchars,boundedbeforetrim,
+stricttext,nonblank,Unicodepreserved. Usedauthoring.create+controllerfallback
+(retainsInvalidDraft);imports/rawdefinitions unchanged. Initial8fail8pass;
+then16pass; mountedtestexposedverboseerrorclippedbefore256, fallbacktestproved
+standaloneoversizeaccepted. Concisewrapperfix+samehelperbothpaths. Final18pass
+includingactualappvisibleerror/retry,retaineddraft,1024charimport,surrogate.
+Captureensure_svg_renderingbeforeimports,actionableImportError(svg+nativeCairo).
+AllrequestedAPI/typecontractsdocumentactualbehavior. NoextraSQLite/runtimeinfra.
+
+539targetedpass181.53s. InternalTypeErrorTRY004correction+wrapperconversion
+reverified18focusedpass5.68s. 13performancepass27.60s (boot767878/768000,
+selectors271/274),7preflightpass. 8Pythonformatpass;7Ruffclean,shared8baseline
+exactsourceattributed0unmatched. ReviewerAverroesfinalnoCritical/Important/Minor,
+reviewclearforcommit/push,closedafterverdict. Sameoldwarnings;nofullsweep/models.
+Task/ADR138/userguide/UATupdated. Needcommit/pushthen5inlineevidencerepliesand
+resolve threads:1681=PRRT_kwDOOcyyl86ixO1S;1690=PRRT_kwDOOcyyl86ixO1a;
+1696=PRRT_kwDOOcyyl86ixO1d;1704=PRRT_kwDOOcyyl86ixO1i;
+1712=PRRT_kwDOOcyyl86ixO1o. Fresh/agentic_review thenexactheadgates/normalmerge.
+AC7stillopen. Heartbeatmustupdatewithnewhead;preserveUATandotherworktrees.

@@ -405,3 +405,56 @@ ID owners, loading before construction, exact generated partition, the boot-byte
 census and mounted-fixture style/geometry parity at 160x48, 110x36 and 60x20.
 That fixture check supplements the coordinator's full-app tests; it is not
 misrepresented as another live-app UAT. New-head GitHub review/CI remains pending.
+
+## Creation and public-contract review (2026-09-16 UTC)
+
+Qodo review5217985076 on92723d5045 published five new findings:
+4022051681 (creation-name boundary), 4022051690 (capture SVG dependency),
+4022051696 (paging event annotation), 4022051704 (catalog API docs) and
+4022051712 (authoring/exchange API docs). Earlier issues remain resolved or
+dismissed; merge is held for these new findings.
+
+The initial targeted regression run had **8 failed, 8 passed**: oversized names
+were persisted, non-text values raised incidental errors, an invalid creation
+replaced the current draft, and unavailable SVG support failed without actionable
+installation guidance. A shared Pydantic creation boundary now admits at most256
+raw Python characters, checks before trimming/storage setup, trims surrounding
+whitespace and rejects blank/non-text values. Plain validation preserves existing
+Unicode including lone surrogates. Imports/raw definitions retain their original
+name/admission contracts; a 1,024-character imported name remains intact.
+
+The first correction passed16 focused cases, but the new full-app test exposed
+multiline Pydantic diagnostics hiding the actual limit in the two-row status
+area. A concise content-free shared wrapper fixes the painted message; that test
+also creates a valid workflow afterward. A separate failing real-store test
+exposed the standalone controller's creation fallback accepting oversized names.
+It now uses the same helper, preserving its InvalidDraft error category and the
+current draft. The final focused selection passes18 cases. An internal type-error
+lint finding was corrected without changing the wrapper's public ValueError
+contract; the same focused cases were rerun afterward.
+
+Capture now consults ensure_svg_rendering before importing Cairo packages, and
+reports the svg extra plus native Cairo requirement via ImportError (the existing
+optional-dependency mechanism has no separate project-wide dependency exception).
+The regression supplies the unavailable dependency boundary and prevents either
+raw import, verifying the real capture entry's guidance. No capture subprocess or
+live profile/model/network was started by this test.
+
+The paging callback has its concrete event and None annotations. Catalog and
+authoring/exchange docstrings now describe actual inputs, results, validation,
+file/storage errors, and retained accepted work. Eight touched Python files pass
+format checks; seven pass whole-file Ruff. The shared input module retains eight
+baseline diagnostics, matched by unchanged source spans, code, message and start/
+end columns, with zero unmatched. No suppressions or baseline cleanup occurred.
+All seven preflight guards and13 import/CSS checks pass (27.60s); boot CSS remains
+767878/768000 and broad selectors271/274. Full targeted and independent-review
+results remain to be recorded before push.
+
+Final broad targeted selection: **539 passed**, 181.53s, covering Workflows,
+authoring storage, editor/paging/projection/route loading and shared reasoning/
+character validation consumers. The final internal TypeError/concise-wrapper
+adjustment was separately reverified with all18 new focused cases (5.68s).
+Independent review found no Critical/Important/Minor findings, checked the final
+production boundary and retained controller exception category, and cleared
+commit/push. No new architecture, model calls, full sweep or baseline cleanup.
+Exact-head review/checks and merge remain pending; AC7 is not yet complete.

@@ -36,6 +36,7 @@ from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 from tldw_chatbook.UI.Workflows_Modules.editor import WorkflowEditor
+from tldw_chatbook.Utils.optional_deps import ensure_svg_rendering
 from tldw_chatbook.Workflows.document_service import DocumentService
 
 
@@ -54,6 +55,11 @@ RICH_EXPORT_SVG = Console.export_svg
 
 
 async def capture() -> None:
+    if not ensure_svg_rendering():
+        raise ImportError(
+            "Workflow visual capture requires SVG rendering. Install "
+            "tldw_chatbook[svg] and the native Cairo library."
+        )
     # Import after process-local fontconfig setup, before Cairo resolves fonts.
     import cairocffi as cairo
     import cairosvg

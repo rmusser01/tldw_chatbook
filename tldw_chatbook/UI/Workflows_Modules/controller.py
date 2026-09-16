@@ -3,6 +3,7 @@
 import asyncio
 from typing import TypedDict, Unpack
 
+from tldw_chatbook.Utils.input_validation import validate_workflow_name
 from tldw_chatbook.Workflows.catalog import FIELDS, discover
 from tldw_chatbook.Workflows.document_service import PAGE_SIZE, DocumentService
 from tldw_chatbook.Workflows.draft_session import DraftSession
@@ -284,21 +285,22 @@ class WorkflowsController:
         """Flush pending edits, create a named empty workflow, and select it.
 
         Args:
-            name: Nonblank workflow name; surrounding whitespace is removed.
+            name: At most 256 raw Python characters; surrounding whitespace is
+                removed and the result must be nonempty text.
 
         Raises:
-            InvalidDraft: The name is blank or the definition exceeds storage bounds.
+            InvalidDraft: The name is invalid or the definition exceeds storage bounds.
             DraftWriteFailed: Pending edits cannot be flushed or selection is locked.
             RevisionConflict: The generated portable identity already exists.
         """
-        if not name.strip():
-            raise InvalidDraft("Name the workflow before creating it")
+        try:
+            name = validate_workflow_name(name)
+        except ValueError as error:
+            raise InvalidDraft(str(error)) from None
         if self.drafts.current:
             await self.drafts.flush()
         # Initial JSON is built by the document owner through the same field seam.
-        raw = self.documents.edit_field(
-            '{"steps":[],"inputs":{}}', "/name", name.strip()
-        )
+        raw = self.documents.edit_field('{"steps":[],"inputs":{}}', "/name", name)
         revision = await asyncio.to_thread(self.documents.create, raw)
         await self.refresh_library()
         await self.select_workflow(revision.workflow_id, revision.revision_id)

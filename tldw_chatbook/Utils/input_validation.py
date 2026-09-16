@@ -33,6 +33,7 @@ CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
 CONSOLE_CHARACTER_QUERY_MAX_LENGTH = 200
 WORKFLOW_SEARCH_MAX_LENGTH = 512
+WORKFLOW_NAME_MAX_LENGTH = 256
 WORKFLOW_MAX_PAGE_SIZE = 100
 SQLITE_INTEGER_MAX = 2**63 - 1
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
@@ -616,6 +617,55 @@ def validate_console_switcher_query(value: object) -> str:
         raise ValueError(
             "Switcher search must be text containing at most "
             f"{CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters."
+        ) from None
+
+
+class WorkflowNameInput(BaseModel):
+    """Bounded New workflow input, not a portable document-name restriction.
+
+    Attributes:
+        name: Nonempty trimmed text, admitted from at most 256 raw characters.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, hide_input_in_errors=True
+    )
+
+    name: str
+
+    @field_validator("name", mode="plain")
+    @classmethod
+    def _bounded_name(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("Workflow name must be text")
+        if len(value) > WORKFLOW_NAME_MAX_LENGTH:
+            raise ValueError(
+                f"Workflow name must contain at most {WORKFLOW_NAME_MAX_LENGTH} characters"
+            )
+        name = value.strip()
+        if not name:
+            raise ValueError("Name the workflow before creating it")
+        return name
+
+
+def validate_workflow_name(value: object) -> str:
+    """Validate a New workflow name with concise, input-free error guidance.
+
+    Args:
+        value: Raw creation name, bounded before whitespace trimming.
+
+    Returns:
+        Nonempty trimmed text, without Unicode normalization.
+
+    Raises:
+        ValueError: The name is non-text, blank or longer than the raw limit.
+    """
+    try:
+        return WorkflowNameInput(name=value).name
+    except (PydanticValidationError, TypeError):
+        raise ValueError(
+            "Workflow name must be nonblank text, at most "
+            f"{WORKFLOW_NAME_MAX_LENGTH} characters."
         ) from None
 
 

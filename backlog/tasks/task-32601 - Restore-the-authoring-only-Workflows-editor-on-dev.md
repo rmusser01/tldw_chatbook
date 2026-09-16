@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-15 04:09'
-updated_date: '2026-09-16 02:40'
+updated_date: '2026-09-16 03:04'
 labels: []
 dependencies: []
 ---
@@ -148,6 +148,28 @@ startup-CSS breach; AC7 already requires resolving introduced integration gates.
    splitter/cascade/byte guards and preflight; obtain scoped independent review.
 4. Record evidence, push with the exact remote-head lease, then await fresh
    Qodo and exact-head CI before merging. Keep AC7 open until verified merge.
+
+### Creation and public-contract review (2026-09-16 UTC)
+
+ADR required: amend existing ADR-138 for the creation-dialog input boundary.
+ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
+Reason: address Qodo4022051681/1690/1696/1704/1712 without altering portable
+definition admission or adding dependency/storage infrastructure.
+
+1. Reproduce oversized/wrong-type creation names reaching setup and missing-SVG
+   capture failing without installation guidance. Pin no-write/draft retention.
+2. Validate creation names in the shared input module before setup: text only,
+   at most256 raw Python characters, trim surrounding whitespace, reject empty;
+   retain admitted Unicode. Apply the same helper to the standalone controller's
+   creation fallback, retaining its InvalidDraft category. Keep errors concise
+   enough for the existing status area; do not restrict imported/raw names.
+3. Check the existing SVG availability helper before capture imports; raise an
+   informative ImportError with the real svg extra and native-Cairo guidance.
+4. Annotate the paging event and document the requested catalog/create/import/
+   export APIs with actual arguments, returns and failure contracts.
+5. Run affected boundary/authoring/exchange/paging/catalog/shared-consumer tests,
+   source-attributed static checks and preflight; obtain scoped review, push,
+   reply to all five threads and await exact-head review/checks before merge.
 
 ## ID provenance
 
@@ -350,4 +372,6 @@ ACs; no data deleted or cleanup code added in this turn.
 New-base integration: rebased 21 patches onto dev65a1437183, preserving both independent lesson appends; all code patches unchanged by range-diff. Qodo import-spacing comment4021886696 was verified false-positive and replied/resolved with Ruff evidence. Combined CSS exceeded the unchanged 768000-byte startup limit by490. Six Workflows geometry selectors now use existing unique pane IDs, allowing the existing splitter/loader to defer612bytes without changed declarations or infrastructure. Corrected targeted selection:182passed; startupCSS767878/768000, broadselectors271/274, all7preflight guards pass. Independent review and exact-head GitHub gates remain pending. ADR097/150 apply; detailed evidence in Docs/UAT/2026-09-15-workflows-qodo-remediation.md. AC7 remains open until verified merge.
 
 Independent review of the new-base six-selector correction is complete: no Critical/Important/Minor findings; ready for push. Reviewer independently verified unchanged declarations, unique ID owners, route loading, generated partition, boot-byte count and mounted-fixture computed-style/geometry parity at160x48,110x36,60x20. Exact-head GitHub review/checks and verified merge still required.
+
+Creation/API review round: Qodo4022051681/1690/1696/1704/1712 addressed. Shared Pydantic creation-name boundary (256 raw characters, strict text, trim/nonblank, preserved Unicode) runs before authoring setup and standalone-controller creation; imported/raw names remain lossless. Concise errors are painted and valid retry is tested in the actual app. Capture checks existing SVG availability with installation guidance. Paging annotations and catalog/create/import/export contracts completed. Initial regressions reproduced name/dependency failures; corrected verification:539 targeted tests,18 focused final-boundary cases,13 performance checks and all7preflight guards pass. Eight shared-module Ruff findings are exactly baseline-attributed, no new debt; eight touched Python files formatted. Independent review reports no issues. Existing ADR138 amended; full evidence in Docs/UAT/2026-09-15-workflows-qodo-remediation.md. Exact-head Qodo/CI and merge remain pending; AC7 open.
 <!-- SECTION:NOTES:END -->

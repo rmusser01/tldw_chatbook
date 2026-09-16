@@ -10,7 +10,10 @@ execution belongs to v1; branching is v2 and parallel execution is v3.
 Press **Ctrl+8**, select **Workflows** in the navigation bar, or use **Ctrl+P** →
 "Tab Navigation: Switch to Workflows".
 
-1. Select **New workflow**, enter a name, and press Enter. On narrower terminals,
+1. Select **New workflow**, enter a name, and press Enter. Creation names accept
+   up to 256 characters before surrounding whitespace is trimmed and must not
+   be blank. This dialog limit does not rewrite imported or existing names.
+   On narrower terminals,
    use **Workflow…** to open the library choices, including New workflow.
 2. Use the library to select a definition. The navigator selects Overview,
    Inputs, Requirements, or a step. **Add step** opens the searchable action

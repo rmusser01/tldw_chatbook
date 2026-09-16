@@ -327,7 +327,7 @@ class WorkflowsScreen(BaseAppScreen):
             )
 
     @on(WorkflowLibrary.PageRequested)
-    def library_page_requested(self, event):
+    def library_page_requested(self, event: WorkflowLibrary.PageRequested) -> None:
         event.stop()
         self.run_worker(
             self._library_page(event.offset, event.query),

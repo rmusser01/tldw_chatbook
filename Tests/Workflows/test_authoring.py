@@ -17,6 +17,93 @@ from tldw_chatbook.Workflows.document_service import DocumentService
 from tldw_chatbook.Workflows.models import DraftWriteFailed
 
 
+@pytest.mark.parametrize(
+    "name", ["x" * 257, " " * 257, "", " \t\n", None, 42, True, b"name", []]
+)
+async def test_creation_rejects_invalid_name_before_opening_storage(tmp_path, name):
+    path = tmp_path / "unopened.sqlite3"
+    opened = []
+
+    def path_factory():
+        opened.append(True)
+        return path
+
+    owner = WorkflowAuthoring(path_factory)
+    try:
+        with pytest.raises(ValueError) as failure:
+            await owner.create(name)
+        assert len(str(failure.value)) < 512
+        assert "x" * 257 not in str(failure.value)
+        assert opened == []
+        assert not path.exists()
+    finally:
+        await owner.close()
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("  A name\t", "A name"),
+        ("é" * 256, "é" * 256),
+        ("e\u0301", "e\u0301"),
+        (chr(0xD800), chr(0xD800)),
+    ],
+)
+async def test_creation_persists_trimmed_bounded_name_without_normalization(
+    tmp_path, name, expected
+):
+    path = tmp_path / "named.sqlite3"
+    owner = WorkflowAuthoring(lambda: path)
+    try:
+        revision = await owner.create(name)
+        assert json.loads(revision.raw_json)["name"] == expected
+        assert owner.documents.get_head(revision.workflow_id) == revision
+    finally:
+        await owner.close()
+
+
+async def test_invalid_creation_retains_current_draft_and_saved_heads(tmp_path):
+    owner = WorkflowAuthoring(lambda: tmp_path / "retained.sqlite3")
+    try:
+        revision = await owner.create("Original")
+        pending = owner.drafts.update('{"unfinished":')
+        with pytest.raises(ValueError):
+            await owner.create("x" * 257)
+        assert owner.drafts.current == pending
+        assert owner.documents.list_workflows() == (revision,)
+    finally:
+        await owner.close()
+
+
+async def test_creation_name_limit_does_not_rewrite_imported_names(tmp_path):
+    source = tmp_path / "portable.json"
+    content = prompt_definition()
+    content["name"] = "é" * 1024
+    source.write_text(json.dumps(content), encoding="utf-8")
+    owner = WorkflowAuthoring(lambda: tmp_path / "imported.sqlite3")
+    try:
+        revision = await owner.import_file(source)
+        assert json.loads(revision.raw_json)["name"] == content["name"]
+    finally:
+        await owner.close()
+
+
+async def test_standalone_controller_rejects_oversized_creation_name(tmp_path):
+    from tldw_chatbook.UI.Workflows_Modules.controller import WorkflowsController
+
+    owner = WorkflowAuthoring(lambda: tmp_path / "controller.sqlite3")
+    try:
+        revision = await owner.create("Retained")
+        pending = owner.drafts.update('{"unfinished":')
+        controller = WorkflowsController(owner.documents, owner.drafts)
+        with pytest.raises(ValueError):
+            await controller.create("x" * 257)
+        assert owner.drafts.current == pending
+        assert owner.documents.list_workflows() == (revision,)
+    finally:
+        await owner.close()
+
+
 async def test_unused_authoring_close_does_not_create_a_database(tmp_path):
     path = tmp_path / "unused.sqlite3"
     owner = WorkflowAuthoring(lambda: path)
@@ -341,6 +428,36 @@ async def settle_authoring(app, pilot):
         *(w.wait() for w in app.workers if w.group.startswith("workflows-"))
     )
     await pilot.pause()
+
+
+async def test_real_app_creation_recovers_after_oversized_name(real_authoring_app):
+    from textual.widgets import Input
+
+    from Tests.UI.test_screen_navigation import _wait_for_initial_screen
+    from Tests.UI.test_workflows_editor import painted_text
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Workflows_Modules.library import ChoiceModal
+
+    app, _path = real_authoring_app
+    async with app.run_test(size=(160, 48)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        app.post_message(NavigateToScreen("workflows"))
+        await settle_authoring(app, pilot)
+        assert await pilot.click("#workflow-new")
+        await pilot.pause()
+        assert isinstance(app.screen, ChoiceModal)
+        app.screen.query_one(Input).value = "x" * 257
+        await pilot.press("enter")
+        await settle_authoring(app, pilot)
+        assert "256" in painted_text(app.screen)
+        assert app.workflow_documents.list_workflows() == ()
+        assert await pilot.click("#workflow-new")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "  Short enough  "
+        await pilot.press("enter")
+        await settle_authoring(app, pilot)
+        assert json.loads(app.workflow_drafts.base.raw_json)["name"] == "Short enough"
+        assert len(app.workflow_documents.list_workflows()) == 1
 
 
 async def test_real_app_create_edit_navigate_quit_and_restart(real_authoring_app):

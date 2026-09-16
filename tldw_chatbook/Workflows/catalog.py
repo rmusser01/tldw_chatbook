@@ -258,12 +258,33 @@ _OUTPUT_TYPES = {
 
 
 def output_types(step_type: str) -> tuple[tuple[str, str], ...]:
-    """Documented output paths/types; an unknown contract promises no fields."""
+    """Return documented output paths/types from the pinned local catalog.
+
+    Args:
+        step_type: Canonical server step-type name.
+
+    Returns:
+        Immutable (output path, type) pairs, or an empty tuple for an unknown
+        contract. The unverified type marks conditional or unproven outputs;
+        this catalog does not guarantee runtime availability.
+    """
     return _OUTPUT_TYPES.get(step_type, ())
 
 
 def new_step(step_type: str) -> dict:
-    """Create only one of the five authorable subsets; missing setup stays blank."""
+    """Create one of the five authorable subsets with missing setup left blank.
+
+    Args:
+        step_type: One of media_ingest, prompt, llm, wait_for_human or notes.
+
+    Returns:
+        A detached step dictionary with type, retry, timeout and config defaults.
+        No step ID or dependencies are assigned, and runtime requirements such
+        as provider, model and resource bindings still need user configuration.
+
+    Raises:
+        ValueError: The step type is unavailable for local authoring.
+    """
     configs = {
         "media_ingest": {
             "sources": [{"uri": ""}],
@@ -323,7 +344,17 @@ _LABELS = {
 
 
 def discover(*, show_all: bool = False, query: str = "") -> tuple[DiscoveryEntry, ...]:
-    """Read bundled pinned inventory; discovery never performs I/O or admission."""
+    """Read bundled pinned inventory without performing I/O or admission.
+
+    Args:
+        show_all: Include known unavailable types as well as authorable types.
+        query: Case-insensitive substring matched against label, canonical type
+            and display family; an empty string matches every included entry.
+
+    Returns:
+        Immutable discovery entries ordered by availability, family and label.
+        Listing a type does not admit a definition or authorize execution.
+    """
     entries = []
     for step_type, family, disposition in DISCOVERY:
         available = step_type in _LABELS

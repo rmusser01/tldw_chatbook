@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
+from tldw_chatbook.Utils.input_validation import validate_workflow_name
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.private_paths import (
     atomic_private_write_text,
@@ -121,13 +122,29 @@ class WorkflowAuthoring:
         self._closed = True
 
     async def create(self, name: str) -> Revision:
-        """Create and select a named definition, retaining the accepted write."""
-        if not name.strip():
-            raise ValueError("Name the workflow before creating it")
+        """Create and select a named definition, retaining the accepted write.
+
+        Args:
+            name: New-workflow text, at most 256 raw Python characters. Surrounding
+                whitespace is removed; the result must not be empty.
+
+        Returns:
+            The saved revision, selected as the current draft base.
+
+        Raises:
+            ValueError: The name is not text, is too long or becomes empty.
+            DraftWriteFailed: Authoring is closing/closed or the current draft
+                could not be durably flushed before creation.
+            RevisionConflict: A generated portable identity already exists.
+            OSError: Private storage could not be opened or accessed.
+            sqlite3.Error: Storage setup, revision persistence or selection fails.
+
+        Cancellation of a waiter does not abandon an accepted creation. A
+        selection failure after insertion does not roll back that saved revision.
+        """
+        name = validate_workflow_name(name)
         await self.open()
-        raw = self.documents.edit_field(
-            '{"steps":[],"inputs":{}}', "/name", name.strip()
-        )
+        raw = self.documents.edit_field('{"steps":[],"inputs":{}}', "/name", name)
         return await self._retain(self._create(raw))
 
     async def _create(self, raw: str) -> Revision:
@@ -173,7 +190,29 @@ class WorkflowAuthoring:
         return content.decode("utf-8")
 
     async def import_file(self, path: Path) -> Revision:
-        """Import an explicitly selected private JSON file; never execute it."""
+        """Import an explicitly selected private JSON file; never execute it.
+
+        Args:
+            path: Regular, nonlinked .json file separate from the workflow
+                database and sidecars, subject to the stable-file contract.
+
+        Returns:
+            The imported saved revision, selected as the current draft base.
+            Imported names are not subject to the New workflow dialog's limit.
+
+        Raises:
+            ValueError: The path is refused, the file exceeds 16 MiB, or UTF-8
+                decoding fails.
+            InvalidDraft: The definition fails local structural admission.
+            RevisionConflict: Its portable identity conflicts with saved content.
+            DraftWriteFailed: Authoring is closing/closed or the current draft
+                cannot be durably flushed.
+            OSError: Private storage or the selected file cannot be accessed.
+            sqlite3.Error: Storage setup, import persistence or selection fails.
+
+        Accepted work survives waiter cancellation. A saved revision can remain
+        if selection subsequently fails; this method never imports run authority.
+        """
         await self.open()
         return await self._retain(self._import(path))
 
@@ -182,7 +221,24 @@ class WorkflowAuthoring:
         return await self._create(raw)
 
     async def export_file(self, path: Path, revision: Revision) -> None:
-        """Export only an exact saved definition, excluding local draft state."""
+        """Export only an exact saved definition, excluding local draft state.
+
+        Args:
+            path: Separate .json destination, atomically replaced with a private
+                file under the approved stable-file exchange contract.
+            revision: Exact saved revision, including its workflow/revision IDs
+                and raw bytes; local edits or fabricated revisions are refused.
+
+        Raises:
+            ValueError: The destination is refused or the supplied revision
+                differs from the saved revision.
+            RevisionConflict: The requested saved identity does not exist.
+            DraftWriteFailed: Authoring is closing or closed.
+            OSError: Private storage or the destination cannot be accessed/written.
+            sqlite3.Error: Storage setup or the saved-revision read fails.
+
+        Accepted export survives waiter cancellation; close waits for settlement.
+        """
         await self.open()
         await self._retain(self._export(path, revision))
 
