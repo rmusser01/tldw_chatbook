@@ -291,6 +291,8 @@ class WorkflowsScreen(BaseAppScreen):
             with destination.owner.bound_notes_db(
                 destination.user_id, destination.db, blocking=False
             ):
+                self._error = ""
+                self._show_status()
                 self.app_instance.post_message(
                     NavigateToScreen(
                         TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTE_ID: view.note_id}

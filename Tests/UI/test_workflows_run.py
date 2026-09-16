@@ -522,6 +522,7 @@ async def test_open_note_during_second_note_keeps_loop_and_stop_responsive(
         )
         await pilot.pause()
         monkeypatch.setattr(harness.owner, "_db_lock", GuardedLock())
+        app.install_screen(app.screen, "retained-workflows")
         try:
             await pilot.click("#workflow-review-accept")
             assert await asyncio.to_thread(entered.wait, 10)
@@ -606,6 +607,12 @@ async def test_open_note_during_second_note_keeps_loop_and_stop_responsive(
                 await pilot.pause()
         assert app.screen._notes_state.selected_note_id == final.note_id
         assert len(harness.rows()) == len(rows)
+        await app.switch_screen("retained-workflows")
+        await pilot.pause()
+        status = app.screen.query_one("#workflow-draft-status", Static)
+        status.scroll_visible(animate=False)
+        await pilot.pause()
+        assert "busy" not in painted_text(app.screen).lower()
 
 
 @pytest.mark.parametrize(
