@@ -302,7 +302,9 @@ authenticated authority snapshot explicitly covers:
 - Execution-affecting configuration and exact connection/tool/model mappings,
   including definition digests and credential reference IDs/authority-binding
   generations, as defined below.
-- Authority/revocation generations and uninstall tombstones.
+- Installation-wide and workspace-scoped authority/revocation generations,
+  uninstall tombstones, and data-root ownership/generations with any committed
+  deletion fence.
 
 Absence and explicit values have defined distinct encodings. An activation row
 or configuration mapping must match this authenticated snapshot at admission
@@ -593,6 +595,22 @@ invocation, recheck current trust, revocation and parent/workspace restrictions.
 Already-admitted runs retain their revision; a new enablement does not add
 capabilities halfway through a run.
 
+Distinguish the installation-wide revocation generation from each workspace's
+activation generation. Use the stable workspace ID, with an explicit unscoped
+identity for default work. Runs, child launches, requests, approvals, hooks and
+continuations retain that owner scope; switching the visible workspace never
+retargets them. Disable here advances only the selected workspace's generation.
+Disable everywhere and uninstall invalidate every scope. Editing the global
+default affects inheriting scopes, including unscoped work, while preserving
+explicit workspace overrides. Re-enable uses fresh generations and cannot revive
+old approvals, callbacks or cancelled work.
+
+The namespace's secure marker authenticates the whole registry; it is not an
+instruction to cancel every installation/workspace after an unrelated edit.
+Revalidate current authenticated state while comparing the operation's captured
+scope and authority. These scoped generations do not introduce per-workspace
+package revisions.
+
 Leases track actual runs, dispatched operations and background jobs. An idle
 MCP connection or archived checkpoint is not a run lease. Resuming an archived
 run revalidates its required revision, component definitions and current
@@ -631,9 +649,10 @@ Use one operation_id and an authenticated write-ahead intent with old/new
 marker identities. Prepare a complete resulting logical authority snapshot in
 the protected trust store, outside SQLite and package content. It contains the
 authoritative registry state needed to reconstruct all installations, selections,
-activation, mappings, revocations/tombstones and the operation result; unrelated
-installations must not disappear during recovery. Package bytes remain separate
-and must match the snapshot's digests. Secrets remain credential references.
+activation, mappings, revocations/tombstones, data-root ownership/deletion fences
+and the operation result; unrelated installations must not disappear during
+recovery. Package bytes remain separate and must match the snapshot's digests.
+Secrets remain credential references.
 Use the trust service's encrypted/authenticated snapshot storage.
 
 The plugin namespace's secure marker is the tuple (generation, operation_id,
@@ -730,12 +749,29 @@ availability across scopes without deleting the installation. Uninstall is
 user-wide. These actions are distinct from disconnecting one MCP connection
 or removing a marketplace.
 
-Seal current admission immediately and durably commit revocation before
-cleanup. Pending approvals, continuations and callbacks must observe the
-new generation. Plugin-owned Stop, Interrupt and SessionEnd callbacks are
-suppressed after revocation; cleanup is performed by the host and cannot
-be vetoed. Existing independently configured user hooks retain their own
-authority and cannot revive the removed installation.
+**Immediate stop and durable outcome.** Under the run-admission synchronization,
+seal the affected live scope and invalidate its captured runtime generation
+before awaiting storage, trust unlock or the mutation coordinator. Immediately
+begin host cancellation of affected work. Neither initiating termination nor
+reaping owned children waits for durable writes. Pending approvals, checkpoints,
+continuations and callbacks observe the live fence. Suppress that scope's
+plugin-owned Stop, Interrupt and SessionEnd callbacks from this point, including
+queued events and late results. Host cleanup cannot be vetoed. Independently
+configured user hooks retain their own authority and cannot revive fenced work.
+
+Commit the scoped activation change or installation-wide revocation through
+section 8.2 before reporting durable disable/uninstall success or removing
+installation files. Saved-data deletion uses the separate root fence below.
+Report runtime stopping separately from persistence. If a full disk, locked
+trust store or failed write prevents commitment, keep the live scope blocked,
+continue host cleanup and report Disable not saved (session-only block), with
+the actual stopped/cleanup-pending state. Session-only means this running
+Chatbook instance; never imply the block survives restart. Incomplete durable
+transitions and surviving children still follow recovery rules; an entirely
+unpersisted request cannot be recovered as a permanent disable. Retrying
+persistence must not reopen live admission.
+Within the live owner, only an explicit subsequent enable/resume after authority
+reconciliation can admit fresh work; it cannot restore old runtime generations.
 
 Cancel already-dispatched work where possible, without claiming its effects
 were undone. An uncertain remote outcome remains uncertain and is not
@@ -743,16 +779,60 @@ automatically retried. Uninstall revokes installation-owned grants and
 registrations; independent MCP connections, shared credentials and unrelated
 policy records remain owned by their existing services.
 
+**Scoped connection ownership.** Disabling workspace A cancels/detaches A's
+requests and suppresses A's callbacks; authorized B runs, approvals and callbacks
+remain valid. Sharing an MCP connection requires equivalent reviewed server
+execution, effective configuration (including paths/environment), credential
+authority bindings and compatible session state. Otherwise use separate
+connections. Each request still follows its own workspace's permission checks;
+the host keeps configuration/credential resolution and hook context/result
+delivery scoped. Unqualified session isolation requires separate connections.
+
+Do not kill a shared server or close its transport to cancel A while it serves
+other authorized scopes. Use request-level cancellation/detachment; if completion
+cannot be established, retain the uncertain outcome and resource/data ownership.
+Reject A's late output without applying it to B. Host process termination applies
+when all connection owners are affected or have drained; disabling everywhere
+and uninstall coordinate all scopes. Independent connection owners are never
+implicitly included in an installation-wide action.
+
 Stale workspace references resolve to Unavailable, never a name-matched
 replacement or permissive default. Reinstallation gets fresh authority.
 Retained data is tied to the original installation ID, with explicit reviewed
 reattachment; a same-name package/fork cannot automatically inherit it.
 
-Keep data by default. Delete saved plugin data is a separate destructive
-action naming the owned roots and affected workspaces. Delete only validated
-owned paths; never follow a symlink into an unrelated directory. Locked files
-or cleanup failures leave a visible cleanup-pending record without undoing
-revocation.
+**Saved-data deletion.** Keep data by default. Delete saved plugin data is a
+separate destructive action bound to the reviewed installation ID, exact owned
+roots, root generations and affected workspaces. Under lifecycle synchronization,
+fence new access to those roots, including pending launches and connections, then
+drain existing users. Shared PLUGIN_DATA requires coordination across every
+workspace using it; disabling one workspace alone is insufficient. Show those
+users and offer waiting or explicit cancellation of affected work. Waiting never
+authorizes forced termination of another workspace's work.
+
+Track root users for the lifetime of processes/operations given access, including
+idle MCP processes that may write between requests. An idle connection's lack
+of a run lease is not proof that a data root is unused. Confirm owned local
+writers stopped and readers/handles drained before removing files. An unresolved
+request, surviving writer or missing ownership evidence leaves deletion pending;
+use section 8.5 recovery without broad PID killing or sandbox claims. Arbitrary
+external programs and deliberately escaped descendants remain outside the host's
+containment guarantee.
+
+Persist the exact root deletion fence/intent through section 8.2 before the first
+destructive filesystem change. Immediately before deletion, revalidate root
+ownership/generation and resolved paths; stale review or reattachment cannot
+retarget cleanup. Delete only validated owned paths and never follow a symlink
+into an unrelated directory. Keep the fence through partial failure/restart so
+new users cannot recreate data during cleanup; successful completion advances
+the root generation through the coordinator. Only fresh admissions under current
+activation and ordinary authority may subsequently create/use a new root;
+retained-data reattachment still requires its separate review. Committing a
+deletion fence does not mean data has been deleted. Cancel before deletion can
+release its access fence through the coordinator after reconciliation, without
+reversing a committed disable or reviving cancelled work. After deletion begins,
+cancellation leaves honest partial/cleanup-pending state, not a claim that data
+was restored.
 
 ### 8.5 Owner death and surviving children
 
@@ -825,8 +905,9 @@ Distinguish no sources, no matches, failed refresh and stale cached results.
 Close/Back means leave the view, not consent or cancellation. Before submission,
 retain an in-session draft; an explicit Discard clears it. Draft inputs must
 be revalidated on return. Secrets are held only by the owning credential flow.
-Unsubmitted drafts are not promised across application restart. Durable
-operation progress/outcomes are available after navigation and restart.
+Unsubmitted drafts are not promised across application restart. Persisted
+operation progress/outcomes are available after navigation and restart; a
+failed persistence attempt cannot promise a durable receipt.
 Cancel operation is a separate state-aware request; after commit it cannot
 pretend to undo the operation. Escape, backdrop clicks and Cancel follow the
 existing safe-dismissal grammar, including nested overlays and focus return.
@@ -836,6 +917,14 @@ actions. A secondary instance explains that another Chatbook instance owns
 plugin execution; it never silently takes over or terminates that process.
 Configuration save never starts a server. Explicit Test connection/Run hook
 test actions disclose execution and use the normal authority path.
+
+Lifecycle progress identifies the affected workspace(s) and separates New work
+blocked, Stopping, confirmed local Stopped and unresolved cleanup. Show durable
+disable success separately from Disable not saved (blocked for this session).
+Neither persistence success nor request detachment proves a process stopped or
+a remote operation ended. Data deletion lists exact roots, all affected users
+and Waiting for data users/Deletion pending; only completed cleanup reports
+Data deleted. Navigation or workspace switching cannot change this scope.
 
 External descriptions/readmes/status text are bounded untrusted content:
 literal labels, control-sequence sanitization, safe link handling, no
@@ -975,6 +1064,33 @@ Written-spec amendment scenarios are mandatory acceptance evidence:
   refresh success permits replay of an uncertain tool call. Include opaque
   credential replacement and credential-store migration, with no secret values
   in authority snapshots, receipts or diagnostics.
+- **Stop despite persistence failure:** stall/fail each durable boundary with a
+  full disk, unavailable trust store or blocked mutation, while a controlled child
+  and pending approval are active. The live scope fences and host cancellation
+  starts without waiting for the write/unlock; stale approval, hook output and
+  continuation cannot dispatch or reopen it. Check confirmed exit and unresolved
+  cleanup separately. A successful persistence retry records the same scoped
+  disable without reviving work. Only a completed durable transition survives
+  restart as a confirmed disable; unpersisted requests report the session-only
+  limitation, and interrupted transitions follow the recovery matrix.
+- **Revocation scope:** run simultaneous A/B/default-inheriting work, approvals
+  and queued hooks. Disable A leaves B's authorized requests, callbacks and
+  approvals usable; re-enabling A cannot accept its old outputs. Editing the
+  global default affects inheritors, while Disable everywhere/uninstall affects
+  all scopes including explicit Enabled overrides. Equivalent reviewed MCP
+  bindings can share a connection without A cancellation killing B's transport;
+  different configurations/credentials/session state use separate connections.
+  Uncancellable A outcomes remain uncertain, with no output or credential leak
+  into B. Receipts and UI retain the original scope after workspace switching.
+- **Data writer drain:** request deletion with a late-writing child, an idle
+  writer-capable MCP process, active readers and another workspace using shared
+  data. New root users are fenced; no deletion starts until all affected users
+  drain or explicitly authorized cancellation confirms cleanup. A surviving or
+  unknown writer leaves deletion pending, including after restart; cancelling
+  the wait never forces other workspace work. With confirmed cleanup, only the
+  reviewed owned roots are deleted and cannot be recreated by old users. Stale
+  root generations, reattachment and symlink replacement reject cleanup; partial
+  deletion and persistence failure never report full success or reopen access.
 - Required hook effects, provisional MCP initialization and aggregate admission/
   teardown, MCP normalization and final-argument validation scenarios are specified
   in the companion hook acceptance section; exercise them through plugin-owned
@@ -1034,6 +1150,10 @@ The written design incorporates all accepted section reviews:
 - Integration-contract amendments: error-first MCP result normalization, pending
   post-event admission barriers, explicit PreToolUse phases and guard guarantees,
   and credential authority bindings that survive ordinary token renewal.
+- Lifecycle amendments: immediate scoped admission fencing and host cancellation
+  independent of persistence, honest durable/session-only outcomes, per-workspace
+  callback/request ownership on shared connections, and exact-root writer drain
+  with persistent deletion fences before destructive cleanup.
 
 This is a proposed implementation contract, not a report of implemented
 features or passing runtime tests. The two written specs receive a final user

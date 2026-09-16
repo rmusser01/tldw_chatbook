@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-15 17:39'
-updated_date: '2026-09-16 00:55'
+updated_date: '2026-09-16 01:49'
 labels:
   - design
   - plugins
@@ -26,6 +26,7 @@ Define a reviewable plugin system and Git marketplace experience for Chatbook, i
 - [x] #4 Document checks and a self-review resolve placeholders, broken local links and contradictory requirements; the written specs are ready for user review.
 - [x] #5 The approved written-spec review gaps are resolved consistently across both specs and ADRs, with a concrete failure/control acceptance scenario for each.
 - [x] #6 The MCP result, pending post-hook barrier, PreToolUse phase and credential renewal contracts are unambiguous and have failure/control acceptance scenarios in the specs and matching ADR decisions.
+- [x] #7 The specs and ADRs define immediate stopping despite persistence failure, workspace-scoped revocation and writer-drained data deletion, with failure and successful-control acceptance scenarios for each.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,6 +63,13 @@ Created through Backlog CLI, then renumbered from its uncommitted offer of TASK-
 3. Classify all PreToolUse effect combinations and distinguish transformations from final-argument guards.
 4. Authenticate stable credential bindings while allowing token renewal within unchanged authority.
 5. Add targeted acceptance scenarios, align both ADRs, verify the documents and commit the amendment.
+
+### Approved lifecycle amendments
+
+1. Separate immediate admission fencing and host cancellation from durable disable/uninstall completion and destructive cleanup.
+2. Define workspace-scoped generations, callback ownership and safe shared MCP connection behavior.
+3. Require exact-root access fencing and confirmed writer drain before saved plugin data deletion.
+4. Add failure and successful-control scenarios, align both ADRs, verify the documentation and commit only the amendment files.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -109,4 +117,10 @@ Integration-contract amendment: resolved the four approved follow-up findings in
 PreToolUse declarations now have exhaustive phase classification: mixed transform/deny handlers run once, final constraints require separate non-transforming guards, context-only handlers see final arguments and optional effect-free observers use the bounded queue. Credential authority uses stable account/issuer/endpoint/scope bindings and generations; ordinary verified token renewal preserves trust, while authority changes invalidate captured mappings.
 
 Added failure and successful-control scenarios for MCP error payloads/normalization, pending checkpoint races, later transformers changing arguments, and credential renewal versus authority changes. Aligned both ADRs and identified the existing MCP content-only client projection as an implementation prerequisite. Document checks passed for four JSON examples, 35 local links, balanced fences, placeholder absence and whitespace. Runtime scenarios remain future implementation evidence; no runtime tests were run for this documentation amendment.
+
+Lifecycle amendment: resolved the three approved follow-up findings in both specs and ADR-162/ADR-163. Live admission fencing, scoped callback suppression and host cancellation begin before storage writes or trust unlock. Durable disable/removal and confirmed process cleanup have separate outcomes; a failed write retains a visible block for the current Chatbook instance without promising restart persistence.
+
+Workspace and installation generations now distinguish Disable here, global-default edits and Disable everywhere/uninstall. Shared MCP reuse requires equivalent reviewed authority and qualified session isolation; cancelling one scope cannot kill another authorized scope's transport. Saved-data deletion binds exact root ownership/generations, fences new users and confirms writers/readers drained, including idle MCP processes. Durable deletion fences survive partial cleanup; stale reattachment cannot redirect deletion.
+
+Added failure and successful-control scenarios for stalled persistence, two-workspace requests/hooks and late or surviving data writers. Documentation checks passed for five files, four JSON examples, 35 local links, balanced fences, unfinished-marker absence, task structure and whitespace. No product code changed or runtime tests ran; implementation evidence and planning remain future work after written-spec review.
 <!-- SECTION:NOTES:END -->

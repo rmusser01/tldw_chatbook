@@ -69,9 +69,17 @@ these boundaries and ADR-009's offline-tamper protection.
    advance the marker. Its matching snapshot permits exact authority recovery
    after registry loss, without recreating grants or bypassing surviving-child
    reconciliation. Projections cannot activate themselves.
-8. Revocation precedes cleanup. Late approvals/callbacks cannot revive execution,
-   and removed plugin cleanup hooks are suppressed. Unclean owner death requires
-   surviving-child reconciliation; acquiring its lock does not prove cleanup.
+8. Immediately fence the affected live scope and start host cancellation without
+   waiting for persistence or trust unlock. Late approvals/callbacks cannot revive
+   it, and affected plugin cleanup hooks are suppressed. Durable disable/uninstall
+   success and installation file removal require committed revocation; persistence
+   failure retains a session-only block with honest cleanup status. Workspace
+   disable invalidates only that workspace's runtime generation; global disable
+   and uninstall cover all scopes. Sharing MCP connections requires equivalent
+   reviewed execution/configuration/credential authority and compatible session
+   state. Cancel/detach scoped requests without killing other authorized users'
+   transport. Unclean owner death requires surviving-child reconciliation;
+   acquiring its lock does not prove cleanup.
 9. Use the existing Git executable, portalocker, private SQLite, HTTP and
    credential seams. Direct generic MCP transport is a separately qualified
    prerequisite; a tldw_server wrapper is not equivalent evidence. SessionStart
@@ -82,6 +90,13 @@ these boundaries and ADR-009's offline-tamper protection.
 10. Plugins owns package management. Library Skills and MCP retain their component
     surfaces with service-enforced package ownership. Canonical Settings owns
     global preferences only. UI shows workspace versus installation-wide effects.
+11. Saved-data deletion separately reviews exact roots, ownership/generations and
+    all affected workspaces. Fence new access, drain existing users and confirm
+    owned writers stopped before deleting; idle MCP processes may still be writers.
+    Persist the root deletion fence through the coordinator and retain it across
+    partial cleanup/restart. Surviving or unknown writers leave deletion pending;
+    stale review/reattachment cannot redirect deletion. Data stays by default,
+    and arbitrary external programs remain outside the containment guarantee.
 
 The detailed state matrix, schemas, resource limits, compatibility behavior and
 acceptance criteria are in the linked specification. No runtime feature is
