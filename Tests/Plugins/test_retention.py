@@ -186,9 +186,11 @@ def test_staging_cleanup_requires_original_reconciled_terminal_owner(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("replace_root", [False, True])
+@pytest.mark.parametrize(
+    "cleanup_state", ["original", "replaced_leaf", "missing_anchor", "missing_leaf"]
+)
 async def test_retention_restart_uses_original_authenticated_cleanup_identity(
-    native_console, native_package, monkeypatch, replace_root
+    native_console, native_package, monkeypatch, cleanup_state
 ):
     from pathlib import Path
 
@@ -226,10 +228,17 @@ async def test_retention_restart_uses_original_authenticated_cleanup_identity(
     path = Path(row["materialized_identity"])
     assert path.exists()
     await rig.service.aclose()
-    if replace_root:
+    if cleanup_state == "replaced_leaf":
         path.rename(path.with_name(path.name + "-original"))
         path.mkdir()
         (path / "new-owner").write_text("must survive")
+    moved_anchor = path.parent.with_name(path.parent.name + "-moved")
+    if cleanup_state == "missing_anchor":
+        path.parent.rename(moved_anchor)
+    elif cleanup_state == "missing_leaf":
+        import shutil
+
+        shutil.rmtree(path)
     monkeypatch.setattr(retention, "remove_revision_root", original_remove)
     restarted = PluginService(
         rig.service.profile_root,
@@ -242,14 +251,32 @@ async def test_retention_restart_uses_original_authenticated_cleanup_identity(
     try:
         await restarted.unlock("test passphrase")
         pending = await restarted.lookup_operation(evidence.new.operation_id)
-        assert pending.committed and pending.cleanup_pending
-        assert path.exists()  # read-only lookup never performs cleanup
+        assert pending.committed and pending.cleanup_pending == (
+            cleanup_state != "missing_leaf"
+        )
+        assert path.exists() == (cleanup_state in {"original", "replaced_leaf"})
         result = await restarted.retain_revisions(installed.installation_id)
         assert result.operation_id == evidence.new.operation_id
-        assert result.committed and result.cleanup_pending == replace_root
-        assert path.exists() == replace_root
-        if replace_root:
+        assert result.committed and result.cleanup_pending == (
+            cleanup_state in {"replaced_leaf", "missing_anchor"}
+        )
+        assert path.exists() == (cleanup_state == "replaced_leaf")
+        if cleanup_state == "replaced_leaf":
             assert (path / "new-owner").read_text() == "must survive"
+        if cleanup_state == "missing_anchor":
+            assert (moved_anchor / path.name).is_dir()
+            assert (
+                await restarted._call(
+                    lambda: restarted._coordinator.authority.verify_transition(
+                        evidence.new.operation_id
+                    )
+                )
+            ).committed
+            moved_anchor.rename(path.parent)
+            assert not (
+                await restarted.retain_revisions(installed.installation_id)
+            ).cleanup_pending
+            assert not path.exists()
     finally:
         await restarted.aclose()
 
@@ -340,3 +367,400 @@ async def test_original_revocation_request_lookup_survives_restart_without_mutat
         )
     finally:
         await restarted.aclose()
+
+
+@pytest.mark.asyncio
+async def test_install_uninstall_cycles_retire_only_removed_revision_observations(
+    native_console, native_package, monkeypatch
+):
+    from tldw_chatbook.Plugins import authority_store
+
+    rig = native_console
+    kept = await rig.install()
+    monkeypatch.setattr(authority_store, "MAX_TRANSITIONS", 6)
+    for _ in range(5):
+        review = await rig.service.review_install(
+            native_package(), selection=("skill:review",), workspace_id=None
+        )
+        await rig.service.commit(review, review.operation_id)
+        assert (await rig.service.uninstall(review.installation_id)).committed
+
+    def inspect_metadata():
+        coordinator = rig.service._coordinator
+        with coordinator.registry.transaction() as cursor:
+            rows = cursor.execute(
+                "SELECT operation_id FROM receipts WHERE operation_id LIKE 'revision:%'"
+            ).fetchall()
+            count = cursor.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
+        inventory = coordinator.authority.list_transitions(limit=50, offset=0)
+        return [row[0] for row in rows], count, len(inventory)
+
+    observed, receipt_count, transitions = await rig.service._call(inspect_metadata)
+    assert observed == ["revision:" + kept.installation_id]
+    assert transitions <= 6 and receipt_count <= transitions + 1
+    assert rig.service.capture_maximum("workspace-a")["available_skills"]
+
+
+@pytest.mark.parametrize("cut", ["hints", "certificate", "intent", "snapshot"])
+def test_coordinator_pruning_recovers_each_durable_retirement_boundary(
+    plugin_stack, native_package, monkeypatch, cut
+):
+    from Tests.Plugins.test_coordinator import reviewed
+    from tldw_chatbook.Plugins import retention
+
+    stack = plugin_stack
+    for _ in range(3):
+        review = reviewed(stack, native_package())
+        stack.call(
+            lambda review=review: stack.coordinator.commit(review, review.operation_id)
+        )
+    current = stack.call(stack.authority.load_marker)
+    original_snapshot = stack.call(stack.authority.verify_current)
+    oldest = min(
+        stack.call(lambda: retention.transition_inventory(stack.authority)),
+        key=lambda item: item.new.generation,
+    )
+    old_snapshot_path = stack.call(lambda: stack.authority._snapshot_path(oldest.new))
+    observed = stack.registry.operation_observed_at
+    monkeypatch.setattr(
+        stack.registry,
+        "operation_observed_at",
+        lambda _: datetime.now(UTC) - timedelta(days=31),
+    )
+    crossed = []
+    if cut == "hints":
+        original = stack.registry.forget_operation_hints
+
+        def interrupt(ids):
+            original(ids)
+            crossed.append("hints")
+            raise OSError("controlled durable retirement cut")
+
+        monkeypatch.setattr(stack.registry, "forget_operation_hints", interrupt)
+    else:
+        original = stack.authority._unlink_artifact
+
+        def interrupt(path):
+            original(path)
+            purpose = {
+                "certificates": "certificate",
+                "intents": "intent",
+                "snapshots": "snapshot",
+            }.get(path.parent.name)
+            if purpose == cut:
+                crossed.append(purpose)
+                raise OSError("controlled durable retirement cut")
+
+        monkeypatch.setattr(stack.authority, "_unlink_artifact", interrupt)
+    with pytest.raises(OSError, match="controlled durable retirement cut"):
+        stack.call(lambda: retention.prune_transition_history(stack.coordinator))
+    assert crossed == [cut]
+    if cut == "hints":
+        monkeypatch.setattr(stack.registry, "forget_operation_hints", original)
+    else:
+        monkeypatch.setattr(stack.authority, "_unlink_artifact", original)
+
+    def reopen_owned_storage():
+        from tldw_chatbook.Plugins.authority_store import (
+            FilePluginMarkerStore,
+            PluginAuthorityStore,
+        )
+        from tldw_chatbook.Plugins.coordinator import PluginCoordinator
+        from tldw_chatbook.Plugins.registry import PluginRegistry
+        from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+        root = stack.owner.root.parent
+        stack.registry.close()
+        stack.owner.close()
+        stack.owner = PluginRuntimeOwner(root / "plugins")
+        assert stack.owner.try_acquire()
+        stack.registry = PluginRegistry(
+            stack.owner.root / "registry.sqlite3", owner=stack.owner
+        )
+        stack.authority = PluginAuthorityStore(
+            root / "trust" / "plugins",
+            FilePluginMarkerStore(root / "marker"),
+            accept_reduced_protection=True,
+        )
+        stack.authority.unlock("test passphrase")
+        stack.coordinator = PluginCoordinator(
+            stack.registry, stack.authority, stack.owner
+        )
+        return stack.coordinator.recover()
+
+    receipts = stack.call(reopen_owned_storage)
+    observed = stack.registry.operation_observed_at
+    monkeypatch.setattr(
+        stack.registry,
+        "operation_observed_at",
+        lambda _: datetime.now(UTC) - timedelta(days=31),
+    )
+    assert all(item.phase == "complete" for item in receipts), receipts
+    assert stack.call(stack.authority.load_marker) == current
+    assert stack.call(stack.coordinator.published_snapshot) == original_snapshot
+    stack.call(lambda: retention.prune_transition_history(stack.coordinator))
+    assert not old_snapshot_path.exists()
+    assert all(
+        item.phase == "complete" for item in stack.call(stack.coordinator.recover)
+    )
+    assert stack.call(stack.coordinator.published_snapshot) == original_snapshot
+    monkeypatch.setattr(stack.registry, "operation_observed_at", observed)
+
+
+def test_coordinator_pruner_protects_live_aborted_review_and_refuses_only_protected_capacity(
+    plugin_stack, native_package, monkeypatch
+):
+    from Tests.Plugins.test_coordinator import reviewed
+    from tldw_chatbook.Plugins import authority_store, retention
+
+    stack = plugin_stack
+    aborted = reviewed(stack, native_package())
+
+    def interrupt(phase):
+        if phase == "prepared":
+            raise OSError("controlled prepared abort")
+
+    stack.coordinator.progress = interrupt
+    with pytest.raises(OSError, match="controlled prepared abort"):
+        stack.call(lambda: stack.coordinator.commit(aborted, aborted.operation_id))
+    stack.coordinator.progress = None
+    assert stack.call(stack.coordinator.recover)[0].phase == "aborted"
+    monkeypatch.setattr(authority_store, "MAX_TRANSITIONS", 3)
+    for _ in range(2):
+        review = reviewed(stack, native_package())
+        assert stack.call(
+            lambda review=review: stack.coordinator.commit(review, review.operation_id)
+        ).committed
+    before = stack.call(stack.authority.load_marker)
+    stack.call(lambda: retention.prune_transition_history(stack.coordinator))
+    inventory = stack.call(lambda: retention.transition_inventory(stack.authority))
+    assert len(inventory) == 3 and any(
+        item.new.operation_id == aborted.operation_id for item in inventory
+    )
+    blocked = reviewed(stack, native_package())
+    with pytest.raises(ValueError, match="capacity"):
+        stack.call(lambda: stack.coordinator.commit(blocked, blocked.operation_id))
+    assert stack.call(stack.authority.load_marker) == before
+    assert len(stack.call(lambda: retention.transition_inventory(stack.authority))) == 3
+    assert all(
+        item.phase in {"complete", "aborted"}
+        for item in stack.call(stack.coordinator.recover)
+    )
+    original_retry = stack.call(
+        lambda: stack.coordinator.commit(aborted, aborted.operation_id)
+    )
+    assert original_retry.phase == "aborted" and not original_retry.committed
+    assert stack.call(stack.authority.load_marker) == before
+
+
+@pytest.fixture
+def orphan_snapshot_case(plugin_stack, native_package):
+    from Tests.Plugins.test_coordinator import reviewed
+    from tldw_chatbook.Plugins.retention import transition_inventory
+
+    stack = plugin_stack
+    bootstrap = stack.call(stack.authority.load_marker)
+    for _ in range(3):
+        review = reviewed(stack, native_package())
+        stack.call(
+            lambda review=review: stack.coordinator.commit(review, review.operation_id)
+        )
+    evidence = sorted(
+        stack.call(lambda: transition_inventory(stack.authority)),
+        key=lambda item: item.new.generation,
+    )
+    first = evidence[0]
+    stack.call(lambda: stack.registry.forget_operation_hints((first.new.operation_id,)))
+    for purpose in ("committed", "prepared"):
+        stack.call(
+            lambda purpose=purpose: stack.authority._unlink_artifact(
+                stack.authority._operation_path(purpose, first.new.operation_id)
+            )
+        )
+    assert all(
+        item.phase == "complete" for item in stack.call(stack.coordinator.recover)
+    )
+    return stack, bootstrap, evidence
+
+
+def _extra_snapshot(stack, generation, nonce, *, legacy_id=None):
+    import copy
+    import hashlib
+
+    from tldw_chatbook.Plugins.authority import PluginMarker, snapshot_digest
+
+    def write():
+        snapshot = copy.deepcopy(stack.authority.verify_current())
+        result = snapshot["operation_result"]
+        result.pop("operation_id")
+        nonce_digest = hashlib.sha256(nonce.encode()).hexdigest()
+        operation_id = legacy_id or stack.authority.issue_operation_id(
+            generation, nonce_digest, result, nonce_digest
+        )
+        result["operation_id"] = operation_id
+        marker = PluginMarker(
+            generation=generation,
+            operation_id=operation_id,
+            recovery_snapshot_digest=snapshot_digest(snapshot),
+        )
+        stack.authority._save_snapshot(snapshot, marker)
+        return marker, snapshot
+
+    return stack.call(write)
+
+
+def test_orphan_snapshot_cleanup_protects_bootstrap_current_referenced_and_newer(
+    orphan_snapshot_case,
+):
+    stack, bootstrap, evidence = orphan_snapshot_case
+    current = stack.call(stack.authority.load_marker)
+    newer, _ = _extra_snapshot(stack, current.generation + 1, "future")
+    same_generation, _ = _extra_snapshot(stack, current.generation, "same-generation")
+    stack.call(
+        lambda: stack.authority.retire_orphan_snapshots(
+            protected_operation_ids=frozenset({evidence[0].new.operation_id})
+        )
+    )
+    assert stack.authority._snapshot_path(evidence[0].new).exists()
+    stack.call(stack.authority.retire_orphan_snapshots)
+    assert not stack.authority._snapshot_path(evidence[0].new).exists()
+    for marker in (bootstrap, evidence[1].new, current, newer, same_generation):
+        assert (
+            stack.call(lambda marker=marker: stack.authority.verify_snapshot(marker))
+            is not None
+        )
+    assert stack.call(stack.authority.load_marker) == current
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "ciphertext",
+        "filename",
+        "link",
+        "directory",
+        "unexpected",
+        "unknown_legacy",
+        "issued_generation",
+        "changed_identity",
+        "changed_bytes",
+    ],
+)
+def test_orphan_snapshot_inventory_refuses_unknown_invalid_or_changed_material(
+    orphan_snapshot_case, monkeypatch, damage
+):
+    import json
+    import os
+
+    from tldw_chatbook.Plugins.authority import PluginMarker, snapshot_digest
+
+    stack, _, evidence = orphan_snapshot_case
+    marker, snapshot = _extra_snapshot(
+        stack,
+        1,
+        "extra",
+        legacy_id="unknown-legacy" if damage == "unknown_legacy" else None,
+    )
+    path = stack.authority._snapshot_path(marker)
+    if damage == "ciphertext":
+        value = json.loads(path.read_text())
+        value["blob"]["ciphertext"] = "not-encrypted"
+        path.write_text(json.dumps(value))
+    elif damage == "filename":
+        path.rename(path.with_name("f" * 64 + ".json"))
+    elif damage == "link":
+        path.unlink()
+        path.symlink_to(stack.authority._snapshot_path(evidence[1].new))
+    elif damage == "directory":
+        path.unlink()
+        path.mkdir()
+    elif damage == "unexpected":
+        path.rename(path.with_name("unexpected.json"))
+    elif damage == "issued_generation":
+        path.unlink()
+        wrong = PluginMarker(
+            generation=2,
+            operation_id=marker.operation_id,
+            recovery_snapshot_digest=snapshot_digest(snapshot),
+        )
+        stack.call(lambda: stack.authority._save_snapshot(snapshot, wrong))
+    elif damage in {"changed_identity", "changed_bytes"}:
+        original = stack.authority._unlink_artifact
+
+        def replace_before_unlink(candidate, **kwargs):
+            if damage == "changed_identity":
+                replacement = candidate.with_suffix(".replacement")
+                replacement.write_bytes(candidate.read_bytes())
+                replacement.chmod(0o600)
+                os.replace(replacement, candidate)
+            else:
+                candidate.write_bytes(candidate.read_bytes() + b" ")
+            return original(candidate, **kwargs)
+
+        monkeypatch.setattr(stack.authority, "_unlink_artifact", replace_before_unlink)
+    before = stack.call(stack.authority.load_marker)
+    with pytest.raises((ValueError, OSError)):
+        stack.call(stack.authority.retire_orphan_snapshots)
+    assert stack.authority._snapshot_path(evidence[0].new).exists()
+    assert stack.call(stack.authority.load_marker) == before
+
+
+def test_snapshot_capacity_refuses_allocation_and_overflow_but_preserves_exact_retry(
+    orphan_snapshot_case, monkeypatch
+):
+    from tldw_chatbook.Plugins import authority_store
+
+    stack, _, evidence = orphan_snapshot_case
+    monkeypatch.setattr(authority_store, "MAX_TRANSITIONS", 3)
+    for index in range(4):
+        marker, snapshot = _extra_snapshot(stack, 4, f"future-{index}")
+    assert len(list((stack.authority.store_dir / "snapshots").iterdir())) == 8
+    stack.call(lambda: stack.authority._save_snapshot(snapshot, marker))
+    with pytest.raises(ValueError, match="capacity"):
+        _extra_snapshot(stack, 4, "over-capacity")
+    extra = stack.authority.store_dir / "snapshots" / ("f" * 64 + ".json")
+    extra.write_bytes(stack.authority._snapshot_path(marker).read_bytes())
+    extra.chmod(0o600)
+    with pytest.raises(ValueError, match="excessive snapshot"):
+        stack.call(stack.authority.retire_orphan_snapshots)
+    assert stack.authority._snapshot_path(evidence[0].new).exists()
+    extra.unlink()
+    stack.call(stack.authority.retire_orphan_snapshots)
+    assert not stack.authority._snapshot_path(evidence[0].new).exists()
+
+
+def test_orphan_snapshot_fixed_legacy_membership_is_exact(plugin_stack, native_package):
+    from Tests.Plugins.test_coordinator import reviewed
+    from Tests.Plugins.test_recovery import (
+        _legacy_fixture_commit,
+        _legacy_fixture_namespace,
+    )
+
+    stack = plugin_stack
+    _legacy_fixture_namespace(stack)
+    legacy = _legacy_fixture_commit(stack, native_package(), "legacy-one")
+    assert all(
+        item.phase == "complete" for item in stack.call(stack.coordinator.recover)
+    )
+    fixed = stack.call(stack.authority.verify_legacy_cutover)
+    review = reviewed(stack, native_package())
+    stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
+    stack.call(
+        lambda: stack.registry.forget_operation_hints((legacy.new.operation_id,))
+    )
+    for purpose in ("committed", "prepared"):
+        stack.call(
+            lambda purpose=purpose: stack.authority._unlink_artifact(
+                stack.authority._operation_path(purpose, legacy.new.operation_id)
+            )
+        )
+    assert all(
+        item.phase == "complete" for item in stack.call(stack.coordinator.recover)
+    )
+    stack.call(stack.authority.retire_orphan_snapshots)
+    assert not stack.authority._snapshot_path(legacy.new).exists()
+    marker, _ = _extra_snapshot(stack, 1, "mismatched-legacy", legacy_id="legacy-one")
+    with pytest.raises(ValueError, match="unknown legacy"):
+        stack.call(stack.authority.retire_orphan_snapshots)
+    assert stack.authority._snapshot_path(marker).exists()
+    assert stack.call(stack.authority.verify_legacy_cutover) == fixed

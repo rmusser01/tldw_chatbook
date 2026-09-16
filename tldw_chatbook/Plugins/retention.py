@@ -88,6 +88,11 @@ def prune_transition_history(coordinator) -> None:
         for review in coordinator._reviews.values()
         if review.expires_at > time.monotonic()
     }
+    authority.retire_orphan_snapshots(
+        protected_operation_ids=frozenset(
+            item.new.operation_id for item in aborted if item.new.operation_id in live
+        )
+    )
     now = datetime.now(UTC)
     count = len(evidence)
     for item in aborted:
@@ -252,8 +257,10 @@ def remove_revision_root(coordinator, installation_id, row, *, remove=True) -> b
         for component in relative.parts[:-1]:
             try:
                 fd = os.open(component, flags, dir_fd=fd)
-            except FileNotFoundError:
-                return False
+            except FileNotFoundError as error:
+                # Absence is only qualified beneath the captured exact anchor.
+                # A missing ancestor may have moved with the original package.
+                raise ValueError("retention ancestor unavailable") from error
             opened.append(fd)
         anchor = os.fstat(fd)
         if (anchor.st_dev, anchor.st_ino) != (

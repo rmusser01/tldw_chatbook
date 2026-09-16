@@ -524,7 +524,15 @@ class PluginRegistry:
         if phase == "complete":
             from datetime import datetime
 
-            if result["revision_digest"] and result["kind"] in {"install", "update"}:
+            if (
+                result["revision_digest"]
+                and result["kind"] in {"install", "update"}
+                and cursor.execute(
+                    "SELECT 1 FROM revisions WHERE installation_id=? AND revision_digest=?",
+                    (result["installation_id"], result["revision_digest"]),
+                ).fetchone()
+                is not None
+            ):
                 cursor.execute(
                     "INSERT INTO receipts VALUES (?, ?, ?) ON CONFLICT(receipt_id) DO NOTHING",
                     (

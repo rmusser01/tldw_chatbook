@@ -204,3 +204,25 @@ original physical root/anchor/directory identities frozen before issuance. The
 existing authenticated result is restart cleanup custody. Other operation kinds
 reject that field; historical absent fields preserve exact bytes. Pending cleanup
 keeps its transition evidence protected until exact owned removal/absence is proven.
+
+### R45: interrupted snapshot retirement (2026-09-16)
+
+After successful reconciliation and durable metadata-v2/fixed-cutover validation,
+the existing exclusive storage owner may rediscover orphan historical snapshots.
+Inventory the entire private snapshot directory before cleanup, bounded at
+`2 * MAX_TRANSITIONS + 2` (2,002) regular digest-named files; unexpected names,
+links, unqualified ancestry, overflow or invalid authentication refuse cleanup.
+Keep the existing 32 MiB per-file bound and decode bodies sequentially. New snapshot
+allocation obeys the same count cap; an existing exact snapshot remains retryable
+at capacity. Authenticate each candidate's exact header/body/digest and bind those
+bytes to its opened file and directory identity before descriptor-relative unlink.
+Recheck current marker and authenticated transition references before removal.
+
+Protect bootstrap, current, generation >= current, every present intent/certificate's
+new snapshot, unresolved/live-review/recovery material, and separately owned reset
+archives/receipts. A retained suffix's old endpoint tuple does not require its old
+body under R29. An older unreferenced result qualifies only through its valid pi1
+MAC with matching issued/snapshot generation or exact result-digest membership in
+the fixed legacy cutover map. Unknown legacy results refuse cleanup; never expand
+that map, infer commitment, authorize replay or select package/data/reset bytes.
+No live admission/revocation lock is held during this storage work.

@@ -31,6 +31,7 @@ class RevisionTicket:
     task: asyncio.Task | None = None
     operation_id: str | None = None
     unresolved: tuple[str, ...] = ()
+    ownership_pending: bool = True
 
 
 class RevisionDrain:
@@ -42,8 +43,9 @@ class RevisionDrain:
     work ownership; absence of active requests alone never proves process cleanup.
     """
 
-    def __init__(self, fences):
+    def __init__(self, fences, inventory=None):
         self.fences = fences
+        self._inventory = inventory
 
     def reserve(
         self,
@@ -123,9 +125,25 @@ class RevisionDrain:
                 {"lease_token": value, "kind": "unresolved_cleanup"}
                 for value in ticket.unresolved
             )
+            if ticket.ownership_pending and ticket.phase in {"waiting", "committing"}:
+                rows.append({"kind": "ownership_inventory_pending"})
             if ticket.cleanup and ticket.cleanup.cleanup_tasks:
                 rows.append({"kind": "cleanup_callback"})
             return tuple(rows)
+
+    def record_inventory(self, token: str, unsettled: tuple[str, ...]) -> None:
+        """Publish a worker-observed inventory without performing I/O under the fence."""
+        with self.fences.live_lock:
+            ticket = self.ticket(token)
+            active = {
+                record.lease_token
+                for record in ticket.records
+                if not record.completed.is_set()
+            }
+            ticket.unresolved = tuple(
+                value for value in unsettled if value not in active
+            )
+            ticket.ownership_pending = False
 
     def cancel(self, token: str) -> None:
         """Cancel this proposal only; never cancel work or release other tickets."""
@@ -154,6 +172,16 @@ class RevisionDrain:
     async def wait(self, token: str) -> None:
         """Wait without holding the live lock; waiter cancellation owns no cleanup."""
         while True:
+            with self.fences.live_lock:
+                ticket = self.ticket(token)
+                if ticket.phase in {"cancelled", "expired", "reserved"}:
+                    raise ValueError("plugin_drain_not_waiting")
+            if self._inventory is None:
+                raise RuntimeError("plugin_drain_owner_inventory_unavailable")
+            # The synchronous fence is already closed. Storage stalls cannot
+            # prevent another live disable/cancel from acquiring its lock.
+            unsettled = await self._inventory(ticket.installation_id)
+            self.record_inventory(token, unsettled)
             with self.fences.live_lock:
                 ticket = self.ticket(token)
                 if ticket.phase in {"cancelled", "expired"}:

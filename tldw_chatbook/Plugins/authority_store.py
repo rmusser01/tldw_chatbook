@@ -624,6 +624,9 @@ class PluginAuthorityStore:
                 raise ValueError("conflicting immutable snapshot")
             _sync_existing(path)
             return
+        names, _ = self._snapshot_inventory()
+        if len(names) >= 2 * MAX_TRANSITIONS + 2:
+            raise ValueError("snapshot inventory capacity exhausted")
         header = {"schema_version": 1, "marker": marker.model_dump()}
         blob = encrypt_json_blob(
             snapshot, key, associated_data=authority_message("snapshot", header)
@@ -633,9 +636,11 @@ class PluginAuthorityStore:
 
     def verify_snapshot(self, marker: PluginMarker) -> dict:
         """Authenticate marker-bound complete reconstruction authority."""
-        key = self._require_keys().snapshot_key
         marker = PluginMarker.model_validate(marker)
-        value = _read(self._snapshot_path(marker))
+        return self._verify_snapshot_value(marker, _read(self._snapshot_path(marker)))
+
+    def _verify_snapshot_value(self, marker: PluginMarker, value: dict) -> dict:
+        key = self._require_keys().snapshot_key
         header = {"schema_version": 1, "marker": marker.model_dump()}
         if (
             set(value) != {"header", "blob"}
@@ -847,14 +852,36 @@ class PluginAuthorityStore:
             result.append(self.verify_transition(operation_id))
         return tuple(result)
 
-    def _unlink_artifact(self, path: Path) -> None:
+    def _unlink_artifact(
+        self,
+        path: Path,
+        *,
+        expected_identity=None,
+        parent_identity=None,
+        expected_digest=None,
+    ) -> None:
         """Remove an exact qualified private artifact with directory durability."""
         with open_private_binary(path) as opened:
             if not opened.result.verified_private:
                 raise ValueError("unqualified retention artifact")
+            if expected_digest is not None:
+                data = opened.stream.read(MAX_ARTIFACT_BYTES + 1)
+                if hashlib.sha256(data).hexdigest() != expected_digest:
+                    raise ValueError("authenticated retention bytes changed")
             pinned = os.fstat(opened.stream.fileno())
+            if (
+                expected_identity is not None
+                and (pinned.st_dev, pinned.st_ino) != expected_identity
+            ):
+                raise ValueError("authenticated retention artifact changed")
             fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
+                parent = os.fstat(fd)
+                if (
+                    parent_identity is not None
+                    and (parent.st_dev, parent.st_ino) != parent_identity
+                ):
+                    raise ValueError("retention snapshot directory changed")
                 observed = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
                 if (pinned.st_dev, pinned.st_ino) != (observed.st_dev, observed.st_ino):
                     raise ValueError("retention artifact changed")
@@ -862,6 +889,118 @@ class PluginAuthorityStore:
                 os.fsync(fd)
             finally:
                 os.close(fd)
+
+    def _snapshot_inventory(self):
+        """Qualify the entire bounded namespace before selecting any artifacts."""
+        path = self.store_dir / "snapshots"
+        if not os.path.lexists(path):
+            return (), None
+        qualification = verify_trusted_directory(path, allow_shared_sticky=False)
+        if qualification.status != PrivatePathStatus.TRUSTED_DIRECTORY:
+            raise ValueError("unqualified snapshot inventory")
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            parent = os.fstat(fd)
+            names = []
+            with os.scandir(fd) as entries:
+                for entry in entries:
+                    if (
+                        len(names) >= 2 * MAX_TRANSITIONS + 2
+                        or re.fullmatch(r"[0-9a-f]{64}\.json", entry.name) is None
+                        or not entry.is_file(follow_symlinks=False)
+                    ):
+                        raise ValueError("invalid or excessive snapshot inventory")
+                    names.append(entry.name)
+            return tuple(sorted(names)), (parent.st_dev, parent.st_ino)
+        finally:
+            os.close(fd)
+
+    def _snapshot_references(self):
+        names = self._transition_inventory()
+        references = set()
+        for name in names["intents"]:
+            path = self.store_dir / "intents" / name
+            envelope = _read(path)
+            operation_id = envelope["payload"]["new"]["operation_id"]
+            if self._operation_path("prepared", operation_id) != path:
+                raise ValueError("transition filename mismatch")
+            payload = self._read_evidence("prepared", operation_id)
+            if (
+                name in names["certificates"]
+                and self._read_evidence("committed", operation_id) != payload
+            ):
+                raise ValueError("commit certificate mismatch")
+            references.add(payload["new"]["recovery_snapshot_digest"])
+        return references
+
+    def retire_orphan_snapshots(
+        self, *, protected_operation_ids: frozenset[str] = frozenset()
+    ) -> None:
+        """Finish interrupted retirement, never derive authority from orphan bytes.
+
+        The coordinator calls after reconciliation under its exclusive owner.
+        Keep only bounded marker/file identities between sequential body reads.
+        """
+        if self.metadata()["schema_version"] != 2:
+            raise ValueError("retention requires durable issued-ID cutover")
+        legacy = self.verify_legacy_cutover()
+        legacy_results = {
+            entry.operation_id: entry.result_digest for entry in legacy.entries
+        }
+        current = self.load_marker()
+        self.verify_current()
+        references = self._snapshot_references()
+        names, parent_identity = self._snapshot_inventory()
+        candidates = []
+        for name in names:
+            path = self.store_dir / "snapshots" / name
+            with open_private_binary(path) as opened:
+                if not opened.result.verified_private:
+                    raise ValueError("unqualified snapshot retirement")
+                data = opened.stream.read(MAX_ARTIFACT_BYTES + 1)
+                if len(data) > MAX_ARTIFACT_BYTES:
+                    raise ValueError("authority artifact limit")
+                value = _decode(data)
+                if (
+                    type(value.get("header")) is not dict
+                    or "marker" not in value["header"]
+                ):
+                    raise ValueError("invalid snapshot header")
+                marker = PluginMarker.model_validate(value["header"]["marker"])
+                if self._snapshot_path(marker) != path:
+                    raise ValueError("snapshot filename mismatch")
+                snapshot = self._verify_snapshot_value(marker, value)
+                pinned = os.fstat(opened.stream.fileno())
+                identity = (pinned.st_dev, pinned.st_ino)
+            if (
+                marker.generation == 0
+                or marker.operation_id in protected_operation_ids
+                or marker.generation >= current.generation
+                or marker.recovery_snapshot_digest in references
+            ):
+                continue
+            result = snapshot["operation_result"]
+            if marker.operation_id.startswith("pi1."):
+                issued = self.verify_operation_id(marker.operation_id, result)
+                if issued.generation != marker.generation:
+                    raise ValueError("snapshot issued generation mismatch")
+            elif legacy_results.get(marker.operation_id) != self.result_digest(result):
+                raise ValueError("unknown legacy snapshot result")
+            candidates.append((path, identity, hashlib.sha256(data).hexdigest()))
+        # Authenticate the whole inventory before unlinking any prefix. A changed
+        # marker/reference or replacement file never inherits this qualification.
+        for path, identity, digest in candidates:
+            if (
+                self.load_marker() != current
+                or self._snapshot_references() != references
+            ):
+                raise ValueError("snapshot retention authority changed")
+            self._unlink_artifact(
+                path,
+                expected_identity=identity,
+                parent_identity=parent_identity,
+                expected_digest=digest,
+            )
 
     def retire_transition(self, evidence: TransitionEvidence) -> None:
         """Remove a caller-qualified oldest prefix item after durable hint removal."""

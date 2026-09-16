@@ -203,8 +203,9 @@ def test_fleet_retention_keeps_exact_host_pin_and_refuses_missing_required_pin()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("broader_parent", [False, True])
 async def test_actual_console_fleet_producer_resumes_exact_pin_and_refuses_changed_scope(
-    native_console, tmp_path
+    native_console, tmp_path, broader_parent
 ):
     import asyncio
     import threading
@@ -228,6 +229,7 @@ async def test_actual_console_fleet_producer_resumes_exact_pin_and_refuses_chang
     rig = native_console
     installed = await rig.install()
     holder = {}
+    reviews = []
 
     def resume():
         return [
@@ -248,7 +250,11 @@ async def test_actual_console_fleet_producer_resumes_exact_pin_and_refuses_chang
             resume,
             ["refusal handled"],
         ],
-        [["child done"], ["child resumed"]],
+        [
+            ["child done"],
+            [_fence("calculator", {"expression": "6*7"})],
+            ["child resumed"],
+        ],
     )
     database = AgentRunsDB(tmp_path / "fleet.sqlite", client_id="managed-fleet")
     bridge = ConsoleAgentBridge(
@@ -274,6 +280,9 @@ async def test_actual_console_fleet_producer_resumes_exact_pin_and_refuses_chang
             skills_context=maximum,
             workspace_id="workspace-a",
             plugin_cancel_root=threading.Event().set,
+            review_tool_calls=lambda calls, run_id: (
+                reviews.append((run_id, tuple(call.name for call in calls))) or {}
+            ),
         )
         await asyncio.to_thread(_join_fleet_threads)
         assert outcome.status == "done", outcome
@@ -287,19 +296,30 @@ async def test_actual_console_fleet_producer_resumes_exact_pin_and_refuses_chang
         retained = fleet.get_retained(first.handle_id)
         assert retained and retained.managed_required and retained.managed_pin
         holder["handle"] = first.handle_id
+        if broader_parent:
+            await rig.install()
         await turn("second")
-        assert gateway.child_calls == 2
+        assert gateway.child_calls == 3
         resumed = [
             row
             for row in database.list_runs("fleet-managed")
             if row.get("resumed_from_run_id") == first.run_id
         ]
         assert len(resumed) == 1
+        child = database.get_run(resumed[0]["id"])
+        assert child["status"] == "done"
+        assert (resumed[0]["id"], ("calculator",)) in reviews, reviews
+        assert any(
+            step.get("tool_name") == "calculator"
+            and step.get("tool_outcome") == "success"
+            for step in child["steps"]
+        ), child["steps"]
+
         await rig.service.disable(
             RevocationTarget(installed.installation_id, "workspace-a", False)
         )
         await turn("third")
-        assert gateway.child_calls == 2
+        assert gateway.child_calls == 3
         assert (
             len(
                 [
@@ -634,3 +654,202 @@ async def test_archived_subset_stays_narrow_under_broader_current_selection(
     finally:
         await asyncio.to_thread(service.complete_run, "child")
         await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_blocked_v2_admission_does_not_delay_immediate_revocation(
+    revocation_case, monkeypatch
+):
+    import asyncio
+    import json
+    import threading
+
+    from Tests.Chat.test_provider_continuation import _checkpoint
+    from tldw_chatbook.Chat.provider_continuation import (
+        parse_provider_continuation_json,
+    )
+    from tldw_chatbook.Plugins.revocation import RevocationTarget
+
+    case = revocation_case
+    service = case.service
+    pin = await asyncio.to_thread(
+        service.capture_resume_pin,
+        case.entries["a"],
+        "root-a",
+        "conversation",
+        "message",
+    )
+    sealed = await asyncio.to_thread(
+        service.seal_resume_checkpoint,
+        pin,
+        parse_provider_continuation_json(json.dumps(_checkpoint())),
+        "conversation",
+        "message",
+    )
+    maximum = await service.resume_maximum(
+        service.capture_maximum("a"), sealed, "conversation", "message"
+    )
+    assert (await service.admit(maximum, "v2-control"))["available_skills"]
+    entered, release, sealed_live = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    original = service._coordinator.authority.verify_archive_pin
+
+    def blocked(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service._coordinator.authority, "verify_archive_pin", blocked)
+    admitted = asyncio.create_task(service.admit(maximum, "v2-blocked"))
+    request = None
+
+    async def revoke():
+        nonlocal request
+        request = service.begin_disable(RevocationTarget(case.installation, "a", False))
+        sealed_live.set()
+        return await service.finish_revocation(request)
+
+    def run_revoke():
+        return asyncio.run(revoke())
+
+    revocation = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        revocation = asyncio.create_task(asyncio.to_thread(run_revoke))
+        assert await asyncio.to_thread(
+            sealed_live.wait, 1
+        ), "V2 storage verification blocked synchronous revocation"
+        assert request is not None
+        await asyncio.wait_for(case.cleanup_started.wait(), 1)
+        with pytest.raises(PermissionError):
+            service.check_entries_live(case.entries["a"])
+    finally:
+        release.set()
+        await asyncio.gather(admitted, return_exceptions=True)
+        if revocation is not None:
+            await asyncio.gather(revocation, return_exceptions=True)
+    assert admitted.done() and isinstance(admitted.exception(), PermissionError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["generation", "coverage", "fence", "path"])
+async def test_authenticated_data_pin_refuses_changed_root_authority(
+    revocation_case, tmp_path, change
+):
+    import asyncio
+    import hashlib
+    import json
+    from uuid import uuid4
+
+    from Tests.Chat.test_provider_continuation import _checkpoint
+    from tldw_chatbook.Chat.provider_continuation import (
+        parse_provider_continuation_json,
+    )
+    from tldw_chatbook.Plugins.authority import PluginMarker, snapshot_digest
+
+    case = revocation_case
+    service = case.service
+    data = tmp_path / "qualified-data-fixture"
+    data.mkdir()
+    root = {
+        "root_id": "qualified-root",
+        "installation_id": case.installation,
+        "workspace_id": "a",
+        "path": str(data),
+        "generation": 1,
+        "deletion_fenced": False,
+    }
+
+    async def publish(rows):
+        # Existing F4 authenticated authority fixture, not a future F8 producer.
+        # Keep activation generations fixed so only data compatibility can refuse.
+        async def operation():
+            c = service._coordinator
+            old = c.authority.load_marker()
+            result = {
+                "kind": "configure",
+                "installation_id": case.installation,
+                "revision_digest": c.published_snapshot()["installations"][0][
+                    "revision_digest"
+                ],
+                "result": "committed",
+            }
+            op = c.authority.issue_operation_id(
+                old.generation + 1,
+                hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest(),
+                result,
+                uuid4().hex + uuid4().hex,
+            )
+            result["operation_id"] = op
+            with c.registry.transaction() as cursor:
+                cursor.execute(
+                    "DELETE FROM data_roots WHERE installation_id=?",
+                    (case.installation,),
+                )
+                for row in rows:
+                    cursor.execute(
+                        "INSERT INTO data_roots VALUES (?, ?, ?, ?, ?, ?)",
+                        tuple(
+                            row[key]
+                            for key in (
+                                "root_id",
+                                "installation_id",
+                                "workspace_id",
+                                "path",
+                                "generation",
+                                "deletion_fenced",
+                            )
+                        ),
+                    )
+                snapshot = c.registry.authority_projection(operation_result=result)
+                new = PluginMarker(
+                    generation=old.generation + 1,
+                    operation_id=op,
+                    recovery_snapshot_digest=snapshot_digest(snapshot),
+                )
+                c.authority.prepare(snapshot, old, new)
+                c.registry.write_operation(cursor, result, phase="committed")
+            c.authority.certify_commit(old, new)
+            c.authority.advance_marker(old, new)
+            assert all(item.committed for item in await c.recover())
+            service._refresh()
+
+        await service._call(operation)
+
+    await publish([root])
+    pin = await asyncio.to_thread(
+        service.capture_resume_pin,
+        case.entries["a"],
+        "root-a",
+        "conversation",
+        "message",
+    )
+    assert json.loads(pin)["installations"][0]["data_coverage"] == "known"
+    sealed = await asyncio.to_thread(
+        service.seal_resume_checkpoint,
+        pin,
+        parse_provider_continuation_json(json.dumps(_checkpoint())),
+        "conversation",
+        "message",
+    )
+    positive = await service.resume_maximum(
+        service.capture_maximum("a"), sealed, "conversation", "message"
+    )
+    assert (await service.admit(positive, "data-positive"))["available_skills"]
+    changed = dict(root)
+    if change == "generation":
+        changed["generation"] += 1
+    elif change == "fence":
+        changed["deletion_fenced"] = True
+    elif change == "path":
+        changed["path"] = str(tmp_path / "another-qualified-data-root")
+    await publish([] if change == "coverage" else [changed])
+    with pytest.raises(PermissionError, match="authority or data changed"):
+        await service.resume_maximum(
+            service.capture_maximum("a"), sealed, "conversation", "message"
+        )
+    with pytest.raises(PermissionError, match="authority or data changed"):
+        await service.admit(positive, "stale-data-positive")

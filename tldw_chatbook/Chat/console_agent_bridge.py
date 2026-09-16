@@ -6592,17 +6592,18 @@ class ConsoleAgentBridge:
             original_dispatch = before_tool_dispatch
 
             def review_tool_calls(calls, kind):
-                bind_plugin_actor()
-                plugin_service.check_entries_from_agent(plugin_entries)
+                active_plugin_entries = bind_plugin_actor()
+                plugin_service.check_entries_from_agent(active_plugin_entries)
                 decisions = original_review(calls, kind) if original_review else {}
-                plugin_service.check_entries_from_agent(plugin_entries)
+                plugin_service.check_entries_from_agent(active_plugin_entries)
                 return decisions
 
             def before_tool_dispatch(calls, pure_runtime_tools):
-                bind_plugin_actor()
+                active_plugin_entries = bind_plugin_actor()
+                plugin_service.check_entries_from_agent(active_plugin_entries)
                 if original_dispatch is not None:
                     original_dispatch(calls, pure_runtime_tools)
-                plugin_service.check_entries_from_agent(plugin_entries)
+                plugin_service.check_entries_from_agent(active_plugin_entries)
 
         run_log_writer = None
         if scratch_root is not None and scratch_lease is not None:

@@ -55,7 +55,12 @@ class PluginService:
         self.fences = LivePluginFences()
         from .revisions import RevisionDrain
 
-        self.revision_drain = RevisionDrain(self.fences)
+        self.revision_drain = RevisionDrain(
+            self.fences,
+            lambda identity: self._call(
+                lambda: self._coordinator._drain_inventory(identity)
+            ),
+        )
         self._lock = self.fences.live_lock
         self._thread = None
         self._closed = False
@@ -71,6 +76,7 @@ class PluginService:
         self._bound_runs = {}
         self._terminal_runs = set()
         self._live_runs = self.fences.runs
+        self._revision_refresh_tasks: set[asyncio.Task] = set()
 
     def _start(self):
         with self._lock:
@@ -204,10 +210,24 @@ class PluginService:
             review.drain_token, review=review, operation_id=operation_id
         )
 
+        def refresh_completed(task):
+            self._revision_refresh_tasks.discard(task)
+            self._refresh()
+
         async def operation():
             try:
                 return await self._coordinator.apply_revision(review, operation_id)
             finally:
+                task = self.revision_drain.ticket(review.drain_token).task
+                # The coordinator retains Apply when this caller leaves. Its
+                # terminal publication must refresh the facade independently.
+                if (
+                    task is not None
+                    and not task.done()
+                    and task not in self._revision_refresh_tasks
+                ):
+                    self._revision_refresh_tasks.add(task)
+                    task.add_done_callback(refresh_completed)
                 self._refresh()
 
         return await self._call(operation)
@@ -401,10 +421,11 @@ class PluginService:
         def operation():
             from .continuation import constrain_maximum
 
-            with self._lock:
-                narrowed = constrain_maximum(
-                    self, maximum, maximum.get("plugin_resume_constraint")
-                )
+            # Files, SQLite and package bytes are verified on the worker without
+            # holding the lock needed by immediate live revocation.
+            narrowed = constrain_maximum(
+                self, maximum, maximum.get("plugin_resume_constraint")
+            )
             return admit_narrowed(narrowed)
 
         def admit_narrowed(maximum):
@@ -478,9 +499,12 @@ class PluginService:
                     key = (run_id, row["plugin_ceiling"], workspace)
                     token = self._admission_keys.get(key)
                     with self._lock:
+                        self.fences.check_snapshot(snapshot)
                         self.fences.require_admission(
                             snapshot.installation_id, snapshot.revision_digest
                         )
+                        if run_id in self._retired:
+                            raise PluginUnavailable("plugin_turn_retired")
                         if token is None:
                             token = uuid4().hex
                             self._admission_keys[key] = token
@@ -501,9 +525,22 @@ class PluginService:
                         trust_blocked=False,
                     )
                 rows.append(row)
-            self._pending_custody.setdefault(run_id, (turn_id, ceiling))
-            result["available_skills"] = rows
-            return result
+            with self._lock:
+                if run_id in self._retired:
+                    raise PluginUnavailable("plugin_turn_retired")
+                # Verification of a later installation may have stalled after an
+                # earlier one passed. Publish the whole admitted set atomically
+                # against current live generations and drain state, without I/O.
+                for row in rows:
+                    if row.get("plugin_owned"):
+                        snapshot = self._admitted[row["plugin_admission"]]
+                        self.fences.check_snapshot(snapshot)
+                        self.fences.require_admission(
+                            snapshot.installation_id, snapshot.revision_digest
+                        )
+                self._pending_custody.setdefault(run_id, (turn_id, ceiling))
+                result["available_skills"] = rows
+                return result
 
         return await self._call(operation)
 

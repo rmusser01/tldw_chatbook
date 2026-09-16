@@ -58,11 +58,15 @@ class PluginCoordinator:
         self.fences = fences or LivePluginFences()
         from .revisions import RevisionDrain
 
-        self.revision_drain = RevisionDrain(self.fences)
+        self.revision_drain = RevisionDrain(self.fences, self._drain_inventory)
         self._revocation_reviews = {}
         self._reviews: dict[str, PluginReview] = {}
         self._published: dict | None = None
         self.progress: Callable[[str], None] | None = None
+
+    async def _drain_inventory(self, installation_id: str) -> tuple[str, ...]:
+        self._require_worker()
+        return self.owner.unsettled_tokens(installation_id)
 
     def _require_worker(self) -> None:
         if (
@@ -283,17 +287,8 @@ class PluginCoordinator:
                 while True:
                     # Storage may block; never hold the admission/cancellation lock.
                     unsettled = self.owner.unsettled_tokens(review.installation_id)
+                    self.revision_drain.record_inventory(ticket.token, unsettled)
                     with self.fences.live_lock:
-                        ticket.unresolved = tuple(
-                            token
-                            for token in unsettled
-                            if token
-                            not in {
-                                record.lease_token
-                                for record in ticket.records
-                                if not record.completed.is_set()
-                            }
-                        )
                         if ticket.phase == "cancelled":
                             raise ValueError("plugin_drain_cancelled_or_expired")
                         ready = not self.revision_drain.blockers(ticket.token)
@@ -546,6 +541,10 @@ class PluginCoordinator:
             operation = self._revocation_reviews[review.token]
             target = operation.target
             if review.kind == "uninstall":
+                cursor.execute(
+                    "DELETE FROM receipts WHERE operation_id=?",
+                    ("revision:" + review.installation_id,),
+                )
                 cursor.execute(
                     "INSERT INTO tombstones VALUES (?, ?, ?)",
                     (
