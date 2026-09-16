@@ -1808,13 +1808,11 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     id="library-ingest-keywords",
                     classes="library-ingest-field",
                 )
-        # Always mounted, even with empty text, so the Start button never
-        # shifts vertically when the gate line's copy appears/disappears
-        # (2026-07 UAT: the button jumped ~2 rows on every gate change,
-        # breaking muscle memory). The fixed inline height reserves the
-        # line's row when the text is empty (an auto-height empty Static
-        # would collapse to 0); the screen's path-changed handler updates
-        # the text in place instead of mounting/removing the widget.
+        # Always mounted with a minimum row, preserving the 2026-07 UAT
+        # fix for Start jumping when an empty gate collapsed. Longer
+        # recovery/consent copy must wrap (TASK-32663); a fixed one-row
+        # height hid its ending at compact widths. The screen updates
+        # the text in place, keeping form fields and focus mounted.
         # (task-2140) Always mounted, display-managed: the conditional
         # compose reintroduced the round-3 empty-Recent bug class -- a
         # text-only pre-flight applies via the NON-structural in-place
@@ -1842,7 +1840,6 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 classes="library-ingest-quiet-line",
                 markup=False,
             )
-            start_quiet_line.add_class("h-1")
             start_quiet_line.set_class(
                 state.start_confirm_armed, "-ingest-start-confirm"
             )

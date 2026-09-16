@@ -3050,6 +3050,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin-bottom: $ds-space-0;
 }
 
+/* Reserve the empty gate row, but show complete recovery and consent copy. */
+#library-ingest-start-quiet-line {
+    height: auto;
+    min-height: $ds-control-height-compact;
+}
+
 /* Accent treatment mirrors .console-action-primary
    (the project's live "primary action button" convention) so Start ingest
    reads as the one button that matters on this canvas. */

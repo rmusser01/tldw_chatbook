@@ -1,0 +1,76 @@
+{
+  "run": "run-002",
+  "app_run_returned": true,
+  "exit_code": 0,
+  "observed_shell": "zsh",
+  "owned_session_closed": true,
+  "terminal_quit_repeated_after_autopilot": true,
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": [
+        "ok"
+      ]
+    }
+  ],
+  "messages": 0,
+  "media": 0,
+  "ingest_jobs": 0,
+  "source_sha256": "912e63c0f2eaf6adc49c23ce07b237cb77cdc62ef3068960cf50f2dc6a315ec8",
+  "source_and_empty_directory_unchanged": true,
+  "app_log_error_lines": []
+}

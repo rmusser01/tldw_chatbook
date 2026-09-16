@@ -82,6 +82,8 @@ In server mode the **Export** rail row is disabled, with the tooltip
 - **Start** — a forecast line, a quiet gate line ("Enter a file path or
   URL to start.") and the "Start import" button, kept together in a pinned
   review bar so a long pre-check cannot push the decision below the fold.
+  Recovery and confirmation text wraps at narrow widths so the full reason
+  stays readable above Start. The empty explanation keeps one reserved row.
   After submission the blank review bar hides so Queue activity gets the
   viewport. The forecast is one
   sentence of counts for the staged selection — "2 will import · 1 will
@@ -1022,3 +1024,8 @@ button, "Can't save there: The folder /nonexistent/dir does not exist.", and
 accepts nothing; the ingest **Browse…** opens at the folder `[notes]
 sync_directory` names when nothing is remembered. Nothing on this page needed
 correcting.)*
+
+*Reviewed on feat/component-pattern-library — 2026-09-16 (TASK-32663):
+Import media recovery and consent text stays complete at compact widths.
+Targeted checks cover both themes; native checks exercise local preflight,
+keyboard Clear/re-entry and metadata retention without submitting imports.*

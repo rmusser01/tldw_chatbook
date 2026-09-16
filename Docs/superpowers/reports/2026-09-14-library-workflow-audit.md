@@ -532,3 +532,28 @@ healthy SQLite databases and zero messages. Normal terminal Quit returned exit
 Next review: Library ingestion/import journeys. Full form traversal, remote
 authorities, extraction/provider actions and restart remain outside this
 evidence. No full suite, push or integration into dev was performed.
+
+## Import media entry and recovery — TASK-32663
+
+The [entry review](../qa/2026-09-16-ingest-entry/README.md) repairs truncated
+Start explanations. Recovery and consent text now wraps, with one reserved
+row when empty, inside the existing docked commit bar. Mounted form fields,
+metadata and keyboard focus survive gate updates and Clear/re-entry.
+
+**271 distinct targeted checks pass.** Eight baseline clipping failures are now
+green. One inherited Parakeet model-directory row overflow remains red and was
+reproduced against the base commit. Zero new Ruff diagnostics; budgets and
+controller/screen sources are unchanged. Independent review found no actionable
+issue in this repair. Test-only setup and CSS_PATH corrections are documented
+in the QA report.
+
+Private native checks pass at 170×48 dark and 80×24 light. Six rendered captures
+show complete recovery messages and visible Start focus. Real local preflight
+and keyboard Clear/re-entry preserve metadata without submitting an import.
+Read-only checks confirm zero media, messages and jobs, ten healthy databases,
+unchanged source content and normal exit 0. The owned shell was closed.
+
+Next: per-type ingest options, beginning with the Parakeet directory-row
+overflow, then queue activity and recovery. File-picker operation, actual import
+execution, remote/provider actions and restart remain unqualified. No full suite,
+push or integration into dev was performed.
