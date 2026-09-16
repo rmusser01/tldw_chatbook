@@ -12,7 +12,9 @@ matters it is walked with ``pilot.press("tab")``, never ``widget.focus()``.
 
 from __future__ import annotations
 
+import os
 import re
+from datetime import datetime
 
 import pytest
 from textual.widgets import Button, Input, Static
@@ -27,6 +29,7 @@ from Tests.UI.test_library_notes_w4_editor import (
     _open_first_note,
 )
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+    library_note_location_line,
     library_note_property_block,
 )
 
@@ -211,3 +214,366 @@ async def test_keywords_are_reachable_and_editable_from_the_editor(size):
         assert after == f"{before}garden", (before, after)
         # Info was never opened to get here.
         assert screen.query_one("#library-note-context-region").display is False
+
+
+# --- task-32640: the editor header answers "where does this note live?" ----
+
+
+class _BoundRuntime:
+    """The one production seam the header reads, with its real signature.
+
+    ``LibraryNotesController._load_library_note_location`` looks up
+    ``app_instance.notes_sync_runtime_owner`` and awaits
+    ``note_file_location(note_id)``. The real owner's implementation is
+    pinned against a real store in
+    ``Tests/Notes/test_notes_sync_note_location.py``; this stands in for it
+    so the HEADER can be exercised without a started sync runtime, and it
+    carries the same signature so a change to that contract breaks here too.
+    """
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self.asked: list[str] = []
+
+    async def note_file_location(self, note_id: str) -> str:
+        self.asked.append(note_id)
+        return self._path
+
+
+def _location_row(screen) -> Static:
+    return screen.query_one("#library-note-location", Static)
+
+
+async def test_a_database_only_note_says_so_and_claims_no_file():
+    """task-32640 AC#1/AC#2, the unbound world.
+
+    Born red on the unfixed tree -- there was no row at all:
+    ``NoMatches: No nodes match '#library-note-location'``.
+    """
+    host = _build_notes_host(notes=_DATED_NOTE)
+    async with host.run_test(size=WIDE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+        await pilot.pause()
+
+        line = str(_location_row(screen).renderable)
+        assert line == "In the Library database only — no file on disk", line
+        # AC#2: no file, so no path and no write time are invented.
+        assert "/" not in line and "written" not in line
+
+
+async def test_a_synced_note_names_its_file_and_when_it_was_written(tmp_path):
+    """task-32640 AC#2/AC#4: the path from the live binding, the time from
+    the FILE -- not from the note record, which knows neither.
+
+    Born red on the unfixed tree for the same reason as the test above (no
+    such row); after the row existed but before the write time came from
+    ``stat``, the line ended at the path.
+    """
+    note_file = tmp_path / "vault" / "People" / "Sam.md"
+    note_file.parent.mkdir(parents=True)
+    note_file.write_text("# Sam\n", encoding="utf-8")
+    written_at = datetime(2026, 9, 15, 8, 6).timestamp()
+    os.utime(note_file, (written_at, written_at))
+
+    host = _build_notes_host(notes=_DATED_NOTE)
+    runtime = _BoundRuntime(str(note_file))
+    async with host.run_test(size=WIDE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        # Attached after the shell builds: the header asks the app for the
+        # runtime when a note opens, which is what makes AC#4's "live state"
+        # true -- a runtime that arrives later is still asked.
+        host.app_instance.notes_sync_runtime_owner = runtime
+        await _open_first_note(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: "In a synced folder" in str(_location_row(screen).renderable),
+            message=f"The header read {str(_location_row(screen).renderable)!r}.",
+        )
+
+        line = str(_location_row(screen).renderable)
+        assert runtime.asked == ["note-dated"], runtime.asked
+        assert "Sam.md" in line, line
+        # The clock is the file's own mtime, stated in local time.
+        assert "file written 2026-09-15 08:06" in line, line
+
+
+def test_the_location_line_truncates_the_path_and_never_the_world():
+    """task-32640 AC#3, as a rule rather than a specimen.
+
+    The world is stated in full at every width; the path is
+    middle-elided so its filename survives; the write time is dropped
+    before the path is. The vacuity guard is the last assertion: a line
+    that simply returned everything unelided would pass the first three.
+    """
+    path = "/Users/someone/Documents/Vaults/Power vault/People/Samantha Reed.md"
+    wide = library_note_location_line(path, "2026-09-15 08:06", 120)
+    assert wide.startswith("In a synced folder · ")
+    assert wide.endswith("· file written 2026-09-15 08:06")
+    assert path in wide
+
+    narrow = library_note_location_line(path, "2026-09-15 08:06", 46)
+    assert narrow.startswith("In a synced folder · ")
+    assert "Samantha Reed.md" in narrow, narrow
+    assert path not in narrow, narrow
+    assert "file written" not in narrow, narrow
+
+    # Unmeasured width elides nothing rather than guessing.
+    assert library_note_location_line(path, "", 0) == (
+        f"In a synced folder · {path}"
+    )
+
+
+# --- task-32641: a vault is recognised BEFORE the review -------------------
+
+
+def _recognition_controller(tmp_path):
+    """One import controller with PRODUCTION discovery and a real ledger.
+
+    Only the seams ``recognise_selected_folder`` actually reaches are real:
+    the bounded discovery (which is also what the review's check runs) and
+    Import once's own receipt ledger. The rest of the constructor's dozen
+    dependencies belong to phases this path never enters.
+    """
+    from tldw_chatbook.Notes.note_import_discovery import discover_import_sources
+    from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
+    from tldw_chatbook.Notes.note_import_receipts import NoteImportReceiptRepository
+    from tldw_chatbook.UI.Library_Modules.library_note_import_controller import (
+        LibraryNoteImportController,
+    )
+
+    published: list[object] = []
+    unused = lambda *args, **kwargs: None  # noqa: E731 - phases not entered here
+    controller = LibraryNoteImportController(
+        bounds=ImportBounds(
+            max_files=1_000,
+            max_file_bytes=16 * 1024 * 1024,
+            max_total_bytes=256 * 1024 * 1024,
+            max_depth=32,
+        ),
+        database=unused,
+        folder_repository=unused,
+        receipt_repository=lambda: NoteImportReceiptRepository(
+            tmp_path / "receipts.sqlite3"
+        ),
+        discover_import_sources=discover_import_sources,
+        parse_import_sources=unused,
+        classify_import_batch=unused,
+        analyze_root_collision=unused,
+        resolve_root_collision=unused,
+        confirm_uncertain_match=unused,
+        apply_item_override=unused,
+        approve_note_import_plan=unused,
+        executor_factory=unused,
+        publish_snapshot=published.append,
+        refresh_after_settlement=unused,
+    )
+    return controller, published
+
+
+def _vault(tmp_path, *, obsidian: bool = True):
+    """A folder shaped like the critique's own power vault."""
+    root = tmp_path / "Power vault"
+    (root / "People").mkdir(parents=True)
+    (root / "People" / "Sam.md").write_text("# Sam\n", encoding="utf-8")
+    (root / "Daily.md").write_text("# Daily\n", encoding="utf-8")
+    if obsidian:
+        (root / ".obsidian").mkdir()
+        (root / ".obsidian" / "app.json").write_text("{}", encoding="utf-8")
+        (root / ".trash").mkdir()
+        (root / ".trash" / "Deleted.md").write_text("gone\n", encoding="utf-8")
+        (root / "Templates").mkdir()
+        (root / "Templates" / "Daily.md").write_text("tpl\n", encoding="utf-8")
+    return root
+
+
+async def test_a_selected_vault_is_recognised_with_its_counts_and_skips(tmp_path):
+    """task-32641 AC#1/AC#2, through production discovery.
+
+    Born red on the unfixed tree: ``recognise_selected_folder`` did not
+    exist -- ``AttributeError: 'LibraryNoteImportController' object has no
+    attribute 'recognise_selected_folder'`` -- and nothing said "vault"
+    anywhere before the review.
+    """
+    controller, published = _recognition_controller(tmp_path)
+    controller.accept_selected_path(_vault(tmp_path), is_folder=True)
+    await controller.recognise_selected_folder(already_synced=False)
+
+    line = controller.presentation_snapshot.vault_recognition
+    assert line.startswith("Obsidian vault · "), line
+    # The two real notes; the vault's own folders are not counted as notes.
+    assert "2 notes to read" in line, line
+    assert "skips .obsidian/, .trash/, Templates/ and empty files" in line, line
+    assert "already" not in line, line
+    assert published, "the recognition was never published to the canvas"
+
+
+async def test_a_plain_folder_says_nothing_extra(tmp_path):
+    """task-32641 AC#3: no empty "0 detected" row.
+
+    The vacuity guard for the test above: the two folders differ only by
+    the ``.obsidian/`` marker, so a recognition that fired for any folder
+    would pass there and fail here.
+    """
+    controller, _ = _recognition_controller(tmp_path)
+    controller.accept_selected_path(_vault(tmp_path, obsidian=False), is_folder=True)
+    await controller.recognise_selected_folder(already_synced=False)
+
+    assert controller.presentation_snapshot.vault_recognition == ""
+
+
+async def test_an_already_synced_vault_says_so_before_the_review(tmp_path):
+    """task-32641 AC#4: the duplicate-vault case, where it can still be undone."""
+    controller, _ = _recognition_controller(tmp_path)
+    controller.accept_selected_path(_vault(tmp_path), is_folder=True)
+    await controller.recognise_selected_folder(already_synced=True)
+
+    line = controller.presentation_snapshot.vault_recognition
+    assert line.endswith("· this folder is already kept in sync"), line
+
+
+async def test_choosing_another_folder_drops_the_previous_recognition(tmp_path):
+    """task-32641 AC#3: the sentence belongs to the folder that was scanned."""
+    controller, _ = _recognition_controller(tmp_path)
+    controller.accept_selected_path(_vault(tmp_path), is_folder=True)
+    await controller.recognise_selected_folder(already_synced=False)
+    assert controller.presentation_snapshot.vault_recognition
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    controller.accept_selected_path(plain, is_folder=True, replace=True)
+    assert controller.presentation_snapshot.vault_recognition == ""
+
+
+def test_the_recognition_line_states_counts_and_the_skip_rule():
+    """task-32641 AC#2 as a rule, not a specimen.
+
+    Empty files are named as always skipped because they always are
+    (``ImportClassification.EMPTY`` -> ``ImportAction.SKIP`` in
+    ``note_import_plan_models``), and no scan is needed to say so; the
+    vault-owned folders are named only when the scan found them.
+    """
+    from tldw_chatbook.Library.library_note_import_state import (
+        vault_recognition_line,
+    )
+
+    assert vault_recognition_line(
+        notes=1, skipped_folders=(), already_imported=0, already_synced=False
+    ) == "Obsidian vault · 1 note to read · skips empty files"
+    assert vault_recognition_line(
+        notes=54,
+        skipped_folders=(".obsidian/",),
+        already_imported=54,
+        already_synced=False,
+    ) == (
+        "Obsidian vault · 54 notes to read · skips .obsidian/ and empty files"
+        " · 54 already imported"
+    )
+
+
+@pytest.mark.parametrize("size", (WIDE, COMPACT, NARROW))
+async def test_the_recognition_paints_under_the_folder_confirmation(size):
+    """task-32641 AC#1: on the confirmation line, at every critique size.
+
+    Born red on the unfixed tree: ``LibraryNoteImportSnapshot`` had no
+    ``vault_recognition`` field and the canvas composed no such row --
+    ``TypeError: __init__() got an unexpected keyword argument``, and after
+    the field, ``NoMatches: No nodes match '#note-import-vault-recognition'``.
+    """
+    from dataclasses import replace as dataclass_replace
+
+    from Tests.UI.test_library_notes_wave_import_ux import _ImportHost
+    from tldw_chatbook.Library.library_note_import_state import (
+        initial_note_import_snapshot,
+        project_library_note_import_snapshot,
+    )
+
+    base = project_library_note_import_snapshot(initial_note_import_snapshot())
+    snapshot = dataclass_replace(
+        base,
+        selected_names=("/Users/someone/Power vault",),
+        selection_kind="folder",
+        vault_recognition=(
+            "Obsidian vault · 54 notes to read · skips .obsidian/, .trash/, "
+            "Templates/ and empty files · 54 already imported"
+        ),
+    )
+    host = _ImportHost(snapshot)
+    async with host.run_test(size=size) as pilot:
+        await pilot.pause()
+        summary = host.query_one("#note-import-source-summary", Static)
+        recognition = host.query_one("#note-import-vault-recognition", Static)
+
+        assert "Obsidian vault" in str(recognition.renderable)
+        # Under the confirmation, not inside the review below it.
+        assert recognition.region.y == summary.region.y + summary.region.height, (
+            summary.region,
+            recognition.region,
+        )
+
+    # AC#3: nothing at all for a folder that is not a vault.
+    plain = _ImportHost(dataclass_replace(snapshot, vault_recognition=""))
+    async with plain.run_test(size=size) as pilot:
+        await pilot.pause()
+        assert not plain.query("#note-import-vault-recognition")
+
+
+def test_a_folder_inside_a_sync_root_is_already_synced(tmp_path):
+    """task-32641 AC#4's other half: the probe that answers it.
+
+    Importing a SUB-FOLDER of a synced vault duplicates it exactly as
+    thoroughly as importing the vault, so the predicate is "covered by",
+    not "equal to" -- which is also the vacuity guard here: an equality
+    check passes the first assertion and fails the second.
+    """
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    root = tmp_path / "vault"
+    (root / "People").mkdir(parents=True)
+    elsewhere = tmp_path / "other"
+    elsewhere.mkdir()
+
+    owner = NotesSyncRuntimeOwner.__new__(NotesSyncRuntimeOwner)
+    owner._root_paths = {"root-1": str(root)}
+    assert owner.folder_is_sync_root(root) is True
+    assert owner.folder_is_sync_root(root / "People") is True
+    assert owner.folder_is_sync_root(elsewhere) is False
+
+
+async def test_picking_a_vault_folder_recognises_it_on_the_real_screen(tmp_path):
+    """task-32641 AC#1/AC#4 through the screen, not the controller alone.
+
+    ``_accept_library_note_import_path`` is the whole of what the picker's
+    callback does once the dialog closes, so this walks the production
+    wiring: the import controller's scan AND the sync-root probe the screen
+    answers for it. Born red with ``AttributeError:
+    '_library_folder_is_sync_root'`` before that seam existed.
+    """
+
+    class _Runtime:
+        def folder_is_sync_root(self, folder) -> bool:
+            return True
+
+    vault = _vault(tmp_path)
+    host = _build_notes_host(notes=_DATED_NOTE)
+    async with host.run_test(size=WIDE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        host.app_instance.notes_sync_runtime_owner = _Runtime()
+
+        screen._accept_library_note_import_path(vault, replace=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen._library_note_import_controller.presentation_snapshot.vault_recognition
+            ),
+            message="The picked folder was never recognised.",
+        )
+
+        line = (
+            screen._library_note_import_controller.presentation_snapshot.vault_recognition
+        )
+        assert line.startswith("Obsidian vault · 2 notes to read"), line
+        assert line.endswith("· this folder is already kept in sync"), line

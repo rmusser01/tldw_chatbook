@@ -301,6 +301,10 @@ class LibraryNoteImportSnapshot:
     obsidian_available: bool = False
     obsidian_mode: bool = True
     obsidian_reason: str = ""
+    #: task-32641: what the selected FOLDER was recognised as, stated on the
+    #: confirmation line before the review. "" for anything that is not a
+    #: vault -- there is no empty "0 detected" row.
+    vault_recognition: str = ""
     skipped_count: int = 0
     skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     resolved_links: int = 0
@@ -1191,6 +1195,57 @@ def _embed_clause(item: ImportPreviewItem) -> str:
     return f"{count} {noun} shows as ![[…]] text, not the file" if count == 1 else (
         f"{count} {noun} show as ![[…]] text, not the files"
     )
+
+
+def vault_recognition_line(
+    *,
+    notes: int,
+    skipped_folders: tuple[str, ...],
+    already_imported: int,
+    already_synced: bool,
+) -> str:
+    """Say a folder was recognised as a vault, before the review (task-32641).
+
+    The detection already existed -- it just arrived inside the review,
+    where changing your mind costs a scan. This is the same fact on the
+    confirmation line, where the folder can still be swapped.
+
+    The counts are of what the scan actually found. What is skipped is
+    stated as the RULE the import follows, not as a tally: the vault-owned
+    folders are named when they exist, and empty files are always skipped,
+    which is true of every import whether or not this folder has one.
+
+    Args:
+        notes: Files the scan would read as notes.
+        skipped_folders: Vault-owned folders found at the root, already
+            spelled as the user sees them (``.obsidian/``).
+        already_imported: How many of those files a completed Import once
+            has already brought in.
+        already_synced: Whether a lasting-sync root already covers this
+            folder -- the duplicate-vault case (task-32605, task-32637),
+            named where the user can still choose differently.
+
+    Returns:
+        One bounded line, or ``""`` when there is nothing to recognise.
+    """
+    if notes < 0:
+        raise ValueError("notes must be non-negative.")
+    parts = [f"Obsidian vault · {notes} note{'' if notes == 1 else 's'} to read"]
+    # "empty files" is the last item of the same list, not a trailing clause:
+    # "skips .obsidian/ and empty files" rather than "skips .obsidian/, and
+    # empty files".
+    skipped = (*skipped_folders, "empty files")
+    listed = (
+        skipped[0]
+        if len(skipped) == 1
+        else f"{', '.join(skipped[:-1])} and {skipped[-1]}"
+    )
+    parts.append(f"skips {listed}")
+    if already_imported:
+        parts.append(f"{already_imported} already imported")
+    if already_synced:
+        parts.append("this folder is already kept in sync")
+    return " · ".join(parts)
 
 
 def _obsidian_reason(state: NoteImportWorkflowSnapshot) -> str:

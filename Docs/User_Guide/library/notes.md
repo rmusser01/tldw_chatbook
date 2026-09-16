@@ -448,6 +448,7 @@ undo the in-place updates that keep a terminal drag cheap.
 | Control | What it does |
 |---|---|
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
+| Where this note lives | One row under the title, on a terminal 80 columns or wider. A note that exists only in the Library database reads "In the Library database only — no file on disk". A note that lasting sync keeps in step with a file reads "In a synced folder", then that file's path, then when the file was last written — the file's own time, so an edit made in Obsidian counts too. The path is elided in the middle when the pane is narrower than the row, keeping the file name; the write time is dropped before the path is, and the first part is never shortened. Both facts are read fresh each time a note opens and after each save, not stored on the note (task-32640). |
 | **Edit** | Shows the editable title, keywords and body. This is the default view when you open a note. Keywords sit on their own row under the title — comma-separated, edited in place, and reachable with one Tab from the title, so you no longer have to open **Info** to add one. The same field appears in Info's Properties; whichever you type in, it is the same keywords. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. A rendered heading is left-aligned, where the rest of the body begins, rather than centred like a page banner — so a note whose title came from Obsidian frontmatter, which never matches its first heading exactly, shows a title and a heading rather than two titles. An Obsidian callout renders as a quoted block headed by its type, on its own line above the body — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker or running the type into the first line of the callout; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. Each property is on its own row, labelled — Created, Modified, Version, Words — rather than joined into one sentence: on a wide terminal the values line up in a second column, and on a compact one the rows keep a single column so a timestamp is never cut off the pane. |
@@ -876,6 +877,16 @@ only line that states the selection: the status line above it says what to
 do next ("Check the selection to see what will be imported.") rather than
 repeating the count (task-32554).
 
+If that folder is an Obsidian vault, a second line under the confirmation says
+so before you check anything: "Obsidian vault", how many notes the scan would
+read, and what it skips — the vault's own folders when they are there
+(`.obsidian/`, `.trash/`, `Templates/`) and empty files, which are always
+skipped. When some of those files have already been imported it says how many,
+and when a lasting-sync root already covers the folder it says "this folder is
+already kept in sync" — both of them here, where you can still pick a
+different folder. A folder that is not a vault gets no extra line at all
+(task-32641).
+
 Picking the folder puts focus back inside Import once, on the confirmation
 itself. From there **Tab** walks **Change selection** → **Clear** → **Check
 selection** → **‹ Notes** and round again: Tab stays inside the Import once
@@ -1000,8 +1011,9 @@ it settles. **Last import** reopens the same-session receipt afterward.
 
 #### Obsidian vaults
 
-If the folder you chose holds an `.obsidian/` directory, the review shows an
-**Obsidian vault** toggle, on by default, and one line saying what it does.
+If the folder you chose holds an `.obsidian/` directory, the selection line
+says so as soon as you pick it (see "Import once" above), and the review shows
+an **Obsidian vault** toggle, on by default, and one line saying what it does.
 
 Windows works the same way: the Windows discovery adapter detects the vault and
 skips its own folders exactly as the POSIX one does.
@@ -2316,3 +2328,12 @@ aligned into a second column on a wide terminal and single-column when
 compact. Keywords moved out of an undisplayed container into the editor, under
 the title, where it is the Tab stop between Title and Body at all three sizes.
 Pinned in `Tests/UI/test_library_notes_w5_ideas.py`.*
+
+*Verified against fix/library-notes-w5-ideas — 2026-09-15 at 235x52, 100x30
+and 60x20 (task-32640, task-32641). The editor now answers "where does this
+note live?" in one row under the title; at 60x20 that row is given back to the
+body on the same 80-column rule the chrome strip already uses, so the answer
+is not on screen there. Import once says a folder is an Obsidian vault on the
+confirmation line, with the scan's own counts, before the review builds.
+Pinned in `Tests/UI/test_library_notes_w5_ideas.py` and
+`Tests/Notes/test_notes_sync_note_location.py`.*
