@@ -1,0 +1,39 @@
+{
+  "success": {
+    "app_run_returned": true,
+    "shell_exit_code": 0,
+    "pid": 28879,
+    "pid_absent": true
+  },
+  "interrupt": {
+    "app_run_returned": true,
+    "shell_exit_code": 0,
+    "pid": 29378,
+    "app_and_worker_pids_absent": [
+      29378,
+      29439
+    ],
+    "durable_job_before_restart": "ingest-job-6",
+    "durable_state_before_restart": "parsing",
+    "durable_media_id_before_restart": null,
+    "durable_progress_before_restart": null
+  },
+  "recover": {
+    "app_run_returned": true,
+    "shell_exit_code": 0,
+    "pid": 29604,
+    "pid_absent": true
+  },
+  "reopen": {
+    "app_run_returned": true,
+    "shell_exit_code": 0,
+    "pid": 30258,
+    "pid_absent": true
+  },
+  "terminal_cleanup": {
+    "owned_socket": "codex32700resume",
+    "owned_session": "ingest",
+    "only_owned_terminal_closed": true,
+    "after_all_app_exits": true
+  }
+}

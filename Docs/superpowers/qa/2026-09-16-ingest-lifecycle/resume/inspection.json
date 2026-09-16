@@ -1,0 +1,138 @@
+{
+  "visual_passes": 1,
+  "captures_inspected": 16,
+  "render_method": "Quick Look PNGs from all final native SVG captures; inspected in one batch",
+  "matrix": {
+    "themes": [
+      "textual-dark",
+      "textual-light"
+    ],
+    "sizes": [
+      [
+        170,
+        48
+      ],
+      [
+        80,
+        24
+      ]
+    ],
+    "surfaces": [
+      "completed queue",
+      "permission failure Retry",
+      "interrupted Retry",
+      "saved Markdown reader"
+    ]
+  },
+  "findings": [
+    "Done/Matched state and Open controls remain readable with visible focus.",
+    "Permission cause and source basename identify the failed attempt; Retry, Show details and Dismiss remain readable.",
+    "Interrupted by app restart is visible with Retry in each matrix cell.",
+    "Saved Markdown heading and body remain visible at both sizes in both themes."
+  ],
+  "limits": [
+    "Permission summary abbreviates the long absolute path; full raw error and Show details content were not qualified.",
+    "Compact captures scroll the queue into view; this does not qualify all surrounding navigation at once.",
+    "Reader long file URI may wrap or clip; arbitrary long metadata headers are outside this check.",
+    "Large interrupted fixture was verified by exact database content after Retry, not rendered in full."
+  ],
+  "normalization": "Only whitespace-only SVG source lines were emptied for diff hygiene; rendered content unchanged.",
+  "captures": [
+    {
+      "file": "completed-textual-dark-170.svg",
+      "phase": "success",
+      "raw_sha256": "7fad394a545b35948f1fc5d0d5b55c8d872c636f621b15b0d177b53ea3475132",
+      "stored_sha256": "f6b7f3b63fbcb83be838cfe7c0dd70ba3c0c0e355b93d84bea44f7e244a6a8e0"
+    },
+    {
+      "file": "completed-textual-dark-80.svg",
+      "phase": "success",
+      "raw_sha256": "0ac581e5cd03571ca07bce275f25696b056cbb5b24ab786f52e4f71518067453",
+      "stored_sha256": "6b1026169e238fb8a129dd746114ef6f648527622c62ebd18ea33382b65a9be2"
+    },
+    {
+      "file": "completed-textual-light-170.svg",
+      "phase": "success",
+      "raw_sha256": "c4d6eb2dd2d477c406887fe60e88b84a4c2e1ff9dd1af5a24c38570df57719c7",
+      "stored_sha256": "08b3bcd3a086d5bdcd590cb6c2713831093de499f0a0a7d77da1109da925c2c3"
+    },
+    {
+      "file": "completed-textual-light-80.svg",
+      "phase": "success",
+      "raw_sha256": "bbc445a54f0d0109b70adae209e38735cc033a0c5fef0cbe05fbf222a7ae1b69",
+      "stored_sha256": "fcf14d0fed502e953e591fac1123077b13e4606a1df07243de2a61c77edee666"
+    },
+    {
+      "file": "permission-retry-textual-dark-170.svg",
+      "phase": "success",
+      "raw_sha256": "fbab5860778562312e806724c277a4d82464324dec7750f3299a00148e50cb0b",
+      "stored_sha256": "cdc2ec090e50713612640e495aa9b000141f5474129176007f2a35751ffabd92"
+    },
+    {
+      "file": "permission-retry-textual-dark-80.svg",
+      "phase": "success",
+      "raw_sha256": "4a6127590f4b760db83fc4e202ccf3d1a544e1d8e51437162540f56cca840b14",
+      "stored_sha256": "67f9e1c1eb0535d532b8769d6539328605d958f9683c66002e281ec4c5761372"
+    },
+    {
+      "file": "permission-retry-textual-light-170.svg",
+      "phase": "success",
+      "raw_sha256": "99d8535cbf0cd97dc0e65bf663dc076d1a6aea437c88d82caa89adc80e8c1fc4",
+      "stored_sha256": "35e21bab9536310e0cee2aeba74670c8d1ee6811da27ad87a8d27feff73b09d3"
+    },
+    {
+      "file": "permission-retry-textual-light-80.svg",
+      "phase": "success",
+      "raw_sha256": "524c1a4956c2370c134adb422379640ff06850c28fa15f47f902d3c6258c6500",
+      "stored_sha256": "55fc50cf5da7bc14b30c17f05f2ee58b67064d1b654c31f85b88fb5f689935a6"
+    },
+    {
+      "file": "interrupted-retry-textual-dark-170.svg",
+      "phase": "recover",
+      "raw_sha256": "71d2be1bea5229bb39f52caaf7b6af568e7a4fccd2fa030009fe10204b4e5caf",
+      "stored_sha256": "12a9870b2ab192e9f5acf11d54f36bf86035a11ef21604a4956be8937085e77e"
+    },
+    {
+      "file": "interrupted-retry-textual-dark-80.svg",
+      "phase": "recover",
+      "raw_sha256": "14f366f590409e56b9e4a4f76d719a4be6179297ef04dba33b3fbe3c50b3650e",
+      "stored_sha256": "f048958be0f6b33b9220cba27a94e959ade2ad9fbf09beffd376c073ae838314"
+    },
+    {
+      "file": "interrupted-retry-textual-light-170.svg",
+      "phase": "recover",
+      "raw_sha256": "715e3dfd3e7eef50579f7e83d1bf1a2a32901fc4fdcf75b47e558545f4c602d1",
+      "stored_sha256": "0c16eeb580c3a4e3b6ecdbf40f0d30f710aa3c7f380b6ea7ac49b3c25be03e9b"
+    },
+    {
+      "file": "interrupted-retry-textual-light-80.svg",
+      "phase": "recover",
+      "raw_sha256": "5c81c95c9c330fac796b3af84c441d6c409887c486bf618562ec69f7efecfeba",
+      "stored_sha256": "4b457b0110fcbdbbb75abf4fddab0b1b0af56529915eb48a8af546f3472190da"
+    },
+    {
+      "file": "reader-textual-dark-170.svg",
+      "phase": "reopen",
+      "raw_sha256": "d695ccdf6a78d3c19fa831a3c93f52343a2c3442269908c571697aafaf4823e6",
+      "stored_sha256": "3e8fef0636607b0873a4a3a22780f0b49cad3412293dd8dac260ea9b109a5af2"
+    },
+    {
+      "file": "reader-textual-dark-80.svg",
+      "phase": "reopen",
+      "raw_sha256": "26e225969762af3af57a4c387ba70dc24fcc34515aefeaf94502bc433b34fc37",
+      "stored_sha256": "fcb61a9f289846e6e3eda024c9c353250fefb11ebdbb95b1ab4e29a5c847c3f5"
+    },
+    {
+      "file": "reader-textual-light-170.svg",
+      "phase": "reopen",
+      "raw_sha256": "128b3e47cef8cea03d554187d16b136ab64fa8ccb658f29d375dbcd694c0ba1a",
+      "stored_sha256": "746cf2506abee52577846afc71ef2caa1c0cc47763455f0d45f33ad0932c099a"
+    },
+    {
+      "file": "reader-textual-light-80.svg",
+      "phase": "reopen",
+      "raw_sha256": "888cf635aa868f19c242b54cc3694d483496933a2dca293512d5061428e7f738",
+      "stored_sha256": "acb58fb0d4c89cea8f9970a9a0bda5a1e51f5ddbf608b8476b0a675eb33774d7"
+    }
+  ]
+}

@@ -1,13 +1,21 @@
-# Local Import lifecycle checkpoint — TASK-32700
+# Local Import lifecycle qualification — TASK-32700
 
 Baseline: `856cbf355d` on `feat/component-pattern-library`.
 
-**Incomplete; semaphore blocker cleared on 2026-09-16 at 19:31 UTC.**
+**Completed: real local success and restart recovery now pass.** See the
+[resumed qualification](resume/README.md) for four native processes, text/Markdown
+imports, duplicate resolution, successful Retry, interruption reconciliation,
+fresh-process Open, 16 inspected captures and 83 passing targeted checks. The
+resumed record includes the unrelated caught Chat sidebar startup error and
+explicit scope limits. No additional application code change was needed.
+
+The historical checkpoint below preserves the earlier failure evidence.
+The semaphore blocker cleared on 2026-09-16 at 19:31 UTC.
 A fresh isolated spawn-context Lock probe and the previously failing real
 spawn-pool parser test both passed outside the sandbox (one test in 0.70s).
-[Recovery check](semaphore-recheck.json) records this evidence. The full native
-Import success/restart journeys have not been rerun; all acceptance criteria
-remain unchecked and the task remains In Progress.
+[Recovery check](semaphore-recheck.json) records this evidence. At that point,
+the full native success/restart journeys were still pending; they are now
+qualified in the resumed record above.
 
 At the earlier checkpoint, the real app could not start its local parse pool:
 `multiprocessing` semaphore construction raised errno 28 inside and outside the
@@ -15,7 +23,7 @@ sandbox. The volume then had 75 GiB available and the reported semaphore limit
 was 10,000. Neither the exhausted resource owner nor the recovery cause was
 established; this recheck changed no host settings or unrelated processes.
 
-## Completed evidence
+## Historical failure evidence
 
 The isolated native app clears an unsubmitted source without creating a job or
 media. Submitting a real text file reaches the production pool-creation path
@@ -59,7 +67,7 @@ is unchanged after excluding docstrings.
 [Independent review](review.json) found the missing profile guard and overstrong
 persistence wording; both corrections passed its follow-up review.
 
-## Reproduction and remaining work
+## Historical failure runner
 
 [native_check.py](native_check.py) is a failure-specific runner. Prepare a fresh
 private profile with `data/`, `data/db/` and `config/` directories, every configured
@@ -74,16 +82,13 @@ process against the same profile and owned tmux session. Each phase writes a
 unique evidence directory; preserve separate process exit receipts.
 
 This runner expects the earlier errno-28 failure. Allocation now passes the
-recheck, so successful parsing should fail that old expectation; execute the
-remaining successful lifecycle journeys from the task plan instead. Do not count
-that expectation failure as an app regression. The pending scope is real
-text/Markdown import and Open in Library,
-duplicate imports without extra content, permission failure followed by a
-successful Retry, quitting during a real parse, and fresh-process interruption
-reconciliation followed by successful Retry.
+recheck, so successful parsing should fail that old expectation. Do not count
+that expectation failure as an app regression. Use the resumed qualification's
+success runner for text/Markdown import, duplicate resolution, permission Retry
+and actual interruption/restart recovery.
 
-The allocation gate now passes, so the remaining native qualification can
-resume. The existing [semaphore diagnosis](../../reviews/2026-09-08-semaphore-allocation-diagnosis.md)
+The allocation gate and resumed native qualification now pass.
+The existing [semaphore diagnosis](../../reviews/2026-09-08-semaphore-allocation-diagnosis.md)
 explains the earlier host failure and the attribution limits. No reboot, global
 resource cleanup, kernel setting change or termination of unrelated processes
 was attempted during this qualification or recheck.
