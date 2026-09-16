@@ -1,6 +1,7 @@
 # First-run implementation and review record
 
-Status: implementation qualification in progress; not a merge approval.
+Status: implementation qualified; all planned reviews reconciled. Integration
+has not been performed or authorized by this record.
 
 This records the narrow session-bound delivery governed by
 [ADR-138](../../../backlog/decisions/138-portable-workflow-definitions-and-local-execution.md)
@@ -81,6 +82,37 @@ font fallback. They are driver/compositor evidence, not native PTY or terminal
 font qualification. The initially unsuitable CairoSVG rendering was not used to
 claim visual approval.
 
+## Acceptance evidence
+
+These map TASK-32691's nine criteria to inspected implementation and recorded
+verification. The final branch finding is resolved and independently reviewed below.
+
+| Criterion | Evidence |
+| --- | --- |
+| 1. Saved revision and real five-step flow | Joined real-control/HTTP/Notes integration and four passing actual llama.cpp walkthroughs in the UAT record |
+| 2. Navigation survives; restart does not resume | Mounted navigation/review tests and four distinct-process, same-profile restarts retaining revision/Notes with zero replay |
+| 3. Captured destinations and fresh authority | Permission and session permission tests cover missing/corrupt authority, revocation, Off, exact approval identity and review rejection/expiration; local effects verify the captured destination |
+| 4. Bounded keyless llama.cpp only | Bounded-client tests cover numeric loopback, deadline, bytes, no redirect/proxy/retry/fallback and retained physical cancellation; live manifests show the selected actual model |
+| 5. One Note attempt and commit-wins cancellation | Real file-backed transaction barriers, duplicate/readback/content/client checks, late commit and worker cleanup tests; existing policy and no Sync dispatch |
+| 6. No duplicate effects; ordered quit | Session duplicate Start/Accept tests and actual app lifecycle coverage for Stay, repeated quit, failed flush/drain, retained workers and same usable authoring owners |
+| 7. No execution persistence or new SQLite infrastructure | Reviewed production diff and historical-row equality assertions; no migration/storage-owner/lock/PID/helper additions |
+| 8. Targeted, UI, live and static qualification | Exact commands/results, deterministic failure fixes, performance figures and attributed static delta in the UAT packet; no full-suite or native-PTY claim |
+| 9. Private payloads absent from ordinary diagnostics | Positive-control logging tests, actual Notes failure canaries, bounded-client errors and all retained ordinary live-log scans |
+
+The tests are in `Tests/Workflows/`, `Tests/LLM_Calls/test_llamacpp_bounded.py`,
+`Tests/UI/test_workflows_run.py`, `Tests/ProductionApp/test_workflows_session_lifecycle.py`,
+and the focused permission/logging manifests linked from the UAT record. Counts
+are overlapping evidence, not additive unique-test totals.
+
+Controller handoff verification at `766e2ca43222703a9b07fe67cbcb9dcf3a75811f`
+reran the final affected selection: **159 passed, 1 opt-in live skip, 1 existing
+dependency warning in 205.32s**. The [command/output](artifacts/2026-09-16-first-run/controller-handoff-covering.txt)
+records this additional run without new live endpoint requests. The three
+new/clean Task 6 integration/editor paths pass Ruff and formatter checks;
+source/documentation whitespace and all 34 checked local documentation links
+pass. This does not supersede the historical broad-run failures or claim an
+all-green repository suite.
+
 ## Rulings I made
 
 Chronological controller decisions and their costs:
@@ -99,6 +131,7 @@ Chronological controller decisions and their costs:
 12. Fix the existing Library nested-mount readiness boundary reached by Open Note after deterministic reproduction. Cost: a small shared-Library lifecycle change requiring focused recompose coverage; no framework or storage change.
 13. Guard the existing editor's deferred view restoration against a newer field selection after reproducing the exact off-screen invalid-field failure. Cost: a small authoring interaction change requiring normal restoration and invalid-field visibility coverage; no focus framework or delays.
 14. Review generated evidence through manifests and exact outputs alongside a complete source/documentation diff; retain the full unfiltered diff. Cost: no line-by-line generated XML/log review, so reviewers must verify evidence claims and integrity explicitly.
+15. Make Open Note's existing captured-route check nonblocking on the app loop while retaining blocking worker semantics and all ownership checks. Cost: a busy route requires user retry and a small optional guard mode; no new owner, lock, database or polling framework.
 
 ## Final gate
 
@@ -109,5 +142,48 @@ Skills-fixture findings remain deferred for final review. Cross-task guarantees
 are covered by the earlier task gates and passed to the whole-branch review;
 native-terminal and early configuration-snapshot limits remain disclosed.
 
-The single whole-branch review is pending. TASK-32691 remains In Progress.
-No push, PR, or merge is authorized by this record.
+The [single whole-branch review](artifacts/2026-09-16-first-run/final-branch-review.md)
+at `766e2ca43222703a9b07fe67cbcb9dcf3a75811f`
+found one Important/P1 defect: after an earlier saved Note, Open Note can wait
+on the existing Notes-owner lock while a later Note worker holds it and waits
+for the app loop's pre-write callback. The circular wait can block navigation,
+Cancel and Quit. This is an implementation defect, not a plan change; the
+initial branch verdict is **not ready to merge**. No other introduced findings
+were supported. The review independently reconciled the earlier deferred items
+as disclosed baseline debt or qualification limits.
+
+The single final fix wave is committed as `cdc7c57909a76cafc451757fb99f9aaa2f8719d4`
+and `bcc8290dd2d883893c781a83a3e5cd0f13f27eb5`. It adds a nonblocking option to
+the existing guard while preserving blocking worker behavior and fresh captured
+identity checks. Busy navigation returns explicit manual-retry feedback; successful
+navigation clears that transient message. No new owner, lock, worker or database
+infrastructure was introduced.
+
+The [implementation report](artifacts/2026-09-16-first-run/final-review-fix/implementation-report.md)
+records deterministic RED/GREEN around the real owner mutex. Two-Note tests cover
+queued events, heartbeat, Quit/Stay, cancellation/physical settlement, exact contents,
+stale identities and seven destination-change cases. RED intercepts the unsafe
+blocking acquire safely; it does not claim a deliberately frozen process. Initial
+covering checks passed 229 tests and separate ProductionApp lifecycle passed 12;
+the later two-line status correction passed nine focused cases. No new static debt.
+
+Controller [final-head verification](artifacts/2026-09-16-first-run/controller-final-covering.txt)
+at `bcc8290dd2d883893c781a83a3e5cd0f13f27eb5` passed **11 tests, 1 opt-in live skip,
+1 existing warning in 38.16s**: nine new UI cases plus two actual-app joined
+HTTP/Notes cases. These use an owned HTTP peer, not new llama.cpp requests.
+The earlier live qualification and its limits remain unchanged.
+
+The [single scoped re-review](artifacts/2026-09-16-first-run/final-review-fix/scoped-review.md)
+verdict is **P1 addressed; no new Critical, Important or Minor findings**.
+All planned reviews are reconciled and all nine acceptance criteria are supported.
+TASK-32691 is closed through the Backlog CLI. Source remains at the reviewed head;
+subsequent closure changes are documentation/evidence only. No push, PR or merge
+has been performed, and those integration actions still require the user's choice.
+
+Cleanup: this plan's 2.5 GB of disposable profiles, temporary packages and ledger
+was moved out of `.superpowers/sdd/` to the recoverable local archive
+`/private/tmp/chatbook-workflow-32691-archive.hboWVC/2026-09-16-workflows-first-run`.
+Committed evidence above remains in the repository. No worktree, branch, sibling
+plan, TASK-32601 edit or `.uat-workflows-9NUT5t/` content was removed. The temporary
+archive is not durable product storage and may be cleared by operating-system
+temporary-file cleanup.

@@ -758,6 +758,15 @@ self.app_instance.post_message(NavigateToScreen(
 
 ## Task 6: End-to-end qualification and user documentation
 
+Final-review correction (existing ADR-138/125, no new ADR): Open Note must not
+block the app loop acquiring the existing Notes route lock while a subsequent
+Note worker holds it and waits for its pre-write callback on that loop. Add a
+nonblocking mode to the existing owner guard (default worker behavior unchanged),
+show transient busy/retry feedback, preserve all fresh captured-identity checks,
+and guard queued events as well as current controls. Verify with a deterministic
+two-Note barrier regression plus route-change and lifecycle coverage. No new
+lock, owner, worker framework, database or polling loop.
+
 Qualification amendment: the merged Open Note test exposed a deterministic
 nested-mount race in `Widgets/Library/library_notes_canvas.py`. The old readiness
 guard sees authority/title before deeper mode buttons exist. A canvas-local
@@ -830,7 +839,7 @@ assert inserted_note_count == 1
   stable-file assumption. Change “Run disabled” documentation only after the
   real integration works; list unsupported operations without implying full
   server parity. Keep source/prompt/response canaries out of ordinary logs.
-- [ ] **5. Review and close the implementation task only on evidence.** Perform
+- [x] **5. Review and close the implementation task only on evidence.** Perform
   spec and code-quality reviews; a reviewer may reject any task independently.
   Recheck Backlog ID/path uniqueness, exact staged files and `git diff --check`.
   Add implementation notes linking ADR-138 and UAT, check only proven ACs, and

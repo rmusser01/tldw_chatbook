@@ -265,5 +265,11 @@ solve concurrent path substitution. Cancelling a request does not prove the
 server stopped generation. See the [user guide](../../User_Guide/workflows.md)
 for supported operations, limits and the session-loss disclosure.
 
-TASK-32691 remains In Progress. The controller owns AC/task-note updates and final
-review; this record does not mark the task Done or authorize push/PR/merge.
+At the Task 6 handoff, TASK-32691 remained In Progress for controller acceptance.
+The subsequent whole-branch review found one Open Note/worker lock inversion;
+the narrow fix, deterministic regression and single scoped re-review are recorded
+in the [final review record](2026-09-16-first-run-review-record.md). Controller
+verification at the final source head passed 11 targeted cases with one live-only
+skip and the existing dependency warning. All nine acceptance criteria are now
+supported and the task is closed through the Backlog CLI. This is not an all-green
+full-suite or native-terminal claim, nor authorization to push, create a PR or merge.

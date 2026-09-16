@@ -74,6 +74,9 @@ during setup; importing the definition grants no permission to execute it.
    Approve the Note effect if asked; a completed run offers **Open Note**, which
    opens that saved Note in Library. Confirm its content there.
 
+If **Open Note** reports that Notes is busy, retry after the current operation
+settles. The app stays responsive; navigation is not silently queued for later.
+
 Leaving Workflows keeps the run and unsaved review in memory. Return to Workflows
 to continue; changing the selected workflow or provider configuration does not
 retarget a launched run. Only one run is active per app instance. **Cancel run**

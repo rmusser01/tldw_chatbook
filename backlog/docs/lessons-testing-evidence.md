@@ -638,6 +638,22 @@ Keep only final distribution artifacts in the checkout after validation.
 
 ---
 
+## A single-Note flow does not exercise opening an earlier result during a write
+
+**TASK-32691, 2026-09-16.** Final branch review found that Open Note acquired
+the existing Notes-owner mutex on the app loop, while a later Note worker could
+hold that mutex and synchronously wait for its pre-write callback on the loop.
+Single-Note UI tests passed because there was no saved Note to open while the
+first write ran. A two-Note barrier test with the real owner intercepted the
+contended blocking app-loop acquisition and reproduced the defect safely;
+it did not leave an actual frozen app process running.
+
+Exercise controls for earlier completed results while later admitted effects
+are active. Draw the cross-thread wait relationships, not just each method's
+local lock usage. A UI control must not block its event loop on a lock whose
+holder can need that loop. Keep destination checks fail-closed when adding a
+nonblocking busy path, and test queued events, cancellation and later retry.
+
 ## A Stay result does not prove the remaining app owners are usable
 
 **TASK-32691, 2026-09-16.** The first Workflows quit integration permanently
