@@ -109,10 +109,12 @@ defines the provisional authority for initialization before the first run.
 
 Reject duplicate IDs, unknown fields, unsupported versions, illegal effect/event
 combinations and malformed required handlers. Invalid required guards block
-their dependent capabilities. Only handlers without a controlling event policy,
-explicit success/context requirement or active dependency requirement are
-optional observations; their failure is diagnostic, not authority to disable an
-unrelated component.
+their dependent capabilities. Optional observations have no declared effects and
+no controlling event policy, explicit required flag or active dependency
+requirement. Context-producing handlers remain effectful even when failure is
+optional; they never enter the lossy observation queue. require_context defines
+valid output rather than changing its failure scope. Optional observation
+failure is diagnostic, not authority to disable an unrelated component.
 
 ### 2.2 Event payload
 
@@ -169,6 +171,44 @@ Nonzero exit, output overflow and invalid JSON are errors; exit code 2 is
 not a new v2 protocol shortcut. Legacy/vendor exit meanings are translated
 by the selected adapter before v2 result validation.
 
+#### MCP result normalization
+
+The MCP client/service boundary must retain the complete typed tool result,
+including isError, structuredContent and content, until hook validation finishes.
+Do not feed hooks a formatted display string or the current content-only client
+projection. Transport/protocol failure, permission refusal, cancellation and an
+MCP isError: true all fail the handler before any returned effects are considered,
+even if the body contains a valid-looking pass decision. A present non-boolean
+isError is invalid; absence follows the selected protocol profile's success
+semantics. An uncertain call outcome is not converted into empty success.
+
+For native v2 MCP hooks, normalize a successful tool result as follows:
+
+1. If structuredContent is present, it must be a v2 result object. content may
+   be absent or [], or contain exactly one text block encoding the same JSON
+   object as a compatibility mirror. Reject mismatched or additional content;
+   do not merge two representations or fall back after invalid structured data.
+2. With no structuredContent, an explicitly successful result whose content is
+   absent or [] means pass with no effects, like empty successful command stdout.
+   It can satisfy a success-only requirement, never require_context: true.
+3. Otherwise, require exactly one text content block containing one complete
+   v2 JSON object. Allow surrounding whitespace, but no Markdown fences, prose,
+   concatenated blocks or embedded-resource/image-derived effects.
+
+Reject duplicate JSON keys, malformed objects and unsupported result shapes.
+The 16 KiB MCP hook result cap covers the complete tool-result payload, including
+both representations and metadata, before v2 normalization; do not truncate it.
+The transport must also enforce finite framing/body/depth limits before parsing
+the protocol envelope. A hook cap checked only after an unbounded receive is not
+enforcement. Preserve ordinary non-hook MCP result behavior through a separate
+display projection of the same typed result.
+
+Generic tools returning prose are not implicitly hook protocols. A versioned,
+reviewed vendor adapter may translate a documented result shape into v2; it must
+preserve error status and bounded capture and cannot reinterpret an error as
+pass. Show stricter shape limits as an adaptation. Neither discarded content
+nor raw error bodies become ordinary logs, context or additional effects.
+
 ### 2.4 Required success and context
 
 There are three sources of requiredness, with the stricter applicable rule
@@ -213,6 +253,32 @@ material from an explicit dependent invocation. Show a remediation or cancel
 action. Do not replay the tool, compactor or hook automatically. If the owner
 already settled, retain the diagnostic without reopening it or attaching effects
 to a later run.
+
+Install a pending checkpoint synchronously when a required post-event is
+published, before completion is exposed to consumers that could admit the next
+model request or declare the owner normally settled. Persisting/displaying the
+tool result or compacted summary need not wait. The checkpoint covers the owning
+event, or only affected capability use for a dependency-scoped requirement.
+The latter still blocks model input that needs those capabilities or their
+required instruction material; independently eligible work may continue.
+
+Required handlers resolve the checkpoint only after successful validation and
+atomic acceptance of their effects under the same admission coordination used
+for the next model request. Failure/timeout leaves a failed checkpoint with
+remediation; it never clears the pending requirement by omission. Key checkpoints
+by event ID, owner and captured authority so a late result cannot release a
+different event's barrier. No coordination lock is held while awaiting a hook.
+
+For a failed dispatched tool, register requirements for both PostToolUse and
+PostToolUseFailure before exposing completion; finishing the first event cannot
+release the second event's requirement. SubagentStop installs the checkpoint in
+the still-active parent at child settlement. A parent request already in flight
+is unchanged, but its next model admission observes the pending checkpoint.
+Normal owner settlement, root Stop and continuation admission cannot overtake
+outstanding required post-events. User cancellation still seals admission
+immediately and closes the owner; late results are discarded while host cleanup
+retains resource ownership. An event whose owner already settled cannot create
+a checkpoint in a later run.
 
 ApprovalRequested, Stop, Interrupt and SessionEnd do not support explicit required
 or require_context set true, or incoming required dependency edges. Reject these
@@ -345,19 +411,48 @@ For PreToolUse:
 1. Apply existing unconditional host restrictions and schema validation.
 2. Run declared transformers sequentially against the current candidate.
    Revalidate each replacement; any denial/invalid result blocks the call.
-3. Freeze final arguments. Run all matching deny-only guards, including
-   legacy guards, against those final arguments. A denial dominates all
-   context or pass results. No further transformation runs afterward.
-4. Compute the final definition/argument identity and run the full existing
-   permission/profile/workspace review chain.
-5. Immediately before dispatch, recheck that approval, arguments, definitions,
+3. Freeze final arguments. Run all matching non-transforming validators,
+   including legacy deny guards, against those final arguments. A denial or
+   controlling failure dominates staged context/pass results. No further
+   transformation runs afterward.
+4. Run remaining optional context-only handlers against the frozen arguments,
+   in stable order. Stage their valid contributions; diagnose optional failures.
+   Publish optional effect-free observations of that same final candidate to
+   the bounded observation queue. They cannot supply effects or gate dispatch.
+5. Accept staged effects under current authority, compute the final
+   definition/argument identity and run the full existing permission/profile/
+   workspace review chain.
+6. Immediately before dispatch, recheck that approval, arguments, definitions,
    policy and owner generations still match.
+
+Classify every valid declaration once from its reviewed definition, not from
+the fields it happens to return on a particular call. Admit handlers lazily in
+phase order under the existing reservation/execution budgets:
+
+| Declaration | Phase and guarantee |
+| --- | --- |
+| updated_input declared, including with deny/context | Transformation phase only. Any denial concerns the candidate at that point; it is not a check of all later transformations. |
+| No updated_input; deny declared, required: true, or an active dependency requirement | Final validation/completion phase. Deny guards validate the frozen arguments; success-only handlers establish only their declared completion/context requirement. |
+| No updated_input/deny or completion requirement; context declared | Optional context phase, using frozen arguments. require_context can make its result invalid but does not itself widen failure scope. |
+| Empty effects with no completion requirement | Optional observation queue, using frozen arguments. |
+
+A transformer that returns no updated_input still stays in its declared phase.
+Never rerun a mixed-effect handler as a final guard: the second execution could
+repeat external effects. Native authors needing a final-argument constraint
+declare a separate non-transforming deny guard and require that guard. A requires
+edge to a transformer establishes only successful transformation-phase execution,
+not final-argument validation. Inspection labels this distinction explicitly.
+Vendor required-guard mappings cannot be satisfied by such a transformer alone;
+require a separately qualified final guard/adaptation or leave that constrained
+behavior unsupported. Do not invent a second invocation to claim equivalence.
 
 Legacy guard-only batches retain their documented concurrent first-deny
 behavior. Without new transformers their input is unchanged. Within a mixed
-pipeline, guards inspect the final candidate. Repeated transformation cycles
+pipeline, final guards inspect the final candidate. Repeated transformation cycles
 are forbidden; there is one finite pass. A transformer may deny on original
-input, and original arguments remain available for attributed review.
+or intermediate input, and original arguments remain available for attributed
+review. Context from a transformer remains attributed to that candidate; it is
+never presented as a constraint validated against the final arguments.
 
 If a preauthorized invocation's arguments change, its prior authorization
 must be re-evaluated under the same host authority contract. Interactive review
@@ -493,7 +588,7 @@ visible adaptation or remain unsupported.
 | Interrupt/SessionEnd notification | 1 s / 3 s wall time per event, including queue and execution | End notification/output acceptance at deadline; no new approval, connection or continuation; initiate host termination. |
 | Post-kill reap | 5 s maximum host cleanup allowance after notification/execution ends | Outside the handler/event window; preserve cleanup-pending ownership if unresolved. |
 | Input envelope | 1 MiB UTF-8, depth 32, 16,384 JSON nodes | Required guard rejects the parent operation whole; optional observation drops with diagnostic. |
-| Structured stdout / MCP result | 16 KiB UTF-8 | Bound during capture; invalid overflow fails the handler. |
+| Structured stdout / MCP tool-result payload | 16 KiB UTF-8 | Bound capture; MCP includes content, structuredContent and metadata before v2 normalization. Overflow fails the handler; protocol framing is independently bounded. |
 | stderr retained | 4 KiB UTF-8 | Truncate diagnostic capture with marker; never parse as effects. |
 | Context | 4 KiB/block; 16 KiB/event; companion 32 KiB/send aggregate | Reject blocks/effect batch whole when required; no silent constraint truncation. |
 | Concurrent effectful executions | 4/runtime; 8/application across all v2 sessions | FIFO within a runtime, round-robin admission across eligible runtimes; cancellation releases reservations correctly. |
@@ -620,6 +715,30 @@ Written-spec amendment scenarios are mandatory acceptance evidence:
   outcomes, block the next owning model input and do not replay either operation.
   Check narrower dependency-only failure, active-parent SubagentStop, late owner
   settlement, and rejection of required teardown/approval/Stop declarations.
+- **Pending checkpoint race:** hold a required post-hook at a deterministic
+  barrier after the tool/compaction/child outcome is visible, then attempt next
+  model admission and normal root settlement. Neither can overtake an applicable
+  pending checkpoint. Success atomically contributes context and releases it;
+  failure/timeout keeps admission blocked. For an execution error, completing
+  PostToolUse cannot release a still-pending PostToolUseFailure requirement.
+  Test concurrent child settlement, already-in-flight parent requests,
+  dependency-only independent work, cancellation, revocation and stale replies.
+- **MCP result normalization:** an isError: true result containing a valid pass
+  object fails before effects; so do transport failures and non-boolean error
+  flags. Successful structured-only, single JSON text, exact mirrored and empty
+  results exercise each accepted form. Mismatched mirrors, extra text/resource
+  blocks, duplicate keys, prose, invalid structured data with valid fallback text,
+  and oversized payload metadata fail without truncation or effects. Empty success
+  fails require_context. Exercise the production typed client/service path on
+  stdio and Streamable HTTP, with ordinary non-hook result display as a control.
+- **PreToolUse phases:** transformer A checks/rewrites a path, transformer B
+  changes it again, and a required final guard C refuses B's final path. C must
+  see the final arguments and prevent dispatch; A cannot satisfy C's guarantee.
+  With an allowed final path, dispatch receives that exact approved candidate.
+  Exercise deny-plus-context guards, context-only handlers, required effect-free
+  completion and optional observations. A mixed handler executes once even when
+  it returns no replacement, and a vendor final-guard mapping to only that mixed
+  handler remains unsupported. Context-only handlers observe the final candidate.
 - **Initialization admission:** an explicitly connected independent MCP dependency
   succeeds through normal approval under a provisional workspace/run identity.
   A disconnected server launches nothing, a known initialization/guard cycle
@@ -641,7 +760,11 @@ Written-spec amendment scenarios are mandatory acceptance evidence:
 
 Initial implementation targets include Agents/run_hooks.py, existing agent
 dispatch/child lifecycle seams, Console runtime/submit/interrupt owners,
-context compaction and scheduler admission. Their exact changes belong to
+context compaction and scheduler admission. The existing
+[MCP client](../../../tldw_chatbook/MCP/client.py) also needs its content-only
+tool-result projection replaced by a typed service result before hooks can rely
+on error/structured fields. Display consumers keep a separate compatible projection.
+Their exact changes belong to
 atomic implementation plans, not a generic event-bus rewrite.
 Use existing Tests/Agents/test_run_hooks.py and Console hook regressions as
 compatibility controls; add focused suites for new contracts and runtime

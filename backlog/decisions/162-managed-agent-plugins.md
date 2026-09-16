@@ -50,7 +50,11 @@ these boundaries and ADR-009's offline-tamper protection.
 5. Extend authenticated skill trust through a separate plugin namespace and
    secure generation marker. Authenticate activation defaults/workspace overrides,
    selection/dependencies, hook requirements, execution mappings and credential
-   references/versions as well as content and revocation. Verify at use time;
+   references/authority-binding generations as well as content and revocation.
+   Bind credential identity, endpoint/audience and scope through the owning auth
+   service. Ordinary verified token renewal preserves that authority; identity,
+   scope or revocation changes invalidate captured mappings. Token/storage
+   revisions are separate from authority generations. Verify at use time;
    no hash-only authority, foreign grants or permission-default recovery. A live
    hook-disable switch cannot erase required dependencies.
 6. One OS-locked plugin execution/mutation owner exists per user-data directory
@@ -72,7 +76,9 @@ these boundaries and ADR-009's offline-tamper protection.
    credential seams. Direct generic MCP transport is a separately qualified
    prerequisite; a tldw_server wrapper is not equivalent evidence. SessionStart
    uses provisional normal authority and independently eligible, already-connected
-   MCP prerequisites; initialization cannot grant itself readiness.
+   MCP prerequisites; initialization cannot grant itself readiness. Preserve
+   typed MCP result error/structured fields through the service boundary before
+   hook interpretation or display projection.
 10. Plugins owns package management. Library Skills and MCP retain their component
     surfaces with service-enforced package ownership. Canonical Settings owns
     global preferences only. UI shows workspace versus installation-wide effects.

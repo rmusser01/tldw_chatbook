@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-15 17:39'
-updated_date: '2026-09-15 19:11'
+updated_date: '2026-09-16 00:55'
 labels:
   - design
   - plugins
@@ -25,6 +25,7 @@ Define a reviewable plugin system and Git marketplace experience for Chatbook, i
 - [x] #3 Canonical ADRs record the package and hook architecture and are linked from both specs and this task.
 - [x] #4 Document checks and a self-review resolve placeholders, broken local links and contradictory requirements; the written specs are ready for user review.
 - [x] #5 The approved written-spec review gaps are resolved consistently across both specs and ADRs, with a concrete failure/control acceptance scenario for each.
+- [x] #6 The MCP result, pending post-hook barrier, PreToolUse phase and credential renewal contracts are unambiguous and have failure/control acceptance scenarios in the specs and matching ADR decisions.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,6 +54,14 @@ Created through Backlog CLI, then renumbered from its uncommitted offer of TASK-
 5. Define provisional SessionStart admission and MCP initialization prerequisites/cycle rejection.
 6. Add aggregate v2 admission limits, fair scheduling and distinct notification/reaping deadlines.
 7. Add failure/control acceptance scenarios, align both ADRs, verify the documentation and commit the amendment.
+
+### Approved integration-contract amendments
+
+1. Specify MCP result preservation, error-first validation and exact v2 normalization.
+2. Establish pending required post-event barriers before the next model admission or normal settlement.
+3. Classify all PreToolUse effect combinations and distinguish transformations from final-argument guards.
+4. Authenticate stable credential bindings while allowing token renewal within unchanged authority.
+5. Add targeted acceptance scenarios, align both ADRs, verify the documents and commit the amendment.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -94,4 +103,10 @@ Written-spec review amendment: resolved all six approved findings in the two spe
 Hook definitions now distinguish required success from required nonempty context, retain requirements when hooks are disabled, and fence subsequent input after required post-event failure without replaying settled work. Provisional initialization uses ordinary authority and independently eligible connected MCP dependencies. Application-wide v2 execution/reservation/observation limits use fair admission and keep cleanup-pending children counted; notification and host-reaping deadlines are separate.
 
 Added concrete failure and successful-control acceptance scenarios for each finding. Self-review aligned failure scopes, initialization timing, recovery evidence and budget units across the specs and ADRs. Documentation checks passed for four JSON examples, 34 local links, balanced fences, unresolved-marker absence and whitespace. No runtime tests were run: the scenarios describe required implementation evidence, not implemented behavior. Implementation planning remains the next phase after written-spec review.
+
+Integration-contract amendment: resolved the four approved follow-up findings in both specs and ADR-162/ADR-163. MCP hooks preserve typed error/structured fields, reject errors before effects and accept only explicit bounded result forms. Required post-events establish pending checkpoints before next model admission or normal settlement; effect acceptance and checkpoint release occur together.
+
+PreToolUse declarations now have exhaustive phase classification: mixed transform/deny handlers run once, final constraints require separate non-transforming guards, context-only handlers see final arguments and optional effect-free observers use the bounded queue. Credential authority uses stable account/issuer/endpoint/scope bindings and generations; ordinary verified token renewal preserves trust, while authority changes invalidate captured mappings.
+
+Added failure and successful-control scenarios for MCP error payloads/normalization, pending checkpoint races, later transformers changing arguments, and credential renewal versus authority changes. Aligned both ADRs and identified the existing MCP content-only client projection as an implementation prerequisite. Document checks passed for four JSON examples, 35 local links, balanced fences, placeholder absence and whitespace. Runtime scenarios remain future implementation evidence; no runtime tests were run for this documentation amendment.
 <!-- SECTION:NOTES:END -->

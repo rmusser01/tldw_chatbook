@@ -300,7 +300,8 @@ authenticated authority snapshot explicitly covers:
 - User-wide activation default and every named-workspace override keyed by
   stable workspace ID, including Disabled values and the meaning of Inherit.
 - Execution-affecting configuration and exact connection/tool/model mappings,
-  including definition digests and credential reference IDs/service versions.
+  including definition digests and credential reference IDs/authority-binding
+  generations, as defined below.
 - Authority/revocation generations and uninstall tombstones.
 
 Absence and explicit values have defined distinct encodings. An activation row
@@ -311,8 +312,31 @@ when the package bytes are unchanged. Display labels, cached search results,
 connection liveness and other transient readiness are not authority.
 
 Secret values remain in the credential service, never in this snapshot or its
-diagnostics. Changing a credential reference/service version invalidates the
-captured mapping until reconciled through that service and the coordinator.
+diagnostics. Authenticate a stable credential binding: reference ID, authority
+generation, authentication method, issuer, intended audience/resource and
+endpoint origin, account/principal identity and authorized scopes where the
+service provides them. Opaque credentials retain an explicitly reviewed binding
+and unknown identity/scope fields; plugin metadata cannot supply verified claims.
+
+The owning credential service separates that authority generation from storage
+revisions, token bytes and expiry. Ordinary access-token renewal or refresh-token
+rotation within the same verified binding does not alter plugin trust, invalidate
+the run's mapping or require package review. Resolve current valid secret material
+through the credential service at dispatch; a trusted binding is not evidence
+that an expired or revoked token is usable. Never derive a plugin authority
+generation by hashing token material or expiry timestamps.
+
+Reference, account, issuer, authentication-method, endpoint/audience or scope
+changes, revocation, and reauthorization advance the authority-binding generation.
+They invalidate captured mappings until reconciled through the credential service
+and plugin coordinator under normal review. If renewal cannot establish the same
+authorized binding, leave the component unready rather than asserting continuity.
+Renewal cannot silently expand scopes, switch accounts or redirect credentials.
+Storage-format/service-version changes alone do not imply changed authority;
+their migration must preserve the binding or require revalidation. This contract
+is a prerequisite of the credential integration, not a claim that existing
+credential storage already provides these identities and generations.
+
 Authenticate plugin hook requirement/selection decisions, not a copy of the
 legacy user hook configuration. The live hook master switch can suppress
 execution, but switching it off cannot remove an authenticated dependency;
@@ -360,6 +384,11 @@ Unknown dependency references are failures, not empty dependency lists. A
 required hook must be enabled, available and successful at its applicable event
 boundary under the companion spec's success/context rules. Disabling the hook
 master switch or an individual required handler leaves the dependency unsatisfied.
+Inspection distinguishes required transformers from final-argument guards.
+A dependency on a transformer that can deny does not establish a final-argument
+constraint; native authors require a separate non-transforming guard for that
+guarantee. Vendor guard constraints need the same qualified final-validation
+behavior or an explicit adaptation, rather than a silently weaker mapping.
 For vendor guard hooks whose dependency scope cannot be established, treat
 all that installation's executable/automatic capabilities as dependent until
 the user reviews an explicit narrower adaptation. Plaintext can describe
@@ -400,6 +429,10 @@ existing MCP client interface using the existing HTTP stack, with versioned
 negotiation, JSON/SSE responses, connection lifecycle, cancellation, authentication
 challenges, tool discovery and reconnect. Keep transport code separate from
 plugin loading. No new mandatory vendor client dependency is assumed.
+Preserve complete typed MCP tool results, including error and structured-content
+fields, through the client/service seam. Hook consumers apply the companion
+spec's error-first normalization; display formatting must not erase the fields
+needed to distinguish a successful hook from a failed tool call.
 
 The initial protocol profiles to qualify are 2026-07-28, 2025-11-25 and the
 existing local client's 2025-03-26 baseline. Implement the current per-request
@@ -417,6 +450,9 @@ authentication service for supported OAuth flows. Unsupported authentication
 requirements produce Needs configuration with an exact reason. Never infer
 access from a vendor app/connector ID. Missing OAuth integration must be
 reported as unsupported authentication, not claimed as working transport auth.
+Credential integration follows section 4.3's stable binding contract. Refreshing
+credentials within unchanged authority does not re-review the package; any
+uncertain invocation still follows the no-automatic-replay rule below.
 
 Remote endpoints use HTTPS except explicitly selected loopback development
 servers. Do not forward credentials across origins or follow an authentication
@@ -930,9 +966,19 @@ Written-spec amendment scenarios are mandatory acceptance evidence:
   restores all authority, including other installations' disables/tombstones;
   a missing/different snapshot blocks recovery. No case recreates grants or
   starts plugin code, and surviving-process reconciliation remains necessary.
+- **Credential renewal:** renew access/refresh tokens in the same authorized
+  binding during a live run and pending review. The binding generation and
+  plugin trust stay unchanged, and a later dispatch resolves the current valid
+  credential. Account, issuer, endpoint/audience, scope, reference or revocation
+  changes invalidate the captured mapping. Unknown continuity, expired tokens
+  and failed renewal leave the component unready; neither old trusted state nor
+  refresh success permits replay of an uncertain tool call. Include opaque
+  credential replacement and credential-store migration, with no secret values
+  in authority snapshots, receipts or diagnostics.
 - Required hook effects, provisional MCP initialization and aggregate admission/
-  teardown scenarios are specified in the companion hook acceptance section;
-  exercise them through plugin-owned registrations as well as standalone v2.
+  teardown, MCP normalization and final-argument validation scenarios are specified
+  in the companion hook acceptance section; exercise them through plugin-owned
+  registrations as well as standalone v2.
 
 Run UI/live verification with isolated config, data, credential and process
 roots and prove the isolation. Follow the repository's
@@ -985,6 +1031,9 @@ The written design incorporates all accepted section reviews:
   explicit authenticated activation/mappings, marker-bound complete recovery
   snapshots and commit certificates, required hook success/context checkpoints,
   provisional MCP initialization, and aggregate v2/cleanup budgets.
+- Integration-contract amendments: error-first MCP result normalization, pending
+  post-event admission barriers, explicit PreToolUse phases and guard guarantees,
+  and credential authority bindings that survive ordinary token renewal.
 
 This is a proposed implementation contract, not a report of implemented
 features or passing runtime tests. The two written specs receive a final user
