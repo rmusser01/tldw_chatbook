@@ -28,7 +28,9 @@ Enter on Clear, immediate typing into the returned path field, retained metadata
 and ready-state recovery without submitting a job. Existing keyboard, consent,
 canvas, structural and token/bundle checks cover the neighboring behavior.
 
-One existing check still fails: the Parakeet model-directory Browse button ends
+Historical observation, corrected by [TASK-32664](../2026-09-16-ingest-options/README.md):
+the harness omitted app-tier sizing utilities. With production CSS the row fits.
+At this checkpoint, one existing check failed: the Parakeet model-directory Browse button ends
 at column 94 beyond its row's column 78 at an 80-column viewport. The same test
 fails with all modified production files restored to the base commit. That
 option-row issue belongs to the next review, not this gate repair.
@@ -77,7 +79,8 @@ and the owned session closed. The app log has no ERROR/CRITICAL lines.
 
 ## Next review
 
-Continue with per-type ingest options, starting with the inherited Parakeet
-directory-row overflow, then queue activity and recovery. This slice does not
+The subsequent [directory-picker review](../2026-09-16-ingest-options/README.md)
+corrects that test and verifies picker return continuity. Continue with remaining
+per-type options, then queue activity and recovery. This slice does not
 qualify file-picker operation, real import execution, remote authorities,
 provider/extraction actions or restart. No push or integration into `dev`.

@@ -14354,3 +14354,19 @@ the committed Review receipt before replacement. A deterministic test delivers
 that event in the terminal-outcome gap, then executes an old presentation callback
 after a genuine new draft edit. This checks operation ownership without relying
 on a lucky native scheduler ordering.
+
+## Layout evidence needs the app's utility sheets (TASK-32664, 2026-09-16)
+
+TASK-32663 reported an inherited Parakeet folder-row overflow: Browse ended at
+column 94 in an 80-column test. The follow-up paired the same state and widget
+with and without APP_STYLESHEETS. The render-only harness loaded consolidated
+widget defaults but omitted app-tier `w-fill`, `w-full` and `h-3` utilities.
+With shipped styles the input resolved to `1fr`, not `100w`, and Browse fit.
+Baseline reproduction alone therefore proved a test failure, not a product bug.
+Geometry journeys must load the app tier as well as consolidated widget CSS.
+
+The real picker journey found a separate defect: selecting a folder rebuilt the
+whole form, reset the title cursor from 4 to 13 and returned compact Browse focus
+at y=36 with no painted label. Updating the existing option input keeps the form
+and its focus position. Assert actual paint and cursor retention across dismissal,
+not just the selected value or a focused widget identity.

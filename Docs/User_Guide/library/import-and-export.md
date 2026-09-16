@@ -1029,3 +1029,10 @@ correcting.)*
 Import media recovery and consent text stays complete at compact widths.
 Targeted checks cover both themes; native checks exercise local preflight,
 keyboard Clear/re-entry and metadata retention without submitting imports.*
+
+*Reviewed on feat/component-pattern-library — 2026-09-16 (TASK-32664):
+The local Parakeet folder Browse action returns to a visible button after Select
+or Cancel. Selecting updates the staged folder without replacing other draft
+fields or resetting their cursor positions. Missing Parakeet tooling keeps the
+folder controls disabled and names the missing package. This qualifies the folder
+picker UI; it does not qualify model installation or transcription.*

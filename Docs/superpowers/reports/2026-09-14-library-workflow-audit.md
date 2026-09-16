@@ -541,8 +541,9 @@ row when empty, inside the existing docked commit bar. Mounted form fields,
 metadata and keyboard focus survive gate updates and Clear/re-entry.
 
 **271 distinct targeted checks pass.** Eight baseline clipping failures are now
-green. One inherited Parakeet model-directory row overflow remains red and was
-reproduced against the base commit. Zero new Ruff diagnostics; budgets and
+green. One inherited Parakeet model-directory geometry test remained red at this
+checkpoint. TASK-32664 subsequently traced it to omitted app-tier utility CSS,
+not a production row overflow. Zero new Ruff diagnostics; budgets and
 controller/screen sources are unchanged. Independent review found no actionable
 issue in this repair. Test-only setup and CSS_PATH corrections are documented
 in the QA report.
@@ -553,7 +554,31 @@ and keyboard Clear/re-entry preserve metadata without submitting an import.
 Read-only checks confirm zero media, messages and jobs, ten healthy databases,
 unchanged source content and normal exit 0. The owned shell was closed.
 
-Next: per-type ingest options, beginning with the Parakeet directory-row
-overflow, then queue activity and recovery. File-picker operation, actual import
+Next at this checkpoint: per-type ingest options and picker continuity,
+then queue activity and recovery. File-picker operation, actual import
 execution, remote/provider actions and restart remain unqualified. No full suite,
 push or integration into dev was performed.
+
+## Parakeet import folder selection — TASK-32664
+
+The [directory-picker review](../qa/2026-09-16-ingest-options/README.md) corrects
+the geometry harness to load production app CSS. The row already fits. The
+actual defect was whole-form replacement after Select: it reset the title cursor
+and returned compact Browse focus below the viewport. Updating the existing
+folder field preserves metadata, cursor, viewport and keyboard return; Cancel
+preserves the staged folder. An explicit gate refresh also clears stale Start
+confirmation after selecting the same folder. **279 distinct targeted checks
+pass**, with zero new Ruff diagnostics and no increased budgets. Focused review
+found no remaining actionable findings after the same-folder repair.
+
+Private native Select/Cancel journeys pass at 170×48 dark and 80×24 light;
+read-only checks confirm ten healthy databases and zero media, messages and
+ingest jobs, with normal exit 0. The real unavailable-package state is recorded;
+enabled folder controls use an explicit UI-only availability simulation.
+No installation, model execution or import was performed.
+
+Next: compact directory-picker layout. The 80×24 capture reports one loaded
+folder but has no visible list rows, and the typed path field is narrow.
+Then continue remaining per-type options and queue activity/recovery. Typed-path
+selection is qualified; compact list navigation, extraction, remote authorities
+and restart remain unqualified. No full suite, push or integration into dev.

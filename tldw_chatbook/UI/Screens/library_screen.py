@@ -27470,7 +27470,13 @@ class LibraryScreen(BaseAppScreen):
                 event.name
             ] = str(selected_path)
             if getattr(self, "_is_mounted", False):
-                self.refresh(recompose=True)
+                # Use the same in-place update as typing. Replacing the form
+                # loses other cursors and can restore focus below the viewport.
+                self.query_one(f"#opt-{event.group}-{event.name}", Input).value = str(
+                    selected_path
+                )
+                # Choosing the same folder emits no Input.Changed event.
+                self._update_library_ingest_gate(self._build_library_ingest_state())
 
         self.app.push_screen(
             SelectDirectory(
