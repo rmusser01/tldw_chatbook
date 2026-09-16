@@ -1,11 +1,11 @@
 ---
 id: TASK-32677
 title: Execute v2 command hooks with bounded resource ownership
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:23'
-updated_date: '2026-09-16 23:11'
+updated_date: '2026-09-16 23:19'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Both synchronous agent-thread and asynchronous Console entries execute argv-only handlers with bounded input/output capture and no implicit shell.
-- [ ] #2 The exact per-runtime and application execution, reservation and observation limits include provisional, nested, late and cleanup-pending work with fair admission.
-- [ ] #3 Cancellation closes admission immediately, keeps local children counted until reaped, and separates notification deadlines from the five-second host-reap allowance.
-- [ ] #4 Real controlled child processes establish successful execution and kill/reap controls; timeout, failed launch, cancelled waiters and surviving-child paths preserve honest outcomes and metadata-only diagnostics.
+- [x] #1 Both synchronous agent-thread and asynchronous Console entries execute argv-only handlers with bounded input/output capture and no implicit shell.
+- [x] #2 The exact per-runtime and application execution, reservation and observation limits include provisional, nested, late and cleanup-pending work with fair admission.
+- [x] #3 Cancellation closes admission immediately, keeps local children counted until reaped, and separates notification deadlines from the five-second host-reap allowance.
+- [x] #4 Real controlled child processes establish successful execution and kill/reap controls; timeout, failed launch, cancelled waiters and surviving-child paths preserve honest outcomes and metadata-only diagnostics.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,3 +60,17 @@ Reason: Direct implementation of the accepted app-owned v2 command execution and
 
 14. Fix the remaining F2 transient dependency-accessor defect in Agents/hooks_v2/engine.py and Tests/Agents/test_hooks_v2_execution.py: carry the already-obtained conservative dependency-required status into failure construction, never erase it by retrying the accessor. Add actual raise-then-false RED plus stable false/true controls; preserve fixed metadata, explicit/event blocking scopes, cancellation and zero custody/ticket leakage. Rerun the exact execution test file and any truly affected neighbor, with committed isolation and final frozen syntax/Ruff/Black/whitespace evidence. Append Fix2 evidence before fresh scoped re-review. F1/F3/F4/R47 are already addressed; Minor F5 remains deferred. No contract or ADR change.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented v2 argv-only command execution on the app-owned loop, including the synchronous agent-thread facade, immutable handler snapshots and engine-issued read-only event scopes. Shared round-robin/FIFO budgets retain provisional, suspended, late and cleanup-pending work; bounded input/output decoding and fixed failure metadata preserve event and dependency requiredness. Session/application shutdown seals admission immediately, keeps exact session fences until actual hook cleanup settles, and separates bounded teardown notifications from host reaping. Legacy hooks retain their separate behavior.
+
+An injected process-owner contract keeps Plugins out of the hook runtime. Real controlled Darwin children qualify success, timeout, spawn/publication races, cancellation and terminal group proof. Windows v2 command launch explicitly refuses before root/environment/process access (R47); Linux execution remains unqualified. Escaped POSIX descendants are outside the group guarantee. Final F8 root/dirty/native/clean adapters and real H3-H6/I7 producer/loop composition remain named downstream obligations, not H2 claims.
+
+Minimal prerequisites fix stale session-close grant cleanup ordering and migrate existing viewless tests to the established tuple API. The committed subprocess bootstrap proves exact checkout, private profile/data root, null keyring and network refusal without an external sitecustomize or temporary path prefix; the incident is recorded in lessons-testing-evidence.md.
+
+Validation: Fix1 frozen five-file targeted run 186 passed in 29.93s, no skips/warnings. Fix2 frozen execution-file run 45 passed in 8.26s; scoped review found F2 addressed with no new Critical/Important issues. The nine-case regression was 3 failing transient cases and 6 passing stable controls before the correction, then all 9 passed. Overlapping test counts are not added. Final syntax/Ruff/Black pass on new files; existing shared-file baseline parity retained. Frozen current/staged hashes and whitespace verified before commits. Independent initial review plus scoped fixes resolve all Important findings; only minor rejected-runtime empty-counter retention remains explicitly deferred to final whole-branch triage. No full suite was run.
+
+ADR required: yes. Direct implementation of backlog/decisions/163-expanded-console-hook-runtime.md and backlog/decisions/162-managed-agent-plugins.md, preserving legacy ADR148. Updated accepted hook spec/ADR, production hook modules, Console runtime/controller, exact Agent/Chat tests, committed child fixture and incident lesson. No new ADR.
+<!-- SECTION:NOTES:END -->
