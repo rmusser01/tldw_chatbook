@@ -5,7 +5,7 @@
 - Historical source task/design: TASK-32077 and Docs/superpowers/specs/2026-09-08-workflows-local-first-parity-design.md on preserved codex/workflows-local-file-to-note.
 - Current task: [TASK-32601](../tasks/task-32601%20-%20Restore-the-authoring-only-Workflows-editor-on-dev.md)
 - Current delivery: [Authoring-only dev port](../../Docs/superpowers/specs/2026-09-14-workflows-authoring-dev.md)
-- Next delivery design: [TASK-32690](../tasks/task-32690%20-%20Design-the-first-sequential-file-to-note-run.md), [session-bound file-to-note run](../../Docs/superpowers/specs/2026-09-16-workflows-first-run-design.md); lifetime choice approved, written design awaiting review.
+- Next delivery design: [TASK-32690](../tasks/task-32690%20-%20Design-the-first-sequential-file-to-note-run.md), [session-bound file-to-note run](../../Docs/superpowers/specs/2026-09-16-workflows-first-run-design.md); lifetime choice and final written design approved. Implementation tracked in [TASK-32691](../tasks/task-32691%20-%20Execute-session-bound-file-to-note-workflows.md).
 - Revision: the user approved the revised Chatbook contracts and safety defaults on 2026-09-08. The paired-server synchronization protocol still requires counterpart agreement and implementation; this acceptance does not assert server support.
 - Supersedes: N/A
 
@@ -163,10 +163,11 @@ This choice does not waive immutable snapshots, captured destinations,
 effect-time permissions, fail-closed unavailable authority, bounded local model
 requests, zero automatic retries, or physical operation settlement. The written
 design identifies gaps in current model/Notes/permission APIs that must be
-qualified before enabling Run. Its integration details await written-design
-review; no new transport or permission implementation is approved by this
-lifetime amendment alone. Restart-resumable option B requires a later explicit
-ownership/reconciliation design and evidence; it is not declared impossible.
+qualified before enabling Run. The user subsequently approved the final written
+design and its narrow integration boundaries; this does not authorize a broader
+transport, permission or ownership framework. Restart-resumable option B requires
+a later explicit ownership/reconciliation design and evidence; it is not declared
+impossible.
 
 ## Context
 

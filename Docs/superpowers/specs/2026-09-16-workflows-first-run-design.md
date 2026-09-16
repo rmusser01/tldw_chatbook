@@ -1,8 +1,8 @@
 # First sequential workflow: execution design checkpoint
 
-Status: Ready for written-design review. The five-step example and option A,
-session-bound execution, are approved by the user. Runtime implementation has
-not begun. TASK-32690 remains In Progress pending review of this written design.
+Status: Approved by the user, including the final written design. The five-step
+example and option A, session-bound execution, are approved. Runtime implementation
+has not begun. TASK-32690 records the design; TASK-32691 tracks implementation.
 
 ADR required: yes; the approved lifetime choice is recorded in existing ADR-138.
 ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
@@ -245,8 +245,8 @@ in ADR-138; they have not been deleted or moved to branching/parallel releases.
 
 ## Current checkpoint
 
-The user selected A, and ADR-138 records that staging decision. Review this
-written design before implementation planning. The model/Notes/permission seams
+The user selected A and approved this written design; ADR-138 records that
+decision. Implementation planning is authorized. The model/Notes/permission seams
 must be qualified against these requirements; their existence is not evidence of
 correct execution. No runtime code, persistent run schema, live-model test or
 server-conformance claim is included in this design-only checkpoint.
