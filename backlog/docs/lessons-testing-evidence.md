@@ -14426,3 +14426,18 @@ whole form, reset the title cursor from 4 to 13 and returned compact Browse focu
 at y=36 with no painted label. Updating the existing option input keeps the form
 and its focus position. Assert actual paint and cursor retention across dismissal,
 not just the selected value or a focused widget identity.
+
+## Same-edge Textual docks overlap; check the label's painted cells (TASK-32699)
+
+The filtered picker's compact repair docked its filename label and input at the
+same top edge. Twelve interaction/geometry tests passed and all buttons worked,
+but the native capture showed no label: both widgets began at row 15, and the
+input painted over the label. Textual docks share an origin rather than stacking.
+A one-row token-backed input margin reserved the label row without replacing
+controls or increasing the footer height.
+
+Check painted labels as well as field geometry and actions when rearranging a
+form. A mounted, nonzero-sized label does not prove the user can read it. The
+added compositor assertion reproduced the overlap before the fix; the final
+native confirmation covers both themes. Evidence:
+`Docs/superpowers/qa/2026-09-16-filtered-picker/`.

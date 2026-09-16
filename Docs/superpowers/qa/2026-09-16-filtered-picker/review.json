@@ -1,0 +1,10 @@
+{
+  "reviewer": "filtered_picker_review",
+  "findings": [],
+  "independent_probes": [
+    "Compact missing-file errors with and without Select folder",
+    "Compact FileSave overwrite rejection"
+  ],
+  "delta_review": "One-row input margin separates same-edge docks without increasing seven-row footer; source/bundle and painted-label assertions reviewed.",
+  "limits": "Reviewer did not rerun full targeted set or inspect native images; parent performed both."
+}

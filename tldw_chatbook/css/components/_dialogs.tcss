@@ -60,24 +60,32 @@ FileSystemPickerScreen Button:focus {
     outline-right: heavy $ds-focus-accent;
 }
 
-/* TASK-32665: preserve listing rows and path space in compact folder dialogs.
+/* TASK-32665 / TASK-32699: preserve listing rows and path space in compact pickers.
    Class changes retain the inputs, listing, focus and selection on resize. */
-SelectDirectory.-compact Dialog {
+SelectDirectory.-compact Dialog,
+FileOpen.-compact Dialog,
+FileSave.-compact Dialog {
     width: $ds-percent-95;
     height: $ds-percent-95;
 }
 
-SelectDirectory.-compact #current_path_display {
+SelectDirectory.-compact #current_path_display,
+FileOpen.-compact #current_path_display,
+FileSave.-compact #current_path_display {
     margin-bottom: $ds-space-0;
 }
 
-SelectDirectory.-compact #path-breadcrumbs {
+SelectDirectory.-compact #path-breadcrumbs,
+FileOpen.-compact #path-breadcrumbs,
+FileSave.-compact #path-breadcrumbs {
     height: $ds-control-height-compact;
     padding: $ds-space-0 $ds-space-inline;
     margin-bottom: $ds-space-0;
 }
 
-SelectDirectory.-compact InputBar {
+SelectDirectory.-compact InputBar,
+FileOpen.-compact InputBar,
+FileSave.-compact InputBar {
     padding: $ds-space-0 $ds-space-inline;
 }
 
@@ -85,21 +93,49 @@ SelectDirectory.-compact InputBar Input {
     width: $ds-width-fill;
 }
 
-SelectDirectory.-compact InputBar Button {
+SelectDirectory.-compact InputBar Button,
+FileOpen.-compact InputBar Button,
+FileSave.-compact InputBar Button {
     width: auto;
     min-width: $ds-size-8;
 }
 
-SelectDirectory #picker-error-line {
+SelectDirectory #picker-error-line,
+FileOpen #picker-error-line,
+FileSave #picker-error-line {
     color: $ds-status-error-readable;
 }
 
 /* The path remains editable in its field; its repeated diagnostic must not
    consume all folder rows when the missing path contains many components. */
-SelectDirectory.-compact #picker-error-line {
+SelectDirectory.-compact #picker-error-line,
+FileOpen.-compact #picker-error-line,
+FileSave.-compact #picker-error-line {
     height: $ds-control-height-compact;
     text-wrap: nowrap;
     text-overflow: ellipsis;
+}
+
+/* TASK-32699: keep the same filename, filter and action widgets mounted.
+   Dock label + filename above the filter/actions only in compact dialogs.
+   Docks share an origin, so the input margin reserves the label row. */
+FileOpen.-compact InputBar,
+FileSave.-compact InputBar {
+    height: $ds-size-7;
+}
+
+FileOpen.-compact #file-name-label,
+FileSave.-compact #file-name-label {
+    dock: top;
+    height: $ds-control-height-compact;
+}
+
+FileOpen.-compact InputBar Input,
+FileSave.-compact InputBar Input {
+    dock: top;
+    width: $ds-width-full;
+    height: $ds-control-height;
+    margin-top: $ds-space-stack;
 }
 
 /* The EnhancedFileDialog selector above (TASK-16478) also defends the
