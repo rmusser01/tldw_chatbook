@@ -317,6 +317,198 @@ async def test_cancelled_quit_preparation_retains_flush_without_late_refence(
         await owner.close()
 
 
+@pytest.mark.parametrize("operation", ["save", "selection"])
+@pytest.mark.parametrize(
+    "gap_creation,cancel_retry", [(False, False), (True, False), (False, True)]
+)
+async def test_quit_retry_refences_and_drains_work_accepted_after_abort(
+    tmp_path, monkeypatch, operation, gap_creation, cancel_retry
+):
+    owner = WorkflowAuthoring(lambda: tmp_path / "prepare-retry.sqlite3")
+    original = await owner.create("Original")
+    target = await owner.create("Selection target")
+    drafts, documents = owner.drafts, owner.documents
+    await drafts.select(original.workflow_id, original.revision_id)
+    entered, release = Event(), Event()
+    gap_entered, gap_release = Event(), Event()
+    first_child, second_child = asyncio.Event(), asyncio.Event()
+    children_settled = asyncio.Event()
+    child_calls = 0
+    child_completions = 0
+    drain = drafts._drain_accepted
+
+    async def observed_drain():
+        nonlocal child_calls, child_completions
+        child_calls += 1
+        # Observe the real fence at the child-stage boundary, before settlement.
+        with pytest.raises(DraftWriteFailed):
+            drafts.update(drafts.current.raw_text + " ")
+        with pytest.raises(DraftWriteFailed):
+            await drafts.save_revision()
+        (first_child if child_calls == 1 else second_child).set()
+        await drain()
+        child_completions += 1
+        if child_completions == 2:
+            children_settled.set()
+
+    monkeypatch.setattr(drafts, "_drain_accepted", observed_drain)
+    method = "save_revision" if operation == "save" else "get_revision"
+    physical = getattr(documents, method)
+
+    def held(*args, **kwargs):
+        result = physical(*args, **kwargs)
+        entered.set()
+        assert release.wait(5)
+        return result
+
+    monkeypatch.setattr(documents, method, held)
+    accepted = asyncio.create_task(
+        drafts.save_revision()
+        if operation == "save"
+        else drafts.select(target.workflow_id, target.revision_id)
+    )
+    first = retry = creation = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        first = asyncio.create_task(owner.prepare_quit())
+        await asyncio.wait_for(first_child.wait(), 5)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        owner.abort_quit()
+        pending = drafts.update(drafts.current.raw_text + "\n ")
+        if gap_creation:
+            create = documents.create
+
+            def held_create(*args, **kwargs):
+                gap_entered.set()
+                assert gap_release.wait(5)
+                return create(*args, **kwargs)
+
+            monkeypatch.setattr(documents, "create", held_create)
+            creation = asyncio.create_task(owner.create("Accepted between quits"))
+            assert await asyncio.to_thread(gap_entered.wait, 5)
+        retry = asyncio.create_task(owner.prepare_quit())
+        if gap_creation:
+            release.set()
+            await accepted
+            # The old barrier can finish, but the newly accepted creation cannot.
+            await asyncio.wait({retry}, timeout=0.1)
+            assert not retry.done(), "Retry skipped work accepted after abort"
+            gap_release.set()
+            created = await creation
+        else:
+            # A retained physical operation keeps the second barrier pending.
+            # If no fresh child stage is entered, probe its public admission too.
+            try:
+                await asyncio.wait_for(second_child.wait(), 0.2)
+            except TimeoutError:
+                pass
+            with pytest.raises(DraftWriteFailed):
+                drafts.update(drafts.current.raw_text + " ")
+            with pytest.raises(DraftWriteFailed):
+                await drafts.save_revision()
+            assert not retry.done() and not accepted.done()
+            if cancel_retry:
+                retry.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await retry
+                owner.abort_quit()
+                pending = drafts.update(drafts.current.raw_text + "\n  ")
+            release.set()
+            await accepted
+        if cancel_retry:
+            await asyncio.wait_for(children_settled.wait(), 5)
+        else:
+            await asyncio.wait_for(retry, 5)
+        assert (
+            documents.get_draft(original.workflow_id, original.revision_id) == pending
+        )
+        if gap_creation:
+            assert documents.get_head(created.workflow_id) == created
+            assert drafts.base == created
+        if not cancel_retry:
+            with pytest.raises(DraftWriteFailed):
+                drafts.update(drafts.current.raw_text + " ")
+            with pytest.raises(DraftWriteFailed):
+                await drafts.save_revision()
+        owner.abort_quit()
+        await owner.create("After second abort")
+        drafts.update(drafts.current.raw_text + "\n")
+        saved = await drafts.save_revision()
+        assert documents.get_head(saved.workflow_id) == saved
+    finally:
+        release.set()
+        gap_release.set()
+        owner.abort_quit()
+        await asyncio.gather(
+            *(task for task in (accepted, first, retry, creation) if task is not None),
+            return_exceptions=True,
+        )
+        monkeypatch.setattr(drafts, "_drain_accepted", drain)
+        await owner.close()
+
+
+async def test_quit_retry_does_not_refence_before_newly_accepted_creation_settles(
+    tmp_path, monkeypatch
+):
+    owner = WorkflowAuthoring(lambda: tmp_path / "flush-retry.sqlite3")
+    await owner.create("Original")
+    entered, release = Event(), Event()
+    write = owner.documents.put_draft
+
+    def held(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return write(*args, **kwargs)
+
+    monkeypatch.setattr(owner.documents, "put_draft", held)
+    owner.drafts.update(owner.drafts.current.raw_text + "\n")
+    first = asyncio.create_task(owner.prepare_quit())
+    creation = retry = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        owner.abort_quit()
+        accepted = asyncio.Event()
+        flush = owner.drafts.flush
+
+        async def observed_flush():
+            accepted.set()
+            return await flush()
+
+        monkeypatch.setattr(owner.drafts, "flush", observed_flush)
+        creation = asyncio.create_task(owner.create("Accepted after abort"))
+        await asyncio.wait_for(accepted.wait(), 5)
+        started = asyncio.Event()
+
+        async def prepare_again():
+            started.set()
+            await owner.prepare_quit()
+
+        retry = asyncio.create_task(prepare_again())
+        await started.wait()
+        release.set()
+        created = await creation
+        await retry
+        assert owner.documents.get_head(created.workflow_id) == created
+        assert owner.drafts.base == created
+        with pytest.raises(DraftWriteFailed):
+            owner.drafts.update(created.raw_json + " ")
+        owner.abort_quit()
+        await owner.create("Usable after retry")
+    finally:
+        release.set()
+        owner.abort_quit()
+        await asyncio.gather(
+            *(task for task in (first, creation, retry) if task is not None),
+            return_exceptions=True,
+        )
+        await owner.close()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX file identity and aliases")
 @pytest.mark.parametrize("operation", ["import", "export"])
 @pytest.mark.parametrize(

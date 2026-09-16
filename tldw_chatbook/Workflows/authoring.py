@@ -40,6 +40,7 @@ class WorkflowAuthoring:
         self._closed = False
         self._quit_preparing = False
         self._quit_task: asyncio.Task | None = None
+        self._quit_tasks: set[asyncio.Task] = set()
 
     async def open(self) -> None:
         """Initialize once; a cancelled waiter cannot abandon construction."""
@@ -97,17 +98,29 @@ class WorkflowAuthoring:
         if self._closed or self._closing:
             raise DraftWriteFailed("Workflow authoring is closing or closed")
         self._quit_preparing = True
-        if self._quit_task is None or self._quit_task.done():
-            self._quit_task = asyncio.create_task(self._prepare_quit())
-            self._quit_task.add_done_callback(
-                lambda task: task.exception() if not task.cancelled() else None
-            )
-        await asyncio.shield(self._quit_task)
+        # Abort may have released the child fence and admitted more work. Each
+        # attempt must flush that work and establish its own child barrier.
+        task = asyncio.create_task(self._prepare_quit())
+        self._quit_task = task
+        self._quit_tasks.add(task)
+
+        def settled(task: asyncio.Task) -> None:
+            self._quit_tasks.discard(task)
+            if not task.cancelled():
+                task.exception()
+
+        task.add_done_callback(settled)
+        await asyncio.shield(task)
 
     async def _prepare_quit(self) -> None:
         await self.flush()
-        # A cancelled waiter may already have aborted while flush was retained.
-        if self._quit_preparing and self.drafts:
+        # An aborted or superseded flush must not fence the newer attempt's
+        # accepted work before that attempt has finished draining it.
+        if (
+            self._quit_preparing
+            and self._quit_task is asyncio.current_task()
+            and self.drafts
+        ):
             await self.drafts.prepare_quit()
 
     def abort_quit(self) -> None:
@@ -135,9 +148,9 @@ class WorkflowAuthoring:
         await asyncio.shield(self._closing)
 
     async def _close(self) -> None:
-        if self._quit_task:
+        if self._quit_tasks:
             await asyncio.shield(
-                asyncio.gather(self._quit_task, return_exceptions=True)
+                asyncio.gather(*self._quit_tasks, return_exceptions=True)
             )
         if self._opening:
             try:
