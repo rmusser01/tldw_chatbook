@@ -1,11 +1,11 @@
 ---
 id: TASK-32675
 title: Delete plugin data only after exact-root users drain
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:21'
-updated_date: '2026-09-16 20:48'
+updated_date: '2026-09-16 21:11'
 labels:
   - plugins
   - implementation
@@ -28,11 +28,11 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Deletion review binds installation identity, exact owned roots, generations and all affected workspaces; a persisted access fence precedes destructive deletion.
-- [ ] #2 Shared-root users and idle writer-capable processes are tracked until confirmed stopped; unresolved writers or handles leave deletion pending without forced cross-workspace cancellation.
-- [ ] #3 Reattachment, stale root generations, symlink replacement and PID reuse cannot redirect cleanup; partial cleanup/restart retains the fence and honest progress.
-- [ ] #4 Successful deletion advances root generation before fresh authorized use; cancellation cannot claim data restoration or revive cancelled work.
-- [ ] #5 Qualified clean shutdown permits safe root recovery after restart; dirty, unknown, malformed or rollback-lost ownership evidence keeps affected retained roots fenced until explicit reconciliation, without treating an empty restored registry as proof that users stopped.
+- [x] #1 Deletion review binds installation identity, exact owned roots, generations and all affected workspaces; a persisted access fence precedes destructive deletion.
+- [x] #2 Shared-root users and idle writer-capable processes are tracked until confirmed stopped; unresolved writers or handles leave deletion pending without forced cross-workspace cancellation.
+- [x] #3 Reattachment, stale root generations, symlink replacement and PID reuse cannot redirect cleanup; partial cleanup/restart retains the fence and honest progress.
+- [x] #4 Successful deletion advances root generation before fresh authorized use; cancellation cannot claim data restoration or revive cancelled work.
+- [x] #5 Qualified clean shutdown permits safe root recovery after restart; dirty, unknown, malformed or rollback-lost ownership evidence keeps affected retained roots fenced until explicit reconciliation, without treating an empty restored registry as proof that users stopped.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,3 +58,17 @@ Reason: Implements the accepted saved-data fence/drain/cleanup contract and reco
 14. Record the observed native fork-warning incident in backlog/docs/lessons-live-verification.md: same isolated stdlib versus sounddevice-only elevated control, CoreAudio/PortAudio sample, Python thread enumeration limitation, and fresh isolated warning-as-error fork verification preserving actual ownership assertions. Preserve all22 already-frozen implementation files and covering evidence; this documentation-only addition needs whitespace and an additional file hash, not repeated unchanged tests. Include the lesson in the task review package.
 15. Address independent review F8-R1–R4 in one scoped fix round: completed-absence dirty recovery with ancestry/replacement refusal; seal ordinary mutation admission and settle queued work before final clean while preserving terminal callbacks; accumulate original epochs across all still-owned root grants; retain original review deadline through final completion. Add actual service/owner boundary controls in existing Tests/Plugins/test_data_cleanup.py, test_surviving_process_recovery.py and named runtime/authority/F6/F7 neighbors from task-8-fix1-findings.md. Preserve R43/R46, current source scope and one owner pipeline. Record focused RED/GREEN, frozen covering/static/hash evidence and append final Fix1 report before controller commit/scoped re-review; do not mark Done until every finding is resolved.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Saved plugin data now has an authenticated original owner, explicit current attachment, generation and exact physical binding. Reviewed cleanup fences new access, waits for every pending/shared/read/idle owner, commits the destructive phase before unlink and advances generation only after confirmed cleanup. Original review deadlines span every phase; partial failure and expiry retain recoverable intent. Completed absence survives dirty restart through reviewed reconciliation with exact ancestry and replacement refusal.
+
+Plugin migration004_root_users.sql advances schema3 to4 with noncascading root-user joins and complete expected-grants evidence. Additional grants preserve every still-owned root's original publication epoch. A separate protected clean/dirty session checkpoint allows qualified clean application restart; unknown or reconstructed ownership requires reviewed whole-root quiescence. Shutdown seals ordinary mutation admission, rejects queued work and waits for already-running work before final clean, while retaining exact terminal-settlement calls after a refused close. Admission and archived continuation pins include actual root membership, attachment and generation. Existing coordinator, runtime, marker and permission ownership remain in use.
+
+Verification: initial440 targeted tests passed; final fix covering run253passed104.86s with no warnings/skips (overlapping, not an aggregate count). Real child/handle controls cover shared/idle users, coherent SQLite owner+join rollback, migration rollback, deletion cuts, dirty/clean restart, multi-root late publication, deadline expiry and queued/active commits at shutdown. Initial17Python files and final4changedPython files compiled with zero Ruff/Black findings; whitespace clean. Final seven-file source/test/doc snapshot matched staged bytes. Fresh wheel verifies both changed runtime modules and unchanged migrations001–004; initial wheel also qualified all other changed runtime resources. Existing unmatched-exclusion build warnings remain explicit. The actual CoreAudio/native-fork test incident is recorded in lessons-live-verification.md; original ownership assertions remain in a fresh warning-as-error child.
+
+ADR check: existing backlog/decisions/162-managed-agent-plugins.md and163-expanded-console-hook-runtime.md implement/amend the accepted contracts; managed-plugin spec and Plugins/README.md document behavior and adapter handoffs. Qualification is local Darwin/APFS within the same boot. R46 requires explicit retained-root reconciliation after boot change; no real reboot, Windows/network-filesystem/external-writer guarantee is claimed. Secure account/readback controls use an isolated fake keyring; file-marker mode retains reduced rollback protection. No full suite or unchanged startup rerun; existing startup/headroom findings remain tracked for final branch review.
+
+Initial implementation ed24534f07fe711b4bf25a2986b7bf9715bc7664; fix51101218bf4496b45e9301a319b7673b21e1f48c. Independent task review and scoped re-review completed. All four findings are addressed; no new Critical/Important breakage, no new out-of-scope observation and no unresolved load-bearing verification item remains for F8. Existing startup/headroom and package-warning observations remain final-branch triage.
+<!-- SECTION:NOTES:END -->
