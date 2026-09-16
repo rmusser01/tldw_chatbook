@@ -398,6 +398,7 @@ from ...Workspaces.eligibility import (
     LIBRARY_GENERIC_WORKSPACE_BLOCK,
     linkable_ineligibility_label,
 )
+from ...Workspaces.registry_service import WorkspaceRegistryServiceError
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
@@ -2479,6 +2480,7 @@ class LibraryScreen(BaseAppScreen):
             library_conversation_workspace_block=(
                 lambda: self._library_conversation_workspace_block()
             ),
+            visible_link_receipt=lambda: self._library_conversation_visible_link_receipt(),
         )
         self._conversations_controller = LibraryConversationsController(
             self,
@@ -13432,6 +13434,25 @@ class LibraryScreen(BaseAppScreen):
             "_workspace_link_receipt_id": workspace_id,
         }
 
+    def _library_conversation_visible_link_receipt(self) -> str:
+        """Project a link receipt only into the workspace it names."""
+        metadata = self._conversations_state.reader_loaded_metadata
+        workspace_id = str(metadata.get("_workspace_link_receipt_id") or "").strip()
+        receipt = str(metadata.get("_workspace_link_receipt") or "").strip()
+        if not workspace_id or not receipt:
+            return ""
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        try:
+            active = registry.get_active_workspace() if registry is not None else None
+        except WorkspaceRegistryServiceError:
+            # Unavailable current context cannot authorize a standing Undo.
+            return ""
+        if active is None or active.workspace_id != workspace_id:
+            return ""
+        if self._library_conversation_workspace_block()[0]:
+            return ""
+        return receipt
+
     def _undo_selected_conversation_workspace_link(self) -> None:
         """Remove the membership the last "Use as source" press added.
 
@@ -13445,6 +13466,8 @@ class LibraryScreen(BaseAppScreen):
         membership this press never added.
         """
         if not self._conversations_state.reader_state.loaded_actions_eligible:
+            return
+        if not self._library_conversation_visible_link_receipt():
             return
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         notify = getattr(self.app_instance, "notify", None)
@@ -15001,6 +15024,9 @@ class LibraryScreen(BaseAppScreen):
                 reader_metadata["_workspace_block_linkable"],
                 reader_metadata["_workspace_block_detail"],
             ) = self._library_conversation_workspace_block()
+            reader_metadata["_workspace_link_receipt"] = (
+                self._library_conversation_visible_link_receipt()
+            )
             reader = LibraryConversationReader(
                 self._conversations_state.reader_state,
                 loaded_metadata=reader_metadata,

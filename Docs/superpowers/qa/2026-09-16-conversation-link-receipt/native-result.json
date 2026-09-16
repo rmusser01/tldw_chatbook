@@ -1,0 +1,53 @@
+{
+  "pid": 15764,
+  "steps": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "refresh": "retained",
+      "receipt_hidden_in_beta": true,
+      "receipt_restored_in_alpha": true,
+      "undo_removed_only_alpha": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "refresh": "recompose",
+      "receipt_hidden_in_beta": true,
+      "receipt_restored_in_alpha": true,
+      "undo_removed_only_alpha": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "refresh": "retained",
+      "receipt_hidden_in_beta": true,
+      "receipt_restored_in_alpha": true,
+      "undo_removed_only_alpha": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "refresh": "recompose",
+      "receipt_hidden_in_beta": true,
+      "receipt_restored_in_alpha": true,
+      "undo_removed_only_alpha": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "passed": true,
+  "app_run_returned": true
+}

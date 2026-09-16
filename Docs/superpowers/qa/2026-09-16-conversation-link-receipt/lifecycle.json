@@ -1,0 +1,9 @@
+{
+  "app_run_returned": true,
+  "shell_exit_code": 0,
+  "app_pid": 15764,
+  "pid_absent_before_cleanup": true,
+  "owned_tmux_socket": "codex32388",
+  "owned_tmux_session": "receipt",
+  "only_owned_session_closed_after_app_exit": true
+}

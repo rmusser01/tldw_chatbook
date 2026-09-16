@@ -1,0 +1,53 @@
+{
+  "batch_count": 1,
+  "capture_count": 8,
+  "captures": [
+    {
+      "file": "linked-textual-dark-170.svg",
+      "native_sha256": "7000cf9dbc64451742048a08aa17f3de9b948f5fa18a9802562d11d81d4bef1f",
+      "stored_sha256": "92ecc11c8c2a3f46612970a7f54066a731b2aab13480a3d11564163242f5a40e"
+    },
+    {
+      "file": "linked-textual-dark-80.svg",
+      "native_sha256": "e8e369b9d085c40fc04149b0a34bd1488dd353389b3fce1d590b32bc5ed91ae9",
+      "stored_sha256": "1489fb303cb9214668ed5d1fa569afe104cd4e238fcada5d1360f6691de6e690"
+    },
+    {
+      "file": "linked-textual-light-170.svg",
+      "native_sha256": "fda21d3609297fe90aa9ab79a5a4f092ee8ac3999b82e1243d9d0ab3beca4dea",
+      "stored_sha256": "f551b367c377aa776d9e1831c18bb19d21989795defb46210f04f9f141c5ffc0"
+    },
+    {
+      "file": "linked-textual-light-80.svg",
+      "native_sha256": "b7c52bb986d2658902e0551abcb6bc246ea1d40cd7644a2061b7dfa9615cffe6",
+      "stored_sha256": "8bf8b9e96a77bbd120b0546d01392471d80432003c7fcb4f92bde8921ef1151d"
+    },
+    {
+      "file": "other-workspace-textual-dark-170.svg",
+      "native_sha256": "2edd8f30ce046f9e23c86d0f797319ce3f63fc2e1d7ff560dc4065cbd16d76d3",
+      "stored_sha256": "cf1c32813967643d5d4059050a783cbca4f3f5fa912f852183c65832a858a104"
+    },
+    {
+      "file": "other-workspace-textual-dark-80.svg",
+      "native_sha256": "01e768caa5c737554fb1ae21c67984dd82df3b812ef99367af8299bb8277df08",
+      "stored_sha256": "bbad8357c7d6377bd6cfbce4ff0f4d9d5671b169c596218ec080fd48b65eb187"
+    },
+    {
+      "file": "other-workspace-textual-light-170.svg",
+      "native_sha256": "85c0c5cd827970643500694e1fad6ec89438ef326462c092cadee01d072d8386",
+      "stored_sha256": "5852c2d8d19d6f048d71c2ed0536e7f87a17f12cd7af812e29c032a191cd1532"
+    },
+    {
+      "file": "other-workspace-textual-light-80.svg",
+      "native_sha256": "13746dc43bafaec33012e6dd82a9c62cc122a48b3dc859d0a65d22a4c4d4d159",
+      "stored_sha256": "7391863c5fe9bd47f4c871a923076db942a4db632eca7c03a720e7d1df205a99"
+    }
+  ],
+  "normalization": "Removed whitespace-only SVG source lines; no geometry or text changed.",
+  "observations": [
+    "Linked Alpha receipt and focused Undo remain legible in both themes at 170x48 and 80x24.",
+    "On Beta, the stale receipt and Undo disappear while Read, Resume, Use as source and Archive remain visible.",
+    "Compact mode collapses Navigation and Items. With Undo focused, the transcript body extends below the viewport; this pass qualifies the receipt and action."
+  ],
+  "limits": "Native registry API workspace changes while Library remains mounted; Console workspace switcher navigation is not qualified."
+}

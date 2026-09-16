@@ -17,6 +17,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     LibraryAdaptiveReaderPaneGrip,
 )
+from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
 
 CONVERSATION_ID = "conv-1"
@@ -634,16 +635,9 @@ async def test_only_one_context_chip_paints_at_sixty_columns() -> None:
 
 
 @pytest.mark.asyncio
-async def test_undo_unlinks_the_workspace_the_receipt_names() -> None:
-    """task-32107 (review fix round 1): Undo reverses THIS press, not the moment.
-
-    Creating a workspace from the rail activates it and recomposes the
-    reader from the same metadata mapping, so a standing receipt can outlive
-    the active workspace it was written for. Undo read
-    ``get_active_workspace()`` and would have removed a membership the press
-    never added -- a data effect in the opposite direction of the one the
-    user asked to reverse.
-    """
+@pytest.mark.parametrize("refresh", ["sync", "recompose"])
+async def test_undo_unlinks_the_workspace_the_receipt_names(refresh) -> None:
+    """A workspace hop hides the old receipt; returning can undo only its link."""
     host = _conversations_host(linked=False)
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_first_conversation(host, pilot)
@@ -662,16 +656,69 @@ async def test_undo_unlinks_the_workspace_the_receipt_names() -> None:
             title=CONVERSATION_TITLE,
         )
         screen._invalidate_library_workspace_depth_state()
+        if refresh == "sync":
+            screen._sync_library_conversation_reader()
+        else:
+            screen.refresh(recompose=True)
+        await pilot.pause()
         await pilot.pause()
 
+        receipt = screen.query_one("#library-conversation-link-receipt", Static)
+        undo = screen.query_one("#library-conversation-link-undo", Button)
+        assert not receipt.display
+        assert not undo.display
+        # A delayed event from the old visible control cannot remove either link.
+        screen.undo_selected_conversation_workspace_link(Button.Pressed(undo))
+        assert {m.workspace_id for m in _memberships(host)} == {
+            "workspace-a",
+            "workspace-b",
+        }
+
+        host.registry.set_active_workspace("workspace-a")
+        screen._invalidate_library_workspace_depth_state()
+        screen._sync_library_conversation_reader()
+        await pilot.pause()
+        receipt = screen.query_one("#library-conversation-link-receipt", Static)
+        assert receipt.display and ACTIVE_WORKSPACE_NAME in str(receipt.renderable)
         screen.query_one("#library-conversation-link-undo", Button).press()
         await pilot.pause()
         await pilot.pause()
 
-        remaining = {
-            membership.workspace_id for membership in _memberships(host)
-        }
+        remaining = {membership.workspace_id for membership in _memberships(host)}
         assert remaining == {"workspace-b"}, remaining
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("context", ["different", "missing", "unavailable", "stale"])
+async def test_undo_rechecks_workspace_before_the_reader_refreshes(
+    context, monkeypatch
+) -> None:
+    """The event admission boundary sees a hop even before old chrome refreshes."""
+    host = _conversations_host(linked=False)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_conversation(host, pilot)
+        screen.query_one("#library-conversation-link-workspace", Button).press()
+        await pilot.pause()
+        undo = screen.query_one("#library-conversation-link-undo", Button)
+        assert undo.display
+        if context == "different":
+            host.registry.create_workspace(workspace_id="workspace-b", name="Other")
+            host.registry.set_active_workspace("workspace-b")
+        elif context == "missing":
+            host.registry.clear_active_workspace()
+        elif context == "stale":
+            screen._conversations_state.freshness = "stale"
+            screen._sync_library_conversation_reader()
+            await pilot.pause()
+            assert not undo.display
+        else:
+
+            def unavailable():
+                raise WorkspaceRegistryServiceError("workspace lookup unavailable")
+
+            monkeypatch.setattr(host.registry, "get_active_workspace", unavailable)
+        screen.undo_selected_conversation_workspace_link(Button.Pressed(undo))
+        assert {m.workspace_id for m in _memberships(host)} == {"workspace-a"}
 
 
 @pytest.mark.asyncio

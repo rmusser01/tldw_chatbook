@@ -701,7 +701,7 @@ requested load.
 | "Resume conversation" / "Restore and resume" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Reopens the original conversation in Console — it does **not** stage it as source context, and it does not depend on workspace membership. |
 | "Use as source" | In the reader header. Stages the open conversation as **source context** in Console. If the conversation is not in the active workspace, the press **links it first**, then continues — see below. |
 | "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. Press it to take on the membership **without** handing anything to Console. |
-| "Undo link" | Appears under the **"✓ linked · \<workspace\>"** receipt after a link, and removes exactly the membership that press added. |
+| "Undo link" | Appears under the **"✓ linked · \<workspace\>"** receipt after a link, only while that workspace is active, and removes exactly the membership that press added. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
 
 **The detail pane is a transcript reader.** Pressing a row loads the whole
@@ -901,8 +901,12 @@ Escape's return to the list live at 100x30).*
   active workspace first, and you can undo that." The press links it,
   continues to Console, and leaves a receipt — **"✓ linked ·
   \<workspace\> · this conversation can now be used in Console"** — with
-  **"Undo link"** beside it, which removes exactly that membership. The
-  separate **"Link to workspace"** button is still there for taking on the
+  **"Undo link"** beside it, which removes exactly that membership. Switching
+  workspaces hides the receipt and Undo. Returning to the named workspace
+  while the same conversation stays loaded restores them, provided the
+  conversation can still be used there. An old Undo press cannot remove a
+  link after the workspace changes or the list becomes stale. The separate
+  **"Link to workspace"** button is still there for taking on the
   membership without a hand-off. (The action name is painted once, on the
   button; the line under it is the explanation, not a second control.)
   A block that a link cannot resolve still refuses: the button dims to

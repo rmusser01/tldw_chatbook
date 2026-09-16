@@ -148,6 +148,7 @@ class LibraryConversationReaderController:
         selected_row_id_accessor: Callable[[], str],
         selected_conversation_id_accessor: Callable[[], str],
         library_conversation_workspace_block: Callable[[], tuple[str, bool, str]],
+        visible_link_receipt: Callable[[], str],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -216,6 +217,8 @@ class LibraryConversationReaderController:
                 link_resolves_it, detail)`` for the open conversation's
                 workspace refusal, or ``("", False, "")`` when it can be
                 staged (task-32056).
+            visible_link_receipt: Projects the retained link receipt into
+                its owning active workspace, or returns an empty string.
             selected_conversation_id_accessor: Reads ``LibraryScreen.
                 _selected_conversation_id`` -- a per-source "currently
                 selected" field parallel to ``_media_state.selected_media_id``/
@@ -246,6 +249,7 @@ class LibraryConversationReaderController:
         self._library_conversation_workspace_block = (
             library_conversation_workspace_block
         )
+        self._visible_link_receipt = visible_link_receipt
 
     # -- framework services: live-read properties, never snapshotted -----
 
@@ -386,6 +390,7 @@ class LibraryConversationReaderController:
             metadata["_workspace_block_linkable"],
             metadata["_workspace_block_detail"],
         ) = self._library_conversation_workspace_block()
+        metadata["_workspace_link_receipt"] = self._visible_link_receipt()
         reader.sync_state(
             self._library_conversation_reader_state,
             loaded_metadata=metadata,
