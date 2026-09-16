@@ -78,6 +78,9 @@ class PluginRegistry:
             read_only=self.read_only,
             must_exist=self.read_only,
             isolation_level=None,
+            # The body authorizer must run on every execution, including reuse
+            # after SQLite automatically rolls back a failed statement.
+            cached_statements=0,
         )
         self._connection.row_factory = sqlite3.Row
         try:
@@ -166,11 +169,22 @@ class PluginRegistry:
         """Return the schema version of this validated view."""
         return self._connection.execute("PRAGMA user_version").fetchone()[0]
 
+    def _authorize_transaction_body(self, action: int, *_args: object) -> int:
+        # executescript first requests COMMIT, even before parsing the script.
+        # Deny it, explicit transaction control, and any work following SQLite's
+        # automatic rollback (for example a caught INSERT OR ROLLBACK failure).
+        if action in (sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT):
+            return sqlite3.SQLITE_DENY
+        if not self._connection.in_transaction:
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Cursor]:
         """Commit atomically and durably before returning; rollback on any failure.
 
         A single worker must serialize access. Nested transactions are refused.
+        Body statements cannot commit/rollback/savepoint or execute scripts.
         This low-level service seam is for trusted coordinator code, not plugins.
         """
         self._require_write()
@@ -179,8 +193,16 @@ class PluginRegistry:
         self._connection.execute("BEGIN IMMEDIATE")
         cursor = self._connection.cursor()
         try:
-            yield cursor
-            self._require_write()
+            self._connection.set_authorizer(self._authorize_transaction_body)
+            try:
+                yield cursor
+                self._require_write()
+                if not self._connection.in_transaction:
+                    raise RuntimeError("plugin transaction ended inside its body")
+            finally:
+                # Only this wrapper may settle the transaction, after ownership
+                # validation. Remove the body guard for its commit or rollback.
+                self._connection.set_authorizer(None)
             self._connection.commit()
         except BaseException:
             self._connection.rollback()

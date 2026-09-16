@@ -257,3 +257,137 @@ def test_explicit_inherit_and_typed_authority_scopes_are_distinct():
             cursor.execute(
                 "INSERT INTO authority_generations VALUES ('i', 'workspace', '', 0, 0)"
             )
+
+
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "script",
+        "COMMIT",
+        "END",
+        "ROLLBACK",
+        "BEGIN",
+        "SAVEPOINT early",
+        "RELEASE early",
+        "ROLLBACK TO early",
+        "connection_commit",
+        "connection_rollback",
+    ],
+)
+def test_disk_transaction_blocks_early_boundary_escape(tmp_path, escape):
+    from tldw_chatbook.Plugins.registry import PluginRegistry
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    owner = PluginRuntimeOwner(tmp_path)
+    assert owner.try_acquire()
+    path = tmp_path / "registry.sqlite3"
+    try:
+        with (
+            PluginRegistry(path, owner=owner) as writer,
+            PluginRegistry(path) as reader,
+        ):
+            # Positive control: both parameterized APIs stay invisible until exit.
+            with writer.transaction() as cursor:
+                cursor.execute(
+                    "INSERT INTO installations(installation_id) VALUES (?)",
+                    ("control",),
+                )
+                cursor.executemany(
+                    "INSERT INTO installations(installation_id) VALUES (?)",
+                    [("control-2",), ("control-3",)],
+                )
+                assert reader.list_installations(limit=50, offset=0) == ()
+            committed = reader.list_installations(limit=50, offset=0)
+            assert len(committed) == 3
+            with (
+                pytest.raises(RuntimeError, match="body failed"),
+                writer.transaction() as cursor,
+            ):
+                cursor.execute(
+                    "INSERT INTO installations(installation_id) VALUES (?)",
+                    ("must-rollback",),
+                )
+                with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+                    if escape == "script":
+                        cursor.executescript(
+                            "INSERT INTO installations(installation_id) VALUES ('script-escape');"
+                        )
+                    elif escape == "connection_commit":
+                        cursor.connection.commit()
+                    elif escape == "connection_rollback":
+                        cursor.connection.rollback()
+                    else:
+                        cursor.execute(escape)
+                assert reader.list_installations(limit=50, offset=0) == committed
+                raise RuntimeError("body failed")
+            assert reader.list_installations(limit=50, offset=0) == committed
+            # A denied statement must not leave the owner transaction unusable.
+            with writer.transaction() as cursor:
+                cursor.execute(
+                    "INSERT INTO installations(installation_id) VALUES (?)",
+                    ("after-denial",),
+                )
+            assert len(reader.list_installations(limit=50, offset=0)) == 4
+    finally:
+        owner.close()
+
+
+def test_disk_transaction_implicit_rollback_cannot_enable_autocommit(tmp_path):
+    from tldw_chatbook.Plugins.registry import PluginRegistry
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    owner = PluginRuntimeOwner(tmp_path)
+    assert owner.try_acquire()
+    path = tmp_path / "registry.sqlite3"
+    insert = "INSERT INTO installations(installation_id) VALUES (?)"
+    try:
+        with (
+            PluginRegistry(path, owner=owner) as writer,
+            PluginRegistry(path) as reader,
+        ):
+            with writer.transaction() as cursor:
+                # Warm this exact statement to catch cached-authorization bypasses.
+                cursor.execute(insert, ("existing",))
+            with (
+                pytest.raises(RuntimeError, match="body failed"),
+                writer.transaction() as cursor,
+            ):
+                cursor.execute(insert, ("will-rollback",))
+                with pytest.raises(sqlite3.IntegrityError):
+                    cursor.execute(
+                        "INSERT OR ROLLBACK INTO installations(installation_id) VALUES (?)",
+                        ("existing",),
+                    )
+                with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+                    cursor.execute(insert, ("escaped",))
+                raise RuntimeError("body failed")
+            assert [
+                row["installation_id"]
+                for row in reader.list_installations(limit=50, offset=0)
+            ] == ["existing"]
+    finally:
+        owner.close()
+
+
+def test_caught_implicit_rollback_cannot_report_success(tmp_path):
+    from tldw_chatbook.Plugins.registry import PluginRegistry
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    owner = PluginRuntimeOwner(tmp_path)
+    assert owner.try_acquire()
+    try:
+        with PluginRegistry(tmp_path / "registry.sqlite3", owner=owner) as registry:
+            with (
+                pytest.raises(RuntimeError, match="transaction ended"),
+                registry.transaction() as cursor,
+            ):
+                cursor.execute(
+                    "INSERT INTO installations(installation_id) VALUES ('duplicate')"
+                )
+                with pytest.raises(sqlite3.IntegrityError):
+                    cursor.execute(
+                        "INSERT OR ROLLBACK INTO installations(installation_id) VALUES ('duplicate')"
+                    )
+            assert registry.list_installations(limit=50, offset=0) == ()
+    finally:
+        owner.close()
