@@ -15,7 +15,8 @@ import unicodedata
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Dict, Optional, Any, Sequence, Union
 
 #
@@ -212,6 +213,21 @@ class NotesInteropService:
 
         return self._get_db(user_id)
 
+    @contextmanager
+    def bound_notes_db(
+        self, user_id: str, expected_db: CharactersRAGDB
+    ) -> Iterator[CharactersRAGDB]:
+        """Retain an existing cached route for one local Notes operation.
+
+        Refuse changed/missing ownership without creating a replacement. Local
+        operations inside this context use ``_get_db``'s cached fast path, since
+        the existing lock is nonreentrant.
+        """
+        with self._db_lock:
+            if self._db_instances.get(user_id) is not expected_db:
+                raise ValueError("note_destination_changed")
+            yield expected_db
+
     def add_internal_research_quick_note_owner_proof(
         self, user_id: str, note_id: str, owner_proof: str
     ) -> bool:
@@ -255,9 +271,7 @@ class NotesInteropService:
             db = self._get_db(user_id)
             created_note_id = db.add_note(title=title, content=content, note_id=note_id)
             if created_note_id is None:
-                logger.error(
-                    f"add_note for user_id '{user_id}' (as client_id) returned None unexpectedly for title '{title}'."
-                )
+                logger.error("add_note returned None unexpectedly.")
                 log_counter(
                     "notes_library_add_note_error",
                     labels={"error_type": "null_id_returned"},
