@@ -77,3 +77,46 @@ def test_invoke_raises_by_design():
     prov = SkillToolProvider([{"name": "x", "description": "d", "argument_hint": None}])
     with pytest.raises(RuntimeError):
         prov.invoke("skill:x", {"args": "y"})
+
+
+def test_plugin_provider_preserves_manual_only_and_existing_spawn_owner():
+    from tldw_chatbook.Plugins.skill_provider import PluginSkillProvider
+
+    provider = PluginSkillProvider(
+        [
+            {
+                "name": "package:review",
+                "tool_name": "plugin_review",
+                "description": "d",
+            },
+            {
+                "name": "package:manual",
+                "tool_name": "plugin_manual",
+                "description": "d",
+                "disable_model_invocation": True,
+            },
+        ]
+    )
+    assert [row.name for row in provider.list_catalog()] == ["plugin_review"]
+    with pytest.raises(RuntimeError, match="spawn executor"):
+        provider.invoke("skill:plugin_review", {"args": "x"})
+
+
+def test_plugin_model_name_collision_fails_closed_at_console_composition():
+    from tldw_chatbook.Chat.console_agent_bridge import _non_colliding_skill_entries
+
+    entries = [
+        {
+            "name": "package:one",
+            "tool_name": "plugin_collision",
+            "description": "one",
+            "plugin_owned": True,
+        },
+        {
+            "name": "other:two",
+            "tool_name": "plugin_collision",
+            "description": "two",
+            "plugin_owned": True,
+        },
+    ]
+    assert not _non_colliding_skill_entries({"available_skills": entries}, ())

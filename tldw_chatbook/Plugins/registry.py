@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Plugins.models import PackageInspection
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PAGE_SIZE = 50
 SELECT_INSTALLATIONS = """
 SELECT installation_id, revision_digest, activation_default
@@ -144,6 +144,25 @@ class PluginRegistry:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version=2")
                 version = 2
+            if version == 2 and not self.read_only:
+                with PluginRegistry._reference_schema(version=2) as reference:
+                    expected_v2 = list(
+                        reference.execute(
+                            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                        )
+                    )
+                actual_v2 = [
+                    tuple(row)
+                    for row in connection.execute(
+                        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                    )
+                ]
+                if actual_v2 != expected_v2:
+                    raise sqlite3.DatabaseError("invalid plugin migration predecessor")
+                for statement in _schema_statements("003_installation_alias.sql"):
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version=3")
+                version = 3
             if version != SCHEMA_VERSION:
                 raise sqlite3.DatabaseError("unsupported plugin registry schema")
             # Exact DDL validation catches missing constraints/columns/triggers, not
@@ -187,6 +206,9 @@ class PluginRegistry:
                 connection.execute(statement)
             if version >= 2:
                 for statement in _schema_statements("002_authority.sql"):
+                    connection.execute(statement)
+            if version >= 3:
+                for statement in _schema_statements("003_installation_alias.sql"):
                     connection.execute(statement)
             yield connection
         finally:
@@ -270,7 +292,7 @@ class PluginRegistry:
             result = empty_snapshot()
             result["operation_result"] = operation_result
             queries = {
-                "installations": "SELECT installation_id, revision_digest, activation_default FROM installations ORDER BY installation_id",
+                "installations": "SELECT installation_id, revision_digest, activation_default, alias FROM installations ORDER BY installation_id",
                 "selections": "SELECT installation_id, revision_digest, component_id, selected FROM selections ORDER BY installation_id, revision_digest, component_id",
                 "activation": "SELECT installation_id, workspace_id, intent FROM activation ORDER BY installation_id, workspace_id",
                 "authority_generations": "SELECT installation_id, scope_kind, workspace_id, generation, revoked FROM authority_generations ORDER BY installation_id, scope_kind, workspace_id",
@@ -292,6 +314,8 @@ class PluginRegistry:
                         if type(row[field]) is not int or row[field] not in (0, 1):
                             raise ValueError("invalid registry boolean")
                         row[field] = bool(row[field])
+                    if name == "installations" and row.get("alias") is None:
+                        row.pop("alias", None)
                     result[name].append(row)
             inventories = {}
             for row in self._connection.execute(
@@ -430,6 +454,8 @@ class PluginRegistry:
         installation_id: str,
         inspection: PackageInspection,
         selection: tuple[str, ...],
+        *,
+        alias: str | None = None,
     ) -> None:
         """Insert a fresh disabled installation inside the caller's transaction."""
         self._require_write()
@@ -437,7 +463,8 @@ class PluginRegistry:
             raise RuntimeError("installation requires owned transaction")
         revision = inspection.effective_digest
         cursor.execute(
-            "INSERT INTO installations VALUES (?, ?, 0)", (installation_id, revision)
+            "INSERT INTO installations(installation_id, revision_digest, activation_default, alias) VALUES (?, ?, 0, ?)",
+            (installation_id, revision, alias),
         )
         cursor.execute(
             "INSERT INTO revisions VALUES (?, ?, ?)",
@@ -526,14 +553,12 @@ class PluginRegistry:
                 cursor.execute(f"DELETE FROM {table}")
             for row in snapshot["installations"]:
                 cursor.execute(
-                    "INSERT INTO installations VALUES (?, ?, ?)",
-                    tuple(
-                        row[key]
-                        for key in (
-                            "installation_id",
-                            "revision_digest",
-                            "activation_default",
-                        )
+                    "INSERT INTO installations(installation_id, revision_digest, activation_default, alias) VALUES (?, ?, ?, ?)",
+                    (
+                        row["installation_id"],
+                        row["revision_digest"],
+                        row["activation_default"],
+                        row.get("alias"),
                     ),
                 )
             for row in snapshot["revisions"]:

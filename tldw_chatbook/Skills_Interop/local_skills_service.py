@@ -245,6 +245,8 @@ class LocalSkillsService:
         trust_service: Any | None = None,
         trust_service_factory: Callable[[], Any] | None = None,
         allow_untrusted_without_trust_service: bool = False,
+        plugin_service: Any | None = None,
+        plugin_service_factory: Callable[[], Any] | None = None,
     ) -> None:
         """Construct the local skill library service.
 
@@ -271,7 +273,26 @@ class LocalSkillsService:
         self.allow_untrusted_without_trust_service = (
             allow_untrusted_without_trust_service
         )
+        self._plugin_service = plugin_service
+        self._plugin_service_factory = plugin_service_factory
         self._lock = asyncio.Lock()
+
+    @property
+    def plugin_service(self) -> Any | None:
+        """Resolve the lazy metadata facade only on actual feature use."""
+        if self._plugin_service is None and self._plugin_service_factory is not None:
+            self._plugin_service = self._plugin_service_factory()
+        return self._plugin_service
+
+    def _owned_skill(self, name: str) -> bool:
+        if ":" in name or name.startswith("plugin_"):
+            return True
+        service = self._plugin_service
+        return service is not None and service.owns(name)
+
+    def _refuse_owned_mutation(self, name: str) -> None:
+        if self._owned_skill(name):
+            raise ValueError("plugin_owned_skill_requires_package_management")
 
     @property
     def trust_service(self) -> Any | None:
@@ -352,6 +373,7 @@ class LocalSkillsService:
         write_text_atomic(self.index_path, text)
 
     def _skill_dir(self, skill_name: str) -> Path:
+        self._refuse_owned_mutation(skill_name)
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.skills_schemas import _normalize_skill_name
 
@@ -782,6 +804,7 @@ class LocalSkillsService:
         ).response_fields()
 
     def _require_trusted_skill(self, skill_name: str) -> None:
+        self._refuse_owned_mutation(skill_name)
         if self.trust_service is None:
             if self.allow_untrusted_without_trust_service:
                 return
@@ -1011,6 +1034,9 @@ class LocalSkillsService:
             self._summary_for_record(record) for _, record in sorted(records.items())
         ]
 
+        if self.plugin_service is not None:
+            summaries.extend(self.plugin_service.list_skills())
+
         def name_key(summary: Mapping[str, Any]) -> tuple[str, str]:
             name = str(summary["name"])
             return name.casefold(), name
@@ -1113,6 +1139,8 @@ class LocalSkillsService:
 
     async def get_skill(self, skill_name: str) -> dict[str, Any]:
         self._enforce("skills.detail.local")
+        if self._owned_skill(skill_name):
+            return await self.plugin_service.get_skill(skill_name)
         records = self._load_index()
         return self._response_for_record(self._require_record(skill_name, records))
 
@@ -1221,6 +1249,8 @@ class LocalSkillsService:
         items = [
             self._summary_for_record(record) for _, record in sorted(records.items())
         ]
+        if self.plugin_service is not None:
+            items.extend(self.plugin_service.list_skills())
         return {
             "items": items[offset : offset + limit],
             "total": len(items),
@@ -1301,6 +1331,12 @@ class LocalSkillsService:
             ValueError: If the skill is not in the managed index.
         """
         self._enforce("skills.detail.local")
+        if self._owned_skill(skill_name):
+            return next(
+                row
+                for row in self.plugin_service.list_skills()
+                if skill_name in {row["name"], row["tool_name"], row["record_id"]}
+            )
         records = self._load_index()
         record = self._require_record(skill_name, records)
         summary = self._summary_for_record(record)
@@ -1409,6 +1445,7 @@ class LocalSkillsService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SkillCreate
 
+        self._refuse_owned_mutation(name)
         self._enforce("skills.create.local")
         request = SkillCreate(
             name=name, content=content, supporting_files=supporting_files
@@ -1446,6 +1483,7 @@ class LocalSkillsService:
         from ..tldw_api.skills_schemas import _normalize_skill_name
         from ..tldw_api import SkillUpdate
 
+        self._refuse_owned_mutation(skill_name)
         self._enforce("skills.update.local")
         request = SkillUpdate(content=content, supporting_files=supporting_files)
         async with self._lock:
@@ -1481,6 +1519,7 @@ class LocalSkillsService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.skills_schemas import _normalize_skill_name
 
+        self._refuse_owned_mutation(skill_name)
         self._enforce("skills.delete.local")
         async with self._lock:
             records = self._load_index()
@@ -1506,6 +1545,7 @@ class LocalSkillsService:
         from ..tldw_api import SkillImportRequest
 
         self._enforce("skills.import.launch.local")
+        self._refuse_owned_mutation(name or "")
         request = SkillImportRequest(
             name=name,
             content=content,
@@ -1570,6 +1610,7 @@ class LocalSkillsService:
         )
 
         self._enforce("skills.import.launch.local")
+        self._refuse_owned_mutation(name)
         skill_name = _normalize_skill_name(name)
         source_dir = Path(source_dir)
         body = source_dir / _SKILL_FILENAME
@@ -1659,6 +1700,7 @@ class LocalSkillsService:
         trust_approved: bool = False,
     ) -> dict[str, Any]:
         self._enforce("skills.import.launch.local")
+        self._refuse_owned_mutation(filename)
         is_zip = content_type in {
             "application/zip",
             "application/x-zip-compressed",
@@ -1772,6 +1814,7 @@ class LocalSkillsService:
         from ..tldw_api.skills_schemas import _normalize_skill_name
 
         self._enforce("skills.export.launch.local")
+        self._refuse_owned_mutation(skill_name)
         normalized = _normalize_skill_name(skill_name)
         skill_dir = self._skill_dir(normalized)
         archive_buffer = io.BytesIO()
@@ -1804,12 +1847,31 @@ class LocalSkillsService:
         }
 
     async def execute_skill(
-        self, skill_name: str, *, args: str | None = None
+        self,
+        skill_name: str,
+        *,
+        args: str | None = None,
+        plugin_admission: str | None = None,
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SkillExecuteRequest, SkillExecutionResult
 
         self._enforce("skills.execute.launch.local")
+        if self._owned_skill(skill_name):
+            from .skill_trust_models import SkillTrustBlockedError
+
+            try:
+                if self.plugin_service is None or plugin_admission is None:
+                    raise PermissionError("plugin_run_admission_required")
+                return await self.plugin_service.execute_skill(
+                    skill_name, admission_token=plugin_admission, args=args
+                )
+            except PermissionError as error:
+                raise SkillTrustBlockedError(
+                    skill_name=skill_name,
+                    reason_code=str(error),
+                    trust_status="plugin_unavailable",
+                ) from error
         self._require_trusted_skill(skill_name)
         request = SkillExecuteRequest(args=args)
         skill = await self.get_skill(skill_name)
@@ -1849,7 +1911,11 @@ class LocalSkillsService:
         return payload
 
     async def read_skill_file(
-        self, skill_name: str, relative_path: str
+        self,
+        skill_name: str,
+        relative_path: str,
+        *,
+        plugin_admission: str | None = None,
     ) -> dict[str, Any]:
         """Read one bundled file of a trusted skill, contained + capped.
 
@@ -1903,6 +1969,12 @@ class LocalSkillsService:
         from ..tldw_api.skills_schemas import validate_supporting_file_path
 
         self._enforce("skills.read_file.launch.local")
+        if self._owned_skill(skill_name):
+            if self.plugin_service is None or plugin_admission is None:
+                raise PermissionError("plugin_run_admission_required")
+            return await self.plugin_service.read_skill_file(
+                skill_name, relative_path, admission_token=plugin_admission
+            )
         self._require_trusted_skill(skill_name)
         # The canonical body path is exempted from the supporting-file
         # validator (which otherwise rejects any-case "skill.md" as a

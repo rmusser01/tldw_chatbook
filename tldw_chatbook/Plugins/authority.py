@@ -71,6 +71,12 @@ class Installation(AuthorityModel):
     installation_id: Identifier
     revision_digest: Digest | None
     activation_default: bool
+    alias: (
+        Annotated[
+            str, Field(min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9.-]*$")
+        ]
+        | None
+    ) = None
 
 
 class Revision(AuthorityModel):
@@ -257,6 +263,13 @@ def canonical_snapshot(snapshot: dict) -> dict:
     if type(snapshot.get("schema_version")) is not int:
         raise ValueError("invalid authority version")
     result = CompleteAuthority.model_validate(snapshot).model_dump(mode="json")
+    # Preserve exact legacy logical bytes: an absent alias is not a new grant.
+    for source, row in zip(snapshot["installations"], result["installations"]):
+        if "alias" not in source:
+            row.pop("alias", None)
+    aliases = [row["alias"] for row in result["installations"] if row.get("alias")]
+    if len(set(aliases)) != len(aliases):
+        raise ValueError("duplicate installation alias")
     for name, keys in _ROW_KEYS.items():
         rows = result[name]
         if len(rows) > 100000:

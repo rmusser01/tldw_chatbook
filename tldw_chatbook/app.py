@@ -8655,6 +8655,19 @@ class TldwCli(
             reduced_rollback_protection=reduced_rollback_protection,
         )
 
+    def _build_plugin_service(self) -> Any:
+        """Build one IO-free facade; its worker starts on explicit plugin use."""
+        service = getattr(self, "_plugin_service", None)
+        if service is None:
+            from tldw_chatbook.Plugins.service import PluginService
+
+            service = PluginService(
+                get_user_data_dir(),
+                workspace_lookup=self.workspace_registry_service.get_workspace,
+            )
+            self._plugin_service = service
+        return service
+
     def _build_local_skills_stack(self) -> None:
         """Build the local skills service + scope facade. Idempotent.
 
@@ -8676,6 +8689,7 @@ class TldwCli(
                 store_dir=default_local_skills_store_dir(get_user_data_dir()),
                 policy_enforcer=policy_enforcer,
                 trust_service_factory=lambda: self.local_skill_trust_service,
+                plugin_service_factory=self._build_plugin_service,
             )
         if self._skills_scope_service is None:
             self._skills_scope_service = SkillsScopeService(
@@ -18000,6 +18014,9 @@ class TldwCli(
             )
             self._console_runtime_shutdown_task = task
         await asyncio.shield(task)
+        plugin_service = getattr(self, "_plugin_service", None)
+        if plugin_service is not None:
+            await plugin_service.aclose()
 
     async def _shutdown_raw_cli_runtime(self) -> None:
         """Disarm and boundedly drain the app-owned raw CLI runtime once."""

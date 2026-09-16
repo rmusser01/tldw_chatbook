@@ -1194,7 +1194,9 @@ def _empty_local_skill_context() -> dict[str, Any]:
     }
 
 
-def capture_skill_context_maximum(app: Any) -> dict[str, Any]:
+def capture_skill_context_maximum(
+    app: Any, workspace_id: str | None = None
+) -> dict[str, Any]:
     """Capture the currently eligible local-skill catalog synchronously."""
     scope = getattr(app, "skills_scope_service", None)
     local = getattr(scope, "local_service", None) or getattr(
@@ -1214,7 +1216,17 @@ def capture_skill_context_maximum(app: Any) -> dict[str, Any]:
                     str(summary.get("name", ""))
                 )
             (blocked if summary.get("trust_blocked") else available).append(summary)
+        plugin_service = getattr(local, "plugin_service", None)
+        if plugin_service is not None:
+            plugin_context = plugin_service.capture_maximum(workspace_id)
+            names = {item.get("name") for item in available + blocked}
+            available.extend(
+                row
+                for row in plugin_context["available_skills"]
+                if row["name"] not in names
+            )
         return {
+            "plugin_run_id": "pending:" + str(uuid4()),
             "available_skills": available,
             "blocked_skills": blocked,
             "context_text": "\n".join(
@@ -3421,7 +3433,6 @@ def _lease_captured_tool_profile(method: Callable[..., Any]):
             return await method(self, *args, **kwargs)
 
     return wrapped
-
 
 
 def _stamp_approval_round_closed(state: dict[str, Any]) -> None:
@@ -7887,7 +7898,6 @@ class ConsoleChatController:
         )
         return accept_turn(request)
 
-
     async def validate_speculative_voice_entry(self) -> Any:
         """Validate the current provider without preparing a turn or audio."""
         from tldw_chatbook import config
@@ -8418,6 +8428,10 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
             )
         finally:
+            for service, pending_id in getattr(
+                self, "_plugin_pending_submissions", {}
+            ).pop(active_task, ()):
+                await service.retire_pending(pending_id)
             self._unregister_submit_task(active_task)
 
     async def _submit_draft_inner(
@@ -8809,6 +8823,22 @@ class ConsoleChatController:
             if configuration is not None
             else self.resolve_turn_configuration_snapshot(session.id)
         )
+        if any(
+            row.get("plugin_owned")
+            for row in configuration.skill_context_maximum.get("available_skills", ())
+        ):
+            maximum = dict(configuration.skill_context_maximum)
+            if resumed_preparation is None:
+                maximum["plugin_run_id"] = "pending:" + str(uuid4())
+                configuration = replace(configuration, skill_context_maximum=maximum)
+            local = getattr(self._skills_service, "local_service", None)
+            service = getattr(local, "plugin_service", None)
+            pending = getattr(self, "_plugin_pending_submissions", None)
+            if pending is None:
+                pending = self._plugin_pending_submissions = {}
+            pending.setdefault(asyncio.current_task(), []).append(
+                (service, maximum["plugin_run_id"])
+            )
         turn_selection = configuration.provider_selection
         if has_pending_attachment:
             vision_model = configuration.effective_model
@@ -15920,7 +15950,6 @@ class ConsoleChatController:
             run_id, {"skill_script": _REVOCATION_STAMPS["skill_script"]}
         )["skill_script"]
 
-
     @staticmethod
     def _discard_chat_create_orphan(db: Any, conversation_id: str) -> None:
         """Best-effort soft-delete of a just-created chat-create conversation.
@@ -15991,7 +16020,6 @@ class ConsoleChatController:
         return revoked
 
     # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
-
 
     def request_skill_install_confirm(
         self, url: str, *, session_id: str | None = None
@@ -16415,7 +16443,6 @@ class ConsoleChatController:
             return list(self._pending_skill_script_rounds)
 
     # -- Worktree-merge confirm bridge (TASK-28238 phase 2 Task 6) -----------
-
 
     def _enrich_chat_create_confirm_payload(
         self, payload: Mapping[str, Any]
@@ -20732,20 +20759,24 @@ class ConsoleChatController:
             presentation_context=self._presentation_context_for(session_id),
             library_policy_maximum=session.library_policy_holder.snapshot,
             library_scope_maximum=ConsoleLibraryItemScopeSnapshot(
-                note_ids=tuple(
-                    str(item.source_id)
-                    for item in held_scope.items
-                    if item.source_type == "note"
-                )
-                if held_scope is not None
-                else (),
-                media_ids=tuple(
-                    str(item.source_id)
-                    for item in held_scope.items
-                    if item.source_type == "media"
-                )
-                if held_scope is not None
-                else (),
+                note_ids=(
+                    tuple(
+                        str(item.source_id)
+                        for item in held_scope.items
+                        if item.source_type == "note"
+                    )
+                    if held_scope is not None
+                    else ()
+                ),
+                media_ids=(
+                    tuple(
+                        str(item.source_id)
+                        for item in held_scope.items
+                        if item.source_type == "media"
+                    )
+                    if held_scope is not None
+                    else ()
+                ),
                 conversations_allowed=held_scope is None,
             ),
             project_authority=capture_project_instruction_authority(
@@ -20763,7 +20794,7 @@ class ConsoleChatController:
                 self.app,
                 session,
             ),
-            skill_context_maximum=capture_skill_context_maximum(self.app),
+            skill_context_maximum=capture_skill_context_maximum(self.app, workspace_id),
             mcp_tool_maximum=(
                 mcp_definition_maximum := capture_mcp_definition_maximum(self.app)
             ),
@@ -21234,7 +21265,39 @@ class ConsoleChatController:
             turn_context.skill_context_maximum if turn_context is not None else {}
         )
 
+        plugin_entries = {
+            item["name"]: item
+            for item in frozen_context.get("available_skills", ())
+            if item.get("plugin_owned")
+        }
+        local_service = getattr(self._skills_service, "local_service", None)
+        plugin_service = getattr(local_service, "plugin_service", None)
+        if plugin_entries:
+            try:
+                frozen_context = await plugin_service.admit(
+                    frozen_context, frozen_context["plugin_run_id"]
+                )
+                plugin_entries = {
+                    item["name"]: item
+                    for item in frozen_context["available_skills"]
+                    if item.get("plugin_owned")
+                }
+            except PermissionError:
+                return (
+                    provider_messages,
+                    "Plugin authority changed; review plugins and retry.",
+                    (),
+                    (),
+                    "",
+                )
+
+        def plugin_options(name: str) -> dict[str, str]:
+            entry = plugin_entries.get(name)
+            return {"plugin_admission": entry["plugin_admission"]} if entry else {}
+
         def ensure_frozen_definition(name: str) -> None:
+            if name in plugin_entries:
+                return  # The plugin owner revalidates exact admission at execute.
             expected = next(
                 (
                     str(item.get("definition_digest"))
@@ -21296,7 +21359,10 @@ class ConsoleChatController:
                     try:
                         ensure_frozen_definition(resolution.name)
                         result = await self._skills_service.execute_skill(
-                            resolution.name, mode="local", args=args
+                            resolution.name,
+                            mode="local",
+                            args=args,
+                            **plugin_options(resolution.name),
                         )
                     except SkillTrustBlockedError as exc:
                         refuse = SKILL_UNTRUSTED_REFUSE.format(
@@ -21371,7 +21437,10 @@ class ConsoleChatController:
             try:
                 ensure_frozen_definition(mention.name)
                 result = await self._skills_service.execute_skill(
-                    mention.name, mode="local", args=""
+                    mention.name,
+                    mode="local",
+                    args="",
+                    **plugin_options(mention.name),
                 )
             except SkillTrustBlockedError:
                 rendered_by_name[mention.name] = None
@@ -21391,6 +21460,27 @@ class ConsoleChatController:
             if execution_mode == "inline" and isinstance(result, Mapping):
                 results_by_name[mention.name] = result
 
+        if plugin_entries:
+            from tldw_chatbook.Plugins.context import check_context_budget
+
+            try:
+                check_context_budget(
+                    [
+                        rendered_by_name[mention.name]
+                        for mention in mentions
+                        if mention.name in plugin_entries
+                        and rendered_by_name.get(mention.name) is not None
+                    ]
+                )
+                await plugin_service.check_entries(plugin_entries.values())
+            except PermissionError:
+                return (
+                    provider_messages,
+                    "Plugin context is unavailable or too large; review selected skills.",
+                    (),
+                    (),
+                    "",
+                )
         new_content = content
         for mention in reversed(mentions):
             body = rendered_by_name.get(mention.name)
@@ -23445,7 +23535,6 @@ class ConsoleChatController:
             resolve_effective_compaction_representation,
         )
 
-
         def blocked(visible_copy: str) -> ConsoleSubmitResult:
             if manual_action:
                 return ConsoleSubmitResult(False, True, visible_copy)
@@ -24395,6 +24484,16 @@ class ConsoleChatController:
                 before_provider_dispatch=before_provider_dispatch,
                 capture_mode_override=capture_mode_override,
                 trace_request=trace_request,
+                plugin_context={
+                    **turn_context.skill_context_maximum,
+                    "available_skills": [
+                        row
+                        for row in turn_context.skill_context_maximum.get(
+                            "available_skills", ()
+                        )
+                        if row.get("plugin_owned") and row.get("name") in skill_bindings
+                    ],
+                },
             )
         finally:
             self._trace_last_provider_activity = time.monotonic()
@@ -24998,6 +25097,7 @@ class ConsoleChatController:
         before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
         capture_mode_override: ConsoleTraceCaptureMode | None = None,
         trace_request: PreparedConsoleRequest | None = None,
+        plugin_context: Mapping[str, Any] | None = None,
     ) -> ConsoleSubmitResult:
         # Dev's citation-repair refactor extracted this streaming body out of
         # the wrapper (`_stream_assistant_response_inner`) into its own
@@ -25150,7 +25250,22 @@ class ConsoleChatController:
         def settle_thinking(outcome: Literal["complete", "stopped", "failed"]) -> None:
             project_thinking(thinking_capture.settle(outcome))
 
+        plugin_service = None
+        plugin_run_id = f"direct:{assistant_message_id}:{generation_token}"
+
         async def enter_provider_dispatch() -> None:
+            nonlocal plugin_service
+            maximum = plugin_context or {}
+            if maximum.get("available_skills"):
+                local = getattr(self._skills_service, "local_service", None)
+                plugin_service = local.plugin_service
+                admitted = await plugin_service.admit(maximum, maximum["plugin_run_id"])
+                await asyncio.to_thread(
+                    plugin_service.bind_run,
+                    admitted["available_skills"],
+                    plugin_run_id,
+                    cancel_event.set,
+                )
             await self._wait_for_trace_maintenance_dispatch()
             self._trace_last_provider_activity = time.monotonic()
             if before_provider_dispatch is not None:
@@ -25467,6 +25582,8 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
+            if plugin_service is not None:
+                await asyncio.to_thread(plugin_service.complete_run, plugin_run_id)
             # Fix round 1 (Critical 1): this run's own per-session cancel
             # signal (created above, mirroring `_run_agent_reply`'s own)
             # must not survive the run -- a stale entry would let a LATER,
@@ -26582,6 +26699,7 @@ class ConsoleChatController:
                 # tool for real). Run-keyed, so a live sibling child --
                 # which shares this same session -- keeps its own card.
                 revoke_approvals=self.revoke_approval_rounds_for_run,
+                plugin_cancel_root=cancel_event.set,
                 on_tool_terminal=self.complete_definitive_tool,
                 on_tool_result_terminal=self.observe_watchlists_operation_result,
                 on_run_terminal=self.complete_definitive_run,

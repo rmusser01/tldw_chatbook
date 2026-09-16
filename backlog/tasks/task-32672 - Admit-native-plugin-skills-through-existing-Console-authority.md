@@ -1,9 +1,11 @@
 ---
 id: TASK-32672
 title: Admit native plugin skills through existing Console authority
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-16 04:19'
+updated_date: '2026-09-16 08:39'
 labels:
   - plugins
   - implementation
@@ -30,3 +32,25 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [ ] #3 Plugin context stays attributed and untrusted with whole-block limits; manual-only and inline/fork metadata, empty tool allowlists and dependencies preserve their meaning.
 - [ ] #4 Owned skill listings expose package provenance while service-level standalone edit/delete/overwrite paths refuse package mutations; unrelated standalone skills remain usable.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR paths: backlog/decisions/162-managed-agent-plugins.md; backlog/decisions/163-expanded-console-hook-runtime.md; extends backlog/decisions/009-local-skill-trust-boundary.md
+Reason: Direct implementation of accepted native plugin admission, existing Console authority and package-owned Skills projections; preserves one plugin mutation/execution owner and existing permission/runtime boundaries.
+1. Read TASK-32672, task5 brief, reviewed F4 handoff and relevant ADR/lessons. Establish RED through the native plugin/Console path using the isolated worktree interpreter and real owned registry/trust/coordinator.
+2. Under R20/R22, minimally extend Plugins/coordinator.py and Plugins/review.py with typed explicit trust and activation reviews through the same authenticated commit pipeline. Bind current exact package/material, installation/workspace and mapping/configuration generations. Never directly toggle rows or expose arbitrary authority replacement.
+3. Implement Plugins/admission.py immutable admitted revision/selection/dependency/mapping/scope snapshots and current-authority revalidation at injection, invocation, launch and approval acceptance. Validate captured named workspace existence/archive state, distinguish global/default sentinels, and prevent namespace-only changes from cancelling unrelated work or mid-run enablements from widening a snapshot.
+4. Implement Plugins/skill_provider.py and Plugins/context.py using existing Skills/ToolProvider/Console ownership, attributed untrusted whole-block context limits and exact manual-only/inline/fork/empty-tool constraints. Missing/unready dependencies remain blockers; aliases cannot shadow existing tools or other skills.
+5. R3/R7 authorize minimal Chat/console_agent_bridge.py, Chat/console_chat_controller.py and app.py changes in addition to console_runtime.py, console_skill_resolver.py and Agents/tool_catalog.py. Wire the actual frozen catalog, skill runner/substitution and bundle-definition checks, ordinary permissions, captured run identity and lazy app-owned persistent non-UI worker marshalling. SQLite construction/use/close stays on its owner thread/loop; keep trust/keyring/scans off startup and retain service lifetime across navigation.
+6. Integrate package-owned listing/detail provenance and service-level guards in Skills_Interop/local_skills_service.py and skills_scope_service.py. Refuse standalone edits, deletion, import overwrite and inapplicable execution/promotion against owned IDs while preserving standalone successful controls. Do not create standalone trust projections or a parallel skill runtime.
+7. Test real install-disabled then explicit trust/workspace enable and Console submit/provider payload; cover scope A/B/default, invalid/archived identity, stale/tampered material, unrelated namespace advance, new capability mid-run, dependencies, manual/fork/empty tools, alias collisions and owned mutation refusal. Preserve raw transcript and actual final untrusted attributed provider input. Extend real fixture only as necessary.
+8. Run exact feature and affected neighboring regression files, startup/preimport guards for changed construction seams, Ruff/Black/syntax/whitespace checks. For pre-existing large-file violations establish baseline parity and clean changed hunks under R10; no unrelated formatting/full suite.
+9. Update relevant authoring/operation documentation, self-review and write task5 report with actual RED/GREEN, changed paths, API handoff and limits. Controller handles exact-path commits, independent task review, AC/Done closeout. F6 owns selective cancellation, F7 revision drain, and M4 actual plugin MCP connection ownership; preserve required captured ownership integration points without duplicating those runtimes.
+10. R25: add Plugins/service.py as the lazy app-owned persistent worker and typed facade/marshalling lifetime; extend Tests/Plugins/conftest.py for the real Console stack and update Plugins/README.md. Keep admission/context/provider focused. Ensure storage scheduling does not prevent the later required immediate live seal/host cancellation while the worker is blocked.
+11. R26: preserve synchronous configuration capture as an immutable worker-published eligibility maximum only. Async send acceptance revalidates current authenticated authority, material and workspace, intersects rather than widens that maximum, and binds exact accepted run identity before plugin effects. Repeat current checks at each later use/approval; cold/locked/uninitialized state is empty, not an implicit grant. Do not block UI on worker Future.result or put source bodies/secrets into persisted configuration metadata.
+12. R27: document strict native string metadata context/user_invocable/disable_model_invocation/argument_hint without loosening the portable parser. Invalid recognized metadata blocks admission; empty allowed-tools stays no tools, not inheritance. Vendor spelling normalization remains its assigned adapter increment.
+13. R28: add the next plugin-owned migration for persistent stable installation aliases and minimally extend Plugins/authority.py, registry.py, recovery.py, coordinator.py and review.py as needed to bind/reconstruct them. Allocate at first install from authenticated package name, suffix/check collision and retain across update/restart/recovery. Preserve old authenticated snapshot digest/canonical bytes on read with explicit backward qualification; no silent grant/retrust or prior migration edits. Add focused registry/authority/store/recovery and actual wheel-resource checks for the migration. Update ADR-162/spec authoring/identity details as needed; this implements the accepted stable identity contract, not a new authority owner.
+14. R30: give each frozen logical turn a fresh pending plugin admission identity, preserving actual request.turn_id association when available. Bind pending ownership to actual root/child run IDs via existing lifecycle callbacks before dispatch/spawn; never infer from the viewed session, reuse a consumed pending ID for an unrelated retry, or bypass inherited maxima. Refusal/cancellation/teardown must retire pending custody without losing retained running work.
+<!-- SECTION:PLAN:END -->

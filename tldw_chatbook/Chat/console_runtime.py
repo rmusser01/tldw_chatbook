@@ -119,7 +119,7 @@ import os
 import functools
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, get_ident
@@ -2375,7 +2375,13 @@ class ConsoleRuntime:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
-                configuration=request.configuration,
+                configuration=replace(
+                    request.configuration,
+                    skill_context_maximum={
+                        **request.configuration.skill_context_maximum,
+                        "plugin_turn_id": request.turn_id,
+                    },
+                ),
                 accepted_attachments=record.inputs.attachments,
                 captured_one_shot_prefill=request.one_shot_prefill,
                 captured_one_shot_prefill_revision=(request.one_shot_prefill_revision),
