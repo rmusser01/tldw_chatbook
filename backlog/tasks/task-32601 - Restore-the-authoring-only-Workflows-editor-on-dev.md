@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-15 04:09'
-updated_date: '2026-09-15 19:09'
+updated_date: '2026-09-16 02:40'
 labels: []
 dependencies: []
 ---
@@ -132,6 +132,22 @@ Reason: Qodo 4021826851 identifies the duplicated signed-SQLite-integer bound.
 2. Verify existing generation/paging boundary and search regressions, scoped
    static attribution and preflight. Obtain scoped review, push, reply and wait
    for exact-head CI/Qodo before merge.
+
+### New-base CSS integration (2026-09-16 UTC)
+
+ADR required: no new ADR; apply existing ADR-097 and ADR-150.
+ADR path: backlog/decisions/097-boot-budget-ratchets.md.
+Reason: rebasing onto dev65a143 adds Notes styles and exposes a 490-byte
+startup-CSS breach; AC7 already requires resolving introduced integration gates.
+
+1. Retain the failing unchanged boot-budget guard (768,490 / 768,000 bytes).
+2. Scope the six remaining bare editor/library/navigator geometry selectors to
+   their existing unique Workflows IDs so the existing conservative splitter
+   can defer them. Preserve declarations, route loader and limits; add no API.
+3. Verify both entry paths, real rendered geometry, compact editor interactions,
+   splitter/cascade/byte guards and preflight; obtain scoped independent review.
+4. Record evidence, push with the exact remote-head lease, then await fresh
+   Qodo and exact-head CI before merging. Keep AC7 open until verified merge.
 
 ## ID provenance
 
@@ -330,4 +346,8 @@ owned bootstrap-profile lifetime and factory cleanup in finally. Current success
 captures remain evidence, but repeated runs can leave disposable profiles behind
 and capture failures skip factory cleanup. Recorded separately from the authoring
 ACs; no data deleted or cleanup code added in this turn.
+
+New-base integration: rebased 21 patches onto dev65a1437183, preserving both independent lesson appends; all code patches unchanged by range-diff. Qodo import-spacing comment4021886696 was verified false-positive and replied/resolved with Ruff evidence. Combined CSS exceeded the unchanged 768000-byte startup limit by490. Six Workflows geometry selectors now use existing unique pane IDs, allowing the existing splitter/loader to defer612bytes without changed declarations or infrastructure. Corrected targeted selection:182passed; startupCSS767878/768000, broadselectors271/274, all7preflight guards pass. Independent review and exact-head GitHub gates remain pending. ADR097/150 apply; detailed evidence in Docs/UAT/2026-09-15-workflows-qodo-remediation.md. AC7 remains open until verified merge.
+
+Independent review of the new-base six-selector correction is complete: no Critical/Important/Minor findings; ready for push. Reviewer independently verified unchanged declarations, unique ID owners, route loading, generated partition, boot-byte count and mounted-fixture computed-style/geometry parity at160x48,110x36,60x20. Exact-head GitHub review/checks and verified merge still required.
 <!-- SECTION:NOTES:END -->

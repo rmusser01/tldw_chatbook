@@ -350,3 +350,58 @@ shared-module Ruff findings remain exactly source-attributed with zero unmatched
 Independent review found no issues and checked maximum/one-over behavior and
 unchanged import dependencies. Exact-head CI/Qodo remains required before merge.
 All seven derived-artifact preflight guards also passed on this corrected tree.
+
+## Rebase onto the Notes integration (2026-09-16 UTC)
+
+Qodo review `5217761250` on `305b90e0b2426f81cfbe8e056f51a60bd89133e0`
+raised only import-spacing comment `4021886696`. The reported internal blank
+lines do not exist: local imports are contiguous at lines 13–37, separated from
+third-party imports only at line 12. Fresh Ruff import-order and format checks
+pass. Evidence reply `4021948606` records the false positive and its thread is
+resolved; no formatter-defined import layout was changed to satisfy it.
+
+While the previous head's required Derived, Fast Lane and UI latency checks
+passed, dev advanced to `65a1437183de025d776afe0dd2c526c2f2423201` and GitHub
+reported a conflict. The backup `codex/workflows-authoring-pre-dev65a143` retains
+the old head. All 21 patches were rebased, resulting in `7bca061ada1f05fc64a41564349853f9a6b0f680`.
+The only conflict was independent appends in lessons-testing-evidence.md; both
+were retained. Range-diff shows 20 identical patches and only changed context
+for that documentation patch. Workflows domain/UI and shared input validation
+are byte-identical to the prior head. New dev's Notes code and generated styles
+are preserved. Fresh targeted integration tests and all preflight guards are
+required on this combination before the leased push; exact-head GitHub checks
+and refreshed Qodo review remain required before merge.
+
+The new-base integration selection had **311 passed, 1 failed** in 140.52s.
+The sole failure was the unchanged startup CSS guard: **768,490 / 768,000 bytes**
+after Notes added 1,066 boot-parsed bytes. Selector count remained 272/274 and
+all seven preflight guards passed. This is a combined-tree integration failure,
+not waived as an unrelated baseline issue.
+
+Six geometry selectors now qualify their existing widget types with the IDs
+already assigned by WorkflowsScreen.compose: workflows-editor, workflows-library
+and workflows-navigator. The root panes and library/navigator child rules retain
+every declaration. The existing conservative splitter can now identify their
+single route owner and move them into screen_feature_workflows.tcss. Consumer
+search found only those production compose sites; no class, loader, new sheet,
+dependency, style value or budget constant was added or changed. Generated files
+were rebuilt through build_css.py, not edited. The unchanged byte guard supplies
+the failing regression; real route-entry, compact/editor and cascade checks
+qualify the specificity/loading change.
+
+Corrected-tree verification: **182 passed**, 161.10s, covering actual app
+authoring/file pickers, editor/paging/projection, both route-entry paths, compact
+layout/focus, CSS partition/cascade, token governance and import/CSS performance.
+The unchanged byte guard now measures **767,878 / 768,000 bytes** (612 fewer);
+the broad-selector guard measures **271 / 274**. All seven preflight guards
+pass again, and diff-check passes. Existing dependency, serial-resource fallback,
+deprecation and unrelated old pytest cleanup warnings remain disclosed. No full
+sweep or model call occurred. Scoped independent review and new-head GitHub
+gates remain the final prerequisites for push/merge respectively.
+
+The scoped independent reviewer found no Critical/Important/Minor issues and
+approved pushing. It independently checked declaration identity, sole production
+ID owners, loading before construction, exact generated partition, the boot-byte
+census and mounted-fixture style/geometry parity at 160x48, 110x36 and 60x20.
+That fixture check supplements the coordinator's full-app tests; it is not
+misrepresented as another live-app UAT. New-head GitHub review/CI remains pending.

@@ -577,3 +577,29 @@ newcodeRuffclean,8sharedbaselinefindingssource-attributedunchanged. Averroesrevi
 nofindings,independentbound/importchecks,closed. Preflightinprogress. Needcommit,
 push,reply/resolve4021826851,/agentic_review,exactheadCIbeforemerge. AC7open.
 Preflight completed:all7passed. Readycommit/push;no otherworktreechanges.
+
+### Rebase65a143 and CSS integration (2026-09-16 UTC)
+
+Qodo5217761250 on305b90 raised only4021886696 (import spacing). Verified no
+internal blank lines in local imports13-37; Ruff I/format pass. Evidence reply
+4021948606, thread resolved. All prior discussions resolved. New dev65a1437183
+caused GitHub conflict; backup codex/workflows-authoring-pre-dev65a143 keeps
+305b90. Rebased21patches to7bca061ada:20identical, onlylessonappendcontextdiff.
+Both devNotes and Workflow lesson appends retained. Corecode byte-identical.
+
+Integration312selection:311passed1failed140.52s. New Notes CSS added1066bytes,
+combinedboot768490/768000; all7preflightpassed. Under approved existingCSSscope,
+six bare geometry selectors now qualify types with existing unique paneIDs.
+No declarations/loader/splitter/budget changes, no Python production edits.
+GeneratedCSSrebuilt. Correctedselection182passed161.10s, including realroute/
+render/focus/compact/split/cascade/token/performance. Boot767878/768000,
+broadselectors271/274, all7preflightpassagain, diffclean. Same existingwarnings.
+Scoped reviewerAverroes resumed/read-only; awaitverdict beforecommit/push.
+Remotehead still305b90, base65a143 unchanged atlastcheck. Useexplicitlease.
+Thennew/agentic_review+exactheadCI,normalmatchheadmerge,BacklogAC7Done,pause
+heartbeat onlyafterMERGED. No runtime/models/SQLiteinfra/fullsuite added.
+
+Independentreview nowcomplete:noCritical/Important/Minor;readyforpush.
+Reviewer separatelyverified declarations/ownerIDs/loadbeforeconstruction,
+generatedpartition,bytecensus and mountedfixturestyle/geometryparity at3sizes.
+Main182full-app/adjacentchecks remain actualapp evidence. Readycommit+leasedpush.
