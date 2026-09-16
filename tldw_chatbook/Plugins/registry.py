@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -14,7 +15,7 @@ from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 if TYPE_CHECKING:
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PAGE_SIZE = 50
 SELECT_INSTALLATIONS = """
 SELECT installation_id, revision_digest, activation_default
@@ -30,10 +31,10 @@ def validate_page(limit: int, offset: int) -> None:
         raise ValueError("offset must be a nonnegative SQLite integer")
 
 
-def _schema_statements() -> tuple[str, ...]:
+def _schema_statements(migration: str = "001_initial.sql") -> tuple[str, ...]:
     text = (
         files("tldw_chatbook.Plugins")
-        .joinpath("migrations/001_initial.sql")
+        .joinpath("migrations", migration)
         .read_text(encoding="utf-8")
     )
     statements, pending = [], ""
@@ -120,8 +121,29 @@ class PluginRegistry:
             if version == 0 and not objects and not self.read_only:
                 for statement in _schema_statements():
                     connection.execute(statement)
-                connection.execute("PRAGMA user_version=1")
-            elif version != SCHEMA_VERSION:
+                version = 1
+            if version == 1 and not self.read_only:
+                # Validate the exact predecessor before applying any schema change.
+                with PluginRegistry._reference_schema(version=1) as reference:
+                    expected_v1 = [
+                        tuple(row)
+                        for row in reference.execute(
+                            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                        )
+                    ]
+                actual_v1 = [
+                    tuple(row)
+                    for row in connection.execute(
+                        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                    )
+                ]
+                if actual_v1 != expected_v1:
+                    raise sqlite3.DatabaseError("invalid plugin migration predecessor")
+                for statement in _schema_statements("002_authority.sql"):
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version=2")
+                version = 2
+            if version != SCHEMA_VERSION:
                 raise sqlite3.DatabaseError("unsupported plugin registry schema")
             # Exact DDL validation catches missing constraints/columns/triggers, not
             # merely a forged user_version. The reference has no filesystem owner.
@@ -154,12 +176,17 @@ class PluginRegistry:
 
     @staticmethod
     @contextmanager
-    def _reference_schema() -> Iterator[sqlite3.Connection]:
+    def _reference_schema(
+        version: int = SCHEMA_VERSION,
+    ) -> Iterator[sqlite3.Connection]:
         # Reuse the registered memory seam for schema validation as well.
         connection = connect_private_sqlite("plugins.registry", ":memory:")
         try:
             for statement in _schema_statements():
                 connection.execute(statement)
+            if version >= 2:
+                for statement in _schema_statements("002_authority.sql"):
+                    connection.execute(statement)
             yield connection
         finally:
             connection.close()
@@ -217,6 +244,175 @@ class PluginRegistry:
             dict(row)
             for row in self._connection.execute(SELECT_INSTALLATIONS, (limit, offset))
         )
+
+    def authority_projection(self, *, operation_result: dict | None) -> dict:
+        """Read complete logical authority in one SQLite snapshot.
+
+        This validates shape, not reviewed authorization. The coordinator must
+        compare it with protected authority before admission. Package definitions
+        are retained references: recovery must reinspect exact immutable material.
+        A caller-owned transaction remains owned by its existing guarded wrapper.
+        """
+        from tldw_chatbook.Skills_Interop.skill_trust_crypto import (
+            canonical_json,
+            sha256_hex,
+        )
+
+        from .authority import canonical_snapshot, empty_snapshot
+        from .models import ComponentRecord, PackageInspection
+        from .package_files import parse_document
+
+        started = not self._connection.in_transaction
+        if started:
+            self._connection.execute("BEGIN")
+        try:
+            result = empty_snapshot()
+            result["operation_result"] = operation_result
+            queries = {
+                "installations": "SELECT installation_id, revision_digest, activation_default FROM installations ORDER BY installation_id",
+                "selections": "SELECT installation_id, revision_digest, component_id, selected FROM selections ORDER BY installation_id, revision_digest, component_id",
+                "activation": "SELECT installation_id, workspace_id, intent FROM activation ORDER BY installation_id, workspace_id",
+                "authority_generations": "SELECT installation_id, scope_kind, workspace_id, generation, revoked FROM authority_generations ORDER BY installation_id, scope_kind, workspace_id",
+                "revision_trust": "SELECT installation_id, revision_digest, reviewed FROM revision_trust ORDER BY installation_id, revision_digest",
+                "tombstones": "SELECT installation_id, generation, operation_id FROM tombstones ORDER BY installation_id",
+                "data_roots": "SELECT root_id, installation_id, workspace_id, path, generation, deletion_fenced FROM data_roots ORDER BY root_id",
+            }
+            booleans = {
+                "activation_default",
+                "selected",
+                "revoked",
+                "reviewed",
+                "deletion_fenced",
+            }
+            for name, query in queries.items():
+                for record in self._connection.execute(query):
+                    row = dict(record)
+                    for field in booleans & row.keys():
+                        if type(row[field]) is not int or row[field] not in (0, 1):
+                            raise ValueError("invalid registry boolean")
+                        row[field] = bool(row[field])
+                    result[name].append(row)
+            inventories = {}
+            for row in self._connection.execute(
+                "SELECT installation_id, revision_digest, inspection_json FROM revisions ORDER BY installation_id, revision_digest"
+            ):
+                raw = parse_document(row["inspection_json"].encode())
+                inspection = PackageInspection.model_validate_json(
+                    json.dumps(raw), strict=True
+                )
+                if inspection.effective_digest != row["revision_digest"]:
+                    raise ValueError("revision inspection identity mismatch")
+                fields = (
+                    "source_identity",
+                    "dialect",
+                    "format_version",
+                    "adapter_version",
+                    "root_manifest",
+                    "overlay_identities",
+                    "content_digest",
+                    "source_digest",
+                    "materialized_identity",
+                    "link_targets",
+                    "activation_blockers",
+                    "rejected",
+                )
+                data = inspection.model_dump(mode="json")
+                result["revisions"].append(
+                    {
+                        "installation_id": row["installation_id"],
+                        "revision_digest": row["revision_digest"],
+                        **{field: data[field] for field in fields},
+                        "variables_digest": sha256_hex(
+                            canonical_json(
+                                parse_document(inspection.variables_json.encode())
+                            )
+                        ),
+                    }
+                )
+                inventories[(row["installation_id"], row["revision_digest"])] = dict(
+                    inspection.inventory
+                )
+            for row in self._connection.execute(
+                "SELECT installation_id, revision_digest, component_id, definition_json FROM components ORDER BY installation_id, revision_digest, component_id"
+            ):
+                raw = parse_document(row["definition_json"].encode())
+                component = ComponentRecord.model_validate_json(
+                    json.dumps(raw), strict=True
+                )
+                identity = (row["installation_id"], row["revision_digest"])
+                if (
+                    row["component_id"] != component.component_id
+                    or inventories[identity].pop(component.component_id, None)
+                    != component
+                ):
+                    raise ValueError("component inspection identity mismatch")
+                data = component.model_dump(mode="json")
+                for field in ("availability", "evidence", "definition_json"):
+                    data.pop(field)
+                result["components"].append(
+                    {
+                        "installation_id": row["installation_id"],
+                        "revision_digest": row["revision_digest"],
+                        **data,
+                        "definition_digest": sha256_hex(
+                            canonical_json(
+                                parse_document(
+                                    b'{"definition":'
+                                    + component.definition_json.encode()
+                                    + b"}"
+                                )["definition"]
+                            )
+                        ),
+                    }
+                )
+            if any(inventories.values()):
+                raise ValueError("missing recorded components")
+            for row in self._connection.execute(
+                "SELECT installation_id, mapping_id, mapping_json FROM mappings ORDER BY installation_id, mapping_id"
+            ):
+                data = parse_document(row["mapping_json"].encode())
+                if (
+                    data.get("installation_id") != row["installation_id"]
+                    or data.get("mapping_id") != row["mapping_id"]
+                ):
+                    raise ValueError("mapping identity mismatch")
+                result["mappings"].append(data)
+            return canonical_snapshot(result)
+        finally:
+            if started:
+                self._connection.rollback()
+
+    def read_operation(self, operation_id: str) -> dict | None:
+        """Load one untrusted operation hint with a closed intended-result shape.
+
+        The phase is not commitment proof; F4 must authenticate exact protected
+        transition evidence. This lookup never creates missing/default authority.
+        """
+        from .authority import OperationResult
+        from .package_files import parse_document
+
+        row = self._connection.execute(
+            "SELECT operation_id, installation_id, phase, intent_json FROM operations WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        result = OperationResult.model_validate(
+            parse_document(row["intent_json"].encode())
+        ).model_dump(mode="json")
+        if (
+            result["operation_id"] != row["operation_id"]
+            or result["installation_id"] != row["installation_id"]
+        ):
+            raise ValueError("operation identity mismatch")
+        if row["phase"] not in {
+            "prepared",
+            "committed",
+            "complete",
+            "recovery_required",
+        }:
+            raise ValueError("invalid operation phase")
+        return {"phase": row["phase"], "result": result}
 
     def close(self) -> None:
         """Release the database handle without deleting recovery evidence."""

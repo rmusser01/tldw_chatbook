@@ -644,3 +644,24 @@ def test_refuses_new_directory_chain_allows_existing_containers():
     # itself a direct child of the user data dir, so it must stay allowed.
     new_nested_dir = sandbox_root / "brand_new_subdir"
     assert not refuses_new_directory_chain(new_nested_dir)
+
+
+def test_plugin_authority_artifacts_use_protected_production_accessor():
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.Plugins.authority_store import default_plugin_authority_dir
+    from tldw_chatbook.Skills_Interop.local_skills_service import (
+        default_local_skills_store_dir,
+    )
+
+    root = default_plugin_authority_dir(
+        default_local_skills_store_dir(app_config.get_user_data_dir())
+    )
+    for relative in (
+        "metadata.json",
+        "generation_marker.json",
+        "snapshots/digest.json",
+        "intents/op.json",
+        "certificates/op.json",
+    ):
+        assert is_sensitive_path(root / relative), relative
+    assert is_sensitive_path(root.parent / "plugins-reset-archive" / "metadata.json")

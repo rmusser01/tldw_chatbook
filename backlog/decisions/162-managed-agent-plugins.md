@@ -132,3 +132,13 @@ declared implemented by this ADR.
 - [Expanded hook runtime design](../../Docs/superpowers/specs/2026-09-15-expanded-hook-runtime-design.md)
 - [Implementation delivery plan](../../Docs/superpowers/plans/2026-09-15-managed-plugins-delivery.md)
 - [ADR-074: bounded write-ahead coordination precedent](074-portable-actor-packs-and-local-persona-visual-runtime.md)
+
+### F3 persistence detail (2026-09-15)
+
+Registry schema v2 adds mutable, explicit revision review state separately from
+immutable revision content, and independent installation tombstones carrying
+revocation generation and operation identity. Upgrade v1 in one owned transaction;
+authenticating registry presence does not imply that a revision was reviewed.
+Tombstones survive removal of installation rows. Closed authority mappings and
+operation results contain references and stable authority generations, not token
+material or live process state.

@@ -197,3 +197,37 @@ def decrypt_json_blob(
     if not isinstance(payload, dict):
         raise ValueError("snapshot payload must be an object")
     return payload
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PluginAuthorityKeys:
+    """Plugin-only keys; standalone key-cache serialization stays unchanged."""
+
+    snapshot_key: bytes
+    prepared_key: bytes
+    committed_key: bytes
+
+    def __repr__(self) -> str:
+        return "PluginAuthorityKeys(<redacted>)"
+
+
+def derive_plugin_authority_keys(
+    passphrase: str, *, salt: bytes
+) -> PluginAuthorityKeys:
+    """Reuse the standalone KDF with disjoint plugin-purpose subkeys."""
+    if type(salt) is not bytes or len(salt) != 32:
+        raise ValueError("plugin authority salt must be 32 bytes")
+    root = scrypt(
+        passphrase.encode("utf-8"),
+        salt,
+        key_len=SKILL_TRUST_KEY_SIZE,
+        N=SKILL_TRUST_KDF_N,
+        r=SKILL_TRUST_KDF_R,
+        p=SKILL_TRUST_KDF_P,
+    )
+    return PluginAuthorityKeys(
+        *(
+            _derive_subkey(root, b"tldw-chatbook-plugin-authority-" + purpose + b"-v1")
+            for purpose in (b"snapshot", b"prepared", b"committed")
+        )
+    )
