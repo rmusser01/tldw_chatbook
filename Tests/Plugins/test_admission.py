@@ -169,3 +169,72 @@ def test_activation_operation_id_cannot_retarget_review(
     ).committed
     with pytest.raises(ValueError, match="different review"):
         stack.call(lambda: stack.coordinator.commit(other, "activation-once"))
+
+
+@pytest.mark.parametrize("workspace", ["global", "workspace-default", ""])
+def test_coordinator_rejects_reserved_activation_scope(
+    plugin_stack, native_package, workspace
+):
+    identity = install(plugin_stack, native_package())
+    with pytest.raises(ValueError, match="workspace"):
+        plugin_stack.call(
+            lambda: plugin_stack.coordinator.review_activation(
+                identity, workspace_id=workspace, intent="enabled"
+            )
+        )
+
+
+@pytest.mark.parametrize("workspace", ["global", "workspace-default"])
+def test_historical_authenticated_sentinel_generations_still_fence_old_runs(
+    plugin_stack, native_package, workspace
+):
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+    from tldw_chatbook.Plugins.authority import PluginMarker, snapshot_digest
+
+    stack = plugin_stack
+    identity = install(stack, native_package())
+    trust(stack, identity)
+    gate = admission(stack)
+
+    def legacy_transition(intent, operation):
+        # Reconstruct a signed pre-fix transition, not a new public activation.
+        old = stack.authority.load_marker()
+        result = {
+            "operation_id": operation,
+            "installation_id": identity,
+            "kind": "activate",
+            "revision_digest": stack.coordinator.published_snapshot()["installations"][
+                0
+            ]["revision_digest"],
+            "result": "committed",
+        }
+        with stack.registry.transaction() as cursor:
+            cursor.execute(
+                "INSERT INTO activation VALUES (?, ?, ?) ON CONFLICT(installation_id, workspace_id) DO UPDATE SET intent=excluded.intent",
+                (identity, workspace, intent),
+            )
+            cursor.execute(
+                "INSERT INTO authority_generations VALUES (?, 'workspace', ?, 1, 0) ON CONFLICT(installation_id, scope_kind, workspace_id) DO UPDATE SET generation=generation+1",
+                (identity, workspace),
+            )
+            snapshot = stack.registry.authority_projection(operation_result=result)
+            new = PluginMarker(
+                generation=old.generation + 1,
+                operation_id=operation,
+                recovery_snapshot_digest=snapshot_digest(snapshot),
+            )
+            stack.authority.prepare(snapshot, old, new)
+            stack.registry.write_operation(cursor, result, phase="committed")
+        stack.authority.certify_commit(old, new)
+        stack.authority.advance_marker(old, new)
+        return stack.coordinator.recover()
+
+    stack.call(lambda: legacy_transition("enabled", "legacy-initial"))
+    snapshot = stack.call(lambda: gate.capture(identity, workspace, "old-run"))
+    stack.call(lambda: gate.check(snapshot, "skill:review"))
+    stack.call(lambda: legacy_transition("disabled", "legacy-disable"))
+    with pytest.raises(PluginUnavailable):
+        stack.call(lambda: gate.check(snapshot, "skill:review"))
+    stack.call(lambda: legacy_transition("enabled", "legacy-reenable"))
+    with pytest.raises(PluginUnavailable, match="changed"):
+        stack.call(lambda: gate.check(snapshot, "skill:review"))

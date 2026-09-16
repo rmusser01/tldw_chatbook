@@ -21491,6 +21491,17 @@ class ConsoleChatController:
             )
         if new_content == content:
             return provider_messages, None, tuple(notes), (), ""
+        if plugin_entries:
+            from tldw_chatbook.Agents.agent_models import carry_plugin_context
+
+            new_content = carry_plugin_context(
+                new_content,
+                *(
+                    rendered_by_name[mention.name]
+                    for mention in mentions
+                    if rendered_by_name.get(mention.name) is not None
+                ),
+            )
 
         # Task 5: bound names are every unique mention that actually
         # spliced, in first-occurrence document order (`dict.fromkeys` on
@@ -25251,33 +25262,81 @@ class ConsoleChatController:
             project_thinking(thinking_capture.settle(outcome))
 
         plugin_service = None
+        admitted_plugin_entries = ()
         plugin_run_id = f"direct:{assistant_message_id}:{generation_token}"
+        provider_stream = None
+        provider_work = set()
+        provider_closers = []
+        provider_consumer_finished = False
+        plugin_terminal_task = None
+        provider_loop = asyncio.get_running_loop()
+        previous_work_callback = stream_signals.provider_work_callback
+
+        def finish_plugin_when_terminal(completion=None) -> None:
+            nonlocal plugin_terminal_task
+            if completion is not None:
+                # Cancelled Future/Task does not prove a to_thread worker ended.
+                if completion.cancelled():
+                    return
+                completion.exception()
+                provider_work.discard(completion)
+            if (
+                provider_consumer_finished
+                and not provider_work
+                and plugin_service is not None
+                and plugin_terminal_task is None
+            ):
+                plugin_terminal_task = provider_loop.create_task(
+                    asyncio.to_thread(plugin_service.complete_run, plugin_run_id)
+                )
+
+        def retain_plugin_provider_work(completion, force_close) -> bool:
+            if previous_work_callback is not None:
+                previous_work_callback(completion, force_close)
+            provider_work.add(completion)
+            if force_close not in provider_closers:
+                provider_closers.append(force_close)
+            completion.add_done_callback(finish_plugin_when_terminal)
+            return True
+
+        def cancel_plugin_provider() -> None:
+            cancel_event.set()
+
+            def close_owned_transport():
+                for close in tuple(provider_closers):
+                    close()
+
+            provider_loop.call_soon_threadsafe(close_owned_transport)
 
         async def enter_provider_dispatch() -> None:
-            nonlocal plugin_service
+            nonlocal plugin_service, admitted_plugin_entries
             maximum = plugin_context or {}
             if maximum.get("available_skills"):
                 local = getattr(self._skills_service, "local_service", None)
                 plugin_service = local.plugin_service
                 admitted = await plugin_service.admit(maximum, maximum["plugin_run_id"])
+                admitted_plugin_entries = tuple(admitted["available_skills"])
                 await asyncio.to_thread(
                     plugin_service.bind_run,
-                    admitted["available_skills"],
+                    admitted_plugin_entries,
                     plugin_run_id,
-                    cancel_event.set,
+                    cancel_plugin_provider,
                 )
             await self._wait_for_trace_maintenance_dispatch()
             self._trace_last_provider_activity = time.monotonic()
             if before_provider_dispatch is not None:
                 await before_provider_dispatch()
-                return
-            if preparation_id is not None and not self._transition_preparation(
+            elif preparation_id is not None and not self._transition_preparation(
                 preparation_id,
                 ConsoleTurnPreparationState.ACCEPTED,
                 ConsoleTurnPreparationState.DISPATCH_STARTED,
             ):
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
+            if plugin_service is not None:
+                await plugin_service.check_entries(admitted_plugin_entries)
 
+        if (plugin_context or {}).get("available_skills"):
+            stream_signals.provider_work_callback = retain_plugin_provider_work
         try:
             if self._teardown_refuses_turn(owner_id):
                 return self._accepted_shutdown_before_dispatch(
@@ -25307,6 +25366,8 @@ class ConsoleChatController:
                 **gateway_options,
             )
             async for chunk in provider_stream:
+                if plugin_service is not None:
+                    await plugin_service.check_entries(admitted_plugin_entries)
                 if not chunk:
                     continue
                 thinking_event = isinstance(
@@ -25407,6 +25468,8 @@ class ConsoleChatController:
                     return self._session_closed_result(session_id=owner_id)
                 if chunk:
                     emitted_content = True
+            if plugin_service is not None:
+                await plugin_service.check_entries(admitted_plugin_entries)
             if cancel_event.is_set():
                 self.store.record_trajectory_timing(
                     assistant_message_id, model_status="cancelled"
@@ -25492,6 +25555,8 @@ class ConsoleChatController:
                         one_shot_used,
                     )
                     return ConsoleSubmitResult(True, True, selection.selected_body)
+            if plugin_service is not None:
+                await plugin_service.check_entries(admitted_plugin_entries)
             self.store.record_trajectory_timing(
                 assistant_message_id, model_status="completed"
             )
@@ -25583,7 +25648,12 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
             if plugin_service is not None:
-                await asyncio.to_thread(plugin_service.complete_run, plugin_run_id)
+                if provider_stream is not None:
+                    await provider_stream.aclose()
+                provider_consumer_finished = True
+                finish_plugin_when_terminal()
+                if plugin_terminal_task is not None:
+                    await asyncio.shield(plugin_terminal_task)
             # Fix round 1 (Critical 1): this run's own per-session cancel
             # signal (created above, mirroring `_run_agent_reply`'s own)
             # must not survive the run -- a stale entry would let a LATER,

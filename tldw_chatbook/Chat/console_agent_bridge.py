@@ -996,7 +996,14 @@ def _append_to_last_user_message(
             content, str
         ):
             result = list(messages)
-            result[index] = {**message, "content": f"{content}\n\n{block}"}
+            from tldw_chatbook.Agents.agent_models import carry_plugin_context
+
+            result[index] = {
+                **message,
+                "content": carry_plugin_context(
+                    f"{content}\n\n{block}", content, block
+                ),
+            }
             return result, True
     return messages, False
 
@@ -4414,18 +4421,7 @@ def build_console_first_request_plan(
     )
     messages = agent_messages
     if turn_bundle_block:
-        messages = [dict(message) for message in agent_messages]
-        for index in range(len(messages) - 1, -1, -1):
-            message = messages[index]
-            content = message.get("content")
-            if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
-                content, str
-            ):
-                messages[index] = {
-                    **message,
-                    "content": f"{content}\n\n{turn_bundle_block}",
-                }
-                break
+        messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,
@@ -4669,7 +4665,12 @@ class _BridgeSkillRunner:
                 f"{'' if r.get('is_text', True) else ', binary'})"
                 for r in refs
             )
-            rendered = f"{rendered}\n\nBundled files (readable via skill_file): {rows}"
+            from tldw_chatbook.Agents.agent_models import carry_plugin_context
+
+            rendered = carry_plugin_context(
+                f"{rendered}\n\nBundled files (readable via skill_file): {rows}",
+                rendered,
+            )
         return spawn(rendered, allowed_tools=allowed_tools)
 
 
@@ -5667,6 +5668,9 @@ class ConsoleAgentBridge:
             for item in _eligible_skill_entries(context)
             if item.get("name") and item.get("definition_digest")
         }
+        admitted_skill_definition_digests.update(
+            (entry["name"], entry["definition_digest"]) for entry in plugin_entries
+        )
         if self._skills_service is not None:
             local_skills = getattr(self._skills_service, "local_service", None)
             if local_skills is None and hasattr(
@@ -6724,6 +6728,11 @@ class ConsoleAgentBridge:
             if plugin_entries:
                 bind_plugin_actor()
                 plugin_service.check_entries_from_agent(plugin_entries)
+                from tldw_chatbook.Plugins.context import check_send_context
+
+                kwargs["messages_payload"] = check_send_context(
+                    kwargs["messages_payload"]
+                )
             result = adapter.chat_call(**kwargs)
             if plugin_entries:
                 plugin_service.check_entries_from_agent(plugin_entries)

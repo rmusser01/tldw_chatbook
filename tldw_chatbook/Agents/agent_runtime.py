@@ -41,6 +41,8 @@ from tldw_chatbook.model_capabilities import (
 from .agent_models import MESSAGE_TOOL_NAMES, READ_AGENT_MESSAGES_TOOL_NAME, REPORT_TO_SUPERVISOR_TOOL_NAME
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
+    PluginContextText,
+    carry_plugin_context,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
@@ -916,6 +918,8 @@ def _truncate_tool_result(
             " Re-issue the call with a narrower query, or use the tool's "
             "offset/limit arguments to read the rest."
         )
+    if isinstance(content, PluginContextText):
+        return "ERROR: plugin context cannot fit whole in the tool result limit"
     full_trailer = (
         f"\n\n[truncated: {tool_name} returned {len(content)} characters.{recovery}]"
     )
@@ -962,7 +966,9 @@ def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> N
         messages.append(
             {
                 "role": "user",
-                "content": f"{FENCE_TOOL_RESULT_PREFIX}{call.name}: {content}",
+                "content": carry_plugin_context(
+                    f"{FENCE_TOOL_RESULT_PREFIX}{call.name}: {content}", content
+                ),
             }
         )
 
@@ -1447,7 +1453,10 @@ def run_agent_loop(
             return False
         return True
 
-    def expand_restore_history(checkpoint: ProviderContinuationCheckpoint) -> bool:
+    def expand_restore_history(
+        checkpoint: ProviderContinuationCheckpoint,
+        live_result: tuple[ToolCall, str] | None = None,
+    ) -> bool:
         nonlocal restore_history_start
         expand = deps.expand_provider_continuation
         if expand is None:
@@ -1458,6 +1467,23 @@ def run_agent_loop(
             return False
         if type(rows) is not list or any(type(row) is not dict for row in rows):
             return False
+        live_contents = {
+            row["tool_call_id"]: row["content"]
+            for row in messages
+            if row.get("tool_call_id")
+            and isinstance(row.get("content"), PluginContextText)
+        }
+        if live_result is not None:
+            live_call, live_content = live_result
+            if isinstance(live_content, PluginContextText):
+                live_contents[live_call.call_id] = live_content
+        for index, row in enumerate(rows):
+            original = live_contents.get(row.get("tool_call_id"))
+            if original is not None:
+                original.checked_origins()
+                if row.get("content") != original:
+                    return False
+                rows[index] = {**row, "content": original}
         if restore_history_start is None:
             restore_history_start = len(messages)
         messages[restore_history_start:] = rows
@@ -1602,8 +1628,10 @@ def run_agent_loop(
         )
         if not is_tool_result:
             return
-        newest["content"] = content + BUDGET_WARNING_TEMPLATE.format(
-            percent=int(fraction * 100), kind=kind
+        newest["content"] = carry_plugin_context(
+            content
+            + BUDGET_WARNING_TEMPLATE.format(percent=int(fraction * 100), kind=kind),
+            newest.get("content", ""),
         )
         budget_warning_delivered = True
 
@@ -3009,7 +3037,7 @@ def run_agent_loop(
                 if not transition_call(
                     call,
                     target_state,
-                    ContinuationResult(continuation_content),
+                    ContinuationResult(str(continuation_content)),
                 ):
                     return continuation_error()
                 _emit_record(
@@ -3088,7 +3116,7 @@ def run_agent_loop(
                 ),
             )
             if restoring_batch and continuation_checkpoint is not None:
-                if not expand_restore_history(continuation_checkpoint):
+                if not expand_restore_history(continuation_checkpoint, (call, content)):
                     return continuation_error()
             else:
                 _append_tool_result(messages, call, content)

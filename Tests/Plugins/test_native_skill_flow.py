@@ -535,3 +535,309 @@ async def test_real_console_revalidates_cached_invocation_metadata(native_consol
     assert result.accepted
     assert rig.gateway.payloads[-1][-1]["content"] == raw
     assert not rig.service.live_runs()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", [False, True])
+async def test_current_authority_after_dispatch_wait(
+    native_console, monkeypatch, change
+):
+    rig = native_console
+    review = await rig.install()
+    name = rig.service.capture_maximum("workspace-a")["available_skills"][0]["name"]
+    original_wait = rig.controller._wait_for_trace_maintenance_dispatch
+
+    async def wait():
+        assert rig.service.live_runs(), "barrier must occur after plugin bind"
+        if change:
+            disabled = await rig.service.review_activation(
+                review.installation_id, workspace_id="workspace-a", intent="disabled"
+            )
+            await rig.service.commit(disabled, "disable-at-wait")
+        await original_wait()
+
+    monkeypatch.setattr(rig.controller, "_wait_for_trace_maintenance_dispatch", wait)
+    result = await rig.controller.submit_draft(
+        f"${name} inspect", session_id=rig.session.id
+    )
+    if change:
+        assert (
+            not rig.gateway.payloads
+        ), "disabled package instructions dispatched after the wait"
+    else:
+        assert result.accepted and len(rig.gateway.payloads) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", [False, True])
+async def test_current_authority_before_direct_result_acceptance(
+    native_console, monkeypatch, change
+):
+    rig = native_console
+    review = await rig.install()
+    name = rig.service.capture_maximum("workspace-a")["available_skills"][0]["name"]
+
+    async def stream(resolution, messages, **kwargs):
+        rig.gateway.payloads.append(messages)
+        assert rig.service.live_runs(), "production dispatch must have retained a run"
+        if change:
+            disabled = await rig.service.review_activation(
+                review.installation_id, workspace_id="workspace-a", intent="disabled"
+            )
+            await rig.service.commit(disabled, "disable-at-result")
+        yield "LATE_PLUGIN_REPLY"
+
+    monkeypatch.setattr(rig.gateway, "stream_chat", stream)
+    result = await rig.controller.submit_draft(
+        f"${name} inspect", session_id=rig.session.id
+    )
+    replies = [
+        m.content
+        for m in rig.store.messages_for_session(rig.session.id)
+        if str(m.role.value) == "assistant"
+    ]
+    if change:
+        assert (
+            "LATE_PLUGIN_REPLY" not in replies
+        ), "reply accepted after authenticated scope disable"
+    else:
+        assert result.accepted and "LATE_PLUGIN_REPLY" in replies
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace", ["workspace-a"])
+async def test_sentinel_scope_generation_cannot_revive_old_admission(
+    native_console, workspace
+):
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+
+    rig = native_console
+    review = await rig.install(enable=False)
+
+    async def activate(intent, operation):
+        change = await rig.service.review_activation(
+            review.installation_id, workspace_id=workspace, intent=intent
+        )
+        await rig.service.commit(change, operation)
+
+    await activate("enabled", "initial")
+    context = await rig.service.admit(
+        rig.service.capture_maximum(workspace), "pending:generation"
+    )
+    entries = context["available_skills"]
+    assert len(entries) == 1
+    await rig.service.check_entries(entries)
+    await activate("disabled", "disable")
+    with pytest.raises(PluginUnavailable):
+        await rig.service.check_entries(entries)
+    await activate("enabled", "reenable")
+    with pytest.raises(PluginUnavailable, match="changed"):
+        await rig.service.check_entries(entries)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_consumer", [False, True])
+async def test_direct_plugin_retains_real_provider_worker_until_terminal(
+    native_console, monkeypatch, cancel_consumer
+):
+    import asyncio
+    import threading
+
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderSelection,
+    )
+
+    rig = native_console
+    await rig.install()
+    name = rig.service.capture_maximum("workspace-a")["available_skills"][0]["name"]
+    entered, release, terminal = threading.Event(), threading.Event(), threading.Event()
+
+    def transport(**kwargs):
+        entered.set()
+        try:
+            assert release.wait(10)
+            return {"choices": [{"message": {"content": "RETAINED_REPLY"}}]}
+        finally:
+            terminal.set()
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=transport,
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+    )
+    original_resolve = gateway.resolve_for_send
+
+    async def resolve(selection):
+        return await original_resolve(
+            ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+        )
+
+    monkeypatch.setattr(gateway, "resolve_for_send", resolve)
+    monkeypatch.setattr(rig.controller, "provider_gateway", gateway)
+    submit = asyncio.create_task(
+        rig.controller.submit_draft(f"${name} inspect", session_id=rig.session.id)
+    )
+    records = ()
+    try:
+        assert await asyncio.to_thread(entered.wait, 5), (
+            submit.result() if submit.done() else "still running"
+        )
+        records = rig.service.live_runs()
+        assert len(records) == 1
+        if cancel_consumer:
+            submit.cancel()
+            await asyncio.gather(submit, return_exceptions=True)
+            assert not terminal.is_set()
+            assert rig.service.live_runs() == records
+            assert not records[0].completed.is_set()
+        release.set()
+        await asyncio.gather(submit, return_exceptions=True)
+        assert await asyncio.to_thread(terminal.wait, 5)
+        for _ in range(200):
+            if not rig.service.live_runs():
+                break
+            await asyncio.sleep(0.01)
+        assert not rig.service.live_runs()
+        assert records[0].completed.is_set()
+    finally:
+        release.set()
+        await asyncio.gather(submit, return_exceptions=True)
+        await asyncio.to_thread(terminal.wait, 5)
+        for _ in range(200):
+            if not rig.service.live_runs():
+                break
+            await asyncio.sleep(0.01)
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_count, initial, forged",
+    [
+        (4, False, False),
+        (5, False, False),
+        (3, True, False),
+        (4, True, False),
+        (1, False, True),
+    ],
+)
+async def test_real_agent_final_send_bounds_aggregate_plugin_file_results(
+    native_console, native_package, tmp_path, file_count, initial, forged
+):
+    import asyncio
+    import threading
+
+    from Tests.Chat.test_console_agent_bridge import _ChunkGateway, _fence, _run
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    rig = native_console
+    package = native_package()
+    for index in range(file_count):
+        (package / f"skills/review/file-{index}.md").write_text(
+            f"FILE_{index}:" + "x" * 6800
+        )
+    review = await rig.service.review_install(
+        package, selection=("skill:review",), workspace_id="workspace-a"
+    )
+    await rig.service.commit(review, "install-files")
+    trust = await rig.service.review_trust(review.installation_id)
+    await rig.service.commit(trust, "trust-files")
+    activation = await rig.service.review_activation(
+        review.installation_id, workspace_id="workspace-a", intent="enabled"
+    )
+    await rig.service.commit(activation, "enable-files")
+    maximum = rig.service.capture_maximum("workspace-a")
+    maximum["plugin_run_id"] = "pending:aggregate"
+    entry = maximum["available_skills"][0]
+    from tldw_chatbook.Plugins.context import instruction_block
+
+    initial_text = (
+        instruction_block(
+            "installation", "skill:review", "revision", "INITIAL:" + "x" * 6800
+        )
+        if initial
+        else "hi"
+    )
+    bound_name = entry["name"] + "-unadmitted" if forged else entry["name"]
+    gateway = _ChunkGateway(
+        [
+            *[
+                [
+                    _fence(
+                        "skill_file",
+                        {"skill_name": bound_name, "path": f"file-{index}.md"},
+                    )
+                ]
+                for index in range(file_count)
+            ],
+            ["done"],
+        ]
+    )
+    db = AgentRunsDB(tmp_path / "aggregate.sqlite", client_id="plugins")
+    assistant = rig.store.append_message(
+        rig.session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=rig.store,
+        provider_gateway=gateway,
+        skills_service=rig.skills,
+    )
+    try:
+        outcome = await asyncio.to_thread(
+            _run,
+            bridge,
+            rig.store,
+            rig.session,
+            assistant.id,
+            conversation_id="plugin-file-send",
+            skills_context=maximum,
+            turn_skill_bindings=(bound_name,),
+            workspace_id="workspace-a",
+            agent_messages=[{"role": "user", "content": initial_text}],
+            turn_bundle_block="Bundled files: file-0.md" if initial else "",
+            plugin_cancel_root=threading.Event().set,
+        )
+        if forged:
+            assert outcome.status == "done", outcome
+            assert "FILE_0:" not in str(gateway.messages_seen)
+        elif file_count + int(initial) <= 4:
+            assert outcome.status == "done", outcome
+            assert len(gateway.messages_seen) == file_count + 1
+            assert all(
+                f"FILE_{index}:" in str(gateway.messages_seen[-1])
+                for index in range(file_count)
+            )
+        else:
+            assert len(gateway.messages_seen) == 5 - int(
+                initial
+            ), "oversized send reached transport"
+            assert outcome.status == "error", outcome
+        assert all(
+            "plugin_context" not in str(row.keys())
+            for payload in gateway.messages_seen
+            for row in payload
+        )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace", ["global", "workspace-default", ""])
+async def test_activation_rejects_reserved_scope_without_global_fallback(
+    native_console, workspace
+):
+    rig = native_console
+    review = await rig.install(enable=False)
+    with pytest.raises((ValueError, PermissionError)):
+        await rig.service.review_activation(
+            review.installation_id, workspace_id=workspace, intent="enabled"
+        )
+    assert not rig.service.capture_maximum(None)["available_skills"]
+    explicit = await rig.service.review_activation(
+        review.installation_id, workspace_id=None, intent="enabled"
+    )
+    await rig.service.commit(explicit, "explicit-global")
+    assert rig.service.capture_maximum(None)["available_skills"]

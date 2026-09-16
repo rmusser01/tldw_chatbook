@@ -138,6 +138,12 @@ class PluginCoordinator:
         """Review one explicit activation scope without changing selection."""
         from .authority import Activation
 
+        if workspace_id is not None and (
+            not isinstance(workspace_id, str)
+            or not workspace_id.strip()
+            or workspace_id in {"global", "workspace-default"}
+        ):
+            raise ValueError("activation override requires a named workspace")
         Activation(
             installation_id=installation_id,
             workspace_id=workspace_id or "global",

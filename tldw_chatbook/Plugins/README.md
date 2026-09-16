@@ -355,7 +355,10 @@ Typed `review_install`, `review_trust`, and `review_activation` return expiring
 durable pipeline. Installation alone is disabled and untrusted. Activation
 reviews specify `workspace_id=None` for the global default or the actual captured
 workspace ID and exact `inherit`, `enabled`, or `disabled` intent. Global defaults
-cannot inherit. Missing/archived named workspaces refuse use rather than falling
+cannot inherit. The Console sentinels `global` and `workspace-default` are not
+valid new override targets; only an explicit `None` edits the global default.
+Already authenticated historical sentinel records retain generation fencing.
+Missing/archived named workspaces refuse use rather than falling
 back to global. Explicit workspace disable wins over the global default.
 
 Schema v3 (`003_installation_alias.sql`) persists the authenticated installation
@@ -395,7 +398,12 @@ wait for a new turn. Current checks also run before injection, invocation, reads
 launch/dispatch, and approval acceptance. Unrelated scope changes do not revoke
 an unchanged admitted scope. Package bodies/arguments enter attributed untrusted
 user context as whole blocks, limited to 8 KiB each and 32 KiB per send. Literal
-arguments are not template-expanded. Console's existing skill spawn runner,
+arguments are not template-expanded. Final agent sends account for all surviving
+host-attributed instruction and file-result blocks. Live typed text carries only
+content-free attribution beside its text; provider JSON and durable projections
+exclude that sidecar. Marker-looking user or standalone text never creates it.
+History pruning removes plugin blocks whole, and removed blocks do not consume
+later sends' budgets. Console's existing skill spawn runner,
 permission review, child tool ceilings, budgets, and lineage remain authoritative.
 
 `bind_run` records exact actual root/child IDs, optional fleet handle, parent ID,
@@ -408,6 +416,9 @@ does not implement cancellation: F6 consumes these exact callbacks and owners.
 A rejected pre-spawn reservation is settled because the host has not launched.
 Already bound work remains retained until actual `complete_run` terminal evidence;
 returning/cancelling a caller or retiring pending custody does not settle children.
+Direct-provider custody also retains the existing gateway worker futures through
+`ConsoleProviderStreamSignals.provider_work_callback`; consumer exit settles only
+after every retained worker/closer reports actual terminal completion.
 Permanent app shutdown drains Console and then closes the plugin service;
 navigation keeps its owner alive. F7 supplies update/revision drain and retention;
 M4 supplies plugin MCP ownership. These later paths must preserve these identities

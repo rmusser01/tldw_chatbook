@@ -181,7 +181,7 @@ class PluginAdmission:
             scopes = {("installation", "")}
             if override == "inherit":
                 scopes.add(("global_default", ""))
-            if workspace_id not in {None, "global", "workspace-default"}:
+            if workspace_id is not None:
                 scopes.add(("workspace", workspace_id))
             rows = [
                 row

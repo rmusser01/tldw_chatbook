@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, Self, TypeAlias
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
@@ -402,6 +402,51 @@ class ToolCall:
     #: data for the approval card ONLY -- never persisted, never serialized
     #: into durable captures, never an input to any security verdict.
     rationale: str = ""
+
+
+@dataclass(frozen=True)
+class PluginContextOrigin:
+    """Content-free host attribution for one whole plugin instruction block."""
+
+    installation_id: str
+    component_id: str
+    revision: str
+    byte_count: int
+
+
+class PluginContextText(str):
+    """Live-only host attribution; JSON and transcript text contain no sidecar.
+
+    Ordinary strings, including text resembling plugin delimiters, never acquire
+    this type through parsing. Formatting must explicitly carry the origins.
+    """
+
+    def __new__(cls, text: str, origins: tuple[PluginContextOrigin, ...]) -> Self:
+        instance = super().__new__(cls, text)
+        instance.origins = tuple(origins)
+        instance.text_digest = hashlib.sha256(text.encode("utf-8")).digest()
+        return instance
+
+    def __getnewargs__(self) -> tuple[str, tuple[PluginContextOrigin, ...]]:
+        return str(self), self.origins
+
+    def checked_origins(self) -> tuple[PluginContextOrigin, ...]:
+        if hashlib.sha256(self.encode("utf-8")).digest() != self.text_digest:
+            raise ValueError("plugin_context_text_changed")
+        if any(not isinstance(origin, PluginContextOrigin) for origin in self.origins):
+            raise ValueError("plugin_context_origin_invalid")
+        return self.origins
+
+
+def carry_plugin_context(text: str, *sources: str) -> str:
+    """Carry host attribution across one explicit, whole-block assembly."""
+    origins = tuple(
+        origin
+        for source in sources
+        if isinstance(source, PluginContextText)
+        for origin in source.checked_origins()
+    )
+    return PluginContextText(text, origins) if origins else text
 
 
 @dataclass(frozen=True)

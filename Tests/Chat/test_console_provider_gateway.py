@@ -4989,6 +4989,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "_trace_preparation",
         "automatic_work_chain_id",
         "_synthetic_fallback",
+        "provider_work_callback",
         "model_retry_callback",
         "usage_payload",
         "completed_usage_payloads",
@@ -5010,6 +5011,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "_trace_preparation",
         "automatic_work_chain_id",
         "_synthetic_fallback",
+        "provider_work_callback",
         "model_retry_callback",
         "usage_payload",
         "completed_usage_payloads",
@@ -11943,3 +11945,20 @@ async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url
     assert resolved.ready is True
     assert resolved.execution_key == "llama_cpp"
     assert resolved.base_url == "http://192.168.1.9:9090"
+
+
+@pytest.mark.asyncio
+async def test_stream_signal_delegates_retained_provider_work_without_owning_cancellation():
+    future = asyncio.get_running_loop().create_future()
+    close = lambda: None
+    seen = []
+    signals = gateway_module.ConsoleProviderStreamSignals()
+    assert not signals.register_provider_work(future, close)
+    signals.provider_work_callback = (
+        lambda completion, closer: seen.append((completion, closer)) or True
+    )
+    assert signals.register_provider_work(future, close)
+    assert seen == [(future, close)]
+    assert not future.cancelled()
+    assert "provider_work_callback" not in repr(signals)
+    future.set_result(None)

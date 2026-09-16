@@ -308,10 +308,7 @@ class PluginService:
                         raise PluginUnavailable("plugin_ceiling_unavailable")
                     workspace = row.get("plugin_workspace_id")
                     generations = prior.generations
-                    if (
-                        workspace not in {None, "global", "workspace-default"}
-                        and prior.workspace_id is None
-                    ):
+                    if workspace is not None and prior.workspace_id is None:
                         generations = tuple(
                             sorted((*generations, ("workspace", workspace, 0)))
                         )
