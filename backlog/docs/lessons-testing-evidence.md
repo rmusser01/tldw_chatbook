@@ -184,6 +184,19 @@ durable import boundary, and compare exact sanitized headers as well as bodies.
 Keep malformed bounded-span inputs fail-closed; a recording fake cannot prove
 production privacy or reconstruction behavior.
 
+
+**TASK-32672 native plugin skills, 2026-09-16.** A bridge-only aggregate-context
+test supplied an already attributed initial message and missed later Console
+string processors. Actual `submit_draft` with retrieved evidence, followed by
+real AgentService `skill_file` results, sent five live plugin blocks over the
+32 KiB budget because the evidence prefix erased the initial carrier. The
+regression first establishes a saved conversation so frozen dictionary and
+world-info inputs actually run. It now proves under-limit final payloads and
+oversized refusal through that entry, including evidence ordering and world-info
+wrapping; edited or duplicated carried text is refused. Multimodal helper
+controls preserve images and count only host-created text carriers. These checks
+qualify live formatting, not archived conversation authority or a real provider.
+
 ---
 
 ## Index-plan guards must accept the names the DDL actually uses

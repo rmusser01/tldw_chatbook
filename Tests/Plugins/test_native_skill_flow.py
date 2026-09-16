@@ -841,3 +841,174 @@ async def test_activation_rejects_reserved_scope_without_global_fallback(
     )
     await rig.service.commit(explicit, "explicit-global")
     assert rig.service.capture_maximum(None)["available_skills"]
+
+
+@pytest.fixture
+async def native_agent_submit(native_console, native_package, tmp_path, monkeypatch):
+    from Tests.Chat.test_console_agent_bridge import _fence
+    from Tests.Chat.test_console_skill_substitution import _RecordingGateway
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    rig = native_console
+    established = await rig.controller.submit_draft(
+        "Establish saved conversation", session_id=rig.session.id
+    )
+    assert established.accepted and rig.session.persisted_conversation_id
+    package = native_package()
+    initial = package / "skills/review/SKILL.md"
+    initial.write_text(initial.read_text() + "\nPLUGIN_INITIAL:" + "x" * 6800)
+    for index in range(4):
+        (initial.parent / f"file-{index}.md").write_text(
+            f"PLUGIN_FILE_{index}:" + "x" * 6800
+        )
+    review = await rig.service.review_install(
+        package, selection=("skill:review",), workspace_id="workspace-a"
+    )
+    await rig.service.commit(review, "install-submit")
+    trust = await rig.service.review_trust(review.installation_id)
+    await rig.service.commit(trust, "trust-submit")
+    active = await rig.service.review_activation(
+        review.installation_id, workspace_id="workspace-a", intent="enabled"
+    )
+    await rig.service.commit(active, "enable-submit")
+    name = rig.service.capture_maximum("workspace-a")["available_skills"][0]["name"]
+
+    class Gateway(_RecordingGateway):
+        file_count = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            index = len(self.payloads)
+            self.payloads.append(messages)
+            if index < self.file_count:
+                yield _fence(
+                    "skill_file", {"skill_name": name, "path": f"file-{index}.md"}
+                )
+            else:
+                yield "Done [S1]."
+
+    gateway = Gateway()
+    db = AgentRunsDB(tmp_path / "submit-agent.sqlite", client_id="plugins")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=rig.store,
+        provider_gateway=gateway,
+        skills_service=rig.skills,
+    )
+    monkeypatch.setattr(rig.controller, "provider_gateway", gateway)
+    rig.controller.update_agent_runtime(enabled=True, bridge=bridge)
+    rig.agent_gateway = gateway
+    rig.agent_db = db
+    rig.skill_name = name
+    try:
+        yield rig
+    finally:
+        await rig.controller.shutdown()
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("file_count", [3, 4])
+@pytest.mark.parametrize("exact_evidence", [False, True])
+@pytest.mark.parametrize("world_info", [False, True])
+async def test_actual_submit_rag_and_world_info_keep_initial_plugin_budget(
+    native_agent_submit, monkeypatch, file_count, exact_evidence, world_info
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.citation_repair import CitationRepairContract
+    from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
+
+    rig = native_agent_submit
+    rig.agent_gateway.file_count = file_count
+    evidence = "[S1] MEDIA — Retrieved source\nRETRIEVED_EVIDENCE"
+    captures, world_calls = [], []
+
+    async def capture(draft):
+        captures.append(draft)
+        return SimpleNamespace(
+            context=evidence,
+            citation_repair_contract=(
+                CitationRepairContract(
+                    schema_version=1,
+                    marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+                    allowed_ordinals=(1,),
+                    evidence_context=evidence,
+                )
+                if exact_evidence
+                else None
+            ),
+        )
+
+    def inject_world(_conversation, text, _history, *_frozen):
+        world_calls.append(text)
+        return "WORLD_INFO_PREFIX\n" + text + "\nWORLD_INFO_SUFFIX"
+
+    monkeypatch.setattr(rig.controller, "_rag_capture_provider", capture)
+    if world_info:
+        monkeypatch.setattr(rig.controller, "_world_info_applier", inject_world)
+    result = await rig.controller.submit_draft(
+        f"${rig.skill_name} inspect", session_id=rig.session.id
+    )
+    assert result.accepted, result
+    assert captures == [f"${rig.skill_name} inspect"]
+    assert bool(world_calls) == world_info
+    payloads = rig.agent_gateway.payloads
+    assert len(payloads) == 4, "oversized initial-plus-files payload reached transport"
+    assert "RETRIEVED_EVIDENCE" in str(payloads[0])
+    assert "PLUGIN_INITIAL:" + "x" * 6800 in str(payloads[0])
+    if world_info:
+        assert "WORLD_INFO_PREFIX" in str(payloads[0]) and "WORLD_INFO_SUFFIX" in str(
+            payloads[0]
+        )
+    runs = rig.agent_db.list_runs(rig.session.persisted_conversation_id)
+    primary = [row for row in runs if row["agent_kind"] == "primary"]
+    assert len(primary) == 1
+    assert primary[0]["status"] == ("done" if file_count == 3 else "error")
+    if file_count == 3:
+        assert all(
+            f"PLUGIN_FILE_{index}:" + "x" * 6800 in str(payloads[-1])
+            for index in range(3)
+        )
+    assert not rig.service.live_runs()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transform", ["dictionary", "world_info"])
+@pytest.mark.parametrize("edit", ["wrap", "change", "duplicate"])
+async def test_actual_submit_refuses_opaque_edits_to_live_plugin_material(
+    native_agent_submit, monkeypatch, transform, edit
+):
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+
+    rig = native_agent_submit
+    calls = []
+
+    def apply(_conversation, text, *_args):
+        calls.append(text)
+        if edit == "wrap":
+            return "HOST_PREFIX\n" + text + "\nHOST_SUFFIX"
+        if edit == "duplicate":
+            return text + text
+        return text.replace("PLUGIN_INITIAL:", "REWRITTEN_PLUGIN:")
+
+    attribute = (
+        "_chat_dictionary_applier"
+        if transform == "dictionary"
+        else "_world_info_applier"
+    )
+    monkeypatch.setattr(rig.controller, attribute, apply)
+    if edit == "wrap":
+        result = await rig.controller.submit_draft(
+            f"${rig.skill_name} inspect", session_id=rig.session.id
+        )
+        assert result.accepted, result
+        assert len(rig.agent_gateway.payloads) == 1
+        assert "HOST_PREFIX" in str(rig.agent_gateway.payloads[0])
+    else:
+        with pytest.raises(PluginUnavailable, match="transform"):
+            await rig.controller.submit_draft(
+                f"${rig.skill_name} inspect", session_id=rig.session.id
+            )
+        assert not rig.agent_gateway.payloads
+    assert len(calls) == 1

@@ -21523,6 +21523,38 @@ class ConsoleChatController:
         }
         return new_messages, None, tuple(notes), spliced_names, block
 
+    @staticmethod
+    def _preserve_plugin_text_transform(original: str, transformed: str) -> str:
+        from tldw_chatbook.Agents.agent_models import PluginContextText
+
+        if isinstance(original, PluginContextText):
+            from tldw_chatbook.Plugins.context import preserve_context_transform
+
+            return preserve_context_transform(original, transformed)
+        return transformed
+
+    @classmethod
+    def _preserve_plugin_content_transform(cls, original: Any, transformed: Any) -> Any:
+        if isinstance(original, str):
+            return cls._preserve_plugin_text_transform(original, transformed)
+        if isinstance(original, list):
+            return [
+                (
+                    {
+                        **new_part,
+                        "text": cls._preserve_plugin_text_transform(
+                            part["text"], new_part["text"]
+                        ),
+                    }
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                    else new_part
+                )
+                for part, new_part in zip(original, transformed, strict=True)
+            ]
+        return transformed
+
     async def _apply_world_info(
         self,
         provider_messages: list[dict[str, Any]],
@@ -21535,7 +21567,8 @@ class ConsoleChatController:
         Runs AFTER `_apply_chat_dictionaries` so world-info matches the
         dict-substituted text the model will see. Conversation-only (the bound
         applier passes `char_data=None`). Offloaded via `asyncio.to_thread`;
-        any failure returns the payload unchanged; `CancelledError` re-raised.
+        applier failures return the payload unchanged; `CancelledError` and
+        changed live plugin material refuse the send.
         """
         applier = self._world_info_applier
         if applier is None:
@@ -21628,6 +21661,24 @@ class ConsoleChatController:
         except Exception:
             return provider_messages
 
+        if isinstance(content, list):
+            from tldw_chatbook.Agents.agent_models import carry_plugin_context
+
+            combined = carry_plugin_context(
+                combined,
+                *(
+                    part["text"]
+                    for part in content
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                ),
+            )
+            self._preserve_plugin_text_transform(combined, injected)
+
+        # Validate outside the optional applier fallback: live material may not
+        # be edited or duplicated into an unattributed successful send.
+        new_content = self._preserve_plugin_content_transform(content, new_content)
         new_messages = list(provider_messages)
         new_messages[final_index] = {**message, "content": new_content}
         return new_messages
@@ -21646,7 +21697,7 @@ class ConsoleChatController:
         synchronous DB read + regex substitution are offloaded via
         `asyncio.to_thread` because native sends run as async workers on the UI
         event loop. Skill commands are left untouched. Any failure returns the
-        payload unchanged so a dictionary problem can never break a send;
+        payload unchanged. Changed live plugin material refuses the send;
         `asyncio.CancelledError` is re-raised so a mid-send Stop still cancels.
         """
         applier = self._chat_dictionary_applier
@@ -21718,6 +21769,9 @@ class ConsoleChatController:
         except Exception:
             return provider_messages
 
+        # Validate outside the optional applier fallback: live material may not
+        # be edited or duplicated into an unattributed successful send.
+        new_content = self._preserve_plugin_content_transform(content, new_content)
         new_messages = list(provider_messages)
         new_messages[final_index] = {**message, "content": new_content}
         return new_messages
@@ -22137,7 +22191,9 @@ class ConsoleChatController:
         message = provider_messages[final_index]
         content = message.get("content")
         if isinstance(content, str):
-            new_content: Any = prefix + content
+            new_content: Any = ConsoleChatController._preserve_plugin_text_transform(
+                content, prefix + content
+            )
         elif isinstance(content, list):
             new_content = list(content)
             text_index = next(
@@ -22156,7 +22212,9 @@ class ConsoleChatController:
                 text_part = new_content[text_index]
                 new_content[text_index] = {
                     **text_part,
-                    "text": prefix + text_part["text"],
+                    "text": ConsoleChatController._preserve_plugin_text_transform(
+                        text_part["text"], prefix + text_part["text"]
+                    ),
                 }
         else:
             return provider_messages
