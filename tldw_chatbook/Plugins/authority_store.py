@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,7 @@ from .authority import (
 MARKER_SERVICE = "tldw_chatbook.plugin_trust"
 MARKER_ACCOUNT = "managed-plugins:generation-marker:v1"
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
+MAX_RESET_RECORDS = 1000
 
 
 def default_plugin_authority_dir(local_skills_store_dir: str | Path) -> Path:
@@ -249,6 +251,7 @@ class PluginAuthorityStore:
         self._require_posture()
         if self._keys is None:
             raise ValueError("plugin authority locked")
+        self._require_completed_resets()
         return self._keys
 
     def load_marker(self) -> PluginMarker | None:
@@ -264,6 +267,10 @@ class PluginAuthorityStore:
             and not self.accept_reduced_protection
         ):
             return "reduced_acceptance_required"
+        try:
+            self._require_completed_resets()
+        except (ValueError, OSError):
+            return "recovery_required"
         try:
             marker = self.load_marker()
         # Third-party keyring errors report posture; they never grant authority.
@@ -289,6 +296,7 @@ class PluginAuthorityStore:
     def bootstrap(self, passphrase: str) -> None:
         """Explicitly initialize only empty generation-zero authority."""
         self._keys = None
+        self._require_completed_resets()
         if self.load_marker() is not None or (
             os.path.lexists(self.store_dir) and any(self.store_dir.iterdir())
         ):
@@ -522,39 +530,219 @@ class PluginAuthorityStore:
         current = self.load_marker()
         if current == new:
             self.verify_current()
-            return
-        if current != old:
+        elif current != old:
             raise ValueError("stale authority marker")
+        # A previous save may have replaced visible bytes and then failed its
+        # durability boundary. Exact retries must qualify the backend write too.
         self.marker_store.save_marker(new.model_dump())
         if self.load_marker() != new:
             raise ValueError("marker publication mismatch")
 
-    def reset(self) -> Path | None:
-        """Caller-reviewed plugin-only reset; archive evidence rather than erase it.
+    @property
+    def _reset_state_path(self) -> Path:
+        return self.store_dir.with_name(f"{self.store_dir.name}-reset-state.json")
 
-        Failure is raised and evidence retained. The archive stays under the
-        protected trust root. Neither standalone files nor its accounts change.
-        """
-        self.lock()
-        self._require_posture()
-        self.marker_store.clear()
-        if self.load_marker() is not None:
-            raise ValueError("plugin marker reset incomplete")
-        if not os.path.lexists(self.store_dir):
+    def _load_reset_state(self) -> tuple[dict, PrivateFileWritePrecondition]:
+        """Read bounded cleanup bookkeeping, never execution authority."""
+        scope = skill_trust_account_scope(self.store_dir)
+        if not os.path.lexists(self._reset_state_path):
+            return {
+                "schema_version": 1,
+                "store_scope": scope,
+                "resets": [],
+            }, PrivateFileWritePrecondition.missing()
+        with open_private_binary(self._reset_state_path) as opened:
+            if not opened.result.verified_private:
+                raise ValueError("unqualified reset receipt")
+            data = opened.stream.read(MAX_ARTIFACT_BYTES + 1)
+            condition = PrivateFileWritePrecondition.from_opened(opened)
+        if len(data) > MAX_ARTIFACT_BYTES:
+            raise ValueError("reset receipt size limit")
+        try:
+            state = _decode(data)
+        except (RecursionError, UnicodeError) as exc:
+            raise ValueError("invalid reset receipt encoding") from exc
+        if (
+            set(state) != {"schema_version", "store_scope", "resets"}
+            or type(state["schema_version"]) is not int
+            or state["schema_version"] != 1
+            or state["store_scope"] != scope
+            or type(state["resets"]) is not list
+            or len(state["resets"]) > MAX_RESET_RECORDS
+        ):
+            raise ValueError("invalid reset receipt")
+        ids, archives = set(), set()
+        for record in state["resets"]:
+            if type(record) is not dict or set(record) != {
+                "operation_id",
+                "archive",
+                "directory_device",
+                "directory_inode",
+                "phase",
+            }:
+                raise ValueError("invalid reset record")
+            self._validate_reset_id(record["operation_id"])
+            if record["archive"] is None:
+                if (
+                    record["directory_device"] is not None
+                    or record["directory_inode"] is not None
+                    or record["phase"] != "completed"
+                ):
+                    raise ValueError("invalid empty reset outcome")
+            else:
+                if type(record["archive"]) is not str or not re.fullmatch(
+                    r"plugins-reset-" + scope + r"-[0-9a-f]{32}", record["archive"]
+                ):
+                    raise ValueError("invalid reset archive")
+                if any(
+                    type(record[key]) is not int or record[key] < 0
+                    for key in ("directory_device", "directory_inode")
+                ) or record["phase"] not in ("pending", "completed"):
+                    raise ValueError("invalid reset identity")
+                if record["archive"] in archives:
+                    raise ValueError("duplicate reset archive")
+                archives.add(record["archive"])
+            if record["operation_id"] in ids:
+                raise ValueError("duplicate reset identity")
+            ids.add(record["operation_id"])
+        if sum(record["phase"] == "pending" for record in state["resets"]) > 1:
+            raise ValueError("conflicting pending resets")
+        return state, condition
+
+    @staticmethod
+    def _validate_reset_id(operation_id: str) -> None:
+        if type(operation_id) is not str or not re.fullmatch(
+            r"[^\s\x00-\x1f]{1,256}", operation_id
+        ):
+            raise ValueError("invalid reset operation ID")
+
+    def _qualify_reset_archive(self, record: dict) -> Path | None:
+        if record["archive"] is None:
             return None
-        _directory(self.store_dir)
-        archive = self.store_dir.with_name(f"plugins-reset-{secrets.token_hex(16)}")
+        archive = self.store_dir.parent / record["archive"]
+        result = secure_private_directory(archive, create=False, application_owned=True)
+        if not result.verified_private:
+            raise ValueError("unqualified reset archive")
         parent_fd = os.open(
-            self.store_dir.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            archive.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
         )
         try:
-            os.rename(
-                self.store_dir.name,
+            archive_fd = os.open(
                 archive.name,
-                src_dir_fd=parent_fd,
-                dst_dir_fd=parent_fd,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=parent_fd,
             )
-            os.fsync(parent_fd)
+            try:
+                info = os.fstat(archive_fd)
+                if (info.st_dev, info.st_ino) != (
+                    record["directory_device"],
+                    record["directory_inode"],
+                ):
+                    raise ValueError("reset archive identity mismatch")
+                os.fsync(archive_fd)
+                os.fsync(parent_fd)
+            finally:
+                os.close(archive_fd)
         finally:
             os.close(parent_fd)
+        return archive
+
+    def _require_completed_resets(self) -> None:
+        state, _ = self._load_reset_state()
+        if any(record["phase"] == "pending" for record in state["resets"]):
+            raise ValueError("plugin reset recovery required")
+        if state["resets"]:
+            # A visible completed receipt may itself have failed parent fsync.
+            _sync_existing(self._reset_state_path)
+            for record in state["resets"]:
+                self._qualify_reset_archive(record)
+
+    def reset(self, *, operation_id: str) -> Path | None:
+        """Perform or retry one caller-reviewed plugin-only reset.
+
+        The caller retains the operation ID with its review. Same-ID retries
+        return only that archive, even after another namespace was bootstrapped.
+        A new reviewed reset uses a new ID; pending different IDs are refused.
+        Protected cleanup receipts preserve exact archive identities and pending
+        durability across fresh instances. They never authorize execution.
+        """
+        self._require_posture()
+        self._validate_reset_id(operation_id)
+        state, condition = self._load_reset_state()
+        record = next(
+            (item for item in state["resets"] if item["operation_id"] == operation_id),
+            None,
+        )
+        if record is not None and record["phase"] == "completed":
+            archive = self._qualify_reset_archive(record)
+            _sync_existing(self._reset_state_path)
+            return archive
+        if any(
+            item["phase"] == "pending" and item["operation_id"] != operation_id
+            for item in state["resets"]
+        ):
+            raise ValueError("different plugin reset pending")
+        if record is None:
+            if len(state["resets"]) >= MAX_RESET_RECORDS:
+                raise ValueError("reset receipt history limit")
+            if not os.path.lexists(self.store_dir):
+                if self.load_marker() is not None:
+                    raise ValueError("orphaned plugin reset marker")
+                state["resets"].append(
+                    {
+                        "operation_id": operation_id,
+                        "archive": None,
+                        "directory_device": None,
+                        "directory_inode": None,
+                        "phase": "completed",
+                    }
+                )
+                _write(self._reset_state_path, state, precondition=condition)
+                return None
+            self.lock()
+            _directory(self.store_dir)
+            info = self.store_dir.stat(follow_symlinks=False)
+            record = {
+                "operation_id": operation_id,
+                "archive": f"plugins-reset-{state['store_scope']}-{secrets.token_hex(16)}",
+                "directory_device": info.st_dev,
+                "directory_inode": info.st_ino,
+                "phase": "pending",
+            }
+            state["resets"].append(record)
+            _write(self._reset_state_path, state, precondition=condition)
+            state, condition = self._load_reset_state()
+            record = state["resets"][-1]
+        self.lock()
+        archive = self.store_dir.parent / record["archive"]
+        if os.path.lexists(self.store_dir):
+            _directory(self.store_dir)
+            parent_fd = os.open(
+                self.store_dir.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            try:
+                info = os.stat(
+                    self.store_dir.name, dir_fd=parent_fd, follow_symlinks=False
+                )
+                if (info.st_dev, info.st_ino) != (
+                    record["directory_device"],
+                    record["directory_inode"],
+                ) or os.path.lexists(archive):
+                    raise ValueError("reset source/archive identity conflict")
+                self.marker_store.clear()
+                if self.load_marker() is not None:
+                    raise ValueError("plugin marker reset incomplete")
+                os.rename(
+                    self.store_dir.name,
+                    archive.name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                )
+            finally:
+                os.close(parent_fd)
+        elif self.load_marker() is not None:
+            raise ValueError("reset marker changed after archive")
+        self._qualify_reset_archive(record)
+        record["phase"] = "completed"
+        _write(self._reset_state_path, state, precondition=condition)
         return archive

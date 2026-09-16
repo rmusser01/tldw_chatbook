@@ -338,7 +338,7 @@ def test_reset_is_independent_in_both_directions(tmp_path):
     assert plugin.verify_current()["installations"] == []
     standalone.bootstrap_trust("standalone", salt=b"s" * 32)
     manifest = standalone.trust_store.manifest_path.read_bytes()
-    archive = plugin.reset()
+    archive = plugin.reset(operation_id="reset-1")
     assert archive.is_dir()
     assert plugin.posture() == "needs_setup"
     assert standalone.trust_posture() == "ready"
@@ -356,10 +356,10 @@ def test_reset_failure_retains_evidence(tmp_path):
     store.bootstrap("pw")
     marker = store.load_marker()
     with pytest.raises(RuntimeError):
-        store.reset()
+        store.reset(operation_id="reset-1")
     assert store.load_marker() == marker
     assert (store.store_dir / "metadata.json").exists()
-    assert store.posture() == "locked"
+    assert store.posture() == "recovery_required"
 
 
 def test_snapshot_header_rejects_bool_generation_even_when_equal_to_integer(tmp_path):
@@ -752,8 +752,239 @@ def test_explicit_reset_can_clear_corrupt_reduced_marker(tmp_path):
     store.bootstrap("pw")
     (path / "generation_marker.json").write_text("not valid JSON")
     assert store.posture() == "unavailable"
-    archive = store.reset()
+    archive = store.reset(operation_id="reset-1")
     assert archive.is_dir()
     assert store.posture() == "needs_setup"
     store.bootstrap("new passphrase")
     assert store.verify_current()["installations"] == []
+
+
+def test_marker_retry_finishes_durability_after_marker_rename(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    from tldw_chatbook.Plugins.authority_store import FilePluginMarkerStore
+    from tldw_chatbook.Utils.private_paths import PrivatePathError
+
+    path = tmp_path / "plugins"
+    store = store_at(path, FilePluginMarkerStore(path), accept_reduced_protection=True)
+    store.bootstrap("pw")
+    snapshot, old, new = transition(store)
+    store.prepare(snapshot, old, new)
+    store.certify_commit(old, new)
+    real_fsync = os.fsync
+    renamed = False
+    fail_parent_sync = True
+    syncs = []
+    parent_info = path.stat()
+
+    def fsync(fd):
+        nonlocal renamed
+        info = os.fstat(fd)
+        marker_parent = (info.st_dev, info.st_ino) == (
+            parent_info.st_dev,
+            parent_info.st_ino,
+        )
+        if marker_parent and store.load_marker() == new:
+            renamed = True
+        if renamed and marker_parent and fail_parent_sync:
+            raise OSError("marker parent sync failed after rename")
+        syncs.append((stat.S_ISDIR(info.st_mode), marker_parent, renamed))
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    with pytest.raises(PrivatePathError):
+        store.advance_marker(old, new)
+    assert renamed and store.load_marker() == new
+    fail_parent_sync = False
+    renamed = False
+    syncs.clear()
+    store.advance_marker(old, new)
+    assert any(
+        not is_dir for is_dir, _, _ in syncs
+    ), "retry must synchronize marker bytes"
+    assert any(
+        is_parent and after_rename for _, is_parent, after_rename in syncs
+    ), "retry must synchronize marker publication"
+    assert store.verify_current() == snapshot
+
+
+@pytest.mark.parametrize(
+    "failure_boundary", ["archive_parent", "completed_receipt_parent"]
+)
+def test_reset_retry_recovers_exact_archive_after_failed_parent_sync(
+    tmp_path, monkeypatch, failure_boundary
+):
+    import os
+
+    path = tmp_path / "plugins"
+    marker = MemoryMarker()
+    store = store_at(path, marker)
+    store.bootstrap("pw")
+    source_identity = path.stat()
+    parent_identity = path.parent.stat()
+    real_fsync = os.fsync
+    fail_sync = True
+    synced = set()
+
+    def fsync(fd):
+        info = os.fstat(fd)
+        parent = (info.st_dev, info.st_ino) == (
+            parent_identity.st_dev,
+            parent_identity.st_ino,
+        )
+        receipt = path.with_name("plugins-reset-state.json")
+        completed = receipt.exists() and any(
+            record["phase"] == "completed"
+            for record in json.loads(receipt.read_text())["resets"]
+        )
+        boundary_reached = not path.exists() and (
+            failure_boundary == "archive_parent" or completed
+        )
+        if fail_sync and parent and boundary_reached:
+            raise OSError("reset parent sync failed after rename")
+        synced.add((info.st_dev, info.st_ino))
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    with pytest.raises(OSError):
+        store.reset(operation_id="reset-1")
+    archives = list(tmp_path.glob("plugins-reset-*"))
+    archives = [candidate for candidate in archives if candidate.is_dir()]
+    assert len(archives) == 1 and not path.exists()
+    archive = archives[0]
+    assert archive.stat().st_ino == source_identity.st_ino
+    fresh = store_at(path, marker)
+    assert fresh.posture() == "recovery_required"
+    with pytest.raises((OSError, ValueError)):
+        fresh.bootstrap("must not ignore pending reset")
+    fail_sync = False
+    synced.clear()
+    assert fresh.reset(operation_id="reset-1") == archive
+    assert (parent_identity.st_dev, parent_identity.st_ino) in synced
+    assert (source_identity.st_dev, source_identity.st_ino) in synced
+    assert fresh.posture() == "needs_setup"
+    synced.clear()
+    assert fresh.reset(operation_id="reset-1") == archive
+    assert (parent_identity.st_dev, parent_identity.st_ino) in synced
+
+
+def test_old_reset_ids_preserve_rebootstrapped_namespace_after_later_reset(tmp_path):
+    store = store_at(tmp_path / "plugins")
+    store.bootstrap("first")
+    first_archive = store.reset(operation_id="reset-first")
+    store.bootstrap("second")
+    second_archive = store.reset(operation_id="reset-second")
+    store.bootstrap("third")
+    current = store.load_marker()
+    metadata = (store.store_dir / "metadata.json").read_bytes()
+    current_snapshot = store.verify_current()
+    assert store.reset(operation_id="reset-first") == first_archive
+    assert store.reset(operation_id="reset-second") == second_archive
+    assert store.load_marker() == current
+    assert (store.store_dir / "metadata.json").read_bytes() == metadata
+    assert store.verify_current() == current_snapshot
+    assert first_archive != second_archive
+    assert first_archive.is_dir() and second_archive.is_dir()
+
+
+def test_new_reset_refuses_receipt_capacity_without_evicting_history(tmp_path):
+    store = store_at(tmp_path / "plugins")
+    store.bootstrap("first")
+    store.reset(operation_id="reset-first")
+    store.bootstrap("second")
+    current = store.load_marker()
+    receipt_path = store.store_dir.with_name("plugins-reset-state.json")
+    state = json.loads(receipt_path.read_text())
+    original = state["resets"][0]
+    for index in range(1, 1000):
+        state["resets"].append(
+            {
+                **original,
+                "operation_id": f"old-{index}",
+                "archive": f"plugins-reset-{state['store_scope']}-{index:032x}",
+            }
+        )
+    receipt_path.write_text(json.dumps(state))
+    before = receipt_path.read_bytes()
+    with pytest.raises(ValueError, match="history limit"):
+        store.reset(operation_id="new-reset")
+    assert receipt_path.read_bytes() == before
+    assert store.store_dir.is_dir() and store.load_marker() == current
+
+
+def test_pending_reset_refuses_other_id_and_can_resume_same_id(tmp_path):
+    class FailingMarker(MemoryMarker):
+        fail = True
+
+        def clear(self):
+            if self.fail:
+                raise RuntimeError("marker unavailable")
+            super().clear()
+
+    marker = FailingMarker()
+    store = store_at(tmp_path / "plugins", marker)
+    store.bootstrap("pw")
+    old = store.load_marker()
+    with pytest.raises(RuntimeError):
+        store.reset(operation_id="pending")
+    marker.fail = False
+    fresh = store_at(store.store_dir, marker)
+    with pytest.raises(ValueError, match="different plugin reset pending"):
+        fresh.reset(operation_id="other")
+    assert fresh.load_marker() == old and fresh.store_dir.exists()
+    with pytest.raises(ValueError, match="reset recovery"):
+        fresh.unlock("pw")
+    archive = fresh.reset(operation_id="pending")
+    assert archive.is_dir() and fresh.posture() == "needs_setup"
+
+
+@pytest.mark.parametrize(
+    "change", ["scope", "archive", "inode", "duplicate", "unknown"]
+)
+def test_invalid_reset_history_blocks_setup_and_retry(tmp_path, change):
+    store = store_at(tmp_path / "plugins")
+    store.bootstrap("pw")
+    archive = store.reset(operation_id="reset-1")
+    receipt = store.store_dir.with_name("plugins-reset-state.json")
+    state = json.loads(receipt.read_text())
+    if change == "scope":
+        state["store_scope"] = "other-profile"
+    elif change == "archive":
+        state["resets"][0]["archive"] = "../unrelated"
+    elif change == "inode":
+        state["resets"][0]["directory_inode"] += 1
+    elif change == "duplicate":
+        state["resets"].append(dict(state["resets"][0]))
+    else:
+        state["authority"] = "allow"
+    receipt.write_text(json.dumps(state))
+    fresh = store_at(store.store_dir, store.marker_store)
+    assert fresh.posture() == "recovery_required"
+    with pytest.raises(ValueError):
+        fresh.bootstrap("new")
+    with pytest.raises(ValueError):
+        fresh.reset(operation_id="reset-1")
+    assert archive.is_dir() and not store.store_dir.exists()
+
+
+def test_pristine_reset_id_retry_cannot_reset_later_bootstrap(tmp_path):
+    store = store_at(tmp_path / "plugins")
+    assert store.reset(operation_id="empty-reset") is None
+    store.bootstrap("new namespace")
+    current = store.load_marker()
+    metadata = (store.store_dir / "metadata.json").read_bytes()
+    assert store.reset(operation_id="empty-reset") is None
+    assert store.load_marker() == current
+    assert (store.store_dir / "metadata.json").read_bytes() == metadata
+    assert store.verify_current()["installations"] == []
+
+
+def test_deeply_nested_reset_receipt_reports_recovery(tmp_path):
+    store = store_at(tmp_path / "plugins")
+    store.reset(operation_id="empty-reset")
+    receipt = store.store_dir.with_name("plugins-reset-state.json")
+    receipt.write_text('{"resets":' + "[" * 20000 + "0" + "]" * 20000 + "}")
+    assert store.posture() == "recovery_required"
+    with pytest.raises(ValueError):
+        store.bootstrap("pw")

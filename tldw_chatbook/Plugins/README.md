@@ -221,9 +221,31 @@ The private-file helper pins protected file identities, fsyncs file and parent,
 and requires `verified_private`. This was exercised on local macOS/APFS; no
 Windows, network/synchronized filesystem or power-loss guarantee is inferred.
 
-`reset()` is an explicit caller-reviewed operation under the same owner gate. It
-clears only the plugin marker, drops session keys and archives encrypted evidence
-under the protected trust parent (`plugins-reset-<random>`). It returns that path;
-it does not delete the archive or standalone data. Failures raise and retain
-available evidence; do not report success after a partial reset. Rebootstrap
-creates only empty authority and never imports previously reviewed packages.
+`reset(operation_id=...)` requires an explicit caller-reviewed operation ID under
+the same owner gate. F4/app retains that ID with the review. A new reviewed reset
+uses a new ID; retries reuse the exact original ID. Reset clears only the plugin
+marker, drops that namespace's session keys and archives encrypted evidence under
+the protected trust parent (`plugins-reset-<scope>-<random>`).
+
+A protected sibling `plugins-reset-state.json` binds its exact store scope and
+retains up to 1,000 closed reset records: operation ID, safe archive leaf, original
+directory device/inode, and pending/completed phase. A pristine reset records an
+explicit completed no-archive outcome. Pending state is durable before any archive
+rename; exact archive and parent synchronization precede completed publication.
+A visible completed receipt is synchronized again on recovery/readiness checks,
+since its final publication may itself have failed synchronization.
+
+Pending or invalid receipts report Recovery required and block bootstrap/unlock.
+Another ID cannot replace a pending reset. Same-ID retries qualify and return only
+that ID's retained archive or no-archive outcome, even after later resets and a new
+bootstrap; they do not clear the new marker or drop the new session's keys. At the
+1,000-record cap, a new reset fails closed; no IDs or archives are evicted. These
+cleanup receipts never authorize execution. Archive deletion/pruning has no API
+in this foundation task.
+
+Reset returns the archive path (or None for a recorded pristine reset). It does
+not delete archives or standalone data. Failures retain available evidence and
+raise; do not report success after a partial reset. Rebootstrap creates only
+empty authority and never imports previously reviewed packages. Exact marker
+advancement retries also republish through the configured marker backend, so
+visible marker bytes cannot substitute for successful durable publication.

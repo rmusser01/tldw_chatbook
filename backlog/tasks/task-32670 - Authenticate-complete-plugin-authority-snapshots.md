@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:17'
-updated_date: '2026-09-16 06:57'
+updated_date: '2026-09-16 07:31'
 labels:
   - plugins
   - implementation
@@ -45,5 +45,7 @@ Reason: Direct implementation of the accepted independent plugin trust namespace
 4. Persist durable encrypted snapshots, domain-separated prepared intents and post-commit certificate primitives; expose authenticated exact-transition recovery reads and compare exact old/new marker tuples. F4 owns certificate creation after real database commit.
 5. Exercise real-crypto tamper/rollback/locked/reduced-posture controls and existing standalone trust tests, plus production-derived sensitive-path coverage; use isolated marker backends, never real keyring/profile data.
 6. Run exact affected tests and static checks, update trust operation documentation, self-review and report. Controller commits exact paths and supplies independent review before AC/Done closeout. R8/R9 settle bootstrap/digest/ordering choices; add no optional key-cache convenience subsystem.
-7. Schema detail R11: add Plugins/migrations/002_authority_state.sql, update PluginRegistry migrations/projection and targeted registry tests for transactional v1-to-v2 upgrade and failed-upgrade rollback. Store revision review state separately from immutable revision rows and retain independent installation tombstones. Define closed mapping/operation JSON contracts. Amend ADR-162 implementation detail and relevant schema documentation before schema code; this implements its accepted trust/revocation contract rather than adding another authority. Preserve v1 file, package migration wildcard, unrelated user intent and launch evidence.
+7. Schema detail R11: add Plugins/migrations/002_authority.sql, update PluginRegistry migrations/projection and targeted registry tests for transactional v1-to-v2 upgrade and failed-upgrade rollback. Store revision review state separately from immutable revision rows and retain independent installation tombstones. Define closed mapping/operation JSON contracts. Amend ADR-162 implementation detail and relevant schema documentation before schema code; this implements its accepted trust/revocation contract rather than adding another authority. Preserve v1 file, package migration wildcard, unrelated user intent and launch evidence.
+8. Independent review fix R15: retain a minimal closed protected sibling reset receipt binding this plugin-store scope, exact archive leaf and original directory identity. Persist pending reset before rename, requalify archive/file-parent durability on retries including fresh instances, and record completed only after the archive is durable. Pending reset blocks bootstrap and reports recovery; exact marker retries republish or qualify durable backend state. Add real after-rename failure/retry regressions, preserving standalone reset and existing runtime-owner gates.
+9. Reset identity R16: require an explicit stable operation_id on the new plugin reset primitive and bind it into the protected reset receipt. Same-ID retries complete/return only that reset; a new reviewed reset uses a new ID. Reject a competing ID while reset is pending, and never let an old completed retry reset a newly bootstrapped namespace. Update new F3 call sites/tests/docs; no standalone API changes.
 <!-- SECTION:PLAN:END -->
