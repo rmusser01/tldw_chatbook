@@ -524,3 +524,117 @@ def test_aborted_prepare_does_not_poison_later_reviewed_commit(
         ("new-attempt", "complete"),
     ]
     assert len(stack.call(stack.coordinator.published_snapshot)["installations"]) == 1
+
+
+@pytest.mark.parametrize("old_generation", [1, 3], ids=["older", "equal"])
+@pytest.mark.parametrize("changed_field", ["operation_id", "recovery_snapshot_digest"])
+def test_prepared_intent_with_unrelated_old_marker_quarantines_before_abort(
+    plugin_stack, native_package, old_generation, changed_field
+):
+    from tldw_chatbook.Plugins.authority import PluginMarker, snapshot_digest
+
+    stack = plugin_stack
+    markers = {}
+    for generation in range(1, 4):
+        review = reviewed(stack, native_package())
+        stack.call(
+            lambda review=review, generation=generation: stack.coordinator.commit(
+                review, f"accepted-{generation}"
+            )
+        )
+        markers[generation] = stack.call(stack.authority.load_marker)
+    # Successful same-stack control proves the accepted chain is publishable.
+    assert all(receipt.committed for receipt in stack.call(stack.coordinator.recover))
+    accepted = stack.call(stack.coordinator.published_snapshot)
+    operation_id = "unrelated-prepared"
+
+    def prepare_unrelated():
+        changed = (
+            "different-old-operation" if changed_field == "operation_id" else "0" * 64
+        )
+        old = markers[old_generation].model_copy(update={changed_field: changed})
+        snapshot = stack.authority.verify_current()
+        snapshot["operation_result"]["operation_id"] = operation_id
+        new = PluginMarker(
+            generation=old.generation + 1,
+            operation_id=operation_id,
+            recovery_snapshot_digest=snapshot_digest(snapshot),
+        )
+        # Use the real protected writer/MAC primitive to construct authenticated
+        # out-of-lineage evidence. This is not a claim an untrusted caller can
+        # forge a MAC; recovery must reject its exact old identity nevertheless.
+        stack.authority._save_snapshot(snapshot, new)
+        stack.authority._save_evidence(
+            "prepared", stack.authority._transition(old, new)
+        )
+        evidence = stack.authority.verify_transition(operation_id)
+        assert evidence.old == old and evidence.committed is False
+        assert stack.registry.read_operation(operation_id) is None
+
+    stack.call(prepare_unrelated)
+    artifacts = {
+        path: path.read_bytes()
+        for folder in ("intents", "snapshots", "certificates")
+        for path in (stack.authority.store_dir / folder).iterdir()
+    }
+    receipts = stack.call(stack.coordinator.recover)
+    assert len(receipts) == 1
+    assert receipts[0].operation_id == operation_id
+    assert receipts[0].phase == "recovery_required"
+    assert receipts[0].committed is False
+    with pytest.raises(PermissionError):
+        stack.call(stack.coordinator.published_snapshot)
+    assert stack.call(stack.authority.load_marker) == markers[3]
+    assert (
+        stack.call(
+            lambda: stack.registry.authority_projection(
+                operation_result=accepted["operation_result"]
+            )
+        )
+        == accepted
+    )
+    assert all(path.read_bytes() == payload for path, payload in artifacts.items())
+
+
+@pytest.mark.parametrize(
+    "prepare_generation", [0, 1, 3], ids=["genesis", "ancestor", "current"]
+)
+def test_prepared_intent_on_exact_accepted_endpoint_aborts_without_fencing(
+    plugin_stack, native_package, prepare_generation
+):
+    from tldw_chatbook.Plugins.authority import PluginMarker, snapshot_digest
+
+    stack = plugin_stack
+    markers = {0: stack.call(stack.authority.load_marker)}
+    for generation in range(1, 4):
+        review = reviewed(stack, native_package())
+        stack.call(
+            lambda review=review, generation=generation: stack.coordinator.commit(
+                review, f"accepted-{generation}"
+            )
+        )
+        markers[generation] = stack.call(stack.authority.load_marker)
+    accepted = stack.call(stack.coordinator.published_snapshot)
+
+    def prepare_legitimate():
+        old = markers[prepare_generation]
+        snapshot = stack.authority.verify_current()
+        snapshot["operation_result"]["operation_id"] = "legitimate-prepared"
+        new = PluginMarker(
+            generation=old.generation + 1,
+            operation_id="legitimate-prepared",
+            recovery_snapshot_digest=snapshot_digest(snapshot),
+        )
+        stack.authority._save_snapshot(snapshot, new)
+        stack.authority._save_evidence(
+            "prepared", stack.authority._transition(old, new)
+        )
+
+    stack.call(prepare_legitimate)
+    receipts = stack.call(stack.coordinator.recover)
+    aborted = next(
+        item for item in receipts if item.operation_id == "legitimate-prepared"
+    )
+    assert aborted.phase == "aborted" and aborted.committed is False
+    assert sum(item.committed for item in receipts) == 3
+    assert stack.call(stack.coordinator.published_snapshot) == accepted

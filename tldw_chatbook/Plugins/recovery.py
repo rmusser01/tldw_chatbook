@@ -154,6 +154,7 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
         # Walk the exact marker ancestry. Same generation or a phase flag is
         # insufficient; every retained committed branch must belong to this chain.
         lineage = {}
+        accepted_markers = {marker}
         ancestor = marker
         while ancestor.generation:
             transition = by_id.get(ancestor.operation_id)
@@ -165,6 +166,7 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
                 raise ValueError("marker lineage mismatch")
             lineage[transition.new.operation_id] = transition
             ancestor = transition.old
+            accepted_markers.add(ancestor)
         successors = [
             item for item in evidence if item.old == marker and item.committed
         ]
@@ -184,6 +186,8 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
             if hint is not None and hint["result"] != item.snapshot["operation_result"]:
                 raise ValueError("operation result mismatch")
             if operation_id not in allowed:
+                if item.old not in accepted_markers:
+                    raise ValueError("unrelated prepared transition")
                 registry_new = hint is not None
                 if item.old == marker and successor is None:
                     # Prepared-only abort requires the OLD authority to agree.
@@ -210,8 +214,6 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
                             "missing_commit_certificate",
                         ),
                     )
-                if item.old.generation > marker.generation:
-                    raise ValueError("unrelated prepared transition")
                 receipts.append(OperationReceipt(operation_id, "aborted", False))
         target = successor.snapshot if successor else current
         operation_id = (
