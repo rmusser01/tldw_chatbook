@@ -217,6 +217,42 @@ def library_note_chrome_facts(word_count: int, row: int, column: int) -> str:
     return f"{words} · {row + 1}:{column + 1}"
 
 
+def library_note_property_block(
+    properties: tuple[tuple[str, str], ...],
+    metadata_line: str,
+    *,
+    compact: bool,
+) -> str:
+    """Info's Properties: one labelled row per property, or the joined line.
+
+    task-32642: Info rendered every property as one " · "-joined sentence,
+    so four facts shared a row in a pane 185 columns wide and 36 rows tall
+    -- and in the compact pane, 46 columns wide, that same sentence ran to
+    roughly 85 characters against a sheet that pins the Static to one row,
+    which truncated the values it was supposed to state.
+
+    One property per row either way. Wide, the values are aligned into a
+    second column; compact drops the padding and keeps a single column, so
+    a value is wrapped onto the property's own rows rather than cut (AC#2).
+
+    Args:
+        properties: ``(label, value)`` pairs in display order.
+        metadata_line: The joined spelling of the same facts. Used only when
+            no pairs were supplied -- a caller that predates the pairs.
+        compact: Whether the compact sheet is in force.
+
+    Returns:
+        The rows to render, newline-separated, or the joined line.
+    """
+    rows = tuple((label, value) for label, value in properties if value)
+    if not rows:
+        return metadata_line
+    if compact:
+        return "\n".join(f"{label} {value}" for label, value in rows)
+    width = max(len(label) for label, _ in rows)
+    return "\n".join(f"{label.ljust(width)}  {value}" for label, value in rows)
+
+
 def browse_row_width(labels: tuple[str, ...]) -> int:
     """Cells the browse toolbar row needs to paint these labels.
 
@@ -752,6 +788,11 @@ class LibraryNotePresentationState:
     snapshot: LibraryNoteSessionSnapshot
     metadata_line: str
     status_line: str
+    #: task-32642: the same facts ``metadata_line`` joins, as ``(label,
+    #: value)`` pairs. Info renders these as aligned rows on a wide
+    #: terminal and falls back to the joined line when compact, where the
+    #: sheet pins the meta Static to one row.
+    properties: tuple[tuple[str, str], ...] = ()
     region: Literal["editor", "context"] = "editor"
     presentation: Literal["edit", "preview"] = "edit"
     compact: bool = False
@@ -2707,6 +2748,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     placeholder="Untitled" if self.title_placeholder_only else "",
                     id="library-note-title",
                 )
+            # task-32642 AC#3: keywords used to be reachable only by opening
+            # Info -- this Input is the twin that lived, permanently
+            # undisplayed, inside `#library-note-wide-utilities`. It is the
+            # same id, the same `Input.Changed` handler and the same
+            # `apply_session_state` reconciliation it always had; only its
+            # parent changed, so it is now on the editor's own Tab ring,
+            # under the title, where the note's other two fields are.
+            with Horizontal(id="library-note-keywords-row"):
+                yield Static("Keywords", id="library-note-keywords-label", markup=False)
+                yield NoteEditorInput(
+                    value=keywords_text,
+                    placeholder="Comma-separated keywords",
+                    id="library-note-keywords",
+                )
             yield Static("Body", id="library-note-body-label", markup=False)
             yield NoteEditorTextArea(content, id="library-note-body")
 
@@ -2739,7 +2794,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     placeholder="Comma-separated keywords",
                     id="library-note-context-keywords",
                 )
-            yield Static(metadata_line, id="library-note-context-meta", markup=False)
+            yield Static(
+                library_note_property_block(
+                    presentation_state.properties,
+                    metadata_line,
+                    compact=self.compact,
+                ),
+                id="library-note-context-meta",
+                markup=False,
+            )
             backlinks = (
                 presentation_state.backlinks if presentation_state is not None else ()
             )
@@ -2838,12 +2901,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
 
         with Vertical(id="library-note-wide-utilities"):
-            yield Static("Keywords", id="library-note-keywords-label", markup=False)
-            yield NoteEditorInput(
-                value=keywords_text,
-                placeholder="Comma-separated keywords",
-                id="library-note-keywords",
-            )
+            # task-32642 AC#3: the Keywords label and field that used to sit
+            # here are now in `#library-note-editor-region`, displayed. This
+            # container stays `display = False` and keeps only the duplicate
+            # action buttons it always had.
             # task-32143 AC#2: `#library-note-meta` used to render the
             # Created/Modified/version/word-count line here. Its container
             # has been `display = False` unconditionally since the utilities
@@ -3234,8 +3295,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # task-32143 AC#2: was a two-selector loop -- the second home,
         # `#library-note-meta`, was never displayed. One meta line now.
         context_meta = self.query_one("#library-note-context-meta", Static)
-        if self._static_text(context_meta) != state.metadata_line:
-            context_meta.update(state.metadata_line)
+        meta_copy = library_note_property_block(
+            state.properties, state.metadata_line, compact=state.compact
+        )
+        if self._static_text(context_meta) != meta_copy:
+            context_meta.update(meta_copy)
         # task-32145: backlinks are loaded by their own worker AFTER the note
         # opens, so they land on an editor that is already composed -- and a
         # recompose is deferred for as long as the reader owns a field
@@ -3331,7 +3395,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # cancel_and_delete`` asserts the disabled state for that reason.
         title_input.disabled = not show_editor or locked
         body_input.disabled = not show_editor or locked
-        wide_keywords.disabled = state.compact or show_context or locked
+        # task-32642 AC#3: the same rule as the title and body above. This
+        # field used to be disabled whenever the terminal was compact --
+        # harmless while it lived undisplayed inside
+        # `#library-note-wide-utilities`, and a silent Tab hole the moment it
+        # became the editor's own Keywords stop: `focusable` was False at
+        # 100x30 and 60x20 while `display` and `visible` were both True.
+        wide_keywords.disabled = not show_editor or locked
         context_keywords.disabled = not show_context or locked
         preview_body.can_focus = False
         self.query_one("#library-note-preview-region").can_focus = show_preview

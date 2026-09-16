@@ -1757,6 +1757,7 @@ class LibraryScreen(BaseAppScreen):
     #library-notes-status-row,
     #library-note-heading,
     #library-note-title-row,
+    #library-note-keywords-row,
     #library-note-context-keywords-row,
     #library-notes-create-heading {
         layout: vertical;
@@ -1997,7 +1998,8 @@ class LibraryScreen(BaseAppScreen):
         overflow-y: hidden;
     }
 
-    #library-shell-grid.library-notes-compact #library-note-title-row {
+    #library-shell-grid.library-notes-compact #library-note-title-row,
+    #library-shell-grid.library-notes-compact #library-note-keywords-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -2006,6 +2008,7 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-note-title-label,
+    #library-shell-grid.library-notes-compact #library-note-keywords-label,
     #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
         width: 10;
         height: 1;
@@ -2013,6 +2016,7 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-note-title,
+    #library-shell-grid.library-notes-compact #library-note-keywords,
     #library-shell-grid.library-notes-compact #library-note-context-keywords {
         width: 1fr;
         height: 1;
@@ -2067,9 +2071,19 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
-    #library-shell-grid.library-notes-compact #library-note-context-meta,
     #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
         height: 1;
+        min-height: 1;
+        margin: 0;
+    }
+
+    /* task-32642 AC#2: Info's properties are one row each here too, unpadded --
+       the joined sentence they replaced ran to ~85 characters against this
+       `height: 1`, so the compact pane truncated the values it was stating.
+       `auto` is the smallest change that lets the rows exist; the zero margin
+       this Static shares with its compact siblings is kept. */
+    #library-shell-grid.library-notes-compact #library-note-context-meta {
+        height: auto;
         min-height: 1;
         margin: 0;
     }

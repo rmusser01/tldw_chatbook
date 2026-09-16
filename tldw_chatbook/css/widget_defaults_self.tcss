@@ -979,6 +979,13 @@
 
 
 
+    /* task-32642 AC#2: Info's properties are one row each here too, unpadded --
+       the joined sentence they replaced ran to ~85 characters against this
+       `height: 1`, so the compact pane truncated the values it was stating.
+       `auto` is the smallest change that lets the rows exist; the zero margin
+       this Static shares with its compact siblings is kept. */
+
+
 
 
 

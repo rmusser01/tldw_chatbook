@@ -706,7 +706,12 @@ async def test_info_properties_show_an_absolute_timestamp_beside_the_relative_on
         assert "Created" in meta
         # An absolute local timestamp ("YYYY-MM-DD HH:MM"), not just a bare
         # relative age -- and never the raw ISO string reaching the user.
-        assert re.search(r"Created \d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+ ago", meta), (
+        #
+        # task-32642 made the wide layout pad the label column, so "Created"
+        # and its value are separated by as many spaces as the widest label
+        # needs. The fact under test is the VALUE beside the age; the
+        # separator is `\s+` rather than one literal space.
+        assert re.search(r"Created\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+ ago", meta), (
             f"No absolute timestamp beside the relative age: {meta!r}"
         )
         assert "T" not in meta.split("Created ", 1)[1].split(" · ")[0], (
@@ -983,6 +988,18 @@ async def test_shift_tab_into_the_title_keeps_the_title():
         body = screen.query_one("#library-note-body", TextArea)
         body.focus()
         await pilot.pause()
+
+        # task-32642 AC#3 put the Keywords field between the body and the
+        # title, so the walk back to the title is now two stops. Both are
+        # ``NoteEditorInput``s and the rule under test is the shared one, so
+        # the new stop is asserted on the way past rather than stepped over.
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        keywords = screen.query_one("#library-note-keywords", Input)
+        assert screen.focused is keywords
+        assert keywords.selection.start == keywords.selection.end, (
+            f"Shift+Tab selected the keywords field: {keywords.selection!r}"
+        )
 
         await pilot.press("shift+tab")
         await pilot.pause()

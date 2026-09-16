@@ -1438,7 +1438,8 @@ class LibraryNotesController:
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
             raise RuntimeError("A note presentation requires an active session.")
-        base_meta = self._library_note_meta_base_line()
+        base = self._library_note_meta_base_state()
+        base_meta = "" if base is None else base.meta_line
         word_count = self._note_word_count(snapshot.body)
         # task-32623: match `library_note_chrome_facts`'s thousands
         # separator -- Info and the editor footer share this exact int
@@ -1448,6 +1449,13 @@ class LibraryNotesController:
         word_copy = f"{word_count:,} words" if word_count != 1 else "1 word"
         status_line = self._library_note_status_line()
         metadata_line = " · ".join(part for part in (base_meta, word_copy) if part)
+        # task-32642: the word count joins the line and the rows at the same
+        # site, from the same ``word_copy`` -- see the class docstring on
+        # ``LibraryNoteEditorState.properties``.
+        properties = (
+            *(base.properties if base is not None else ()),
+            ("Words", word_copy),
+        )
         operation = self._library_notes_operation_for_active_region()
         status_channels = resolve_database_note_status_channels(
             conflict=snapshot.in_conflict,
@@ -1474,6 +1482,7 @@ class LibraryNotesController:
         return LibraryNotePresentationState(
             snapshot=snapshot,
             metadata_line=metadata_line,
+            properties=properties,
             # task-32143: the same count the meta line above is built from,
             # carried as a number so the editor chrome strip needs no scan
             # and no database read of its own.
@@ -3705,11 +3714,16 @@ class LibraryNotesController:
             exclusive=True,
             group="library_note_save",
         )
-    def _library_note_meta_base_line(self) -> str:
-        """The static Created/Modified/version portion of the meta line."""
+    def _library_note_meta_base_state(self) -> LibraryNoteEditorState | None:
+        """The Created/Modified/version facts, as line AND labelled pairs.
+
+        task-32642: Info lays the same facts out as rows, so both shapes come
+        out of one ``build_library_note_editor_state`` call rather than two
+        readings of the note.
+        """
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
-            return ""
+            return None
         return build_library_note_editor_state(
             {
                 "id": snapshot.note_id,
@@ -3717,7 +3731,12 @@ class LibraryNotesController:
                 "created_at": snapshot.baseline.created_at,
                 "last_modified": snapshot.baseline.modified_at,
             }
-        ).meta_line
+        )
+
+    def _library_note_meta_base_line(self) -> str:
+        """The static Created/Modified/version portion of the meta line."""
+        base = self._library_note_meta_base_state()
+        return "" if base is None else base.meta_line
     def _update_library_note_meta_static(self, *, content: str) -> None:
         """Synchronize persistent metadata and status without recomposition.
 
