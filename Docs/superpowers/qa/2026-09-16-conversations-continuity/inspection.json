@@ -1,0 +1,68 @@
+{
+  "native_run": "run-004",
+  "batch_count": 1,
+  "confirmation_batch_required": false,
+  "inspected": [
+    {
+      "file": "empty-filter-textual-dark-80.svg",
+      "sha256": "b21b583f42324ca04b282a0941dd90f301c57117b9890f0899bf4f4d9b3f14c2",
+      "native_sha256": "d443ee521b0c39da10f2c50b210cb0359ad92f231db174d418ef3832065444b1"
+    },
+    {
+      "file": "empty-filter-textual-light-80.svg",
+      "sha256": "8f28b49674ea59949c64fe282b553b209d6de51b42fb64f27c24aca4b5ace13d",
+      "native_sha256": "de34f66761e41620b4697d87d15c55149415c7a9989075ba62a8dcfb7b0aedeb"
+    },
+    {
+      "file": "filter-textual-dark-80.svg",
+      "sha256": "8be1ba175618871e150aba743ba036ff4ae5c500a24f22e7a1e8a3e4570782e8",
+      "native_sha256": "40bb197b0297b3ddd4977a24a255ed214dc1fa5a54f3267674aff2de97fc8f9b"
+    },
+    {
+      "file": "filter-textual-light-80.svg",
+      "sha256": "0817f50e03f85d0ed6fe20f982f99df1dbb8f51216cb0f2afe4a9d257358eb7e",
+      "native_sha256": "53107dab039cb2080002ba873621d433abff3dc5a881fa683471adc45741c995"
+    },
+    {
+      "file": "find-textual-dark-170.svg",
+      "sha256": "9ecbdc2b899c2fd8f259a1dfc151d4daa0fc7c1c271e408ef6781eab34941824",
+      "native_sha256": "f48205c5cb71b520412fad02035887c1033dfd6f1e8f7c4ddb39d1e5e46d6776"
+    },
+    {
+      "file": "find-textual-dark-80.svg",
+      "sha256": "e34118452acfa724ef5e301122f8f64295576dd00f4a91b2f15a539d00cf04a1",
+      "native_sha256": "5b27891270270c4bc0da8da94709bb2442e7e9a1908583680f1b873d01e78731"
+    },
+    {
+      "file": "find-textual-light-170.svg",
+      "sha256": "c7bad2a9b2c89476c1cd211e5137f800b37fc41b0ffab671d4d676e329b38756",
+      "native_sha256": "6a918a9e483de360d77a4351bf9af243b93b4d52f996897ab7cc2916c8a898e7"
+    },
+    {
+      "file": "find-textual-light-80.svg",
+      "sha256": "1e8f7532f86032f993e16e7fef0e9156bbca9ab44fa3c1beae04b6ac91015d09",
+      "native_sha256": "44a9f8e8d64a7955c777837dd50204975bff73730970fc0b5c236406f922ba34"
+    },
+    {
+      "file": "match-textual-dark-80.svg",
+      "sha256": "12c2549febc2b14ba34cac04d52997498ff0b320c90606bd686ff33ccac813ea",
+      "native_sha256": "2f0d98902f7996356215a5dbebab1e335027dc4514d9bccaddb2248bb24cc657"
+    },
+    {
+      "file": "match-textual-light-80.svg",
+      "sha256": "cb04001ada41c2c258b05ef27249aa11cbfde2cd9ca1cb35be956523db814ca9",
+      "native_sha256": "1380f5ef40b51e987069292cc8614f816914e6639406b32bca2e1be86f78fbb9"
+    }
+  ],
+  "observations": [
+    "Filter and Find drafts retain visible focused borders and selected trailing text in both themes.",
+    "Compact Clear filter has readable label and visible underline/focus treatment.",
+    "The focused Saved message20 body remains visible above the footer after nested viewport reveal.",
+    "Wide Find captures retain the loaded Alpha transcript and three-pane layout."
+  ],
+  "limits": [
+    "Focused row is revealed by scrolling the reader; its top actions can scroll above the viewport.",
+    "Captures qualify these browse/filter/find journeys, not every conversation action."
+  ],
+  "artifact_normalization": "Removed whitespace on blank SVG source lines only; rendered text and geometry are unchanged."
+}

@@ -124,6 +124,7 @@ class LibraryConversationsCanvas(
                     value=self.canvas.query,
                     placeholder="Filter conversations… (Enter)",
                     id="library-conversations-filter",
+                    select_on_focus=False,
                 )
             yield Static(
                 self.canvas.empty_copy,
@@ -283,6 +284,7 @@ class LibraryConversationsCanvas(
             value=self.canvas.query,
             placeholder="Filter conversations… (Enter)",
             id="library-conversations-filter",
+            select_on_focus=False,
         )
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy

@@ -107,7 +107,7 @@ from ...Library.library_conversation_reader_state import (
     settle_conversation_unavailable,
 )
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS
-from ...Utils.adaptive_reader_state import resolve_adaptive_reader_layout
+from ...Utils.adaptive_reader_state import PaneName, resolve_adaptive_reader_layout
 from ...Widgets.Library import LibraryAdaptiveReaderShell, LibraryConversationReader
 from .library_conversations_state import (
     CONVERSATIONS_PLURAL_STATE_FIELDS,
@@ -820,6 +820,8 @@ class LibraryConversationReaderController:
     def _sync_library_conversation_reader_layout_from_shell(
         self,
         priority: Literal["library", "items"] | None = None,
+        *,
+        manual_reopen: PaneName | None = None,
     ) -> None:
         """Resolve the settled Conversations shell and patch it in place."""
         try:
@@ -850,7 +852,7 @@ class LibraryConversationReaderController:
             reader_has_item=self._library_conversation_reader_state.selected_id
             is not None,
         )
-        shell.sync_layout(layout)
+        shell.sync_layout(layout, manual_reopen=manual_reopen)
         self._library_conversation_reader_layout = layout
         self._sync_library_conversation_reader()
 

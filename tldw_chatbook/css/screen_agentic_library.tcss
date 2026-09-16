@@ -434,6 +434,7 @@ $ds-console-settings-wide-max-width: 196;
     min-height: $ds-size-0;
     padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-panel;
+    overflow-y: auto;
 }
 
 .library-conversation-reader-modes,
@@ -505,6 +506,7 @@ $ds-console-settings-wide-max-width: 196;
 }
 
 #library-conversation-reader-messages {
+    min-height: $ds-size-5;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
     scrollbar-color: $ds-text-muted;

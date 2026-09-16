@@ -6636,9 +6636,11 @@ class LibraryScreen(BaseAppScreen):
     def _sync_library_conversation_reader_layout_from_shell(
         self,
         priority: Literal["library", "items"] | None = None,
+        *,
+        manual_reopen: PaneName | None = None,
     ) -> None:
         return self._conversation_reader_controller._sync_library_conversation_reader_layout_from_shell(
-            priority
+            priority, manual_reopen=manual_reopen
         )
 
     def _sync_library_collections_reader_layout_from_shell(
@@ -6757,7 +6759,9 @@ class LibraryScreen(BaseAppScreen):
         if key == "library_open" or destination == "collections":
             self._sync_library_collections_reader_layout_from_shell(priority)
         if key == "library_open" or destination == "conversations":
-            self._sync_library_conversation_reader_layout_from_shell(priority)
+            self._sync_library_conversation_reader_layout_from_shell(
+                priority, manual_reopen=manual_reopen
+            )
         if key == "library_open" or destination == "notes":
             self._sync_library_notes_reader_layout_from_shell(
                 priority,
@@ -7562,7 +7566,10 @@ class LibraryScreen(BaseAppScreen):
             self._replace_library_reader_preference("conversations", key, opening)
             self._mirror_library_conversation_reader_preference(key, opening)
             self._sync_library_reader_preference_layout(
-                "conversations", key, event.pane if opening else None
+                "conversations",
+                key,
+                event.pane if opening else None,
+                manual_reopen=event.pane if opening else None,
             )
             self.run_worker(
                 self._persist_library_reader_preference(
@@ -7830,6 +7837,7 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_note_presentation_state()
         self._apply_library_notes_footer_context()
         if self._library_selected_row_id in {
+            LIBRARY_ROW_BROWSE_CONVERSATIONS,
             LIBRARY_ROW_BROWSE_PROMPTS,
             LIBRARY_ROW_CREATE_PROMPT,
             LIBRARY_ROW_INGEST_MEDIA,

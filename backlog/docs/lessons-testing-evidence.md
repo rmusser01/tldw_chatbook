@@ -1,5 +1,19 @@
 # Lessons: what counts as evidence a change works
 
+
+## A focused transcript row can remain below its outer viewport
+
+**TASK-32701, 2026-09-16.** Conversations Find retained message20 focus at
+80×24 while painting only a one-row transcript viewport below the header.
+Giving the transcript a minimum height and calling the row's `scroll_visible`
+scrolled the inner transcript but still left its viewport below the reader's
+visible area. The mounted compositor probe passed only after revealing the
+transcript viewport first, then its row, inside the settled refresh callback.
+The native app reproduced the failure and confirmed the repair in both themes.
+Check the visible text across every scrolling ancestor, not just focused-row
+identity or inner scroll offset. A held-callback test also proved old resize
+work must skip scrolling after Info receives newer focus.
+
 ## Queue focus must be captured when the panel actually rebuilds
 
 **TASK-32667, 2026-09-16.** A queue state transition replaced the focused

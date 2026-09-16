@@ -171,9 +171,7 @@ class LibraryConversationReader(Vertical):
 
     def _workspace_link_offered(self) -> bool:
         """Whether a workspace link would actually resolve the block."""
-        return library_conversation_link_would_unblock(
-            self.state, self.loaded_metadata
-        )
+        return library_conversation_link_would_unblock(self.state, self.loaded_metadata)
 
     def _actions_enabled(self) -> bool:
         """Whether the Console hand-off may run with nothing else happening."""
@@ -422,6 +420,30 @@ class LibraryConversationReader(Vertical):
             loaded_metadata=self.loaded_metadata,
             selected_metadata=self.selected_metadata,
         )
+
+    def on_resize(self) -> None:
+        """Keep the current reader control visible after viewport geometry settles."""
+        focused = self.screen.focused
+        if focused is not None and self in focused.ancestors:
+            self.call_after_refresh(self._reveal_reader_focus, focused)
+
+    def _reveal_reader_focus(self, focused) -> None:
+        """Do not let delayed resize work replace a newer focus choice."""
+        if (
+            self.is_mounted
+            and self.screen.focused is focused
+            and self in focused.ancestors
+            and not getattr(focused, "_pruning", False)
+        ):
+            # Reveal the viewport first: Textual's nested-row reveal can
+            # scroll the transcript while leaving that viewport below the fold.
+            parent = focused.parent
+            if (
+                parent is not None
+                and parent.id == "library-conversation-reader-messages"
+            ):
+                parent.scroll_visible(animate=False, immediate=True)
+            focused.scroll_visible(animate=False, immediate=True)
 
     @staticmethod
     def _message_copy(message: ConversationMessageView) -> str:
@@ -769,7 +791,7 @@ class LibraryConversationReader(Vertical):
         """Focus and reveal one stable message reference."""
         for row in self.query(".library-conversation-reader-message"):
             if getattr(row, "message_id", None) == message_id:
-                row.scroll_visible(animate=False)
                 row.focus(scroll_visible=False)
+                self.call_after_refresh(self._reveal_reader_focus, row)
                 return True
         return False
