@@ -9,6 +9,20 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Observe completed callbacks before reading their files (TASK-32628, 2026-09-16)
+
+**Incident.** Windows backup run 35109868161 passed 95/96 product cases, but the
+installed F9 journey read config after the consent modal disappeared and before
+the real consent-save callback finished. The polling reader received a Windows
+sharing violation. Modal dismissal did not establish persistence completion.
+
+The fixture now wraps and awaits the original async callback, then signals an
+event. It waits for that event before asserting both persisted consent values.
+Keep the real writer and saved-value assertions; do not hide file-access errors
+or replace persistence with a test-only write.
+
+---
+
 ## Windows test homes need USERPROFILE isolation (TASK-32562, 2026-09-13)
 
 **Incident.** Backup native-close run 34745966265 reported lease-lock error 33

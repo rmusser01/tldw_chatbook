@@ -86,3 +86,13 @@ plain journey passes in 70.39s; independent review is clean. The current 24 chan
 Python files parse, with 43 existing Ruff findings, zero new, and zero Bandit
 findings. Native repeat is pending. The separate GGUF source workflow
 35109812051 passes on all three operating systems.
+
+Final tested revision `290dff72fb` passes Linux 96/96 in 117.57s and Windows
+96/96 product cases in 510.721s plus 59/59 native checks (run 35111695348).
+Both source/install audits pass; Windows also verifies all 21 artifact hashes.
+Qodo's 14:56:26 UTC review includes this revision and reports zero findings; all
+nine discussion threads remain resolved. Evidence is recorded in
+`Docs/Development/backup-qodo-review-verification-2026-09-16.md` and its JSON.
+Only evidence/task documentation follows this tested revision. This is the
+pre-merge snapshot: final protected checks and the actual merge result are
+recorded by PR #2642, not asserted prospectively here.
