@@ -13620,3 +13620,15 @@ derivation), the landing pass runs the pin files of every sibling group that
 also touched it in the same wave — `git log -S'<function>' --oneline` on the
 wave's branches names them — not only your own. A contradiction between two
 pins is a product ruling to record in both task files, not a merge fix.
+
+## Python statvfs does not expose macOS MNT_LOCAL
+
+**TASK-32669, managed plugin runtime owner, 2026-09-15.** A qualification probe
+against the actual local APFS worktree returned `os.statvfs(path).f_flag == 0`.
+Using that field as a Darwin mount-flags bitmask would either reject the working
+local control or encourage an unsafe local-default fallback. Native Darwin
+`statfs64`, with its layout verified against the installed SDK `sys/mount.h`,
+reported the required `MNT_LOCAL` and APFS identity. Read filesystem-specific
+flags through the qualified platform API, test a real successful local path,
+and refuse missing/unknown probe results. A successful OS lock still does not
+establish that a local directory is not synchronized by third-party software.

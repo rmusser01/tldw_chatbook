@@ -636,10 +636,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C55 is the existing private-file trace maintenance connection.
         # C56 is schema-independent, read-only legacy Collections recovery.
         # C57 discovers native fleet results at launch without migration (ADR-135).
+        # C58/C59 own plugin registry and in-memory schema validation.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 58)
+        for number in range(1, 60)
         if number not in {10, 48}
     ]
     assert [row["id"] for row in backup_rows] == [
@@ -1559,3 +1560,24 @@ def test_explicit_exclusions_and_absence_of_async_owner_are_documented() -> None
         isinstance(node, ast.Call) and _is_sqlite3_connect(node)
         for node in ast.walk(json_backup)
     )
+
+
+def test_plugins_registry_is_private_readonly_and_memory_without_backup() -> None:
+    policy = SQLITE_OWNER_REGISTRY["plugins.registry"]
+    assert policy.production_module == "tldw_chatbook/Plugins/registry"
+    assert policy.allowed_target_kinds == frozenset(
+        {
+            SQLiteTargetKind.PRIVATE_FILE,
+            SQLiteTargetKind.MEMORY,
+            SQLiteTargetKind.READ_ONLY_URI,
+        }
+    )
+    assert not policy.centralized_backup_allowed
+    assert not policy.preserve_read_only_source_mode
+    rows = [
+        row for row in _inventory_rows("C") if row["owner_id"] == "plugins.registry"
+    ]
+    assert {row["symbol"] for row in rows} == {
+        "PluginRegistry.__init__",
+        "PluginRegistry._reference_schema",
+    }
