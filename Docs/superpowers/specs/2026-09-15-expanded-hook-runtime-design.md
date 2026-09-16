@@ -919,7 +919,9 @@ H3–H6 events or installing plugin adapters:
   Only data may change in the same execution scope. Unknown definitions,
   another engine's scope, changed host identity, concurrent use, expired or
   closed scopes refuse. `execution.close()` retires the caller-owned scope;
-  there is no unbounded engine registry of contexts. A caller cancellation
+  the handle exposes read-only deadline/accounting/lifetime properties, cannot
+  be publicly constructed or reassigned, and carries private engine-issued
+  accounting without an unbounded registry of contexts. A caller cancellation
   discards effects while retained command work finishes cleanup.
 - `HookEventOutcome` separates `accepted` `(handler_id, HookResult)` tuples,
   `failures` (fixed metadata codes and owning-event/dependency requiredness),
@@ -942,8 +944,9 @@ H3–H6 events or installing plugin adapters:
   **owner_options)` lazily binds the app loop and shared budget independently
   of views. Existing snapshots reject replacement definitions. Session close
   seals only its engine; app disposal seals all before drain. `close_hooks_v2`
-  joins shielded ownership, and `hooks_v2_cleanup_pending` prevents detaching an
-  unresolved disposed owner. Actual H4 lifecycle producers supply scoped IDs and
+  joins shielded ownership. Exact-session hook custody must be settled before
+  its fleet/wake fences can be released; a bounded close return is insufficient.
+  `hooks_v2_cleanup_pending` prevents detaching an unresolved disposed owner. Actual H4 lifecycle producers supply scoped IDs and
   snapshots; no automatic SessionStart, Stop continuation or MCP dispatch is
   added here.
 
@@ -969,8 +972,17 @@ proof. Retained records may be explicitly checked again with
 Qualification is controlled local Darwin processes, including a live/exited
 leader, retained grandchildren, cancellation during launch/publication and
 refused kill/settlement. Deliberately escaped descendants are outside the group
-guarantee. Windows uses the existing taskkill attempt but has no qualified whole
-tree terminal proof in this implementation, so custody remains unresolved.
-Future Windows qualification must supply real controls before claiming successful
-settlement. H6/M4 must likewise supply typed MCP outcomes and exact remote/local
+guarantee. R47 refuses Windows v2 commands before launch, root reservation or environment
+access, with a fixed `unsupported_platform` outcome and released host reservation.
+Linux POSIX behavior remains explicitly unqualified until its own controls run.
+Future Windows support requires a qualified whole-tree terminal-proof backend
+and real controls; legacy hooks remain unchanged. H6/M4 must likewise supply typed MCP outcomes and exact remote/local
 ownership; this command foundation does not infer them.
+
+H2 callback failures are protocol outcomes: `authority_check_failed` at admission
+or final acceptance, and `dependency_check_failed` for an unavailable dependency
+accessor (including while constructing another failure or considering optional
+notification). Unknown dependency state remains dependency-required for the
+owning capability coordinator; explicit/event-control failure scope is unchanged.
+These outcomes contain no exception text. `CancelledError` retains its original
+cancellation semantics and cannot release unsettled process custody.

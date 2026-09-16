@@ -829,3 +829,59 @@ async def test_cancelled_session_hook_drain_still_finalizes_exact_close():
     assert session.id not in {item.id for item in store.sessions()}
     assert not engine.processes.records
     await runtime.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('refuse_terminal', [True, False])
+async def test_session_fences_include_exact_hook_custody(refuse_terminal):
+    from Tests.Agents.test_hooks_v2_execution import command, event
+    from tldw_chatbook.Agents.hooks_v2.ownership import HostProcessOwner
+
+    class TerminalOwner(HostProcessOwner):
+        refuse = refuse_terminal
+
+        def settle_process(self, token, confirmed):
+            if self.refuse:
+                raise RuntimeError("terminal settlement unavailable")
+            super().settle_process(token, confirmed)
+
+    runtime, controller, bridge, store, session = _runtime_with_fleet()
+    other = store.create_session(ephemeral=True)
+    owner = TerminalOwner()
+    engine = runtime.ensure_hooks_v2(
+        session.id, (command(effects=["deny"]),), lambda *_: True, process_owner=owner
+    )
+    second = runtime.ensure_hooks_v2(
+        other.id, (command(effects=["deny"]),), lambda *_: True
+    )
+    await engine.fire_async(event(runtime=session.id))
+    bridge.release.set()
+    try:
+        await runtime.close_session(
+            session.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=session.id
+            ).revision,
+        )
+        assert engine.cleanup_pending == refuse_terminal
+        assert (session.id in bridge.released) == (not refuse_terminal)
+        assert (
+            session.id in controller.fleet_wake._conversation_fences
+        ) == refuse_terminal
+        assert engine.budget_owner.snapshot(session.id)["tickets"] == int(
+            refuse_terminal
+        )
+        assert (await second.fire_async(event(runtime=other.id))).succeeded
+        await runtime.close_session(
+            other.id,
+            expected_revision=controller.lifecycle_impact(session_id=other.id).revision,
+        )
+        assert other.id in bridge.released
+    finally:
+        owner.refuse = False
+        await engine.processes.reap_pending()
+        await runtime.close_hooks_v2(session.id)
+        await runtime.dispose()
+    assert not engine.cleanup_pending and not any(
+        engine.budget_owner.snapshot().values()
+    )

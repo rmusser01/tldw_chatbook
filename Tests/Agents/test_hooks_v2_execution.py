@@ -3,7 +3,6 @@
 import asyncio
 import os
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -33,21 +32,8 @@ def event(name="PreToolUse", runtime="runtime-a"):
 
 
 def command(code="pass", name="PreToolUse", **kwargs):
-    from tldw_chatbook.config import get_user_data_dir
+    from Tests.hooks_v2_process_support import child_argv
 
-    data_root = get_user_data_dir()
-    assert str(data_root).startswith("/private/tmp/")
-    assert data_root.is_dir()
-    # Children inherit the isolated runner and independently prove its provenance.
-    prelude = (
-        "import pathlib,os,keyring,socket,tldw_chatbook;"
-        f"assert str(pathlib.Path(tldw_chatbook.__file__).resolve())=={str(Path(__file__).resolve().parents[2] / 'tldw_chatbook/__init__.py')!r};"
-        "assert type(keyring.get_keyring()).__module__=='keyring.backends.null';"
-        "assert socket.getaddrinfo.__module__=='sitecustomize';"
-        "assert str(pathlib.Path(os.environ['XDG_DATA_HOME']).resolve()).startswith('/private/tmp/');"
-        "from tldw_chatbook.config import get_user_data_dir;"
-        f"assert str(get_user_data_dir())=={str(data_root)!r};"
-    )
     return parse_handlers(
         [
             {
@@ -55,7 +41,7 @@ def command(code="pass", name="PreToolUse", **kwargs):
                 "event": name,
                 "type": "command",
                 "effects": [],
-                "argv": [sys.executable, "-c", prelude + code],
+                "argv": child_argv(code),
                 **kwargs,
             }
         ]
@@ -603,10 +589,10 @@ async def test_posix_owned_group_descendants_are_reaped(tmp_path, leader_exits):
     if os.name != "posix":
         pytest.fail("This real process-group qualification requires a POSIX worker")
     pidfile = tmp_path / "grandchild"
-    child = command("import time;time.sleep(30)").argv[2]
+    child = command("import time;time.sleep(30)").argv[-1]
     code = (
         "import subprocess,sys,pathlib,time;"
-        f"p=subprocess.Popen([sys.executable,'-c',{child!r}]);"
+        f"p=subprocess.Popen([sys.executable,'-I','-c',{child!r}]);"
         f"pathlib.Path({str(pidfile)!r}).write_text(str(p.pid));"
         + ("pass" if leader_exits else "time.sleep(30)")
     )
@@ -636,3 +622,240 @@ async def test_notification_errors_remain_metadata_only():
     await engine.close()
     assert engine.notification_failures == {"invalid_output": 1}
     assert "private" not in repr(engine.notification_failures)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["admission", "final_acceptance", "dependency"])
+async def test_callback_failure_is_fixed_metadata_with_requiredness(boundary):
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    accepts = 0
+
+    def authority(_handler, _event, stage):
+        nonlocal accepts
+        if stage == "accept":
+            accepts += 1
+        if (boundary == "admission" and stage == "admission") or (
+            boundary == "final_acceptance" and accepts == 2
+        ):
+            raise RuntimeError("review-sensitive-marker")
+        return True
+
+    def dependency(*_):
+        if boundary == "dependency":
+            raise RuntimeError("review-sensitive-marker")
+        return False
+
+    budget = HookBudgetOwner()
+    engine = HookEngine(
+        (command(required=boundary != "dependency"),),
+        authority,
+        budget,
+        dependency_required=dependency,
+    )
+    try:
+        result = await engine.fire_async(event())
+        assert not result.succeeded and not result.accepted
+        assert result.failures[0].code == (
+            "dependency_check_failed"
+            if boundary == "dependency"
+            else "authority_check_failed"
+        )
+        assert (
+            result.failures[0].dependency_required
+            if boundary == "dependency"
+            else result.failures[0].blocking
+        )
+        assert "review-sensitive-marker" not in repr(result)
+        assert not engine.processes.records
+        assert not any(budget.snapshot().values())
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["admission", "final_acceptance", "dependency"])
+async def test_callback_cancellation_preserves_cancel_and_custody(boundary):
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    accepts = 0
+
+    def authority(_handler, _event, stage):
+        nonlocal accepts
+        if stage == "accept":
+            accepts += 1
+        if (boundary == "admission" and stage == "admission") or (
+            boundary == "final_acceptance" and accepts == 2
+        ):
+            raise asyncio.CancelledError
+        return True
+
+    def dependency(*_):
+        if boundary == "dependency":
+            raise asyncio.CancelledError
+        return False
+
+    budget = HookBudgetOwner()
+    engine = HookEngine((command(),), authority, budget, dependency_required=dependency)
+    with pytest.raises(asyncio.CancelledError):
+        await engine.fire_async(event())
+    await engine.close()
+    assert not engine.cleanup_pending
+    assert not any(budget.snapshot().values())
+
+
+@pytest.mark.asyncio
+async def test_dependency_failure_cannot_escape_failure_construction_or_notify():
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    def broken(*_):
+        raise RuntimeError("review-sensitive-marker")
+
+    engine = HookEngine(
+        (command(effects=["deny"]), command(name="SessionEnd", id="end")),
+        lambda *_: False,
+        HookBudgetOwner(),
+        dependency_required=broken,
+    )
+    try:
+        result = await engine.fire_async(event())
+        assert not result.allowed
+        assert result.failures[0].code == "dependency_check_failed"
+        assert result.failures[0].dependency_required
+        assert not engine.notify(event("SessionEnd"))
+        assert engine.notification_failures["dependency_check_failed"] == 1
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_scope_state_is_read_only_and_close_cannot_be_reversed():
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    engine = HookEngine(
+        (command(effects=["deny"]),), lambda *_: True, HookBudgetOwner()
+    )
+    scope = engine.begin_event(event())
+    deadline = scope.deadline
+    assert (await engine.fire_handler_async(scope, "command", event())).succeeded
+    used = scope.active_seconds
+    assert used > 0
+    for name, replacement in {
+        "deadline": deadline + 180,
+        "active_seconds": 0,
+        "closed": False,
+        "busy": False,
+        "_engine": object(),
+        "_identity": {},
+        "teardown": True,
+    }.items():
+        with pytest.raises((AttributeError, TypeError)):
+            setattr(scope, name, replacement)
+    scope.close()
+    assert not (await engine.fire_handler_async(scope, "command", event())).succeeded
+    assert scope.closed and scope.deadline == deadline and scope.active_seconds == used
+    await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_forged_and_concurrent_scopes_cannot_enter_executor():
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine, HookEventExecution
+
+    engine = HookEngine(
+        (command("import time;time.sleep(.2)", effects=["deny"]),),
+        lambda *_: True,
+        HookBudgetOwner(),
+    )
+    with pytest.raises(TypeError):
+        HookEventExecution(engine, {}, 999999999)
+    forged = object.__new__(HookEventExecution)
+    assert not (await engine.fire_handler_async(forged, "command", event())).succeeded
+    scope = engine.begin_event(event())
+    first = asyncio.create_task(engine.fire_handler_async(scope, "command", event()))
+    await asyncio.sleep(0)
+    assert not (await engine.fire_handler_async(scope, "command", event())).succeeded
+    assert (await first).succeeded
+    assert (await engine.fire_handler_async(scope, "command", event())).succeeded
+    assert scope.active_seconds > 0.4
+    await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_windows_command_refuses_before_root_access_or_launch(monkeypatch):
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.hooks_v2.ownership import HostProcessOwner
+
+    accesses = []
+
+    class Owner(HostProcessOwner):
+        def reserve_launch(self, event):
+            accesses.append("root")
+            return super().reserve_launch(event)
+
+    budget = HookBudgetOwner()
+    engine = HookEngine(
+        (command(effects=["deny"]),),
+        lambda *_: True,
+        budget,
+        process_owner=Owner(),
+        environment=lambda *_: accesses.append("env") or {},
+    )
+    with monkeypatch.context() as m:
+        m.setattr(sys, "platform", "win32")
+        result = await engine.fire_async(event())
+    assert not result.allowed and result.failures[0].code == "unsupported_platform"
+    assert accesses == [] and not engine.processes.records
+    assert not any(budget.snapshot().values())
+    assert (await engine.fire_async(event())).succeeded
+    await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_scope_deadline_and_active_allowance_remain_engine_owned(monkeypatch):
+    from tldw_chatbook.Agents.hooks_v2 import engine as engine_module
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    engine = HookEngine(
+        (command(effects=["deny"]),), lambda *_: True, HookBudgetOwner()
+    )
+    scope = engine.begin_event(event())
+    deadline = scope.deadline
+    wait = engine.processes.wait
+
+    async def measured_full_allowance(job, finish):
+        result = await wait(job, finish)
+        # Real child/protocol control, with elapsed active time injected at the
+        # measured-result boundary to exercise the 60-second ceiling promptly.
+        result.duration = 60.0
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(engine.processes, "wait", measured_full_allowance)
+        assert (await engine.fire_handler_async(scope, "command", event())).succeeded
+    assert scope.active_seconds == 60 and scope.deadline == deadline
+    assert (await engine.fire_handler_async(scope, "command", event())).failures[
+        0
+    ].code == "event_deadline"
+    with pytest.raises((AttributeError, TypeError)):
+        scope.active_seconds = 0
+    expired = engine.begin_event(event())
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            engine_module,
+            "time",
+            SimpleNamespace(monotonic=lambda: expired.deadline + 1),
+        )
+        assert (await engine.fire_handler_async(expired, "command", event())).failures[
+            0
+        ].code == "event_deadline"
+    scope.close()
+    expired.close()
+    assert not engine.processes.records
+    await engine.close()

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:23'
-updated_date: '2026-09-16 22:23'
+updated_date: '2026-09-16 22:43'
 labels:
   - plugins
   - implementation
@@ -55,4 +55,6 @@ Reason: Direct implementation of the accepted app-owned v2 command execution and
 11. Repair the pre-existing unbound session_id in Chat/console_chat_controller.py finalize_session_close as the minimal prerequisite for the actual H2 shutdown qualification: remove the closed session's chat-create grants only after the existing ticket and generation checks succeed and the session ID is assigned. Preserve all close fences and ownership checks; no broader controller refactor. Qualify successful close grant removal and stale-ticket refusal without grant mutation in the already-scoped Tests/Chat/test_console_runtime_shutdown.py. Record the ten pre-existing close failures separately from new H2 RED evidence. This implements AC3-4 and existing ADR150/163 lifecycle ownership; no new ADR is required. Include this additional source file in frozen hashes, covering tests and shared static baseline parity.
 
 12. Update only the three stale delivering_conversation_id() assertions/cleanup uses in Tests/Chat/test_console_viewless_hooks.py to the existing delivering_conversation_ids() tuple API. Preserve the exact delivering-conversation precondition and empty-delivery assertions; no production compatibility shim or weakened viewless behavior. Record the unchanged-neighbor API mismatch separately from H2 RED, rerun the five scoped feature/legacy/viewless files and include this additional modified test in frozen/static parity evidence.
+
+13. Address independent review F1-F4 via the existing H2 runtime/engine modules and exact covering tests: keep exact session fences while hook custody remains unresolved; convert authority/dependency accessor exceptions to fixed policy-preserving metadata outcomes with cancellation/custody intact; replace mutable event-scope authority/lifetime fields with a bounded engine-controlled read-only handle; make child isolation self-contained in committed Tests/hooks_v2_process_support.py shared by the Agent/Chat tests. Run the exact five-file coverage without the external h2-profile child shim and with a non-/private/tmp isolated basetemp, preserving provenance/network/null-keyring checks. Record actual incident RED/GREEN in backlog/docs/lessons-testing-evidence.md. Apply controller R47 in existing command engine/spec/ADR surfaces: Windows native v2 command execution refuses before launch/root access until whole-tree proof is qualified; current Darwin controls remain the only platform success evidence, Linux remains unqualified. Preserve all original budget/deadline/authority contracts and defer reviewer Minor F5 to final branch triage. Record extra necessary paths before editing; freeze final covering/static evidence and append Fix1 report before scoped review.
 <!-- SECTION:PLAN:END -->

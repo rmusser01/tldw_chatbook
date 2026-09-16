@@ -13645,3 +13645,23 @@ reported the required `MNT_LOCAL` and APFS identity. Read filesystem-specific
 flags through the qualified platform API, test a real successful local path,
 and refuse missing/unknown probe results. A successful OS lock still does not
 establish that a local directory is not synchronized by third-party software.
+
+## A successful subprocess suite can depend on an uncommitted child bootstrap
+
+**TASK-32677 / H2 review F3, 2026-09-16.** The recorded 173-pass five-file run
+used `/private/tmp/h2-profile/run_py.sh`, whose PYTHONPATH injected a temporary
+`sitecustomize.py` into command-hook children. The committed tests asserted that
+shim existed and that every profile path started with `/private/tmp/`. The
+custom-environment run was valid for that setup, but did not establish standalone
+committed-test reproducibility. A fresh parent without the shim produced **1
+failed, 1 passed** for real-command/normalization controls; a repository-local
+basetemp produced **1 failed, 1 error** at the hard-coded prefix assertion.
+
+The fix moved child isolation into `Tests/hooks_v2_process_support.py`. Children
+use `python -I`, import the explicit checkout, install network/DNS refusal before
+application imports, and assert null keyring and the actual precreated fixture
+data directory. The same two controls then passed under the repository-local
+basetemp without an external child shim. Keep subprocess bootstrap/policy in the
+repository and qualify the documented command from a fresh parent environment;
+record exact checkout and fixture-root provenance instead of assuming one OS's
+temporary-directory spelling.

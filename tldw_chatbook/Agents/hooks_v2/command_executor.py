@@ -6,6 +6,7 @@ import asyncio
 import os
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -160,6 +161,12 @@ class CommandExecutor:
         terminal = False
         capture = job.capture = _Capture(job.signal_child)
         try:
+            # R47: without whole-tree terminal proof, a Windows launch would
+            # permanently consume custody. Refuse before root/owner/env access.
+            if sys.platform == "win32":
+                terminal = True
+                outcome.failure = "unsupported_platform"
+                return outcome
             job.token = await asyncio.to_thread(self.owner.reserve_launch, event)
             env = await asyncio.to_thread(environment, handler, event)
             if job.cancel.is_set() or time.monotonic() >= deadline:

@@ -12,7 +12,7 @@ import os
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import RLock
 
 from .budgets import BudgetExceeded, HookBudgetOwner
@@ -56,23 +56,60 @@ class HookEventOutcome:
 
 
 @dataclass
-class HookEventExecution:
-    """Caller-owned event scope: no application registry or implicit worker.
+class _ExecutionState:
+    """Private accounting shared by the engine and its read-only handle."""
 
-    Close after phase orchestration. All invocations share its original deadline
-    and active budget. It cannot be used concurrently or by another engine.
-    """
-
-    _engine: object
-    _identity: dict
+    issuer: object
+    identity: tuple
     deadline: float
     teardown: bool = False
     active_seconds: float = 0.0
     closed: bool = False
     busy: bool = False
 
+
+@dataclass(frozen=True, init=False, slots=True, eq=False)
+class HookEventExecution:
+    """Engine-issued, read-only event scope with irreversible retirement.
+
+    The handle carries bounded private accounting, so abandoned caller scopes
+    need no retained engine registry. Only engine code updates accounting;
+    public construction, replacement and reassignment are unavailable.
+    """
+
+    _state: _ExecutionState = field(repr=False)
+
+    def __init__(self) -> None:
+        raise TypeError("event scopes are issued by HookEngine.begin_event")
+
+    @classmethod
+    def _issue(cls, state: _ExecutionState) -> HookEventExecution:
+        scope = object.__new__(cls)
+        object.__setattr__(scope, "_state", state)
+        return scope
+
+    @property
+    def deadline(self) -> float:
+        return self._state.deadline
+
+    @property
+    def active_seconds(self) -> float:
+        return self._state.active_seconds
+
+    @property
+    def closed(self) -> bool:
+        return self._state.closed
+
+    @property
+    def busy(self) -> bool:
+        return self._state.busy
+
+    @property
+    def teardown(self) -> bool:
+        return self._state.teardown
+
     def close(self) -> None:
-        self.closed = True
+        self._state.closed = True
 
 
 @dataclass(eq=False)
@@ -125,6 +162,7 @@ class HookEngine:
         self._host_environment = host_environment
         self._dependency_required = dependency_required or (lambda *_: False)
         self._lock = RLock()
+        self._scope_issuer = object()
         self._sealed_at: float | None = None
         self._teardown_closed = False
         self._deliveries: set[_Delivery] = set()
@@ -170,7 +208,7 @@ class HookEngine:
         parse_event(value)  # Bound input before serialization or admission.
         if event.causal_depth > 4:
             raise ValueError("causal_depth")
-        identity = {key: value for key, value in value.items() if key != "data"}
+        identity = tuple((key, item) for key, item in value.items() if key != "data")
         now = time.monotonic()
         deadline = now + ({"Interrupt": 1.0, "SessionEnd": 3.0}.get(event.event, 180.0))
         with self._lock:
@@ -178,7 +216,34 @@ class HookEngine:
                 raise ValueError("invalid teardown event")
             if self._sealed_at is not None:
                 deadline = min(deadline, self._sealed_at + 3.0)
-        return HookEventExecution(self, identity, deadline, teardown)
+        return HookEventExecution._issue(
+            _ExecutionState(self._scope_issuer, identity, deadline, teardown)
+        )
+
+    def _execution_state(self, execution: HookEventExecution) -> _ExecutionState | None:
+        if type(execution) is not HookEventExecution:
+            return None
+        state = getattr(execution, "_state", None)
+        if type(state) is not _ExecutionState or state.issuer is not self._scope_issuer:
+            return None
+        return state
+
+    def _dependency_status(self, handler, event) -> tuple[bool, str | None]:
+        try:
+            return bool(self._dependency_required(handler, event)), None
+        except Exception:  # noqa: BLE001 - retain unknown dependency requirements
+            return True, "dependency_check_failed"
+
+    async def _authority_status(self, handler, event, stage) -> tuple[bool, str | None]:
+        try:
+            return (
+                bool(
+                    await asyncio.to_thread(self.authority_check, handler, event, stage)
+                ),
+                None,
+            )
+        except Exception:  # noqa: BLE001 - callback text may contain private data
+            return False, "authority_check_failed"
 
     def _failure(self, handler, event, code) -> HookFailure:
         blocking = (
@@ -192,9 +257,8 @@ class HookEngine:
                 and bool(handler.effects & {"deny", "child_limits"})
             )
         )
-        return HookFailure(
-            handler.id, code, blocking, bool(self._dependency_required(handler, event))
-        )
+        dependency, failure = self._dependency_status(handler, event)
+        return HookFailure(handler.id, failure or code, blocking, dependency)
 
     def _configuration_failure(self, event) -> HookEventOutcome | None:
         if not self.invalid_admissions:
@@ -316,11 +380,12 @@ class HookEngine:
             parse_event(value)
         except ValueError:
             return failed("invalid_event")
+        state = self._execution_state(execution)
         if (
-            execution._engine is not self
-            or execution.closed
-            or execution.busy
-            or (execution._identity != {k: v for k, v in value.items() if k != "data"})
+            state is None
+            or state.closed
+            or state.busy
+            or state.identity != tuple((k, v) for k, v in value.items() if k != "data")
         ):
             return failed("invalid_event_execution")
         if not self.enabled:
@@ -335,17 +400,18 @@ class HookEngine:
             return failed("unsupported_matcher")
         with self._lock:
             if self._teardown_closed or (
-                self._sealed_at is not None and not execution.teardown
+                self._sealed_at is not None and not state.teardown
             ):
                 return failed("admission_closed")
-            if execution.teardown and self._sealed_at is not None:
-                execution.deadline = min(execution.deadline, self._sealed_at + 3.0)
-            if time.monotonic() >= execution.deadline or execution.active_seconds >= 60:
+            if state.teardown and self._sealed_at is not None:
+                state.deadline = min(state.deadline, self._sealed_at + 3.0)
+            if time.monotonic() >= state.deadline or state.active_seconds >= 60:
                 return failed("event_deadline")
+            dependency, dependency_failure = self._dependency_status(handler, event)
+            if dependency_failure:
+                return failed(dependency_failure)
             observation = (
-                not handler.effects
-                and not handler.required
-                and not self._dependency_required(handler, event)
+                not handler.effects and not handler.required and not dependency
             )
             try:
                 ticket = self.budget_owner.reserve(
@@ -353,17 +419,17 @@ class HookEngine:
                 )
             except BudgetExceeded:
                 return failed("delivery_capacity")
-            delivery = _Delivery(ticket, asyncio.Event(), execution.teardown)
+            delivery = _Delivery(ticket, asyncio.Event(), state.teardown)
             self._deliveries.add(delivery)
-            execution.busy = True
+            state.busy = True
             delivery.task = asyncio.create_task(
-                self._deliver(delivery, handler, event, execution, value)
+                self._deliver(delivery, handler, event, state, value)
             )
             delivery.task.add_done_callback(self._consume)
         try:
             done, _ = await asyncio.wait(
                 {delivery.task},
-                timeout=max(0, execution.deadline + 5.0 - time.monotonic()),
+                timeout=max(0, state.deadline + 5.0 - time.monotonic()),
             )
             if done:
                 return delivery.task.result()
@@ -382,7 +448,7 @@ class HookEngine:
             execution.close()
             raise
         finally:
-            execution.busy = False
+            state.busy = False
 
     async def _deliver(self, delivery, handler, event, execution, value):
         ticket = delivery.ticket
@@ -408,10 +474,12 @@ class HookEngine:
                     acquire.cancel()
                 cancelled.cancel()
                 await asyncio.gather(acquire, cancelled, return_exceptions=True)
-            if failure is None and not await asyncio.to_thread(
-                self.authority_check, handler, event, "admission"
-            ):
-                failure = "authority_refused"
+            if failure is None:
+                authorized, callback_failure = await self._authority_status(
+                    handler, event, "admission"
+                )
+                if not authorized:
+                    failure = callback_failure or "authority_refused"
             if failure is None and (delivery.cancel.is_set() or execution.closed):
                 failure = "cancelled"
             if failure:
@@ -440,11 +508,13 @@ class HookEngine:
             )
             result = await self.processes.wait(job, deadline)
             execution.active_seconds += result.duration
-            if result.result is not None and not await asyncio.to_thread(
-                self.authority_check, handler, event, "accept"
-            ):
-                result.result = None
-                result.failure = "authority_refused"
+            if result.result is not None:
+                authorized, callback_failure = await self._authority_status(
+                    handler, event, "accept"
+                )
+                if not authorized:
+                    result.result = None
+                    result.failure = callback_failure or "authority_refused"
             if result.result is not None and (
                 delivery.cancel.is_set()
                 or execution.closed
@@ -493,11 +563,13 @@ class HookEngine:
                 try:
                     if not matches_handler(handler, event):
                         continue
-                    if (
-                        handler.effects
-                        or handler.required
-                        or self._dependency_required(handler, event)
-                    ):
+                    dependency, dependency_failure = self._dependency_status(
+                        handler, event
+                    )
+                    if dependency_failure:
+                        self.notification_failures[dependency_failure] += 1
+                        continue
+                    if handler.effects or handler.required or dependency:
                         continue
                     ticket = self.budget_owner.reserve(event.runtime_session_id, True)
                 except (ValueError, BudgetExceeded):
@@ -508,7 +580,9 @@ class HookEngine:
 
                 def submit(d=delivery, h=handler):
                     d.task = asyncio.create_task(
-                        self._deliver(d, h, event, execution, value)
+                        self._deliver(
+                            d, h, event, self._execution_state(execution), value
+                        )
                     )
                     d.task.add_done_callback(self._consume_notification)
 

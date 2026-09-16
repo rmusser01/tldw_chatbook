@@ -4257,6 +4257,7 @@ class ConsoleRuntime:
         for turn_id, record in tuple(self._turn_custody.items()):
             if record.session_id == session_id:
                 self._release_custody(turn_id)
+        hook_engine = self._hooks_v2_engines.get(session_id)
         hook_drain = asyncio.create_task(self.close_hooks_v2(session_id))
         while True:
             try:
@@ -4265,7 +4266,8 @@ class ConsoleRuntime:
             except asyncio.CancelledError:
                 cancel_requested = True
         closed = controller.finalize_session_close(ticket)
-        if not pending and fleet_drain_succeeded:
+        hook_drain_succeeded = hook_engine is None or not hook_engine.cleanup_pending
+        if not pending and fleet_drain_succeeded and hook_drain_succeeded:
             # The fence was provisional while this exact session scope
             # drained. With every task and delegated child terminal, no stale
             # producer remains, so a later resume of the saved conversation
