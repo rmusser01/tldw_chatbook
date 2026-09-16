@@ -68,6 +68,70 @@ class TestLoadHooksConfig:
         result = load_hooks_config({"hooks": {"enabled": False}})
         assert result.enabled is False
 
+    def test_v2_required_state_survives_master_disable(self):
+        result = load_hooks_config(
+            {
+                "hooks": {
+                    "enabled": False,
+                    "handler": [
+                        {
+                            "id": "guard",
+                            "event": "PreToolUse",
+                            "type": "command",
+                            "argv": ["guard"],
+                            "effects": ["deny"],
+                            "required": True,
+                        }
+                    ],
+                }
+            }
+        )
+        assert len(result.v2_handlers) == 1
+        assert result.v2_requirements_unsatisfied
+        assert not result.v2_invalid
+
+    def test_invalid_required_v2_batch_is_not_silently_omitted(self):
+        result = load_hooks_config(
+            {
+                "hooks": {
+                    "enabled": False,
+                    "handler": [
+                        {
+                            "id": "guard",
+                            "event": "PreToolUse",
+                            "type": "command",
+                            "argv": [],
+                            "effects": ["deny"],
+                            "required": True,
+                        }
+                    ],
+                }
+            }
+        )
+        assert result.v2_handlers == ()
+        assert result.v2_invalid_required
+        assert result.v2_requirements_unsatisfied
+
+    def test_invalid_optional_v2_batch_does_not_invent_requirement(self):
+        result = load_hooks_config(
+            {
+                "hooks": {
+                    "handler": [
+                        {
+                            "id": "observer",
+                            "event": "Stop",
+                            "type": "command",
+                            "argv": [],
+                            "effects": [],
+                        }
+                    ]
+                }
+            }
+        )
+        assert result.v2_invalid
+        assert not result.v2_invalid_required
+        assert not result.v2_requirements_unsatisfied
+
     def test_valid_hook_parsed(self):
         result = load_hooks_config(
             {

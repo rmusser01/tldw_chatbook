@@ -22,12 +22,15 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Utils.path_validation import validate_existing_absolute_directory
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.hooks_v2.models import HookHandler
 
 HOOK_EVENTS: frozenset[str] = frozenset(
     {
@@ -97,6 +100,19 @@ class RunHooksConfig:
 
     enabled: bool = True
     hooks: tuple[HookSpec, ...] = ()
+    v2_handlers: tuple[HookHandler, ...] = ()
+    v2_invalid: bool = False
+    v2_invalid_required: bool = False
+
+    @property
+    def v2_requirements_unsatisfied(self) -> bool:
+        """Whether configuration alone prevents required v2 satisfaction.
+
+        Execution/success remains the later runtime owner's responsibility.
+        """
+        return self.v2_invalid_required or (
+            not self.enabled and any(handler.required for handler in self.v2_handlers)
+        )
 
 
 def _parse_hook(raw: object) -> HookSpec | None:
@@ -155,7 +171,8 @@ def load_hooks_config(config: Mapping) -> RunHooksConfig:
         config: Loaded application configuration containing the optional hooks section.
 
     Returns:
-        Valid hooks, with invalid master switches disabled and invalid entries omitted.
+        Legacy hooks and separately validated v2 definitions. An invalid v2
+        batch is retained as invalid state rather than partially activated.
     """
     section = config.get("hooks") if isinstance(config, Mapping) else None
     if not isinstance(section, Mapping):
@@ -171,7 +188,32 @@ def load_hooks_config(config: Mapping) -> RunHooksConfig:
         )
         raw_hooks = []
     hooks = tuple(h for h in (_parse_hook(r) for r in raw_hooks) if h is not None)
-    return RunHooksConfig(enabled=enabled, hooks=hooks)
+    raw_v2 = section.get("handler", [])
+    try:
+        # Keep the v2 import out of default startup and all legacy-only loads.
+        if raw_v2:
+            from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+            v2_handlers = parse_handlers(raw_v2)
+        else:
+            v2_handlers = ()
+            if not isinstance(raw_v2, list):
+                raise ValueError("handlers must be a list")
+    except ValueError:
+        logger.warning("run-hooks: invalid v2 handler batch; activation refused")
+        invalid_required = not isinstance(raw_v2, list) or any(
+            not isinstance(item, Mapping)
+            or item.get("required", False) is not False
+            or item.get("require_context", False) is not False
+            for item in raw_v2
+        )
+        return RunHooksConfig(
+            enabled=enabled,
+            hooks=hooks,
+            v2_invalid=True,
+            v2_invalid_required=invalid_required,
+        )
+    return RunHooksConfig(enabled=enabled, hooks=hooks, v2_handlers=v2_handlers)
 
 
 # ---------------------------------------------------------------------------

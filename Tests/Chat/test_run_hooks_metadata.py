@@ -54,6 +54,31 @@ def test_real_config_loader_preserves_hooks_across_setting_save(tmp_path, monkey
     ] == list(expected.command)
 
 
+def test_real_config_loader_preserves_mixed_legacy_and_v2_hooks(tmp_path, monkeypatch):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[hooks]\nenabled = false\n"
+        '[[hooks.hook]]\nevent = "PreToolUse"\ncommand = ["/bin/legacy"]\n'
+        '[[hooks.handler]]\nid = "guard"\nevent = "PreToolUse"\n'
+        'type = "command"\nargv = ["/bin/v2"]\neffects = ["deny"]\nrequired = true\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+    loaded = load_hooks_config(config.load_settings(force_reload=True))
+    assert loaded.hooks == (HookSpec("PreToolUse", ("/bin/legacy",)),)
+    assert loaded.v2_handlers[0].id == "guard"
+    assert loaded.v2_requirements_unsatisfied
+
+    assert config.save_setting_to_cli_config("hooks", "enabled", True)
+    reloaded = load_hooks_config(config.load_settings(force_reload=True))
+    assert reloaded.hooks == loaded.hooks
+    assert reloaded.v2_handlers == loaded.v2_handlers
+    assert not reloaded.v2_requirements_unsatisfied
+    saved = tomllib.loads(path.read_text(encoding="utf-8"))["hooks"]
+    assert saved["hook"][0]["command"] == ["/bin/legacy"]
+    assert saved["handler"][0]["effects"] == ["deny"]
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "content", ["Additional context", "Send blocked by hook: guard refused"]
