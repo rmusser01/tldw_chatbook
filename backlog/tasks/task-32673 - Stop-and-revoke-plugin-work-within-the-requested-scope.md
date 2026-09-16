@@ -1,11 +1,11 @@
 ---
 id: TASK-32673
 title: Stop and revoke plugin work within the requested scope
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:20'
-updated_date: '2026-09-16 16:34'
+updated_date: '2026-09-16 16:42'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Disable here, global-default changes, Disable everywhere and uninstall invalidate exactly their specified scopes; old approvals and callbacks never revive on re-enable.
-- [ ] #2 Live admission closes and host cancellation starts before waiting for trust unlock or storage writes; affected plugin cleanup callbacks are suppressed immediately.
-- [ ] #3 Durable disable/removal success is distinct from a session-only block and confirmed local stop; retry and failure cannot reopen the live scope or release surviving resource ownership.
-- [ ] #4 Uninstall removes only installation-owned grants and registrations, retains data by default and leaves independent credentials/connections owned by their existing services.
+- [x] #1 Disable here, global-default changes, Disable everywhere and uninstall invalidate exactly their specified scopes; old approvals and callbacks never revive on re-enable.
+- [x] #2 Live admission closes and host cancellation starts before waiting for trust unlock or storage writes; affected plugin cleanup callbacks are suppressed immediately.
+- [x] #3 Durable disable/removal success is distinct from a session-only block and confirmed local stop; retry and failure cannot reopen the live scope or release surviving resource ownership.
+- [x] #4 Uninstall removes only installation-owned grants and registrations, retains data by default and leaves independent credentials/connections owned by their existing services.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,3 +51,15 @@ Reason: Direct implementation of the accepted scoped revocation, retained lifecy
 9. R17 exact adapter selected by actual Console cancellation regression: minimally extend Chat/console_chat_controller.py direct-provider run ownership to wake/cancel its captured consumer task on its owning loop when scoped revocation closes queue delivery. Keep actual provider_work completion custody and generation identity intact; consumer cancellation does not prove underlying work ended. Cancel only while that exact consumer is active, so a retained provider callback cannot cancel later unrelated work in a reused caller task. Extend the real Console regression in Tests/Plugins/test_revocation.py and exact affected provider lifecycle/stop neighbors; baseline static comparison against task BASE for the shared controller.
 10. Fix independent review I1 in Plugins/coordinator.py: qualified recovered explicit-enable receipts must reconcile the live scope, while replay of an old enable after newer disable cannot reopen it. Extend Tests/Plugins/test_revocation.py and exact affected coordinator/recovery controls with post-certificate retry, stale-enable replay and old-token refusal. Append command/output/static evidence to task-6-report.md; controller owns the scoped review and final closeout.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Scoped disable, global-default changes, Disable everywhere and uninstall now seal admission and start exact retained cancellation before waiting for trust or storage. Captured scope generations preserve unrelated work and prevent old approvals/callbacks reviving after enable. Direct Console cancellation wakes only its active captured consumer while retaining actual provider-worker terminal evidence.
+
+The existing authenticated commit pipeline persists revocation and uninstall tombstones. Receipts distinguish persistence, observed stop, pending cleanup and original failures. Uninstall removes only confirmed owned package paths through directory descriptors, retaining saved data and unresolved process evidence. Recovered enables reopen fresh admission only when current authenticated scoped authority still matches; replay after a newer disable preserves that fence.
+
+Validation: 163 affected plugin/Console lifecycle tests passed before the final cleanup refinement; 37 final revocation/persistence tests passed after descriptor cleanup; 34 targeted tests passed after the recovered-enable fix. These runs overlap. Changed Python syntax/Ruff/Black checks and whitespace passed; the shared controller preserves its existing diagnostic baseline. Independent task review and scoped fix review are clear. No full suite was run. macOS/Python 3.12 with isolated local resources is qualified; real MCP cancellation, hook-v2 consumers, revision retention and data deletion remain their assigned delivery tasks. Existing startup-budget limitations are unchanged.
+
+ADR required: yes. Implements backlog/decisions/162-managed-agent-plugins.md and backlog/decisions/163-expanded-console-hook-runtime.md without a second permission/runtime owner. Core changes: Plugins revocation/admission/coordinator/service/runtime_owner/review, the direct Console owner adapter, focused tests and Plugins/README.md. R17/R36 adapter scope and resolved cross-task verification are recorded in the implementation plan and delivery ledger.
+<!-- SECTION:NOTES:END -->
