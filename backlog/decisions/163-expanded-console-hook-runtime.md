@@ -1,9 +1,9 @@
 # ADR-163: Expanded Console hook runtime
 
-Status: Proposed — approved capability scope; written specification awaiting review.
+Status: Accepted (2026-09-15) — written specification reviewed; implementation pending.
 Date: 2026-09-15
 Related Task: [TASK-32645](../tasks/task-32645%20-%20Design-managed-plugins-and-expanded-hook-runtime.md)
-Supersedes: N/A while proposed; explicitly extends ADR-148's v1 scope on adoption.
+Supersedes: N/A; explicitly extends ADR-148's v1 scope while preserving legacy behavior.
 Companion: [ADR-162](162-managed-agent-plugins.md)
 
 ## Decision
@@ -106,7 +106,7 @@ Package discovery and shared execution need separate module boundaries.
   editor-only events and permission-bypass semantics remain unsupported.
 - Tests need real runtime entries, positive controls, causal-cycle cases and
   process-death evidence on each supported platform.
-- ADR-148 remains the authoritative legacy contract. Adoption of this ADR
+- ADR-148 remains the authoritative legacy contract. This ADR
   extends its previously deferred scope; it does not rewrite its historical
   behavior or automatically enable new hooks.
 
@@ -114,3 +114,4 @@ Package discovery and shared execution need separate module boundaries.
 
 - [Expanded hook runtime design](../../Docs/superpowers/specs/2026-09-15-expanded-hook-runtime-design.md)
 - [Managed plugins design](../../Docs/superpowers/specs/2026-09-15-managed-plugins-design.md)
+- [Hook implementation plan](../../Docs/superpowers/plans/2026-09-15-expanded-hooks.md)

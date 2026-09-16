@@ -1,7 +1,7 @@
 # Managed plugins and Git marketplaces
 
 Date: 2026-09-15
-Status: Draft for written-spec review; six design sections and their review amendments approved.
+Status: Approved for implementation planning after written-spec review and amendments.
 Task: [TASK-32645](../../../backlog/tasks/task-32645%20-%20Design-managed-plugins-and-expanded-hook-runtime.md)
 Decisions: [ADR-162](../../../backlog/decisions/162-managed-agent-plugins.md), [ADR-163](../../../backlog/decisions/163-expanded-console-hook-runtime.md)
 Companion: [Expanded hook runtime](2026-09-15-expanded-hook-runtime-design.md)
@@ -1119,8 +1119,9 @@ Never publish a blanket Cursor/Codex-compatible claim from parser tests alone.
 
 Every stage includes its own documentation, targeted verification and
 review; final qualification does not postpone integration testing.
-Implementation plans and atomic Backlog tasks are created after written-spec
-approval, with foundation dependencies pointing only to already-created tasks.
+The [delivery plan](../plans/2026-09-15-managed-plugins-delivery.md) maps this
+approved design to subsystem plans and atomic Backlog tasks. Dependencies point
+only to already-created tasks; implementation tasks remain open until verified.
 
 ADR required: yes
 ADR paths: backlog/decisions/162-managed-agent-plugins.md;
@@ -1155,6 +1156,6 @@ The written design incorporates all accepted section reviews:
   callback/request ownership on shared connections, and exact-root writer drain
   with persistent deletion fences before destructive cleanup.
 
-This is a proposed implementation contract, not a report of implemented
-features or passing runtime tests. The two written specs receive a final user
-review before implementation planning.
+This is the approved implementation contract, not a report of implemented
+features or passing runtime tests. Written-spec review is complete; the delivery
+plan records the implementation and qualification work still required.

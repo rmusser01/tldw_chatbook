@@ -1,11 +1,11 @@
 ---
 id: TASK-32645
 title: Design managed plugins and expanded hook runtime
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-15 17:39'
-updated_date: '2026-09-16 01:49'
+updated_date: '2026-09-16 04:40'
 labels:
   - design
   - plugins
@@ -27,6 +27,7 @@ Define a reviewable plugin system and Git marketplace experience for Chatbook, i
 - [x] #5 The approved written-spec review gaps are resolved consistently across both specs and ADRs, with a concrete failure/control acceptance scenario for each.
 - [x] #6 The MCP result, pending post-hook barrier, PreToolUse phase and credential renewal contracts are unambiguous and have failure/control acceptance scenarios in the specs and matching ADR decisions.
 - [x] #7 The specs and ADRs define immediate stopping despite persistence failure, workspace-scoped revocation and writer-drained data deletion, with failure and successful-control acceptance scenarios for each.
+- [x] #8 Approved specifications have complete subsystem implementation plans with verified code seams, atomic Backlog tasks, backward-only dependencies and targeted acceptance/verification coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -70,6 +71,13 @@ Created through Backlog CLI, then renumbered from its uncommitted offer of TASK-
 2. Define workspace-scoped generations, callback ownership and safe shared MCP connection behavior.
 3. Require exact-root access fencing and confirmed writer drain before saved plugin data deletion.
 4. Add failure and successful-control scenarios, align both ADRs, verify the documentation and commit only the amendment files.
+
+### Implementation planning handoff
+
+1. Treat the user's continue instruction as acceptance of the amended written design and advance the specs/ADRs to that state.
+2. Verify current runtime, trust, storage, MCP and navigation seams; split execution into focused subsystem plans.
+3. Create atomic implementation Backlog tasks with only already-created dependencies and link exact files, interfaces and targeted validation in the plans.
+4. Self-review full spec coverage, task identity/dependencies, plan examples and local links; commit the planning documentation and close this design task.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -123,4 +131,12 @@ Lifecycle amendment: resolved the three approved follow-up findings in both spec
 Workspace and installation generations now distinguish Disable here, global-default edits and Disable everywhere/uninstall. Shared MCP reuse requires equivalent reviewed authority and qualified session isolation; cancelling one scope cannot kill another authorized scope's transport. Saved-data deletion binds exact root ownership/generations, fences new users and confirms writers/readers drained, including idle MCP processes. Durable deletion fences survive partial cleanup; stale reattachment cannot redirect deletion.
 
 Added failure and successful-control scenarios for stalled persistence, two-workspace requests/hooks and late or surviving data writers. Documentation checks passed for five files, four JSON examples, 35 local links, balanced fences, unfinished-marker absence, task structure and whitespace. No product code changed or runtime tests ran; implementation evidence and planning remain future work after written-spec review.
+
+Written-spec review is complete following the user's continue instruction. Marked both specs approved for implementation planning and ADR-162/ADR-163 Accepted, with their index entries aligned. Created a delivery index and four subsystem plans covering the native package lifecycle, shared hooks, direct MCP and marketplace/UI delivery. Each implementation task has exact file ownership, interfaces, a behavioral test sketch, implementation increments and a failure/control matrix; the delivery index maps every approved spec section and review amendment to task ownership.
+
+Filed 25 atomic To Do tasks through Backlog CLI with backward-only dependencies. Verified existing trust/private-SQLite, Console/tool/compaction, typed-result, transport-profile and navigation seams. A final cross-ref/worktree scan caught one concurrent ID claim; renumbered this uncommitted three-task tail, updated dependencies/links and recorded provenance without touching the other task.
+
+[Implementation delivery plan](../../Docs/superpowers/plans/2026-09-15-managed-plugins-delivery.md)
+
+Planning verification: four JSON examples parsed, 50 Python examples passed syntax checks, local document links and Markdown fences/whitespace passed, all new task identities/statuses/criteria and dependency order were checked, and the final ID scan found no competing claims across refreshed refs and 26 worktrees. Python examples are proposed implementation/test sketches, not executed runtime evidence. No product code changed and no runtime tests or full-suite sweep ran. This completes the design/planning task and supersedes its earlier pending-review status; implementation tasks remain open.
 <!-- SECTION:NOTES:END -->

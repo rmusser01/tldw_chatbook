@@ -116,8 +116,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-150](150-mcp-hub-bulk-permission-actions.md) | Accepted | Add filter-scoped shift+space/C bulk permission actions executed as N ordinary profile-scoped set_tool_state writes. |
 | [ADR-149](149-offer-first-canvas-guide-and-inline-skill.md) | Accepted | Offer Canvas before proactive authoring; load bounded packaged guidance in the owning Console run and provide an optional trusted inline skill. |
 | [ADR-159](159-console-native-reasoning-prefill.md) | Accepted | Keep native reasoning prefill adapter-qualified, with exclusive per-turn seed ownership, conversation-owned pins, and exact tool/recovery semantics. |
-| [ADR-162](162-managed-agent-plugins.md) | Proposed | Manage immutable agent-capability packages with Git marketplaces, reviewed adapters, workspace activation and authenticated lifecycle recovery. |
-| [ADR-163](163-expanded-console-hook-runtime.md) | Proposed | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
+| [ADR-162](162-managed-agent-plugins.md) | Accepted | Manage immutable agent-capability packages with Git marketplaces, reviewed adapters, workspace activation and authenticated lifecycle recovery. |
+| [ADR-163](163-expanded-console-hook-runtime.md) | Accepted | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
 
 ## Historical Decision Material
 
