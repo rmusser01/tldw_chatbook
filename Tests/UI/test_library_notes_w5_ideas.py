@@ -131,6 +131,14 @@ async def test_the_compact_property_block_keeps_one_column_and_no_truncation():
         await _open_info(screen, pilot)
 
         rows = _meta_rows(screen)
+        # The PAINT, not the string the widget was handed. Review round 1:
+        # without this line the whole compact CSS half of the fix is
+        # unpinned -- with the branch's Python and dev's stylesheets the
+        # file was 19 passed / 0 failed while the pane painted one row,
+        # `Created 2026-06-30 20:00 · 10w ago`, WORSE than dev. This line
+        # gives `assert 1 == 4` in that state.
+        meta = screen.query_one("#library-note-context-meta", Static)
+        assert meta.region.height == len(rows), (rows, meta.region.height)
         assert [row.split(" ", 1)[0] for row in rows] == [
             "Created",
             "Modified",
@@ -206,6 +214,18 @@ async def test_keywords_are_reachable_and_editable_from_the_editor(size):
                 break
         assert "library-note-keywords" in visited, visited
 
+        # The row's own GEOMETRY, which is CSS and was unpinned (review
+        # round 1): compact spells it as one label-beside-field row, wide
+        # as the stacked label+bordered field the Title row uses. Without
+        # the compact rules the row paints 7 rows at 100x30 and takes them
+        # from the body, silently.
+        row = screen.query_one("#library-note-keywords-row")
+        expected_rows = 1 if size in (COMPACT, NARROW) else 5
+        assert row.region.height == expected_rows, (size, row.region.height)
+        assert screen.query_one("#library-note-keywords", Input).region.height == (
+            1 if size in (COMPACT, NARROW) else 3
+        ), (size, screen.query_one("#library-note-keywords", Input).region.height)
+
         # ...and it EDITS: the canonical draft, not a detached widget value.
         before = screen._library_note_session.snapshot.keywords_text
         await pilot.press("g", "a", "r", "d", "e", "n")
@@ -259,6 +279,12 @@ async def test_a_database_only_note_says_so_and_claims_no_file():
 
         line = str(_location_row(screen).renderable)
         assert line == "In the Library database only — no file on disk", line
+        # AC#3's "costs at most one line" is CSS, so assert the PAINT:
+        # without `#library-note-location { height: 1 }` a long line wraps
+        # and takes a second row from the body.
+        assert _location_row(screen).region.height == 1, _location_row(
+            screen
+        ).region.height
         # AC#2: no file, so no path and no write time are invented.
         assert "/" not in line and "written" not in line
 
