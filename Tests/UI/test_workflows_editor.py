@@ -341,6 +341,69 @@ async def test_incomplete_field_is_repairable_across_fresh_screens(
         assert_hit(fresh, field)
 
 
+async def test_deferred_view_restore_preserves_newer_field_focus_and_invalid_paint(
+    tmp_path, monkeypatch
+):
+    """An older layout callback cannot displace the user's newer repair field."""
+    harness = WorkflowEditorHarness(tmp_path)
+    async with harness.run_test(size=(110, 36)) as pilot:
+        editor = await select_step(harness, pilot, "summarize")
+        await pilot.wait_for_scheduled_animations()
+        earlier = field_for(editor, "/steps/2/config/prompt")
+        earlier.focus(scroll_visible=False)
+        earlier.scroll_visible(animate=False)
+        await pilot.pause()
+        assert harness.focused is earlier
+        editor.capture_view()
+
+        held = []
+        queued = asyncio.Event()
+        original_after_refresh = editor.call_after_refresh
+
+        def hold_restore(callback, *args, **kwargs):
+            held.append((callback, args, kwargs))
+            queued.set()
+            return True
+
+        with monkeypatch.context() as barrier:
+            barrier.setattr(editor, "call_after_refresh", hold_restore)
+            editor.restore_view(focus=True)
+        await asyncio.wait_for(queued.wait(), 5)
+        assert len(held) == 1
+
+        field = field_for(editor, "/steps/2/config/max_tokens")
+        field.focus(scroll_visible=False)
+        field.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        assert harness.focused is field
+        assert_hit(harness.screen, field)
+        latest_scroll = editor.query_one("#workflow-form").scroll_y
+        completed = asyncio.Event()
+
+        def release_restore():
+            callback, args, kwargs = held[0]
+            callback(*args, **kwargs)
+            completed.set()
+
+        original_after_refresh(release_restore)
+        await asyncio.wait_for(completed.wait(), 5)
+        await pilot.wait_for_scheduled_animations()
+        assert harness.focused is field
+        assert editor.query_one("#workflow-form").scroll_y == latest_scroll
+        assert_hit(harness.screen, field)
+
+        # Actual keyboard invalidation, with no new focus/scroll after release.
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert field.value == ""
+        assert harness.workflow_drafts.current.error
+        assert not field.disabled
+        assert harness.focused is field
+        await pilot.wait_for_scheduled_animations()
+        assert_hit(harness.screen, field)
+
+
 async def test_restart_protected_parseable_fragment_needs_explicit_advanced_acceptance(
     tmp_path,
 ):

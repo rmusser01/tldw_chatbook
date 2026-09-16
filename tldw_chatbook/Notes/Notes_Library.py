@@ -5,19 +5,26 @@ from __future__ import annotations
 
 # Imports
 import hashlib
+import json
 import logging
 import re
-import threading
 import sqlite3  # For exception handling in _get_db
+import threading
 import time
-import json
 import unicodedata
 import uuid
-from datetime import UTC, datetime
-from pathlib import Path
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, List, Dict, Optional, Any, Sequence, Union
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+
+from tldw_chatbook.config import (
+    chachanotes_db as global_db_from_config,
+)
+from tldw_chatbook.config import (
+    load_console_library_migration_seed,
+)
 
 #
 # Third-Party Imports
@@ -29,20 +36,17 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     ConflictError,
     SchemaError,
 )
-from tldw_chatbook.config import (
-    chachanotes_db as global_db_from_config,
-    load_console_library_migration_seed,
-)
-from tldw_chatbook.Utils.private_paths import (
-    lexical_path,
-    verify_trusted_directory,
-)
 from tldw_chatbook.Notes.note_folder_models import (
     NotesOrganizationRepositoryError,
     portable_collision_key,
     portable_relative_path,
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Utils.private_paths import (
+    lexical_path,
+    verify_trusted_directory,
+)
+
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 if TYPE_CHECKING:

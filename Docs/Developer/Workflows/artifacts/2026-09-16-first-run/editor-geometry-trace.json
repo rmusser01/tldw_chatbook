@@ -1,0 +1,578 @@
+[
+  {
+    "event": "after_render",
+    "field": [
+      29,
+      40,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 0.0,
+    "scroll_target_y": 0.0,
+    "focused": "nav-home",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "test_incomplete_field_is_repairable_across_fresh_screens",
+      "_select_section",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "focus:workflow-field-3",
+    "field": [
+      29,
+      38,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 0.0,
+    "scroll_target_y": 0.0,
+    "focused": "nav-home",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "invoke",
+      "_invoke",
+      "after_layout",
+      "focus_field",
+      "focus"
+    ]
+  },
+  {
+    "event": "scroll:workflow-field-3",
+    "field": [
+      29,
+      38,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 0.0,
+    "scroll_target_y": 0.0,
+    "focused": "nav-home",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "_invoke",
+      "after_layout",
+      "focus_field",
+      "_scroll_field",
+      "scroll"
+    ]
+  },
+  {
+    "event": "focus:workflow-field-4",
+    "field": [
+      29,
+      35,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 3.0,
+    "scroll_target_y": 3,
+    "focused": "workflow-field-3",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "run_forever",
+      "_run_once",
+      "_run",
+      "test_incomplete_field_is_repairable_across_fresh_screens",
+      "focus"
+    ]
+  },
+  {
+    "event": "scroll:workflow-field-4",
+    "field": [
+      29,
+      35,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 3.0,
+    "scroll_target_y": 3,
+    "focused": "workflow-field-3",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "run_forever",
+      "_run_once",
+      "_run",
+      "test_incomplete_field_is_repairable_across_fresh_screens",
+      "scroll"
+    ]
+  },
+  {
+    "event": "before_render",
+    "field": [
+      29,
+      25,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 18.386363467312904,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "_invoke",
+      "field_changed",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "after_render",
+    "field": [
+      29,
+      25,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 18.386363467312904,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": true,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "_invoke",
+      "field_changed",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "assert_hit",
+    "field": [
+      29,
+      21,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      13,
+      81,
+      20
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": true,
+    "status": [
+      0,
+      4,
+      110,
+      2
+    ],
+    "callers": [
+      "run_forever",
+      "_run_once",
+      "_run",
+      "test_incomplete_field_is_repairable_across_fresh_screens",
+      "hit"
+    ]
+  },
+  {
+    "event": "after_render",
+    "field": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "form": [
+      56,
+      11,
+      53,
+      22
+    ],
+    "scroll_y": 0.0,
+    "scroll_target_y": 0.0,
+    "focused": "nav-home",
+    "draft_error": true,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "invoke",
+      "_invoke",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "focus:workflow-field-4",
+    "field": [
+      29,
+      21,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      13,
+      81,
+      20
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "nav-home",
+    "draft_error": true,
+    "status": [
+      0,
+      4,
+      110,
+      2
+    ],
+    "callers": [
+      "run_forever",
+      "_run_once",
+      "_run",
+      "test_incomplete_field_is_repairable_across_fresh_screens",
+      "focus"
+    ]
+  },
+  {
+    "event": "scroll:workflow-field-4",
+    "field": [
+      29,
+      21,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      13,
+      81,
+      20
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "nav-home",
+    "draft_error": true,
+    "status": [
+      0,
+      4,
+      110,
+      2
+    ],
+    "callers": [
+      "run_forever",
+      "_run_once",
+      "_run",
+      "test_incomplete_field_is_repairable_across_fresh_screens",
+      "scroll"
+    ]
+  },
+  {
+    "event": "before_render",
+    "field": [
+      29,
+      21,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      13,
+      81,
+      20
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": true,
+    "status": [
+      0,
+      4,
+      110,
+      2
+    ],
+    "callers": [
+      "_invoke",
+      "field_changed",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "after_render",
+    "field": [
+      29,
+      21,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      13,
+      81,
+      20
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      2
+    ],
+    "callers": [
+      "_invoke",
+      "field_changed",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "before_render",
+    "field": [
+      29,
+      19,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "_invoke",
+      "field_changed",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "after_render",
+    "field": [
+      29,
+      19,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "_invoke",
+      "field_changed",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "before_render",
+    "field": [
+      29,
+      19,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "_invoke",
+      "field_changed",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "after_render",
+    "field": [
+      29,
+      19,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "_invoke",
+      "field_changed",
+      "_refresh_authoring",
+      "_render_authoring",
+      "render"
+    ]
+  },
+  {
+    "event": "assert_hit",
+    "field": [
+      29,
+      19,
+      78,
+      3
+    ],
+    "form": [
+      28,
+      11,
+      81,
+      22
+    ],
+    "scroll_y": 19,
+    "scroll_target_y": 19,
+    "focused": "workflow-field-4",
+    "draft_error": false,
+    "status": [
+      0,
+      4,
+      110,
+      1
+    ],
+    "callers": [
+      "run_forever",
+      "_run_once",
+      "_run",
+      "test_incomplete_field_is_repairable_across_fresh_screens",
+      "hit"
+    ]
+  }
+]

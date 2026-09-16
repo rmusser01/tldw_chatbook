@@ -1,0 +1,16 @@
+[
+  {
+    "path": "Tests/UI/test_library_canvas_scoped_sync.py",
+    "base": "b3e94fa245af0770cdf710a7f82033a8d1aee805",
+    "base_sha256": "016b818af3f1590c2b5b5663ac0238b968c88e5c2c45c655cdd15fa37f1bf7a1",
+    "current_sha256": "016b818af3f1590c2b5b5663ac0238b968c88e5c2c45c655cdd15fa37f1bf7a1",
+    "identical": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "base": "b3e94fa245af0770cdf710a7f82033a8d1aee805",
+    "base_sha256": "0128983826df6e20377502882dcc1c6a2c20559ee4dad3e3cfd49a36d52f5583",
+    "current_sha256": "0128983826df6e20377502882dcc1c6a2c20559ee4dad3e3cfd49a36d52f5583",
+    "identical": true
+  }
+]

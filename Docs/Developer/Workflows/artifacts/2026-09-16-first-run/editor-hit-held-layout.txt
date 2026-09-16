@@ -1,0 +1,26 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_incomplete_field_is_repairable_across_fresh_screens[step:summarize-/steps/2/config/max_tokens--256] _
+Tests/UI/test_workflows_editor.py:306: in test_incomplete_field_is_repairable_across_fresh_screens
+    assert_hit(screen, field)
+Tests/Workflows/_task6_editor_probe.py:80: in hit
+    return original_hit(screen, widget)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_workflows_editor.py:58: in assert_hit
+    painted, _ = screen.get_widget_at(x, y)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.12/site-packages/textual/screen.py:646: in get_widget_at
+    return self._compositor.get_widget_at(x, y)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.12/site-packages/textual/_compositor.py:848: in get_widget_at
+    raise errors.NoWidget(f"No widget under screen coordinate ({x}, {y})")
+E   textual.errors.NoWidget: No widget under screen coordinate (68, 38)
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED Tests/UI/test_workflows_editor.py::test_incomplete_field_is_repairable_across_fresh_screens[step:summarize-/steps/2/config/max_tokens--256]
+1 failed, 1 warning in 2.26s
