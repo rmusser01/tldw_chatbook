@@ -79,6 +79,32 @@ def test_real_config_loader_preserves_mixed_legacy_and_v2_hooks(tmp_path, monkey
     assert saved["handler"][0]["effects"] == ["deny"]
 
 
+def test_real_config_loader_keeps_invalid_required_hook_across_save(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[hooks]\nenabled = false\n"
+        '[[hooks.hook]]\nevent = "PreToolUse"\ncommand = ["/bin/legacy"]\n'
+        '[[hooks.handler]]\nid = "guard"\nevent = "PreToolUse"\n'
+        'type = "command"\nargv = []\neffects = ["deny"]\nrequired = true\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+    loaded = load_hooks_config(config.load_settings(force_reload=True))
+    assert loaded.hooks == (HookSpec("PreToolUse", ("/bin/legacy",)),)
+    assert loaded.v2_invalid_required
+    assert loaded.v2_invalid_admissions[0].event == "PreToolUse"
+    assert loaded.v2_requirements_unsatisfied
+
+    assert config.save_setting_to_cli_config("hooks", "enabled", True)
+    reloaded = load_hooks_config(config.load_settings(force_reload=True))
+    assert reloaded.hooks == loaded.hooks
+    assert reloaded.v2_invalid_required
+    assert reloaded.v2_invalid_admissions == loaded.v2_invalid_admissions
+    assert reloaded.v2_requirements_unsatisfied
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "content", ["Additional context", "Send blocked by hook: guard refused"]

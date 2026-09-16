@@ -90,6 +90,27 @@ class HookSpec:
 
 
 @dataclass(frozen=True)
+class V2InvalidAdmission:
+    """Bounded metadata for a rejected v2 batch entry, never its raw body.
+
+    `policy` is explicit_required, event_control, optional or unresolved.
+    `event` is None when no supported event can be trusted. H2 must refuse
+    activation of the rejected v2 set; it uses these records to retain each
+    possible controlling event scope, not as a global run-denial boolean.
+    """
+
+    index: int | None
+    event: str | None
+    policy: str
+
+
+_V2_EVENT_CONTROL_EFFECTS = {
+    "PreToolUse": frozenset({"deny", "updated_input"}),
+    "SubagentStart": frozenset({"deny", "child_limits"}),
+}
+
+
+@dataclass(frozen=True)
 class RunHooksConfig:
     """Validated user configuration.
 
@@ -103,6 +124,7 @@ class RunHooksConfig:
     v2_handlers: tuple[HookHandler, ...] = ()
     v2_invalid: bool = False
     v2_invalid_required: bool = False
+    v2_invalid_admissions: tuple[V2InvalidAdmission, ...] = ()
 
     @property
     def v2_requirements_unsatisfied(self) -> bool:
@@ -113,6 +135,48 @@ class RunHooksConfig:
         return self.v2_invalid_required or (
             not self.enabled and any(handler.required for handler in self.v2_handlers)
         )
+
+
+def _invalid_v2_admissions(raw: object) -> tuple[V2InvalidAdmission, ...]:
+    """Retain bounded, body-free scope hints when a whole batch is rejected."""
+    from tldw_chatbook.Agents.hooks_v2.validation import EFFECTS
+
+    if not isinstance(raw, list):
+        return (V2InvalidAdmission(None, None, "unresolved"),)
+    records: list[V2InvalidAdmission] = []
+    for index, item in enumerate(raw[:256]):
+        if type(item) is not dict:
+            records.append(V2InvalidAdmission(index, None, "unresolved"))
+            continue
+        proposed_event = item.get("event")
+        event = (
+            proposed_event
+            if type(proposed_event) is str and proposed_event in EFFECTS
+            else None
+        )
+        required = item.get("required", False)
+        effects = item.get("effects")
+        if required is True:
+            policy = "explicit_required"
+        elif (
+            required is not False
+            or event is None
+            or not isinstance(effects, list)
+            or len(effects) > 6
+        ):
+            policy = "unresolved"
+        elif any(
+            effect in _V2_EVENT_CONTROL_EFFECTS.get(event, ())
+            for effect in effects
+            if type(effect) is str
+        ):
+            policy = "event_control"
+        else:
+            policy = "optional"
+        records.append(V2InvalidAdmission(index, event, policy))
+    if len(raw) > 256:
+        records.append(V2InvalidAdmission(None, None, "unresolved"))
+    return tuple(records)
 
 
 def _parse_hook(raw: object) -> HookSpec | None:
@@ -201,17 +265,15 @@ def load_hooks_config(config: Mapping) -> RunHooksConfig:
                 raise ValueError("handlers must be a list")
     except ValueError:
         logger.warning("run-hooks: invalid v2 handler batch; activation refused")
-        invalid_required = not isinstance(raw_v2, list) or any(
-            not isinstance(item, Mapping)
-            or item.get("required", False) is not False
-            or item.get("require_context", False) is not False
-            for item in raw_v2
-        )
+        invalid_admissions = _invalid_v2_admissions(raw_v2)
         return RunHooksConfig(
             enabled=enabled,
             hooks=hooks,
             v2_invalid=True,
-            v2_invalid_required=invalid_required,
+            v2_invalid_required=any(
+                item.policy == "explicit_required" for item in invalid_admissions
+            ),
+            v2_invalid_admissions=invalid_admissions,
         )
     return RunHooksConfig(enabled=enabled, hooks=hooks, v2_handlers=v2_handlers)
 

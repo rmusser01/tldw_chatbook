@@ -115,6 +115,14 @@ requirement. Context-producing handlers remain effectful even when failure is
 optional; they never enter the lossy observation queue. require_context defines
 valid output rather than changing its failure scope. Optional observation
 failure is diagnostic, not authority to disable an unrelated component.
+If a user v2 batch is rejected whole, retain bounded body-free metadata for
+each inspected declaration's supported event and failure scope: explicit
+required, selected event-policy control, optional or unresolved. An unresolved
+shape prevents activation of that v2 definition set until repaired; it is not
+silently downgraded to an optional handler. `require_context` alone remains an
+output-success rule and never becomes explicit requiredness. A rejected
+optional-only batch does not create a global run requirement. Active dependency
+edges remain host-owned state outside this config record.
 
 The pure phase classifier accepts host-resolved `dependency_required` (default
 false), which is absent from definitions and their digest. `updated_input` wins;

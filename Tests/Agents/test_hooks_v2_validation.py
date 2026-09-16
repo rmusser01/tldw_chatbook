@@ -1,6 +1,7 @@
 """Explicit v2 hook declaration and result contracts."""
 
 import copy
+import json
 
 import pytest
 
@@ -109,6 +110,22 @@ def test_declaration_phase_order(effects, required, dependency, expected):
 
     handler = parse_handlers([_command(effects=effects, required=required)])[0]
     assert handler_phase(handler, dependency_required=dependency) == expected
+
+
+@pytest.mark.parametrize(
+    "event", ["ApprovalRequested", "Stop", "Interrupt", "SessionEnd"]
+)
+def test_forbidden_incoming_dependency_requirement_is_refused(event):
+    from tldw_chatbook.Agents.hooks_v2.validation import handler_phase, parse_handlers
+
+    handler = parse_handlers([_command(event)])[0]
+    assert handler_phase(handler) == "observe"
+    with pytest.raises(ValueError):
+        handler_phase(handler, dependency_required=True)
+    assert (
+        handler_phase(parse_handlers([_command()])[0], dependency_required=True)
+        == "validate"
+    )
 
 
 @pytest.mark.parametrize(
@@ -359,6 +376,17 @@ def test_result_effects_and_closed_nested_shapes():
     ):
         with pytest.raises(ValueError):
             parse_result({**baseline, "child_limits": limits}, child)
+    assert parse_result(
+        {**baseline, "child_limits": {"budget_caps": {"max_wall_seconds": 2.5}}}, child
+    ).child_limits
+    with pytest.raises(ValueError):
+        parse_result(
+            {
+                **baseline,
+                "child_limits": {"budget_caps": {"max_wall_seconds": 10**1000}},
+            },
+            child,
+        )
     stop = _result_handler("Stop", ["continuation", "stop_continuations"])
     assert (
         parse_result(
@@ -481,3 +509,80 @@ def test_mcp_templates_preserve_type_and_refuse_missing_paths():
     raw["input"] = {"bad": "${data.undocumented}"}
     with pytest.raises(ValueError):
         parse_handlers([raw])
+
+
+def test_large_event_is_refused_before_whole_object_serialization(monkeypatch):
+    from tldw_chatbook.Agents.hooks_v2 import validation
+
+    assert _event("UserPromptSubmit", {"prompt": "small"}).data["prompt"] == "small"
+    original = validation.json.dumps
+
+    def guarded_dumps(value, *args, **kwargs):
+        if isinstance(value, (dict, list)):
+            raise TypeError("whole JSON object serialized before byte refusal")
+        return original(value, *args, **kwargs)
+
+    monkeypatch.setattr(validation.json, "dumps", guarded_dumps)
+    with pytest.raises(ValueError):
+        _event("UserPromptSubmit", {"prompt": "x" * (1024 * 1024)})
+
+
+def test_event_input_accepts_exact_byte_limit_then_refuses_one_more():
+    from tldw_chatbook.Agents.hooks_v2.validation import INPUT_BYTES, parse_event
+
+    value = {
+        "protocol_version": 2,
+        "event_id": "e1",
+        "event": "UserPromptSubmit",
+        "timestamp": "2026-09-16T00:00:00Z",
+        "runtime_session_id": "s1",
+        "initiator": "manual",
+        "origin": "user",
+        "causal_chain_id": "c1",
+        "causal_depth": 0,
+        "data": {"prompt": ""},
+    }
+    overhead = len(
+        json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    value["data"]["prompt"] = "x" * (INPUT_BYTES - overhead)
+    assert parse_event(value).data["prompt"] == value["data"]["prompt"]
+    value["data"]["prompt"] += "x"
+    with pytest.raises(ValueError):
+        parse_event(value)
+
+
+def test_repeated_typed_template_is_bounded_before_materialization(monkeypatch):
+    from tldw_chatbook.Agents.hooks_v2 import matching
+    from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+    event = _event(
+        data={
+            "tool_id": "local:fs_read",
+            "provider": "local",
+            "original_arguments": {"text": "x" * 8192},
+        }
+    )
+    raw = {
+        "id": "template",
+        "event": "PreToolUse",
+        "type": "mcp_tool",
+        "server": "server",
+        "tool": "inspect",
+        "effects": [],
+        "input": {str(i): "${data.original_arguments}" for i in range(180)},
+    }
+    handler = parse_handlers([raw])[0]
+    accepted = parse_handlers(
+        [{**raw, "input": {str(i): "${data.original_arguments}" for i in range(120)}}]
+    )[0]
+    assert len(matching.expand_input(accepted, event)) == 120
+    original = matching._json_tree
+
+    def bounded_before_expand(value, **kwargs):
+        assert value is handler.input, "template was materialized before bounding"
+        return original(value, **kwargs)
+
+    monkeypatch.setattr(matching, "_json_tree", bounded_before_expand)
+    with pytest.raises(ValueError):
+        matching.expand_input(handler, event)

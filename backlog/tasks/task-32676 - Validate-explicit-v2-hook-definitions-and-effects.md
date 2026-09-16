@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:22'
-updated_date: '2026-09-16 21:18'
+updated_date: '2026-09-16 21:39'
 labels:
   - plugins
   - implementation
@@ -51,4 +51,6 @@ Reason: Direct implementation of accepted v2 hook validation, with R41 closing n
 9. Update author/config docs within the modified spec/config surfaces, then report actual commands/output, changed paths, public schema APIs, raw provenance limits and H2-H6 handoffs in task-9-report.md. Run syntax/Ruff/Black/whitespace with established shared-file baseline handling. Controller owns commit, independent spec/quality review, AC/notes and Done only after all gates pass.
 
 10. Include Tests/Chat/test_run_hooks_metadata.py as the explicit additional test path for the existing real configuration load/save production entry. Prove mixed legacy/v2 preservation across hooks.enabled saves, including required and invalid-required v2 state while disabled. This implements existing R41 and AC1-2; do not expand to unrelated settings or runtime wiring.
+
+11. Fix independent-review H1-R1 through H1-R4 within the existing authorized H1 source/test/contract paths before dependent runtime work: preserve bounded explicit-required versus event-policy invalid-state scope without promoting optional require_context; reject forbidden dependency_required event combinations; translate out-of-range numeric durations into validation refusal with retained config state; enforce byte/node/depth budgets during object/template copying before excessive allocation. Establish actual public-entry RED and positive controls, complete the already-planned invalid-required mixed save/load case, then freeze and rerun the exact three H1 feature/legacy/config test files plus static baseline checks. Append the fix report and corrected H2 config-state API; controller owns fresh scoped re-review.
 <!-- SECTION:PLAN:END -->

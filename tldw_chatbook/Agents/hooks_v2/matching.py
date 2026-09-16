@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from collections.abc import Mapping
 from typing import Any
 
 from .models import HookEvent, HookHandler
-from .validation import _json_tree
+from .validation import INPUT_BYTES, _json_tree
 
 _REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_.]*)\}")
 
@@ -60,30 +59,32 @@ def expand_input(handler: HookHandler, event: HookEvent) -> dict[str, Any]:
     if handler.type != "mcp_tool":
         raise ValueError("only MCP handlers have input templates")
 
-    def plain(value: Any) -> Any:
-        if isinstance(value, Mapping):
-            return {key: plain(item) for key, item in value.items()}
-        if isinstance(value, tuple):
-            return [plain(item) for item in value]
-        return value
-
-    def expand(value: Any) -> Any:
-        if isinstance(value, Mapping):
-            return {key: expand(item) for key, item in value.items()}
-        if isinstance(value, tuple):
-            return [expand(item) for item in value]
-        if not isinstance(value, str):
-            return value
+    def expand(value: str) -> object:
         match = _REFERENCE.fullmatch(value)
         if match:
-            return plain(_field(event, match.group(1)))
-
-        def replace(found: re.Match[str]) -> str:
+            return _field(event, match.group(1))
+        parts: list[str] = []
+        size = 0
+        end = 0
+        for found in _REFERENCE.finditer(value):
+            literal = value[end : found.start()]
             projected = _field(event, found.group(1))
             if type(projected) not in (str, int, float, bool):
                 raise ValueError("embedded template path must be scalar")
-            return str(projected).lower() if type(projected) is bool else str(projected)
+            rendered = (
+                str(projected).lower() if type(projected) is bool else str(projected)
+            )
+            size += len(literal.encode("utf-8")) + len(rendered.encode("utf-8"))
+            if size > INPUT_BYTES:
+                raise ValueError("template output byte limit exceeded")
+            parts.extend((literal, rendered))
+            end = found.end()
+        if not parts:
+            return value
+        tail = value[end:]
+        if size + len(tail.encode("utf-8")) > INPUT_BYTES:
+            raise ValueError("template output byte limit exceeded")
+        parts.append(tail)
+        return "".join(parts)
 
-        return _REFERENCE.sub(replace, value)
-
-    return _json_tree(expand(handler.input or {}))
+    return _json_tree(handler.input or {}, string_transform=expand, allow_frozen=True)

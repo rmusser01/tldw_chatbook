@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -77,6 +77,15 @@ def _fail(message: str) -> None:
     raise ValueError(message)
 
 
+def _finite_number(value: object) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _object(
     value: object,
     *,
@@ -90,47 +99,99 @@ def _object(
     return value
 
 
-def _json_tree(value: object, *, max_bytes: int = INPUT_BYTES) -> Any:
-    """Copy JSON data, rejecting cycles, non-finite values and whole oversized input."""
+def _json_tree(
+    value: object,
+    *,
+    max_bytes: int = INPUT_BYTES,
+    string_transform: Callable[[str], object] | None = None,
+    allow_frozen: bool = False,
+) -> Any:
+    """Copy JSON with incremental byte/node/depth checks before allocation.
+
+    The optional string transform is used only for typed template values. Host
+    projections it returns are copied without re-expansion, preserving one pass.
+    """
     count = 0
+    byte_count = 0
     seen: set[int] = set()
 
-    def copy(node: object, depth: int) -> Any:
+    def charge(size: int) -> None:
+        nonlocal byte_count
+        byte_count += size
+        if byte_count > max_bytes:
+            _fail("JSON byte limit exceeded")
+
+    def charge_string(value: str) -> None:
+        if len(value) > max_bytes:
+            _fail("JSON byte limit exceeded")
+        charge(2)  # Quotes.
+        for offset in range(0, len(value), 1024):
+            chunk = value[offset : offset + 1024]
+            try:
+                escaped = json.dumps(chunk, ensure_ascii=False)[1:-1]
+                charge(len(escaped.encode("utf-8")))
+            except (UnicodeError, ValueError) as exc:
+                raise ValueError("invalid UTF-8 JSON") from exc
+
+    def copy(node: object, depth: int, expand_strings: bool) -> Any:
         nonlocal count
+        if depth > MAX_DEPTH:
+            _fail("JSON depth limit exceeded")
+        if type(node) is str and expand_strings and string_transform is not None:
+            return copy(string_transform(node), depth, False)
         count += 1
-        if count > MAX_NODES or depth > MAX_DEPTH:
-            _fail("JSON depth or node limit exceeded")
-        if node is None or type(node) in (str, bool, int):
+        if count > MAX_NODES:
+            _fail("JSON node limit exceeded")
+        if type(node) is str:
+            charge_string(node)
             return node
-        if type(node) is float:
-            if not math.isfinite(node):
+        if node is None or type(node) in (bool, int, float):
+            if type(node) is float and not math.isfinite(node):
                 _fail("non-finite JSON number")
+            try:
+                charge(len(json.dumps(node, allow_nan=False).encode("utf-8")))
+            except (OverflowError, ValueError) as exc:
+                raise ValueError("invalid JSON number") from exc
             return node
-        if isinstance(node, (dict, list)):
+        is_object = isinstance(node, dict) or (
+            allow_frozen and isinstance(node, Mapping)
+        )
+        is_array = isinstance(node, list) or (allow_frozen and isinstance(node, tuple))
+        if is_object or is_array:
             identity = id(node)
             if identity in seen:
                 _fail("cyclic JSON value")
             seen.add(identity)
             try:
-                if isinstance(node, list):
-                    return [copy(item, depth + 1) for item in node]
-                if any(type(key) is not str for key in node):
-                    _fail("JSON object keys must be strings")
-                return {key: copy(item, depth + 1) for key, item in node.items()}
+                if is_array:
+                    charge(1)
+                    result = []
+                    for index, item in enumerate(node):
+                        if index:
+                            charge(1)
+                        result.append(copy(item, depth + 1, expand_strings))
+                    charge(1)
+                    return result
+                charge(1)
+                result = {}
+                for index, (key, item) in enumerate(node.items()):
+                    if type(key) is not str:
+                        _fail("JSON object keys must be strings")
+                    count += 1
+                    if count > MAX_NODES:
+                        _fail("JSON node limit exceeded")
+                    if index:
+                        charge(1)
+                    charge_string(key)
+                    charge(1)
+                    result[key] = copy(item, depth + 1, expand_strings)
+                charge(1)
+                return result
             finally:
                 seen.remove(identity)
         _fail("non-JSON value")
 
-    result = copy(value, 0)
-    try:
-        encoded = json.dumps(
-            result, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-        ).encode("utf-8")
-    except (UnicodeError, ValueError) as exc:
-        raise ValueError("invalid UTF-8 JSON") from exc
-    if len(encoded) > max_bytes:
-        _fail("JSON byte limit exceeded")
-    return result
+    return copy(value, 0, True)
 
 
 def _freeze(value: Any) -> Any:
@@ -286,11 +347,7 @@ def parse_handlers(
         if raw.get("require_context") and "context" not in effects:
             _fail("require_context needs context effect")
         timeout = raw.get("timeout_seconds", 10)
-        if (
-            type(timeout) not in (int, float)
-            or not math.isfinite(timeout)
-            or not 0 < timeout <= 60
-        ):
+        if not _finite_number(timeout) or not 0 < timeout <= 60:
             _fail("invalid handler timeout")
         match = raw.get("match")
         if match is not None:
@@ -389,6 +446,8 @@ def parse_native_handlers(
 
 def handler_phase(handler: HookHandler, *, dependency_required: bool = False) -> str:
     """Classify a reviewed declaration with the host's active dependency state."""
+    if dependency_required and handler.event in NON_REQUIRED_EVENTS:
+        _fail("incoming requirement forbidden for this event")
     if "updated_input" in handler.effects:
         return "transform"
     if "deny" in handler.effects or handler.required or dependency_required:
@@ -414,7 +473,7 @@ def _child_limits(value: object) -> Mapping[str, Any]:
             _fail("empty child budget caps")
         for key, amount in caps.items():
             if key in DURATION_CAPS:
-                valid = type(amount) in (int, float) and math.isfinite(amount)
+                valid = _finite_number(amount)
             else:
                 valid = type(amount) is int
             if not valid or amount < 0 or (key in POSITIVE_CAPS and amount == 0):
