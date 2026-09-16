@@ -1,11 +1,11 @@
 ---
 id: TASK-32674
 title: Drain plugin work before applying updates and rollback
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:21'
-updated_date: '2026-09-16 19:22'
+updated_date: '2026-09-16 19:39'
 labels:
   - plugins
   - implementation
@@ -27,12 +27,12 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Applying update fences new old-revision admission, shows leases and approvals, and prevents Stop continuations from extending the drain.
-- [ ] #2 Users can wait, cancel before commitment or explicitly cancel affected work; updates publish only after confirmed drain and cleanup.
-- [ ] #3 Rollback uses the same review and commit gates with current disables, mappings and grants; shared-data and external-effect rollback remain explicitly unsupported.
-- [ ] #4 New or newly supported components stay unselected, immutable prior packages remain available for comparison, and quota/retention protects live and recovery material.
-- [ ] #5 Exact managed-plugin archived resumption checks the pinned revision, component definitions, current authority and applicable data generation through the actual resume owner; incompatible resumption refuses without silently substituting revisions, while ordinary new runs and standalone continuation remain usable.
-- [ ] #6 Retained retries return the original outcome; expired or changed requests never replay, and bounded evidence pruning and legacy cutover preserve refusal of unresolved newer commits and reconstruction from older valid registry backups without delaying live revocation.
+- [x] #1 Applying update fences new old-revision admission, shows leases and approvals, and prevents Stop continuations from extending the drain.
+- [x] #2 Users can wait, cancel before commitment or explicitly cancel affected work; updates publish only after confirmed drain and cleanup.
+- [x] #3 Rollback uses the same review and commit gates with current disables, mappings and grants; shared-data and external-effect rollback remain explicitly unsupported.
+- [x] #4 New or newly supported components stay unselected, immutable prior packages remain available for comparison, and quota/retention protects live and recovery material.
+- [x] #5 Exact managed-plugin archived resumption checks the pinned revision, component definitions, current authority and applicable data generation through the actual resume owner; incompatible resumption refuses without silently substituting revisions, while ordinary new runs and standalone continuation remain usable.
+- [x] #6 Retained retries return the original outcome; expired or changed requests never replay, and bounded evidence pruning and legacy cutover preserve refusal of unresolved newer commits and reconstruction from older valid registry backups without delaying live revocation.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,3 +63,19 @@ Reason: Direct implementation of the accepted reviewed update/drain/retention an
 18. Independent review fix round1 (FIX_BASE f51890239efc0ce1ceee615f704da41364bbff7f): address all six Important findings and confirmed F7 evidence gap Q1 in task-7-fix1-findings.md. Move V2 disk/crypto checks outside the immediate live lock with atomic current-generation publication checks; bind facade refresh to retained Apply completion; carry actor-constrained entries through every fleet review/dispatch/result boundary; keep missing cleanup ancestors pending until exact anchor qualification; make standalone drain begin/blockers/wait consume actual unknown/pending/idle runtime ownership without delaying live fencing; remove obsolete revision-observation receipts when their revision ownership is removed. Source scope is existing F7 files plus Plugins/runtime_owner.py; no second owner or migration. Cover with exact Plugins continuation/revision_drain/retention tests plus necessary recovery_worker/conftest/test_recovery/test_runtime_owner and Tests/Chat/test_console_agent_bridge neighbors. Add real pending-approval update, authenticated root-generation/coverage comparison, per-retirement-boundary interruption and live-aborted/all-protected coordinator-pruner controls. Preserve future F8/M4/H5/I3/I4 owner handoffs. Freeze final source/test files, record actual covering commands/results/static parity, then controller commits and dispatches a scoped re-review.
 19. R45 within fix1/Q1: complete interrupted snapshot retirement through bounded authenticated orphan rediscovery under the existing storage owner. Follow f7-orphan-snapshot-ruling.md in full: complete inventory at most 2,002 snapshot files with existing 32 MiB artifact cap, exact authenticated opened-file identity and marker/reference checks, issued-generation/result or fixed legacy-map qualification, bootstrap/current/newer/referenced/unknown protection, and capacity refusal before new snapshot creation while exact existing retries remain usable. No new recovery authority, journal, key, migration or package cleanup route. Amend existing ADR-162/managed-plugins spec before code; source scope authority_store.py/retention.py and necessary existing coordinator/recovery helpers; test_retention.py plus existing test_authority_store.py/test_recovery.py. Qualify actual intent-unlinked crash/restart/re-prune, legacy/changed/protected/overflow controls and final frozen checks.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented reviewed update/rollback with immediate admission fencing, retained run/process/approval drain, separate proposal/work cancellation and current-policy publication. Replacement packages use immutable disjoint storage. Exact archived Console/fleet resumption pins the original managed revision, definitions, scope and data authority; legacy pinless continuation keeps an explicit zero-managed ceiling.
+
+Bounded revision/receipt retention uses the existing authenticated commit/recovery owner, issued request identities and fixed legacy cutover. Retained cleanup identity survives interruption; older orphan snapshots are rediscovered only after complete bounded authentication. Review fixes keep storage/crypto outside live revocation locks, refresh after retained Apply completion, constrain fleet tool boundaries, retain uncertain cleanup/drain ownership and remove obsolete revision observations.
+
+Validation: final targeted Plugins run 477 passed; affected Console/fleet run 61 passed/277 deselected. Initial unchanged continuation/transport qualification was 340 passed. Final 10 changed Python files compile with zero new Ruff/Black diagnostics; all 12 frozen source/test/contract hashes match. Plugins/test Plugins Ruff passes and Black leaves 40 files unchanged. Whitespace passes. Initial wheel resources were verified; no new migration or dependency. Full repository suite was not run.
+
+Limits: local macOS qualification; future F8/M4/H5/I3/I4 tasks must qualify actual data, MCP, Stop and acquisition/cache producers through these seams. Unknown ownership remains pending/refused. Existing startup preimport515/500 failure and UI-ready973/973 zero-headroom warning remain explicit; no overall green startup claim.
+
+ADR required: yes. Existing ADR-162 (managed plugins), ADR-063 (durable continuation) and ADR-163 (hook lifecycle) apply. ADR-162/063 and their linked specs record R37–R40/R42/R44/R45; no separate execution or permission owner. Modified Plugins authority/recovery/review/service/admission/retention/drain modules, actual Console/fleet continuation owners, focused tests and author/operation documentation.
+
+Review: independent scoped Fix1 re-review closed I1–I6 and Q1 with no new Critical/Important breakage. Existing startup concerns remain recorded for final branch review. Implementation f51890239efc0ce1ceee615f704da41364bbff7f; fix1 1c1f7fde856f5ca2503ebff2d398221e7c2c98d6. R45 rediscovery/capacity refinement is the documented deviation discovered by the required interruption control.
+<!-- SECTION:NOTES:END -->
