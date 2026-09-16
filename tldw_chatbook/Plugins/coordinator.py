@@ -463,6 +463,60 @@ class PluginCoordinator:
                         matches = intent == review.intent
                     if not matches:
                         raise ValueError("operation ID belongs to a different review")
+                    if prior.committed and prior.phase == "complete" and target is None:
+                        current = self.published_snapshot()
+
+                        def resume_authority(snapshot):
+                            installed = next(
+                                (
+                                    row
+                                    for row in snapshot["installations"]
+                                    if row["installation_id"] == review.installation_id
+                                ),
+                                None,
+                            )
+                            if installed is None:
+                                return None
+                            scopes = {("installation", ""), (scope, workspace)}
+                            if review.intent == "inherit":
+                                scopes.add(("global_default", ""))
+                            return (
+                                installed["revision_digest"],
+                                installed.get("alias"),
+                                (
+                                    installed["activation_default"]
+                                    if review.workspace_id is None
+                                    or review.intent == "inherit"
+                                    else None
+                                ),
+                                [
+                                    row
+                                    for row in snapshot["activation"]
+                                    if row["installation_id"] == review.installation_id
+                                    and row["workspace_id"] == review.workspace_id
+                                ],
+                                [
+                                    row
+                                    for row in snapshot["authority_generations"]
+                                    if row["installation_id"] == review.installation_id
+                                    and (row["scope_kind"], row["workspace_id"])
+                                    in scopes
+                                ],
+                            )
+
+                        # A historical receipt is not a fresh enable. Only the
+                        # still-current scoped authority may release its fence;
+                        # unrelated namespace publications do not prevent resume.
+                        if resume_authority(current) == resume_authority(
+                            evidence.snapshot
+                        ):
+                            with self.fences.live_lock:
+                                self.fences.require_enable_reconciled(
+                                    review.installation_id, review.workspace_id
+                                )
+                                self.fences.reconcile_enable(
+                                    review.installation_id, review.workspace_id
+                                )
             return prior
         if any(item.phase == "recovery_required" for item in receipts):
             raise PermissionError("plugin recovery required")

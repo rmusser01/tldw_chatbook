@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:20'
-updated_date: '2026-09-16 16:11'
+updated_date: '2026-09-16 16:34'
 labels:
   - plugins
   - implementation
@@ -49,4 +49,5 @@ Reason: Direct implementation of the accepted scoped revocation, retained lifecy
 7. Update plugin operation documentation, report concrete output and qualification limits in task-6-report.md, self-review, then return exact paths for controller commit/review. Controller closes acceptance criteria/Done only after independent clean review and resolves cross-task cannot-verify items explicitly.
 8. R36: minimally extend Plugins/review.py with closed revoke/uninstall review kinds and additive independent operation outcome dimensions, reusing the one existing coordinator commit/certificate pipeline and existing authority OperationResult/Tombstone schema. Retain original persistence/cancellation failure if cleanup also fails, with content-free public diagnostics; ephemeral runtime outcomes do not become authenticated commitment proof. Update Plugins/README.md operational guidance. Disable everywhere records default false and all explicit overrides disabled, advances installation authority and live generations; later explicit scoped enable admits fresh work only after reconciliation, preserving stale callback/approval refusal.
 9. R17 exact adapter selected by actual Console cancellation regression: minimally extend Chat/console_chat_controller.py direct-provider run ownership to wake/cancel its captured consumer task on its owning loop when scoped revocation closes queue delivery. Keep actual provider_work completion custody and generation identity intact; consumer cancellation does not prove underlying work ended. Cancel only while that exact consumer is active, so a retained provider callback cannot cancel later unrelated work in a reused caller task. Extend the real Console regression in Tests/Plugins/test_revocation.py and exact affected provider lifecycle/stop neighbors; baseline static comparison against task BASE for the shared controller.
+10. Fix independent review I1 in Plugins/coordinator.py: qualified recovered explicit-enable receipts must reconcile the live scope, while replay of an old enable after newer disable cannot reopen it. Extend Tests/Plugins/test_revocation.py and exact affected coordinator/recovery controls with post-certificate retry, stale-enable replay and old-token refusal. Append command/output/static evidence to task-6-report.md; controller owns the scoped review and final closeout.
 <!-- SECTION:PLAN:END -->

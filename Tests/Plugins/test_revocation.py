@@ -369,3 +369,62 @@ async def test_explicit_inherit_resumes_fresh_work_under_true_default(revocation
     await case.service.check_entries(fresh["available_skills"])
     with pytest.raises(PermissionError):
         await case.service.check_entries(case.entries["a"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intent", ["enabled", "inherit"])
+@pytest.mark.parametrize("disable_everywhere", [False, True])
+@pytest.mark.parametrize("unrelated_publication", [False, True])
+async def test_recovered_resume_reopens_only_its_current_authority(
+    revocation_case, intent, disable_everywhere, unrelated_publication
+):
+    from tldw_chatbook.Plugins.revocation import RevocationTarget
+
+    case = revocation_case
+    if intent == "inherit":
+        await case.enable(None, "recovery-default-on")
+    await case.start_disable_here()
+    review = await case.service.review_activation(
+        case.installation, workspace_id="a", intent=intent
+    )
+    fault = OSError("injected certificate milestone failure")
+
+    def fail(phase):
+        if phase == "certified":
+            raise fault
+
+    await case.service._call(
+        lambda: setattr(case.service._coordinator, "progress", fail)
+    )
+    with pytest.raises(OSError) as caught:
+        await case.service.commit(review, "recover-resume")
+    assert caught.value is fault
+    assert not case.admission_allows_a()
+    await case.service._call(
+        lambda: setattr(case.service._coordinator, "progress", None)
+    )
+    if unrelated_publication:
+        # An unrelated B marker change after recovery must not prevent A's resume.
+        await case.service.unlock("test passphrase")
+        await case.enable("b", "unrelated-b-after-recovery")
+    recovered = await case.service.commit(review, "recover-resume")
+    assert recovered.committed and recovered.phase == "complete"
+    fresh = await case.service.admit(
+        case.service.capture_maximum("a"), "recovered-fresh"
+    )
+    assert fresh[
+        "available_skills"
+    ], "recovered explicit resume must open fresh admission"
+    await case.service.check_entries(fresh["available_skills"])
+    with pytest.raises(PermissionError):
+        await case.service.check_entries(case.entries["a"])
+    newer = RevocationTarget(
+        case.installation, None if disable_everywhere else "a", disable_everywhere
+    )
+    assert (await case.service.disable(newer, "newer-disable")).committed
+    # Replaying history is not a new enable and cannot clear this later fence.
+    historical = await case.service.commit(review, "recover-resume")
+    assert historical.committed and historical.phase == "complete"
+    assert not case.service.capture_maximum("a")["available_skills"]
+    with pytest.raises(PermissionError):
+        await case.service.check_entries(fresh["available_skills"])
