@@ -516,26 +516,33 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
         # ticks recompose this panel's CHILDREN while the panel itself keeps
         # identity, so an expansion survives every tick that matters.
         self.expanded_groups: set[str] = set()
+        self._recent_collapsed = True
         self.add_class("w-fill")
         self.add_class("h-auto")
 
     async def recompose(self) -> None:
         """Capture queue focus at the actual rebuild, including late Tab input."""
+        recent = next(iter(self.query("#library-ingest-recent")), None)
+        if isinstance(recent, Collapsible):
+            self._recent_collapsed = recent.collapsed
         focused = self.app.focused
-        if focused is not None and focused.id and self in focused.ancestors:
-            control_id = focused.id
-            self.queue_default_after_recompose(
-                lambda: self._restore_queue_focus(control_id)
-            )
-            self.screen.set_focus(None)
+        if focused is not None and self in focused.ancestors:
+            selector = f"#{focused.id}" if focused.id else None
+            if recent is not None and focused is recent.query_one("CollapsibleTitle"):
+                selector = "#library-ingest-recent > CollapsibleTitle"
+            if selector:
+                self.queue_default_after_recompose(
+                    lambda: self._restore_queue_focus(selector)
+                )
+                self.screen.set_focus(None)
         await super().recompose()
 
-    def _restore_queue_focus(self, control_id: str) -> None:
+    def _restore_queue_focus(self, control_selector: str) -> None:
         """Restore before older action callbacks, without replacing newer focus."""
         focused = self.app.focused
         if (focused is not None and focused.is_attached) or self.parent is None:
             return
-        for selector in (f"#{control_id}", "#library-ingest-path"):
+        for selector in (control_selector, "#library-ingest-path"):
             try:
                 target = self.parent.query_one(selector)
             except NoMatches:
@@ -692,7 +699,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
         if state.recent_jobs:
             with Collapsible(
                 title="Recent imports",
-                collapsed=True,
+                collapsed=self._recent_collapsed,
                 id="library-ingest-recent",
             ):
                 for job in state.recent_jobs:

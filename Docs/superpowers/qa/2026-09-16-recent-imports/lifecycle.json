@@ -1,0 +1,10 @@
+{
+  "run": "run-003",
+  "pid": 25102,
+  "app_run_returned": true,
+  "exit_code": 0,
+  "process_absent": true,
+  "pane_after_exit": "25101 zsh",
+  "owned_tmux_socket": "codex32696",
+  "owned_session_closed": true
+}

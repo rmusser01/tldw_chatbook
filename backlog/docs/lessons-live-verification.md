@@ -3002,3 +3002,13 @@ the rows it will never see again (here: forget them, `FileNotesReplica.
 forget_file`, never tombstone). Pin it with a replica seeded by hand
 (`Tests/Notes/test_file_notes_service.py::test_a_file_indexed_under_a_dot_
 directory_is_forgotten_not_recently_deleted`).
+
+## Check notification overlays on the active screen (TASK-32696, 2026-09-16)
+
+The first Recent imports native capture batch waited for `app.query("Toast")`
+to be empty, yet six inspected images still carried import-finished notices.
+The query did not inspect the pushed Library screen. Waiting on
+`app.screen.query("Toast")` produced the clean confirmation batch without
+suppressing notifications or changing product behavior. Scope screenshot-readiness
+checks to the surface actually being captured; a successful empty query alone
+is not evidence that the picture is unobscured.
