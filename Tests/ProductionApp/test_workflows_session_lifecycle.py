@@ -14,6 +14,28 @@ from tldw_chatbook.app import TldwCli
 harness = session_tests.harness
 
 
+@pytest.fixture
+async def console_runtime(tmp_path):
+    from tldw_chatbook.Agents.run_hooks import RunHooksConfig, RunHooksEngine
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    runtime = ConsoleRuntime(SimpleNamespace())
+    runtime._run_hooks_engine = RunHooksEngine(RunHooksConfig, lambda: str(tmp_path))
+    _ = runtime.voice_promotion_owner  # Exercise an existing reversible quit fence.
+    try:
+        yield runtime
+    finally:
+        await runtime.dispose()
+
+
+def assert_console_reopened(runtime):
+    assert runtime.accepts_raw_cli_refusal_callbacks
+    assert not runtime.voice_promotion_owner.status.quit_fenced
+    hooks = runtime.run_hooks_engine
+    assert runtime.ensure_run_hooks() is hooks
+    assert not hooks.fire("PreToolUse", session_id="retained-console").blocked
+
+
 class WorkflowQuitHarness(_ConfirmationHarness):
     _shutdown_workflow_session = TldwCli._shutdown_workflow_session
 
@@ -84,7 +106,7 @@ async def test_failed_flush_preserves_review_and_normal_close_drains_first(harne
 
 
 async def test_cancelled_accepted_close_retains_physical_writer_and_fence(
-    harness, monkeypatch
+    harness, monkeypatch, console_runtime
 ):
     from tldw_chatbook.Workflows.session import SessionError
 
@@ -107,14 +129,18 @@ async def test_cancelled_accepted_close_retains_physical_writer_and_fence(
     h.session.answer_review(run_id, "review", accept=True)
     assert await asyncio.to_thread(entered.wait, 5)
     app = WorkflowQuitHarness(h.session)
+    app.console_runtime = console_runtime
     app.decision = True
     waiter = asyncio.create_task(app._confirm_and_quit())
     try:
         await until(h.session, lambda v: v.state == "stopping")
+        assert console_runtime.accepts_raw_cli_refusal_callbacks
+        assert console_runtime.voice_promotion_owner.status.quit_fenced
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
         assert not exited.is_set() and app.cleanup_calls == 0
+        assert_console_reopened(console_runtime)
         with pytest.raises(SessionError):
             await h.session.prepare(revision, {}, h.setup)
     finally:
@@ -125,9 +151,16 @@ async def test_cancelled_accepted_close_retains_physical_writer_and_fence(
     assert h.session.view().message_code == "saved_after_cancel"
     await app._confirm_and_quit()
     assert app.cleanup_calls == 1
+    assert not console_runtime.accepts_raw_cli_refusal_callbacks
+    assert console_runtime.voice_promotion_owner.status.quit_fenced
+    assert console_runtime.run_hooks_engine.fire(
+        "PreToolUse", session_id="retained-console"
+    ).blocked
 
 
-async def test_failed_physical_drain_never_enters_exit_cleanup(harness, monkeypatch):
+async def test_failed_physical_drain_never_enters_exit_cleanup(
+    harness, monkeypatch, console_runtime
+):
     from tldw_chatbook.Workflows.local_steps import LocalNoteCleanupError
 
     async def failed(**kwargs):
@@ -139,10 +172,34 @@ async def test_failed_physical_drain_never_enters_exit_cleanup(harness, monkeypa
     harness.session.answer_review(run_id, "review", accept=True)
     await until(harness.session, lambda v: v.state == "failed")
     app = WorkflowQuitHarness(harness.session)
+    app.console_runtime = console_runtime
     app.decision = True
     await app._confirm_and_quit()
     assert app.cleanup_calls == 0 and not app._shutting_down
     assert any("physical drain failed" in text for text, _ in app.notifications)
+    assert_console_reopened(console_runtime)
+
+
+async def test_failed_authoring_close_keeps_console_usable(harness, console_runtime):
+    _, _, _ = await launch(harness)
+    await until(harness.session, lambda v: v.state == "review")
+    app = WorkflowQuitHarness(harness.session)
+    app.console_runtime = console_runtime
+    app.decision = True
+
+    async def flush():
+        pass
+
+    async def close():
+        assert harness.session.view().state == "cancelled"
+        raise OSError("authoring close refused")
+
+    app._workflow_authoring = SimpleNamespace(flush=flush, close=close)
+    await app._confirm_and_quit()
+
+    assert app.cleanup_calls == 0 and not app._shutting_down
+    assert any("draft could not be saved" in text for text, _ in app.notifications)
+    assert_console_reopened(console_runtime)
 
 
 async def test_confirmation_changes_do_not_cancel_newer_review(harness):

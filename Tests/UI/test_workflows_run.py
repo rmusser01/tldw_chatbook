@@ -153,11 +153,9 @@ async def start_review(app, pilot, source):
     return app._workflow_session.view()
 
 
-def capture(app, size, state):
+def capture(app, size, state, *, svg_only=False):
     if not os.environ.get("WORKFLOW_UI_CAPTURES"):
         return
-    import cairosvg
-
     folder = (
         Path(__file__).parents[2]
         / ".superpowers/sdd/2026-09-16-workflows-first-run/ui-captures"
@@ -166,7 +164,12 @@ def capture(app, size, state):
     path = folder / f"task-5-{size[0]}x{size[1]}-{state}.svg"
     svg = app.export_screenshot(simplify=True)
     path.write_text(svg, encoding="utf-8")
-    cairosvg.svg2png(bytestring=svg.encode(), write_to=str(path.with_suffix(".png")))
+    if not svg_only:
+        import cairosvg
+
+        cairosvg.svg2png(
+            bytestring=svg.encode(), write_to=str(path.with_suffix(".png"))
+        )
 
 
 def control_contrast(app, label):
@@ -653,3 +656,127 @@ async def test_delayed_accept_does_not_accept_changed_review(
         assert app._workflow_session.view().state == "review"
         assert app._workflow_session.view().review_text == "New review"
         assert harness.rows() == []
+
+
+@pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
+async def test_capture_effect_ask_with_focused_approval(
+    tmp_path, harness, size, monkeypatch
+):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    await configure_model()
+    harness.set_permission("workflow_read_file", "ask")
+    app = WorkflowRunHarness(tmp_path, harness)
+    async with app.run_test(size=size) as pilot:
+        await open_setup(app, pilot, harness.setup.source)
+        await pilot.click("#workflow-start")
+        view = await until(app._workflow_session, lambda v: v.state == "approval")
+        await pilot.pause()
+        approve = app.screen.query_one("#workflow-effect-approve", Button)
+        approve.focus()
+        effect = app.screen.query_one("#workflow-effect-text", Static)
+        effect.scroll_visible(animate=False)
+        await pilot.pause()
+        assert app.focused is approve
+        assert_hit(app.screen, approve)
+        assert_hit(app.screen, app.screen.query_one("#workflow-effect-reject"))
+        assert str(effect.renderable) == view.pending_effect.payload_json
+        assert "source.txt" in painted_text(app.screen)
+        assert str(harness.setup.source) in "".join(painted_text(app.screen).split())
+        assert "Approve once" in painted_text(app.screen)
+        capture(app, size, "ask-file-focused", svg_only=True)
+        await pilot.click("#workflow-effect-reject")
+        await until(app._workflow_session, lambda v: v.state == "rejected")
+        assert harness.requests == [] and harness.rows() == []
+
+
+@pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
+async def test_capture_recoverable_setup_error(tmp_path, harness, size, monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    await configure_model()
+    app = WorkflowRunHarness(tmp_path, harness)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        await pilot.click("#workflow-run")
+        await pilot.pause()
+        app.screen.query_one("#workflow-source", Input).value = str(
+            harness.setup.source
+        )
+        inputs = app.screen.query_one("#workflow-inputs", TextArea)
+        inputs.load_text("{invalid}")
+        await pilot.click("#workflow-setup-review")
+        await pilot.pause()
+        inputs.focus()
+        app.screen.query_one("#workflow-setup-error").scroll_visible(animate=False)
+        await pilot.pause()
+        assert inputs.text == "{invalid}"
+        assert app.screen.query_one("#workflow-source", Input).value == str(
+            harness.setup.source
+        )
+        assert "{invalid}" in painted_text(app.screen)
+        assert "inputs must be a JSON object" in painted_text(app.screen)
+        assert app.focused is inputs
+        assert_hit(app.screen, inputs)
+        capture(app, size, "error-setup-focused", svg_only=True)
+        inputs.load_text("{}")
+        recovery = app.screen.query_one("#workflow-setup-review", Button)
+        recovery.focus()
+        # Textual debounces both mouse and keyboard activation while active.
+        async with asyncio.timeout(2):
+            while recovery.has_class("-active"):
+                await pilot.pause()
+        await pilot.press("enter")
+        async with asyncio.timeout(10):
+            while not app.screen.query("#workflow-start"):
+                await pilot.pause()
+        await pilot.click("#workflow-start-cancel")
+        assert harness.requests == [] and harness.rows() == []
+
+
+async def test_capture_narrow_setup_and_review_context(tmp_path, harness, monkeypatch):
+    from textual.containers import VerticalScroll
+    from textual.widgets import Select
+
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    await configure_model()
+    app = WorkflowRunHarness(tmp_path, harness)
+    size = (60, 20)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        await pilot.click("#workflow-run")
+        await pilot.pause()
+        app.screen.query_one("#workflow-source", Input).value = str(
+            harness.setup.source
+        )
+        choice = app.screen.query_one("#workflow-model-choice", Select)
+        choice.focus()
+        choice.scroll_visible(animate=False, top=True)
+        await pilot.pause()
+        for identifier in (
+            "workflow-model-choice",
+            "workflow-model",
+            "workflow-note-title",
+        ):
+            assert_hit(app.screen, app.screen.query_one("#" + identifier))
+        assert "llama_cpp" in painted_text(app.screen)
+        assert "Actual model ID" in painted_text(app.screen)
+        assert "Reviewed file summary" in painted_text(app.screen)
+        capture(app, size, "setup-inputs-scrolled", svg_only=True)
+        await pilot.click("#workflow-setup-review")
+        async with asyncio.timeout(10):
+            while not app.screen.query("#workflow-start"):
+                await pilot.pause()
+        await pilot.click("#workflow-start")
+        view = await until(app._workflow_session, lambda v: v.state == "review")
+        await pilot.pause()
+        app.screen.query_one("#workflow-review-accept", Button).focus()
+        app.screen.query_one("#workflow-session-content", VerticalScroll).scroll_home(
+            animate=False
+        )
+        await pilot.pause()
+        painted = painted_text(app.screen)
+        assert view.run_id in painted and view.revision_id in painted
+        assert view.review_instructions in painted
+        assert_hit(app.screen, app.screen.query_one("#workflow-review-accept"))
+        capture(app, size, "review-context-scrolled", svg_only=True)
+        await pilot.click("#workflow-review-reject")
+        await until(app._workflow_session, lambda v: v.state == "rejected")

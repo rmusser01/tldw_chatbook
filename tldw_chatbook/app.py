@@ -20389,6 +20389,29 @@ class TldwCli(
                     pass
                 return
 
+            # Keep the reversible promotion permit unconsumed through fallible
+            # workflow settlement. Permanent Console disposal cannot be undone.
+            if workflow_owner is not None:
+                try:
+                    workflow_close_accepted = True
+                    await workflow_owner.close()
+                except Exception:  # noqa: BLE001 - failed physical drain must never enter unconditional exit cleanup.
+                    self.notify(
+                        "Workflow is stopping; physical drain failed. Staying in Chatbook.",
+                        severity="error",
+                    )
+                    return
+            if workflow_authoring is not None:
+                try:
+                    await workflow_authoring.close()
+                except (OSError, RuntimeError, sqlite3.Error):
+                    self._quit_in_progress = False
+                    self.notify(
+                        "Workflow draft could not be saved; staying in Chatbook. Retry.",
+                        severity="warning",
+                    )
+                    return
+
             fence_console = getattr(runtime, "begin_dispose", None)
             from .Chat.console_chat_models import ConsoleLifecycleRevisionChanged
 
@@ -20427,28 +20450,6 @@ class TldwCli(
                         )
                     except Exception:
                         pass
-                    return
-            if workflow_owner is not None:
-                # Every awaited confirmation/flush has completed. No await separates
-                # the final fence from accepting cancellation in the session owner.
-                try:
-                    workflow_close_accepted = True
-                    await workflow_owner.close()
-                except Exception:  # noqa: BLE001 - failed physical drain must never enter unconditional exit cleanup.
-                    self.notify(
-                        "Workflow is stopping; physical drain failed. Staying in Chatbook.",
-                        severity="error",
-                    )
-                    return
-            if workflow_authoring is not None:
-                try:
-                    await workflow_authoring.close()
-                except (OSError, RuntimeError, sqlite3.Error):
-                    self._quit_in_progress = False
-                    self.notify(
-                        "Workflow draft could not be saved; staying in Chatbook. Retry.",
-                        severity="warning",
-                    )
                     return
             self._shutting_down = True
             # TASK-22215: the user has approved the quit -- nothing further from

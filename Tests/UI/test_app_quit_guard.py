@@ -515,6 +515,40 @@ async def test_app_quit_reconfirms_when_revision_changes_at_the_fence():
     ]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", [False, True])
+async def test_console_revision_is_rechecked_after_workflow_drain(decision):
+    first = ConsoleLifecycleImpact(1, 0, 0, 0, 0)
+    updated = ConsoleLifecycleImpact(2, 1, 0, 0, 0)
+    app = _AppLevelQuitHarness(_ConfirmationScreen(), [first], [decision])
+    owner = app.console_runtime.voice_promotion_owner
+
+    async def drain():
+        assert owner.calls[-1] == ("seal", owner.token)
+        await asyncio.sleep(0)
+        app.console_runtime.chat_controller.impacts = [updated]
+        app.events.append("workflow-drained")
+
+    app._workflow_session = SimpleNamespace(
+        view=lambda: None,
+        begin_close=lambda: app.events.append("workflow-fence"),
+        abort_close=lambda: None,
+        close=drain,
+    )
+
+    await app._confirm_and_quit()
+
+    assert len(app.dialogs) == 1
+    assert "Live agent runs: 1" in app.dialogs[0].message
+    assert app.events == ["workflow-fence", "workflow-drained"] + (
+        ["fence", "cleanup"] if decision else []
+    )
+    assert app.console_runtime.disposed is decision
+    if not decision:
+        assert owner.calls[-1] == ("abort", owner.permit)
+        assert not app._quit_in_progress
+
+
 class _FleetConfirmationHarness:
     _confirm_fleet_loss = ConsoleSessionController._confirm_fleet_loss
 
