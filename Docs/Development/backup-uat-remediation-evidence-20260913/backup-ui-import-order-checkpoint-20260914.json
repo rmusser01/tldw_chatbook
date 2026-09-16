@@ -1,0 +1,21 @@
+{
+  "base_revision": "47736289679a122618fa13fbad7edbca04528340",
+  "scope": "Move existing replacement_case helper import to collection before per-test config retargeting",
+  "source_sha256": "14478147fe79498431431b3357b0a89603a0c85da2a36f3d04f4fa225a7f7932",
+  "standalone_baseline": {
+    "passed": 13,
+    "failed": 9,
+    "setup_errors": 1
+  },
+  "standalone_corrected": {
+    "passed": 23,
+    "seconds": 39.88
+  },
+  "combined_core_owners_and_ui": {
+    "passed": 85,
+    "seconds": 72.64
+  },
+  "ruff": "passed",
+  "bandit_non_assert_findings": "unchanged",
+  "test_bodies_assertions_fixtures": "unchanged"
+}

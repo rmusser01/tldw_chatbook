@@ -282,7 +282,7 @@ def test_v3_database_really_lacks_run_group_id_before_it_is_opened(tmp_path):
         conn.close()
 
 
-def test_opening_a_v3_database_migrates_to_v4_and_adds_run_group_id(tmp_path):
+def test_opening_a_v3_database_migrates_to_v4_and_adds_run_group_id(request, tmp_path):
     """The ALTER TABLE path: EvalsDB opening a real, hand-built v3 file must
     pass through the v4 step, add `eval_runs.run_group_id`, and create its
     index -- the exact upgrade every existing user's database takes. The
@@ -295,6 +295,7 @@ def test_opening_a_v3_database_migrates_to_v4_and_adds_run_group_id(tmp_path):
     ids = _build_v3_database(path)
 
     db = EvalsDB(db_path=path, client_id="test")
+    request.addfinalizer(db.close)
     conn = db.get_connection()
 
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
@@ -336,7 +337,7 @@ def test_opening_a_v3_database_migrates_to_v4_and_adds_run_group_id(tmp_path):
     assert [r["id"] for r in grouped] == [new_run_id]
 
 
-def test_reopening_a_migrated_v3_database_is_idempotent(tmp_path):
+def test_reopening_a_migrated_v3_database_is_idempotent(request, tmp_path):
     """Re-opening the same file a second time (the normal case: the app
     restarts against a database it already migrated) must not raise and
     must not re-run the v3->v4 ALTER (which would fail on an existing
@@ -345,6 +346,7 @@ def test_reopening_a_migrated_v3_database_is_idempotent(tmp_path):
     ids = _build_v3_database(path)
 
     first = EvalsDB(db_path=path, client_id="test")
+    request.addfinalizer(first.close)
     first_conn = first.get_connection()
     assert first_conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
@@ -354,6 +356,7 @@ def test_reopening_a_migrated_v3_database_is_idempotent(tmp_path):
     # again also exercises the `current_version == SCHEMA_VERSION` branch of
     # `_init_schema`, which does neither create nor migrate).
     second = EvalsDB(db_path=path, client_id="test")
+    request.addfinalizer(second.close)
     second_conn = second.get_connection()
 
     assert second_conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION

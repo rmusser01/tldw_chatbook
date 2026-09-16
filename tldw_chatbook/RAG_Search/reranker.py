@@ -31,6 +31,10 @@ from dataclasses import dataclass, replace
 from abc import ABC, abstractmethod
 import json
 from loguru import logger
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+from .activation import async_guarded as activation_async_guarded
+from .activation import guarded as activation_guarded
+from .activation import source_paths
 
 # Optional numpy import
 try:
@@ -180,6 +184,7 @@ class BaseReranker(ABC):
 
     def __init__(self, config: RerankingConfig):
         self.config = config
+        self._rag_activation_sources = source_paths(self)
         self._cache = {} if config.cache_results else None
         # NOTE (TASK-3502 AC#4): a reranker carries NO per-call state. How
         # many scoring attempts failed is part of `rerank()`'s RETURN value
@@ -346,6 +351,7 @@ class BaseReranker(ABC):
             return max(self.config.max_tokens, REASONING_TOKEN_FLOOR)
         return self.config.max_tokens
 
+    @activation_async_guarded
     async def _call_llm_impl(
         self, prompt: str, system_prompt: Optional[str] = None
     ) -> str:
@@ -488,6 +494,7 @@ class PointwiseReranker(BaseReranker):
             )
 
     @timeit("reranker_pointwise")
+    @activation_async_guarded
     async def rerank(
         self,
         query: str,
@@ -685,6 +692,7 @@ class PairwiseReranker(BaseReranker):
             )
 
     @timeit("reranker_pairwise")
+    @activation_async_guarded
     async def rerank(
         self,
         query: str,
@@ -818,6 +826,7 @@ class ListwiseReranker(BaseReranker):
             )
 
     @timeit("reranker_listwise")
+    @activation_async_guarded
     async def rerank(
         self,
         query: str,
@@ -1200,6 +1209,7 @@ class CrossEncoderReranker(BaseReranker):
         )
         return hashlib.md5(f"{query}|{ordered}".encode()).hexdigest()
 
+    @activation_async_guarded
     async def rerank(
         self,
         query: str,
@@ -1291,18 +1301,16 @@ class CrossEncoderReranker(BaseReranker):
             future = loop.run_in_executor(
                 None, functools.partial(self._predict_scores_sync, query, rows)
             )
-            # Qodo PR-1775 finding 8: honour `timeout_seconds`. The executor
-            # THREAD cannot be cancelled -- it runs to completion and its
-            # result is dropped -- but the AWAIT is what a search's latency
-            # actually depends on, so that is what gets bounded. A timeout
-            # degrades like any other failure (note-b: an unscored row must
-            # not claim a rerank score) and is not cached, because it is
-            # transient rather than an answer.
+            # A timeout still discards the score, but the uncancellable
+            # native worker must settle before source admission can retire.
             timeout = self.config.timeout_seconds
-            if timeout and timeout > 0:
-                scores = await asyncio.wait_for(future, timeout=timeout)
-            else:
-                scores = await future
+            try:
+                if timeout and timeout > 0:
+                    scores = await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+                else:
+                    scores = await asyncio.shield(future)
+            finally:
+                await join_retained_task(future)
         except Exception as exc:
             # Reranking must NEVER fail a search: a missing model file, a
             # missing sentence-transformers install and an OOM all land here
@@ -1376,6 +1384,7 @@ def create_reranker(strategy: str = "pointwise", **kwargs) -> BaseReranker:
     return create_reranker_from_config(config)
 
 
+@activation_guarded
 def create_reranker_from_config(config: RerankingConfig) -> BaseReranker:
     """Build a reranker directly from an already-constructed ``RerankingConfig``.
 

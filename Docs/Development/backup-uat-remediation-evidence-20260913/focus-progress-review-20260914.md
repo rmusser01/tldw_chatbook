@@ -1,0 +1,17 @@
+# Bounded focus-progress observer — independent review
+
+Approved within the test-only scope against `6b20175799c47f44cf287065207630ab1ad86e93`; no actionable finding. Reviewed `startup_timing_diagnostic.py` and `test_startup_config_timing.py`; companion `test_startup_timing_diagnostic.py` remains unchanged. Exact hashes are in `/private/tmp/uat-focus-progress-independent-review-hashes.json`.
+
+The selector adds only `_press_until_focus` from the collected GGUF test's exact source file, labelled `test_focus`. Existing PY_YIELD code coordinates will distinguish its press await from its pause await. Only this label's yield/return/unwind events read the named test-local `visited`; `type(visited) is list` precedes built-in length inspection, accepts0..80, and rejects subclasses/nonlists/missing/oversized state without invoking custom length. No widget IDs, elements, arguments, application locals, exception messages, or return values are exported. No frame/list is retained in observer records. The transient frame-local dictionary access is the explicitly documented numeric-only exception; it is not application-state telemetry.
+
+`completed_focus_steps` is the number of fully completed press+pause iterations, because the unchanged helper appends only after both awaits. It is not an attempted-key count, proof of correct focus, or time in the suspended line. Active records contain the latest event-observed count; snapshots are not atomic. Return/unwind refresh the count and copy only the integer into completed/slowest rows. Invalid later state removes the previously recorded count. Existing active/completed/coordinate bounds and callback/error/monitor-slot cleanup remain unchanged; there is no new polling or native access.
+
+Independent validation:
+
+- Final strengthened observer modules: **34 PASS in0.19s**, `/private/tmp/uat-focus-progress-independent-final.log`, isolated basetemp and `--noconftest` (no app boot).
+- Five additional private behavioral probes: **5 PASS in2.57s**, `/private/tmp/uat-focus-progress-probe.log`. Actual coroutine return80, original ValueError identity/unwind80, cancellation0, missing variable and non-list cases; metadata privacy, slowest record and released monitoring slot/local events checked. Source `/private/tmp/test_focus_progress_review_probe.py`.
+- AST comparison: every pre-existing test body except the expected fixed-selector test is unchanged. The actual GGUF helper/test, workflow, assertions and60s limit are unchanged.
+
+This approves the evidence mechanism, not a diagnosis or correction of the remaining Windows focus wait. No full app or Windows acceptance was run by this reviewer. Parent static/full-app evidence is separate.
+
+Final lint-only refresh: inverse byte replacement of every `private_marker` with `secret` reproduces the exact previously reviewed test SHA256 `40020e1d94912f8b4bb95e4dbd3bdf5dca0e904b5b4e0f5ee4a9ea583cd38b08`; no behavioral change. Helper hash remains `973e6d8bc973b29ac52f62a8da40328bbf45b33cbd1462ff632fc92a16207c48`. Current test hash: `1b1308dd8c64806cf2e3152cf0c7ea9296075d593af17c0a35a0f901a4568eaf`. No rerun required for this exact alpha rename. Latest-observed/non-atomic count semantics remain as described above. Parent separately reports actual unchanged Mac llamafile PASS17.70s call/19.39s session, two matching/error-free records, and completed focus39steps in5.765295s; this is not a Windows result.

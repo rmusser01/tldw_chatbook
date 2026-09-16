@@ -1,0 +1,25 @@
+{
+  "result": "FAIL: replacement retry after normal restart refused during review",
+  "ui_issue": "target_unverified",
+  "binding_fingerprint_matches": false,
+  "stored_fingerprint": "27376cf52980fed2bc0df9348b49ba907ca57fbaa6cc978d609d8661ef18a43c",
+  "current_config_sha256": "89e0854ded44e60965b65ad2beccb9554d5bd7e91423003b3e70378206d98eb0",
+  "activation": null,
+  "no_new_replacement_started": true,
+  "normal_quit_original_note_receipt": "replacement-ab24-clean-abort-reopen.json",
+  "causal_review": {
+    "result": "confirmed by independent read-only review",
+    "only_semantic_config_change": "console.rail_state added by automatic ordinary Console shared-layout default persistence",
+    "original_captured_config_matches_saved_binding": true,
+    "propagation": [
+      "bootstrap._binding rejects mismatched fingerprint",
+      "MCP.recovery_activation.inventory_path raises mcp_recovery_binding_changed",
+      "MCP adapter discovery fails before included target config declarations are published",
+      "destinations.resolve_destinations refuses target_unverified because no included target config exists"
+    ],
+    "live_sqlite_opened": false,
+    "fixture_modified": false,
+    "repair_scope": "successful installed configuration-owner write continuity for the same existing binding, including activation=None; preserve roots/namespaces/activation",
+    "native_regression": "2 expected failures in2.11s; successful installed writes invalidate default binding for explicit and implicit selector"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "base_revision": "d3082ef98211e3ad42273ac2d2dcbbf43b6d93cc",
+  "working_tree_product_hashes": {
+    "tldw_chatbook/Backup_Recovery/config_participants.py": "37f9e4feeff45ff819bcd2b432e222e12cc05c0295c425a9c798d6b57d92644a",
+    "tldw_chatbook/config.py": "99aca34149611ab3a33b142fdf292826d84615ef381a76f873a7c9ac87e2f644",
+    "tldw_chatbook/Chat/console_runtime.py": "7de3ce6850847db3e146a3721e66b367726e19109794acb75397a39e9393dcf7",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "ceefda4d3139d09c31cb6544e1368745765cecacbfaf40528ee110dff87892d7"
+  },
+  "wheel_sha256": "76cfa94a27123eee75311147c94732c76fe73ac39c885adf1d9e68f0f36a2031",
+  "installed_files_preserved_by_fixture": 2866,
+  "python_files_matching_current_source": 2474,
+  "test_cases": [
+    {
+      "classname": "Tests.Backup_Recovery.test_mounted_console_backup",
+      "name": "test_mounted_console_complete_capture_and_resumed_writes[console]",
+      "time": "44.722"
+    },
+    {
+      "classname": "Tests.Backup_Recovery.test_mounted_console_backup",
+      "name": "test_mounted_console_complete_capture_and_resumed_writes[settings]",
+      "time": "37.448"
+    },
+    {
+      "classname": "Tests.Backup_Recovery.test_mounted_console_backup",
+      "name": "test_mounted_console_complete_capture_and_resumed_writes[library]",
+      "time": "37.255"
+    }
+  ],
+  "junit_sha256": "e14f33d6ce2169de2f0121d57f79eea12b8c79410b5c09ffe4f5fd392b3d930b",
+  "method": "fresh installed wheel and native Textual test harness, not physical keyboard"
+}

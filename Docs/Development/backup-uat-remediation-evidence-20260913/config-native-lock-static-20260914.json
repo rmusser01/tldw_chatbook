@@ -1,0 +1,12 @@
+{
+  "ruff": {
+    "baseline": 165,
+    "current": 165,
+    "new": []
+  },
+  "bandit": {
+    "baseline": 3,
+    "current": 3,
+    "new": []
+  }
+}

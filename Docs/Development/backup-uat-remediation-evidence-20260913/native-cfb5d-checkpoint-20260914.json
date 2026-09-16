@@ -1,0 +1,201 @@
+{
+  "revision": "cfb5d35e7354b171215e17db261228f48832463a",
+  "windows_native": {
+    "run": 34919049697,
+    "revision": "cfb5d35e7354b171215e17db261228f48832463a",
+    "result": "success",
+    "verified_artifact_files": 18,
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.647,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 36,
+      "counts": {
+        "passed": 36
+      },
+      "seconds": 550.648,
+      "failures": [],
+      "skips": []
+    },
+    "groups": {
+      "tts_native_close": 4,
+      "db_status_maintenance": 8,
+      "canvas_policy_maintenance": 12,
+      "canvas_view_binding_lifetime": 11,
+      "installed_library": 1
+    },
+    "library": {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+      "status": "passed",
+      "seconds": 260.977
+    },
+    "installed": [
+      {
+        "fixture": "product-pytest/f9-native-package0/native-package.json",
+        "files": 2867,
+        "wheel_sha256": "73559b31ecc057423262bc7344759b6ad64b0ffca625fc4e95455bdbf28808df",
+        "source_comparable_python_files": 2475,
+        "source_python_mismatches": []
+      }
+    ],
+    "git": {
+      "revision": "cfb5d35e7354b171215e17db261228f48832463a",
+      "source_clean": true,
+      "python_git_blobs": 2475,
+      "installed_receipts": 1,
+      "matching_modes": {
+        "windows_crlf": 2443,
+        "exact": 32
+      },
+      "mismatches": []
+    },
+    "assertion_driver_checks": {
+      "Tests/Backup_Recovery/test_mounted_console_backup.py": {
+        "sha256": "1be300313cd0a211ca58e7829ee9f1f0c16b7bbefc063e00e914eced624fc8c7",
+        "git_match": "windows_crlf"
+      },
+      "Tests/Backup_Recovery/test_home_citation_retirement.py": {
+        "sha256": "e78005a249bd9f891d5f29f8178a6aad515a28b3950be88ff9705c88e101dd41",
+        "git_match": "windows_crlf"
+      },
+      "Tests/Backup_Recovery/run_platform_product.py": {
+        "sha256": "44e7f3083d3f5621f4bc2b0720fe225ccdd00446bf4060bb2687772714aa99e2",
+        "git_match": "windows_crlf"
+      }
+    },
+    "prior_d640_classification": "separate420s timeout; no causal fix attribution",
+    "startup_acceptance": "separate remaining failures; not covered by this run",
+    "evidence_hashes": {
+      "/private/tmp/uat-windows-cfb5d-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/artifact-sha256.json": "b05125e209f559713dbe30c342a0ff9d717f76b34374d423ca9c8b3ae3ee171b",
+      "/private/tmp/uat-windows-cfb5d-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/pytest.xml": "6c19931e91252cfae02e3419cd7d0b769a429b6160b0b8deb38ba641dfe82735",
+      "/private/tmp/uat-windows-cfb5d-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/native-pytest.xml": "4233ef8ebf6374c7bf859b378d0ec121922db8cfe171e087760fd6bbab07e766",
+      "/private/tmp/uat-windows-cfb5d-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/source-receipt.json": "8340b359c97dddad76521d876d97cb2ed72110e45dc12ec548a5aaf10d431455",
+      "/private/tmp/uat-windows-cfb5d-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/installed-package-receipt.json": "b7d02973cb970522b2ce652c607768f9d3e1aa66cfdb27b8088d09afa244bb21"
+    }
+  },
+  "linux": {
+    "installed_files": 2867,
+    "mismatches": 0,
+    "python_sources": 2475,
+    "revision": "cfb5d35e7354b171215e17db261228f48832463a",
+    "tracked_source_unchanged": true,
+    "wheel_sha256": "f6faecc5e818ba91cad203d0a6f0c422547fbafd5634dbef4d81cefea77b3beb",
+    "passed": 36,
+    "failed": 0,
+    "skipped": 0,
+    "unfinished": 0,
+    "status_log": "/private/tmp/uat-linux-cfb5d-canvas-status.log"
+  },
+  "windows_startup": {
+    "run": 34919030019,
+    "job": 104222787333,
+    "log_sha256": "e8362cdf4c5bd0d42644ea4c81715c125edfbe878ed3d2ed68061087a86ae6ce",
+    "non_ui": {
+      "passed": 31,
+      "seconds": 10.46
+    },
+    "primary_full_app": {
+      "timeout_cases": 4,
+      "deadline_seconds": 60
+    },
+    "diagnostic": {
+      "baseline": "4631b60f",
+      "baseline_passed": 1,
+      "baseline_seconds": 54.51,
+      "baseline_warnings": 2,
+      "candidate_timeout": true,
+      "profiles": [
+        {
+          "log_line": 1996,
+          "label": "dev",
+          "elapsed_seconds": 13.547,
+          "source_matches": true,
+          "observer_errors": []
+        },
+        {
+          "log_line": 2049,
+          "label": "dev",
+          "elapsed_seconds": 30.391,
+          "source_matches": true,
+          "observer_errors": []
+        },
+        {
+          "log_line": 2050,
+          "label": "dev",
+          "elapsed_seconds": 49.469,
+          "source_matches": true,
+          "observer_errors": []
+        },
+        {
+          "log_line": 2054,
+          "label": "dev",
+          "elapsed_seconds": 58.016,
+          "source_matches": true,
+          "observer_errors": []
+        },
+        {
+          "log_line": 2090,
+          "label": "candidate",
+          "elapsed_seconds": 14.188,
+          "source_matches": true,
+          "observer_errors": []
+        },
+        {
+          "log_line": 2114,
+          "label": "candidate",
+          "elapsed_seconds": 28.547,
+          "source_matches": true,
+          "observer_errors": []
+        },
+        {
+          "log_line": 2127,
+          "label": "candidate",
+          "elapsed_seconds": 44.36,
+          "source_matches": true,
+          "observer_errors": []
+        },
+        {
+          "log_line": 2128,
+          "label": "candidate",
+          "elapsed_seconds": 60.156,
+          "source_matches": true,
+          "observer_errors": []
+        }
+      ]
+    },
+    "conclusion": {
+      "config_lock_holder": "asyncio_3 / 2856",
+      "holder_stage": "rail preference writer; post-write runtime cache reload; user-data directory native qualification",
+      "main_wait": "CompactModelBar.compose -> guarded load_settings -> config operation REBUILD/FILE acquisition",
+      "cycle_proven": false,
+      "specific_rail_key_known": false,
+      "lock_hold_duration_known": false,
+      "product_fix_justified": false
+    }
+  },
+  "perf_guard": {
+    "run": 34919029699,
+    "result": "success"
+  },
+  "remaining_support_run": {
+    "run": 34920105965,
+    "selection": "support-diagnostic",
+    "collected_expected": 348,
+    "status": "in progress"
+  },
+  "acceptance": "In progress; native-close passes, Windows startup criterion still fails, full support selection remains pending. No merge.",
+  "evidence_sha256": {
+    "/private/tmp/uat-cfb5d-windows-independent-summary.json": "4355d43192df57bfd9551892fdf1f2e2e551148331c37a24277a2e8f70200402",
+    "/private/tmp/uat-cfb5d-startup-independent-summary.json": "cadd51077985b56f0e28e5717fe9085fea169ae0264385637107944876a77889",
+    "/private/tmp/uat-linux-cfb5d-installed-verification.json": "0c705e40ee948c013aee61c2fe5de524b88729635d40f664f248094f53af62e2",
+    "/private/tmp/uat-linux-cfb5d-canvas-status.log": "18295b1fbe4ba3d72f263b5a59a8d54f0da1f8ffa35e45b2b2b7f6025d60dbf7",
+    "/private/tmp/uat-cfb5d-windows-independent-review.md": "cbb816abd75b70eca0b1a48e4201ece27544d037b61f3fdbe12df0aaf2981dae",
+    "/private/tmp/uat-cfb5d-startup-independent-review.md": "acc72830a9dfa9e138dce6157eac6f8c9da4a5442e7465edf78c2285376a0676"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "result": "PASS",
+  "stage": "After clean actual keyboard Abort/reopen and refused replacement retry",
+  "revision": "ab24f6b0c2690f7705bdcddf46a941104541fe07",
+  "revision_type": "tree",
+  "wheel_sha256": "198a7494d194b553e1bba81d01adf401ae5e6590c93f9f310fc0659e489ad8bb",
+  "installed_files_verified": 5347,
+  "changed_files": []
+}

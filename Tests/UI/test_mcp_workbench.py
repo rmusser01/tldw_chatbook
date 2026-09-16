@@ -5453,11 +5453,13 @@ async def test_test_tool_preview_unmount_and_remount_revokes_old_nonce():
     async with app.run_test(size=(120, 40)) as pilot:
         nonce = await _open_fetch_test_preview(app, pilot)
         old = app.query_one(MCPWorkbench)
+        old._mcp_recovery_token = object()
         app.set_focus(None)
         await pilot.pause()
         await old.remove()
         await pilot.pause()
         assert not old.is_attached
+        assert old._mcp_recovery_token is None
         app.unified_mcp_service._active_tests.add(("local:docs", "fetch"))
         preview_count = app.unified_mcp_service._preview_count
         await app.mount(MCPWorkbench(app_instance=app, id="mcp-workbench-remounted"))

@@ -1,0 +1,27 @@
+{
+  "revision": "2031d0c5261c2b4781aba40752f228da9d19b4eb",
+  "source": "/home/ml-user/Working/chatbook-backup-linux-20260912/source-final-2031d0c526-chfvcalw",
+  "fixture": "/home/ml-user/Working/chatbook-backup-linux-20260912/native-final-2031d0c526-9f6w3ijb",
+  "pytest_returncode": 0,
+  "source_tracked_unchanged": true,
+  "status": {
+    "collected": 22,
+    "counts": {
+      "failed": 0,
+      "passed": 22,
+      "skipped": 0
+    },
+    "exitstatus": 0,
+    "failed_ordinals": [],
+    "unfinished": 0
+  },
+  "installed_receipts": [
+    {
+      "installed_files": 2867,
+      "package_python_files": 2475,
+      "python_mismatches": 0,
+      "receipt_sha256": "90c61fbd9fb66bd6ae8ad8f0531dcde9f945e70fa38932408bee37236de79ea3"
+    }
+  ],
+  "privacy": "Only numeric results, source identity and hashes were returned. Raw logs and application fixtures remain on the host."
+}

@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Restoration validated
+  Profile: eb5cd86e55774840a50b2d2d9b68beae
+
+  Excluded profile:9708a222682d14d71840feea:notes.sync_bindings:sqlite-wal: intentionally_excluded
+  Excluded profile:9708a222682d14d71840feea:notes.sync_bindings:sqlite-shm: intentionally_excluded
+  Excluded profile:9708a222682d14d71840feea:notifications.client:sqlite-wal: intentionally_excluded                                                          ▃
+  Excluded profile:9708a222682d14d71840feea:notifications.client:sqlite-shm: intentionally_excluded                                                          ▃
+  Excluded profile:9708a222682d14d71840feea:quiz.local:sqlite-wal: intentionally_excluded
+  Excluded profile:9708a222682d14d71840feea:quiz.local:sqlite-shm: intentionally_excluded
+  Excluded profile:9708a222682d14d71840feea:runtime.sync_state:sqlite-wal: intentionally_excluded
+  Excluded profile:9708a222682d14d71840feea:runtime.sync_state:sqlite-shm: intentionally_excluded
+  Excluded profile:9708a222682d14d71840feea:study.local:sqlite-wal: intentionally_excluded
+  Excluded profile:9708a222682d14d71840feea:study.local:sqlite-shm: intentionally_excluded
+  Excluded recovery.control:fixed-bootstrap: intentionally_excluded
+  Excluded control:f29bb4c7592353dc89c10668aabee440cc0bf39abd4c8da25c00d838dc3abe05: intentionally_excluded
+  Captured files: 135
+  Captured bytes: 26860280
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊                                                                                                                                                         ▎
+  ▊  Restore as isolated profile                                                                                                                         ▼  ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  Choose a new folder and display name for each isolated profile. Required database and application folders are arranged automatically.
+
+  Profile 1 — new local folder
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  /private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/newcomer/restores/first-note                                                                 ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  Profile 1 — new display name (isolated restore)
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  Recovered first note                                                                                                                                   ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  For replacement: selected existing profile configuration
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  Existing local config.toml                                                                                                                             ▎
+
+
+                       Inspect                                         Cancel operation                                           Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

@@ -1,0 +1,166 @@
+name: Backup Python encryption qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-candidate:
+    name: ${{ matrix.runner_os }}/${{ matrix.runner_arch }} Python ${{ matrix.python }}
+    runs-on:
+      - self-hosted
+      - backup-helper
+      - ${{ matrix.runner_os }}
+      - ${{ matrix.runner_arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner_os: [darwin, linux]
+        runner_arch: [amd64, arm64]
+        python: ["3.11", "3.12", "3.13"]
+        include:
+          - runner_os: windows
+            runner_arch: amd64
+            python: "3.11"
+          - runner_os: windows
+            runner_arch: amd64
+            python: "3.12"
+          - runner_os: windows
+            runner_arch: amd64
+            python: "3.13"
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Provision Python packaging dependencies and offline cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check \
+            "uv>=0.8.0,<1"
+          export UV_CACHE_DIR="${RUNNER_TEMP}/backup-python-uv-cache"
+          echo "UV_CACHE_DIR=$UV_CACHE_DIR" >> "$GITHUB_ENV"
+          PYTHON_BIN="$(python -c 'import sys; print(sys.executable)')"
+          UV_BIN="$(python -c 'import os, sysconfig; print(os.path.join(sysconfig.get_path("scripts"), "uv.exe" if os.name == "nt" else "uv"))')"
+          "$UV_BIN" pip install --python "$PYTHON_BIN" --reinstall \
+            pytest pytest-asyncio pytest-timeout "pydantic>=2.4,<3" loguru psutil \
+            pycryptodomex build wheel "setuptools>=77.0"
+      - name: Verify source, editable, sdist, and wheel delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest Tests/Packaging/test_backup_helper_distribution.py -q
+      - name: Build and probe the Python encryption candidate
+        shell: bash
+        env:
+          QUALIFICATION_OUTPUT: ${{ runner.temp }}/backup-python-evidence.json
+          QUALIFICATION_ROOT: ${{ runner.temp }}/backup-python-candidate
+        run: |
+          set -euo pipefail
+          python -m build --outdir "$QUALIFICATION_ROOT/dist"
+          python Packaging/check_manifest.py "$QUALIFICATION_ROOT/dist"
+          python -m pip install --disable-pip-version-check --no-index --no-deps \
+            --target "$QUALIFICATION_ROOT/installed" "$QUALIFICATION_ROOT"/dist/*.whl
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import platform
+          from pathlib import Path
+          import subprocess
+          import sys
+          from threading import Event
+
+          root = Path(os.environ["QUALIFICATION_ROOT"])
+          installed = root / "installed"
+          sys.path.insert(0, str(installed))
+          from tldw_chatbook.Backup_Recovery import crypto
+
+          package = installed / "tldw_chatbook"
+          worker = package / "Backup_Recovery/age_worker.py"
+          assert Path(crypto.__file__).resolve().is_relative_to(package.resolve())
+          assert worker.is_file() and not worker.is_symlink()
+          info_result = subprocess.run(
+              [sys.executable, "-I", str(worker), "info"],
+              check=True,
+              capture_output=True,
+              text=True,
+              timeout=30,
+          )
+          info = json.loads(info_result.stdout)
+          assert info == {
+              "protocol": 2,
+              "implementation": "python",
+              "format": "age-v1",
+          }
+
+          plain = root / "plain.bin"
+          sealed = root / "sealed.age"
+          restored = root / "restored.bin"
+          plain.write_bytes(b"Python package qualification" * 4096)
+          crypto.transform(
+              plain,
+              sealed,
+              password=b"qualification-pipe-fixture",
+              decrypt=False,
+              cancel=Event(),
+          )
+          crypto.transform(
+              sealed,
+              restored,
+              password=b"qualification-pipe-fixture",
+              decrypt=True,
+              cancel=Event(),
+          )
+          assert restored.read_bytes() == plain.read_bytes()
+
+          fixture = Path("Tests/Backup_Recovery/fixtures/age_v1/official.age")
+          fixed = root / "fixed-restored.bin"
+          crypto.transform(
+              fixture,
+              fixed,
+              password=b"interop-synthetic-password",
+              decrypt=True,
+              cancel=Event(),
+          )
+          assert fixed.read_bytes() == bytes(range(256)) * 2048
+
+          wheel = next((root / "dist").glob("*.whl"))
+          sdist = next((root / "dist").glob("*.tar.gz"))
+          evidence = {
+              "runner": {
+                  "target": "${{ matrix.runner_os }}/${{ matrix.runner_arch }}",
+                  "platform": platform.platform(),
+                  "python": platform.python_version(),
+              },
+              "artifacts": {
+                  "wheel": wheel.name,
+                  "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                  "sdist": sdist.name,
+                  "sdist_sha256": hashlib.sha256(sdist.read_bytes()).hexdigest(),
+                  "worker_sha256": hashlib.sha256(worker.read_bytes()).hexdigest(),
+              },
+              "worker_info": info,
+              "round_trip": "passed_actual_encrypt_decrypt",
+              "fixed_fixture": "passed_official_age_v1_decrypt",
+              "package_provenance": {
+                  "crypto": str(Path(crypto.__file__).resolve()),
+                  "worker": str(worker.resolve()),
+              },
+              "parent_process_socket_blocking": "packaging_runtime_probe",
+              "dependency_installation": "uv_offline_in_isolated_environments",
+              "status": "candidate_only_not_advertised",
+          }
+          Path(os.environ["QUALIFICATION_OUTPUT"]).write_text(
+              json.dumps(evidence, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backup-python-${{ matrix.runner_os }}-${{ matrix.runner_arch }}-py${{ matrix.python }}
+          path: ${{ runner.temp }}/backup-python-evidence.json
+          if-no-files-found: error

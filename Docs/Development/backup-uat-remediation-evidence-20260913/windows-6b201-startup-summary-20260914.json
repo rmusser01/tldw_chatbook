@@ -1,0 +1,1346 @@
+{
+  "revision": "6b20175799c47f44cf287065207630ab1ad86e93",
+  "run": 34928712931,
+  "job": 104252216498,
+  "sha256": {
+    "uat-6b201-windows-startup-job.log": "c6f673598a3f08120ee59e2e8ae5e68fca8488f9540209eb82440a0e9227078a",
+    "uat-6b201-startup-profiles.json": "36b85e1855cf216fb2b3e8694d840294ed192d08892cf151ddd8fb8d4a6d9924"
+  },
+  "record_count": 21,
+  "source_match_count": 21,
+  "errors": 0,
+  "cprofile_enabled_count": 0,
+  "non_ui": {
+    "pass": 31,
+    "seconds": 11.91
+  },
+  "primary": [
+    {
+      "case": "test_claim_authority_survives_screen_recompose_and_not_window_selection",
+      "outcome": "pass",
+      "call_seconds": 53.59,
+      "session_seconds": 59.85
+    },
+    {
+      "case": "test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable",
+      "outcome": "pass",
+      "call_seconds": 56.55,
+      "session_seconds": 60.5
+    },
+    {
+      "case": "test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]",
+      "outcome": "timeout",
+      "limit_seconds": 60
+    },
+    {
+      "case": "test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]",
+      "outcome": "timeout",
+      "limit_seconds": 60
+    }
+  ],
+  "comparisons": [
+    {
+      "case": "llamacpp",
+      "label": "dev",
+      "outcome": "pass",
+      "call_seconds": 41.37,
+      "session_seconds": 48.47,
+      "records": 5,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 28,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_close": 1
+      },
+      "completed_mount": {
+        "function": "test_mount",
+        "outcome": "returned",
+        "thread": 1964,
+        "elapsed_seconds": 8.149784,
+        "thread_cpu_seconds": 6.34375
+      },
+      "final_active": [],
+      "progress": [
+        {
+          "at_seconds": 10.0,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1361
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "at_seconds": 20.015,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1398
+          },
+          "mount_suspension": null
+        },
+        {
+          "at_seconds": 30.015,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1526
+          },
+          "mount_suspension": null
+        },
+        {
+          "at_seconds": 40.031,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1526
+          },
+          "mount_suspension": null
+        },
+        {
+          "at_seconds": 49.39,
+          "test_suspension": null,
+          "mount_suspension": null
+        }
+      ]
+    },
+    {
+      "case": "llamacpp",
+      "label": "candidate",
+      "outcome": "timeout",
+      "call_seconds": null,
+      "session_seconds": null,
+      "records": 6,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 913,
+        "user_directory": 32,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1,
+        "test_settle": 8
+      },
+      "completed_mount": {
+        "function": "test_mount",
+        "outcome": "returned",
+        "thread": 8884,
+        "elapsed_seconds": 43.215541,
+        "thread_cpu_seconds": 31.34375
+      },
+      "final_active": [
+        {
+          "function": "test_case",
+          "thread": 8884,
+          "phase": "running",
+          "elapsed_seconds": 55.743237,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1532
+          }
+        }
+      ],
+      "progress": [
+        {
+          "at_seconds": 10.0,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "at_seconds": 20.0,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "at_seconds": 30.0,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        },
+        {
+          "at_seconds": 40.016,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        },
+        {
+          "at_seconds": 50.016,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1479
+          },
+          "mount_suspension": null
+        },
+        {
+          "at_seconds": 60.031,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1532
+          },
+          "mount_suspension": null
+        }
+      ]
+    },
+    {
+      "case": "llamafile",
+      "label": "dev",
+      "outcome": "pass",
+      "call_seconds": 35.48,
+      "session_seconds": 37.94,
+      "records": 4,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_close": 1
+      },
+      "completed_mount": {
+        "function": "test_mount",
+        "outcome": "returned",
+        "thread": 2844,
+        "elapsed_seconds": 10.24879,
+        "thread_cpu_seconds": 4.390625
+      },
+      "final_active": [],
+      "progress": [
+        {
+          "at_seconds": 10.0,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1361
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 116
+          }
+        },
+        {
+          "at_seconds": 20.0,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1526
+          },
+          "mount_suspension": null
+        },
+        {
+          "at_seconds": 30.015,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1547
+          },
+          "mount_suspension": null
+        },
+        {
+          "at_seconds": 38.656,
+          "test_suspension": null,
+          "mount_suspension": null
+        }
+      ]
+    },
+    {
+      "case": "llamafile",
+      "label": "candidate",
+      "outcome": "timeout",
+      "call_seconds": null,
+      "session_seconds": null,
+      "records": 6,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 913,
+        "user_directory": 32,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1,
+        "test_settle": 8
+      },
+      "completed_mount": {
+        "function": "test_mount",
+        "outcome": "returned",
+        "thread": 7504,
+        "elapsed_seconds": 44.521641,
+        "thread_cpu_seconds": 31.265625
+      },
+      "final_active": [
+        {
+          "function": "test_case",
+          "thread": 7504,
+          "phase": "running",
+          "elapsed_seconds": 56.466658,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1532
+          }
+        }
+      ],
+      "progress": [
+        {
+          "at_seconds": 10.0,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "at_seconds": 20.016,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 112
+          }
+        },
+        {
+          "at_seconds": 30.031,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        },
+        {
+          "at_seconds": 40.031,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          },
+          "mount_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 114
+          }
+        },
+        {
+          "at_seconds": 50.031,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1446
+          },
+          "mount_suspension": null
+        },
+        {
+          "at_seconds": 60.031,
+          "test_suspension": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1532
+          },
+          "mount_suspension": null
+        }
+      ]
+    }
+  ],
+  "terminal_stacks": [
+    {
+      "case": "primary_cpp",
+      "threads": [
+        {
+          "thread": "Stack of asyncio_7 (5368)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_6 (4360)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_5 (5860)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_4 (7820)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of ui-stall-persist (5552)",
+          "frames": [
+            {
+              "file": "ui_responsiveness.py",
+              "line": 118,
+              "function": "_drain_stalls"
+            },
+            {
+              "file": "queue.py",
+              "line": 180,
+              "function": "get"
+            },
+            {
+              "file": "threading.py",
+              "line": 359,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_3 (9000)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_2 (6612)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_1 (5800)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_0 (2468)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of chatbook-storage-admission (7132)",
+          "frames": [
+            {
+              "file": "storage_admission.py",
+              "line": 512,
+              "function": "_run"
+            },
+            {
+              "file": "threading.py",
+              "line": 655,
+              "function": "wait"
+            },
+            {
+              "file": "threading.py",
+              "line": 355,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of MainThread (6060)",
+          "frames": [
+            {
+              "file": "base_events.py",
+              "line": 1961,
+              "function": "_run_once"
+            },
+            {
+              "file": "windows_events.py",
+              "line": 445,
+              "function": "select"
+            },
+            {
+              "file": "windows_events.py",
+              "line": 774,
+              "function": "_poll"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "primary_file",
+      "threads": [
+        {
+          "thread": "Stack of asyncio_7 (6924)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_6 (6908)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_5 (3600)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_4 (8548)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of ui-stall-persist (2580)",
+          "frames": [
+            {
+              "file": "ui_responsiveness.py",
+              "line": 118,
+              "function": "_drain_stalls"
+            },
+            {
+              "file": "queue.py",
+              "line": 180,
+              "function": "get"
+            },
+            {
+              "file": "threading.py",
+              "line": 359,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_3 (10184)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_2 (7060)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_1 (5344)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_0 (6492)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of chatbook-storage-admission (9624)",
+          "frames": [
+            {
+              "file": "storage_admission.py",
+              "line": 512,
+              "function": "_run"
+            },
+            {
+              "file": "threading.py",
+              "line": 655,
+              "function": "wait"
+            },
+            {
+              "file": "threading.py",
+              "line": 355,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of MainThread (3804)",
+          "frames": [
+            {
+              "file": "base_events.py",
+              "line": 1961,
+              "function": "_run_once"
+            },
+            {
+              "file": "windows_events.py",
+              "line": 445,
+              "function": "select"
+            },
+            {
+              "file": "windows_events.py",
+              "line": 774,
+              "function": "_poll"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "diagnostic_cpp",
+      "threads": [
+        {
+          "thread": "Stack of asyncio_7 (2456)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_6 (1152)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_5 (8052)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_4 (3400)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of ui-stall-persist (8364)",
+          "frames": [
+            {
+              "file": "ui_responsiveness.py",
+              "line": 118,
+              "function": "_drain_stalls"
+            },
+            {
+              "file": "queue.py",
+              "line": 180,
+              "function": "get"
+            },
+            {
+              "file": "threading.py",
+              "line": 359,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_3 (10172)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_2 (2400)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_1 (2792)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_0 (748)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of chatbook-storage-admission (9012)",
+          "frames": [
+            {
+              "file": "storage_admission.py",
+              "line": 512,
+              "function": "_run"
+            },
+            {
+              "file": "threading.py",
+              "line": 655,
+              "function": "wait"
+            },
+            {
+              "file": "threading.py",
+              "line": 355,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of backup-startup-profile (2876)",
+          "frames": [
+            {
+              "file": "startup_timing_diagnostic.py",
+              "line": 333,
+              "function": "sample"
+            },
+            {
+              "file": "threading.py",
+              "line": 655,
+              "function": "wait"
+            },
+            {
+              "file": "threading.py",
+              "line": 359,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of MainThread (8884)",
+          "frames": [
+            {
+              "file": "base_events.py",
+              "line": 1961,
+              "function": "_run_once"
+            },
+            {
+              "file": "windows_events.py",
+              "line": 445,
+              "function": "select"
+            },
+            {
+              "file": "windows_events.py",
+              "line": 774,
+              "function": "_poll"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "diagnostic_file",
+      "threads": [
+        {
+          "thread": "Stack of asyncio_7 (9920)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_6 (8408)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_5 (5112)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_4 (8420)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of ui-stall-persist (5448)",
+          "frames": [
+            {
+              "file": "ui_responsiveness.py",
+              "line": 118,
+              "function": "_drain_stalls"
+            },
+            {
+              "file": "queue.py",
+              "line": 179,
+              "function": "get"
+            },
+            {
+              "file": "threading.py",
+              "line": 367,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_3 (1244)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_2 (5384)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_1 (7792)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of asyncio_0 (1544)",
+          "frames": [
+            {
+              "file": "thread.py",
+              "line": 93,
+              "function": "_worker"
+            },
+            {
+              "file": "thread.py",
+              "line": 59,
+              "function": "run"
+            },
+            {
+              "file": "_win_sleep.py",
+              "line": 100,
+              "function": "wait_inner"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of chatbook-storage-admission (8028)",
+          "frames": [
+            {
+              "file": "storage_admission.py",
+              "line": 512,
+              "function": "_run"
+            },
+            {
+              "file": "threading.py",
+              "line": 655,
+              "function": "wait"
+            },
+            {
+              "file": "threading.py",
+              "line": 355,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of backup-startup-profile (2896)",
+          "frames": [
+            {
+              "file": "startup_timing_diagnostic.py",
+              "line": 333,
+              "function": "sample"
+            },
+            {
+              "file": "threading.py",
+              "line": 655,
+              "function": "wait"
+            },
+            {
+              "file": "threading.py",
+              "line": 359,
+              "function": "wait"
+            }
+          ]
+        },
+        {
+          "thread": "Stack of MainThread (7504)",
+          "frames": [
+            {
+              "file": "inspect.py",
+              "line": 3348,
+              "function": "signature"
+            },
+            {
+              "file": "inspect.py",
+              "line": 3085,
+              "function": "from_callable"
+            },
+            {
+              "file": "inspect.py",
+              "line": 2597,
+              "function": "_signature_from_callable"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

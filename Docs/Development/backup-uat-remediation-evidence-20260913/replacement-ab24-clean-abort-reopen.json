@@ -1,0 +1,21 @@
+{
+  "result": "PASS",
+  "operation_id": "0e3372ac6fcf47f2810e220cf2e53546",
+  "abort_ui": "Succeeded: aborted; No local entries",
+  "normal_startup": "Console mounted, Library displayed Notes (1) and Before clean replacement",
+  "normal_quit": "Ctrl+Q closed the normal application tmux session",
+  "readback_method": "Copy native files as bytes; open SQLite copy only; live source hashes unchanged by verification",
+  "notes": [
+    [
+      "e1576243-c8f0-4c5f-9a2d-ce1712e91fc9",
+      "Before clean replacement",
+      "Restore this note on rollback. CLEAN-AB24-20260913."
+    ]
+  ],
+  "source_sha256": {
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-z19sdhzy/power/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db": "40c0973b8719dffcec0cff036095b09a9bc3d61ffb6c8b1a3fc04971c4d8fbe2",
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-z19sdhzy/power/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-z19sdhzy/power/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db-shm": "f25e5f1fb0f48d519e884f88e765df449c4cf52d842339b241259f72d2f6d719"
+  },
+  "snapshot": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/uat-clean-after-abort-snapshot-falsmt07"
+}

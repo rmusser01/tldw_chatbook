@@ -1,0 +1,40 @@
+
+  Backup & Restore
+
+                        Create backup                                            Inspect / restore
+
+
+                       Recovery copies                                           Restored profiles
+
+
+  No operation started
+
+  Create a verified local backup, or inspect an archive before choosing where to restore it.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                      Cancel operation                                                 Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to S▏^p Palette Menu

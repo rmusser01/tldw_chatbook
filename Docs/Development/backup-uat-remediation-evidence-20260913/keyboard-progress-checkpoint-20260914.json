@@ -1,0 +1,63 @@
+{
+  "base_revision": "d2f89fbc01d49b326c14c7ef2f345d230032d0d4",
+  "scope": "Test-only suspended keyboard coordinates and unprofiled dev/candidate comparison; no product/guard/assertion/deadline change.",
+  "source_hashes": {
+    "Tests/Backup_Recovery/startup_timing_diagnostic.py": "fe3f2005560910e7709f35e02e476daf7ef46919333c445198214f0a95a2479a",
+    "Tests/Backup_Recovery/test_startup_config_timing.py": "e62ba8bd422533566deb240993cf64b3f5c6bf30de7d54f722438ef57ac77004",
+    "Tests/Backup_Recovery/test_startup_timing_diagnostic.py": "fd4e688a01244145df9285ec6276930b06b04a6c447ddb56d2eb626c25f67cf7",
+    ".github/workflows/task-2062-2-gguf-source-evidence.yml": "3c1ef3c5a2bb684dab750f28ade471453f6018de53a9f8483b3c235ec5bbe084"
+  },
+  "root_tests": {
+    "passed": 26,
+    "seconds": 0.94,
+    "log_sha256": "a9c2d7f1bc91354426c4dceaf5170434b54ff4e5b9c2d836a707b9232eeeeb0f"
+  },
+  "independent_tests": {
+    "passed": 26,
+    "seconds": 0.94,
+    "log": "/private/tmp/uat-keyboard-progress-independent-final.log"
+  },
+  "red_evidence": {
+    "initial": {
+      "failed": 4,
+      "passed": 20
+    },
+    "caught_exception": {
+      "failed": 2
+    },
+    "invalid_local_throw_mask": {
+      "failed": 14,
+      "passed": 12
+    }
+  },
+  "static": {
+    "ruff": "pass",
+    "compile": "pass",
+    "bandit": {
+      "B101_test_assertions": 81,
+      "other_findings": 0
+    }
+  },
+  "final_native_macos": {
+    "case": "llamafile keyboard",
+    "passed": 1,
+    "session_seconds": 18.64,
+    "records": 2,
+    "source_matches": true,
+    "errors": [],
+    "final_active": 0,
+    "log_sha256": "d7c66a9f37a67df94556109eb57154c6177fff44a9b5bf2984454c01b3452731"
+  },
+  "earlier_native_macos": {
+    "case": "llama-cpp keyboard",
+    "passed": 1,
+    "session_seconds": 23.95,
+    "limitation": "Precedes PY_THROW correction; recorded separately."
+  },
+  "baseline_test_body_ast_equal": true,
+  "baseline_helpers_ast_equal": true,
+  "limitations": [
+    "Finite monitoring still adds overhead.",
+    "Windows comparison pending; no product performance or final acceptance claim."
+  ]
+}

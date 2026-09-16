@@ -42,6 +42,7 @@ from .fetch import (
     stream_fetch,
 )
 from .leases import ArtifactLeaseTimeoutError, ArtifactOperationLease, LeaseMode
+from .maintenance import acquisition_call, staged_read
 from .service import (
     ACQUISITION_SESSION_LEASE_KEY,
     NONBLOCKING_LEASE_TIMEOUT_SECONDS,
@@ -759,6 +760,7 @@ class ArtifactAcquisitionService:
         # (queue and proceed, not "busy"). Safe to construct without a
         # running loop on Python >= 3.10.
         self._lock = asyncio.Lock()
+        self._maintenance_session = None
 
     def _auth_headers(
         self, repository: str, *, url: str, source_url: str
@@ -809,6 +811,7 @@ class ArtifactAcquisitionService:
             return None
         return {"Authorization": f"Bearer {token}"}
 
+    @acquisition_call
     async def preflight(
         self,
         root: ArtifactRef,
@@ -914,7 +917,7 @@ class ArtifactAcquisitionService:
         closure = resolve_catalog_closure(root, catalog)
         source_map: ArtifactSourceMap = sources if sources is not None else {}
 
-        installed = self._core.list_installed()
+        installed = self._maintenance_core_read(self._core.list_installed)
         installed_refs = {
             item.descriptor.reference
             for item in installed
@@ -1052,7 +1055,7 @@ class ArtifactAcquisitionService:
         free_bytes = (
             self._free_bytes_probe(destination)
             if self._free_bytes_probe is not None
-            else self._core.disk_usage().free_bytes
+            else self._maintenance_core_read(self._core.disk_usage).free_bytes
         )
 
         report = PreflightReport(
@@ -1071,6 +1074,7 @@ class ArtifactAcquisitionService:
         )
         return closure, report, gating_targets, resolved_sources
 
+    @acquisition_call
     async def provision(
         self,
         root: ArtifactRef,
@@ -1197,9 +1201,10 @@ class ArtifactAcquisitionService:
                     ) from error
                 except asyncio.CancelledError:
                     with contextlib.suppress(BaseException):
-                        await acquire_future
+                        await self._settle_native(acquire_future)
                     raise
 
+                self._maintenance_session = (asyncio.current_task(), lease)
                 closure, report, _gating_targets, resolved_sources = (
                     self._aggregate_closure(root, catalog, sources)
                 )
@@ -1214,7 +1219,7 @@ class ArtifactAcquisitionService:
                         f"{report.free_bytes} free"
                     )
 
-                installed = self._core.list_installed()
+                installed = self._maintenance_core_read(self._core.list_installed)
                 installed_refs = {
                     item.descriptor.reference
                     for item in installed
@@ -1287,7 +1292,10 @@ class ArtifactAcquisitionService:
                 return activated
             finally:
                 if lease.acquired:
-                    await loop.run_in_executor(None, lease.release)
+                    try:
+                        await self._settle_native(loop.run_in_executor(None, lease.release))
+                    finally:
+                        self._maintenance_session = None
 
     async def _fetch_artifact(
         self,
@@ -1779,16 +1787,18 @@ class ArtifactAcquisitionService:
         attempts_used = 0
         loop = asyncio.get_running_loop()
         while True:
-            digest = await loop.run_in_executor(
-                None,
-                functools.partial(
-                    self._hash_staged_file,
-                    destination,
-                    descriptor,
-                    file,
-                    progress_state,
-                    loop,
-                ),
+            digest = await self._settle_native(
+                loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        self._hash_staged_file,
+                        destination,
+                        descriptor,
+                        file,
+                        progress_state,
+                        loop,
+                    ),
+                )
             )
             if digest == file.sha256:
                 return
@@ -1935,6 +1945,43 @@ class ArtifactAcquisitionService:
             functools.partial(self._core._finalize_download_stage, descriptor, stage),
         )
 
+    def _maintenance_lease(self):
+        session = self._maintenance_session
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+        return session[1] if session is not None and session[0] is task else None
+
+    def _maintenance_core_read(self, function, *, lease=None):
+        from .maintenance import provision_continuation
+        from .service import ModelArtifactService
+
+        lease = lease if lease is not None else self._maintenance_lease()
+        if lease is None or type(self._core) is not ModelArtifactService:
+            return function()
+        with provision_continuation(self._core, lease, function):
+            return function()
+
+    @staticmethod
+    async def _settle_native(future):
+        """Cancellation cannot abandon a native store call or its lock close."""
+        cancelled = False
+        while not future.done():
+            try:
+                await asyncio.shield(future)
+            except asyncio.CancelledError:
+                cancelled = True
+            except BaseException:
+                if not future.done():
+                    raise
+                break
+        if cancelled:
+            with contextlib.suppress(BaseException):
+                future.result()
+            raise asyncio.CancelledError
+        return future.result()
+
     async def _run_core_call(
         self,
         operation: Literal["stage", "finalize", "activate"],
@@ -1980,7 +2027,12 @@ class ArtifactAcquisitionService:
 
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(None, func)
+            lease = self._maintenance_lease()
+
+            def run():
+                return self._maintenance_core_read(func, lease=lease)
+
+            return await self._settle_native(loop.run_in_executor(None, run))
         except ArtifactIntegrityError as exc:
             raise TransferError(
                 f"{operation} failed for {ref.artifact_id}@{ref.revision}: {exc}",
@@ -2026,6 +2078,7 @@ class ArtifactAcquisitionService:
                 )
             )
 
+    @staged_read
     def _staged_bytes_for(self, descriptor: ArtifactDescriptor) -> int:
         """Best-effort resumable-byte credit from a fetch-state sidecar.
 

@@ -1,0 +1,137 @@
+{
+  "revision": "65a5c152b31e77f33506fceac5ec5921b61ef040",
+  "verified_artifact_hashes": 124,
+  "native": {
+    "passed": 42
+  },
+  "product": {
+    "passed": 192,
+    "failed": 5
+  },
+  "product_seconds": 2409.575,
+  "skips": 0,
+  "missing_outcomes": 0,
+  "installed_receipts": 2,
+  "matching_python_files_each": 2474,
+  "cases": [
+    {
+      "case": "Tests.Backup_Recovery.test_recovery_restart::test_actual_handoff_execs_fresh_recovery_ui[handoff]",
+      "seconds": 115.487,
+      "nearest_cause": "parent 70s subprocess TimeoutExpired; startup log only, fresh handoff completion unproved",
+      "traceback": "/private/tmp/uat-windows-65a5-support/junit-failures/d061c3e25d6c54c2.txt"
+    },
+    {
+      "case": "Tests.Backup_Recovery.test_recovery_restart::test_actual_handoff_execs_fresh_recovery_ui[later]",
+      "seconds": 70.046,
+      "nearest_cause": "parent 70s subprocess TimeoutExpired; startup log only, fresh handoff completion unproved",
+      "traceback": "/private/tmp/uat-windows-65a5-support/junit-failures/f339fa553c45a2ce.txt"
+    },
+    {
+      "case": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]",
+      "seconds": 289.657,
+      "nearest_cause": "capture succeeded/archive_verified; run_test exits with WorkerFailed(raw_source_helper_not_supported); originating helper frame truncated",
+      "traceback": "/private/tmp/uat-windows-65a5-support/junit-failures/6526b41a87beaaa0.txt"
+    },
+    {
+      "case": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+      "seconds": 204.488,
+      "nearest_cause": "F4 Pilot.press wait-for-screen timeout before preview",
+      "traceback": "/private/tmp/uat-windows-65a5-support/junit-failures/fba1b81bd111b8be.txt"
+    },
+    {
+      "case": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+      "seconds": 396.057,
+      "nearest_cause": "SchedulerLoop drain false after29.969s; exclusive lease admission then times out; heartbeat config acquisition unfinished",
+      "traceback": "/private/tmp/uat-windows-65a5-support/junit-failures/344f17c907ca7f60.txt"
+    }
+  ],
+  "snapshot_change_events": 0,
+  "native_snapshot_race_cases_passed": 6,
+  "slowest_groups": {
+    "console": {
+      "namespaces": 20,
+      "total_roots": 20,
+      "unique_roots": 20,
+      "total_depth": 283,
+      "max_depth": 15,
+      "unique_ancestors": 23,
+      "thread_id": 5424,
+      "caller": {
+        "file": "admission.py",
+        "function": "pause_requested",
+        "line": 702
+      },
+      "completed": 1,
+      "errors": 0,
+      "wall_ns": 684413900,
+      "thread_cpu_ns": 250000000,
+      "process_cpu_ns": 937500000,
+      "calls": {
+        "_tokens": {
+          "started": 20,
+          "completed": 20,
+          "errors": 0,
+          "wall_ns": 681695000
+        }
+      },
+      "started_wall_ns": 2362217792900
+    },
+    "settings": {
+      "namespaces": 1,
+      "total_roots": 1,
+      "unique_roots": 1,
+      "total_depth": 14,
+      "max_depth": 14,
+      "unique_ancestors": 13,
+      "thread_id": 3636,
+      "caller": {
+        "file": "admission.py",
+        "function": "pause_requested",
+        "line": 702
+      },
+      "completed": 1,
+      "errors": 0,
+      "wall_ns": 35686000,
+      "thread_cpu_ns": 15625000,
+      "process_cpu_ns": 46875000,
+      "calls": {
+        "_tokens": {
+          "started": 1,
+          "completed": 1,
+          "errors": 0,
+          "wall_ns": 35633400
+        }
+      },
+      "started_wall_ns": 2484314614200
+    },
+    "library": {
+      "namespaces": 21,
+      "total_roots": 21,
+      "unique_roots": 21,
+      "total_depth": 298,
+      "max_depth": 15,
+      "unique_ancestors": 23,
+      "thread_id": 4032,
+      "caller": {
+        "file": "admission.py",
+        "function": "_admit",
+        "line": 541
+      },
+      "completed": 1,
+      "errors": 0,
+      "wall_ns": 79803672100,
+      "thread_cpu_ns": 156250000,
+      "process_cpu_ns": 79968750000,
+      "calls": {
+        "_tokens": {
+          "started": 21,
+          "completed": 21,
+          "errors": 0,
+          "wall_ns": 79800747700
+        }
+      },
+      "started_wall_ns": 2894038818100
+    }
+  },
+  "modifications_or_reruns": false
+}

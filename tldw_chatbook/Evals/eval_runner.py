@@ -28,6 +28,7 @@ from pathlib import Path
 import csv
 
 from loguru import logger
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 
 try:
     from datasets import load_dataset, Dataset  # noqa: F401
@@ -1380,11 +1381,19 @@ class BaseEvalRunner(ABC):
             if param in kwargs:
                 call_params[param] = kwargs[param]
 
-        async def invoke_dispatcher():
+        async def invoke_native_dispatcher():
             response = await asyncio.to_thread(chat_api_call, **call_params)
             if inspect.isawaitable(response):
                 response = await response
             return response
+
+        async def invoke_dispatcher():
+            # A timeout/cancel cannot stop the synchronous dispatcher thread.
+            # Keep the sample's ownership until its real native/async tail ends,
+            # then let wait_for preserve the original timeout/cancel outcome.
+            native = asyncio.create_task(invoke_native_dispatcher())
+            await join_retained_task(native)
+            return native.result()
 
         # The production dispatcher is synchronous; keep it off the event loop.
         response = await asyncio.wait_for(

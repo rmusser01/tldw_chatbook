@@ -1,0 +1,26 @@
+{
+  "scope": "Test-only bounded observation of original preview SQLite snapshot failures",
+  "base": "4a50a22cffd5ae0ca029dad4c1e10eada8a2c3a5",
+  "hashes": {
+    "baseline_bandit": {
+      "B105": 1,
+      "B101": 115
+    },
+    "current_bandit": {
+      "B105": 1,
+      "B101": 134
+    },
+    "Tests/Backup_Recovery/thread_diagnostics.py": "059931cd11b345a8417546678310001c4806851d372e01dd96d7199456781b31",
+    "Tests/Backup_Recovery/test_thread_diagnostics.py": "091d61da80b2bee7dc1b88e4f297c59c3b6d1522a97115db875db7a73e8bdb5a"
+  },
+  "root_tests": {
+    "passed": 41,
+    "seconds": 2.39
+  },
+  "independent_tests": {
+    "passed": 33,
+    "seconds": 2.23
+  },
+  "windows_attribution": "Pending native repeat; concurrent-note probe proves mechanism only",
+  "product_changes": false
+}

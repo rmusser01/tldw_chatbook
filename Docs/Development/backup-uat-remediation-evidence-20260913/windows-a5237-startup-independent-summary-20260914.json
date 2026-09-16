@@ -1,0 +1,528 @@
+{
+  "revision": "a5237449584d5b6d0090c15adabb4b12846a4aaa",
+  "run": 34936472021,
+  "job": 104275363447,
+  "log_sha256": "b309d2c3bc0124e6635b55bd4b43b315fe37edc1d4f1c4b9cfada5b4c89b312e",
+  "observer_git_sha256": "973e6d8bc973b29ac52f62a8da40328bbf45b33cbd1462ff632fc92a16207c48",
+  "observer_identical_63756": true,
+  "non_ui": {
+    "passed": 31,
+    "seconds": 9.23
+  },
+  "primary": {
+    "timeouts": 4,
+    "limit_seconds": 60
+  },
+  "dev_revision": "4631b60f8dd9623fc55bf16f4a37e29fcb1240c7",
+  "dev_session_seconds": [
+    47.32,
+    39.37
+  ],
+  "dev_call_seconds": [
+    38.73,
+    36.49
+  ],
+  "candidate_timeouts": 2,
+  "records": 22,
+  "all_source_matches": true,
+  "observer_errors": [],
+  "config_errors": [],
+  "dropped_active_max": 0,
+  "cprofile_enabled": false,
+  "groups": [
+    {
+      "label": "dev",
+      "provider": "llamacpp",
+      "records": 5,
+      "last_elapsed_seconds": 48.328,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_focus": 1,
+        "test_close": 1
+      },
+      "pending_tests": [],
+      "completed_tests": [
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.028915,
+          "thread_cpu_seconds": 0.0
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.162212,
+          "thread_cpu_seconds": 0.125
+        },
+        {
+          "function": "test_mount",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 12.377183,
+          "thread_cpu_seconds": 8.03125
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.055871,
+          "thread_cpu_seconds": 0.03125
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.140001,
+          "thread_cpu_seconds": 0.078125
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.029769,
+          "thread_cpu_seconds": 0.015625
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.060378,
+          "thread_cpu_seconds": 0.046875
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.051167,
+          "thread_cpu_seconds": 0.015625
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.067427,
+          "thread_cpu_seconds": 0.03125
+        },
+        {
+          "function": "test_focus",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 13.866381,
+          "thread_cpu_seconds": 2.625,
+          "completed_focus_steps": 43
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.170842,
+          "thread_cpu_seconds": 0.09375
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 0.044465,
+          "thread_cpu_seconds": 0.0
+        },
+        {
+          "function": "test_close",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 5.886628,
+          "thread_cpu_seconds": 0.109375
+        },
+        {
+          "function": "test_case",
+          "outcome": "returned",
+          "thread": 1416,
+          "elapsed_seconds": 38.73311,
+          "thread_cpu_seconds": 12.59375
+        }
+      ],
+      "slowest_config_operation": null,
+      "sampled_frames": []
+    },
+    {
+      "label": "candidate",
+      "provider": "llamacpp",
+      "records": 6,
+      "last_elapsed_seconds": 60.047,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 759,
+        "user_directory": 32,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1,
+        "test_settle": 4
+      },
+      "pending_tests": [
+        {
+          "function": "test_case",
+          "thread": 7336,
+          "phase": "running",
+          "elapsed_seconds": 55.93894,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1404
+          }
+        }
+      ],
+      "completed_tests": [
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 7336,
+          "elapsed_seconds": 0.02922,
+          "thread_cpu_seconds": 0.0
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 7336,
+          "elapsed_seconds": 0.079949,
+          "thread_cpu_seconds": 0.078125
+        },
+        {
+          "function": "test_mount",
+          "outcome": "returned",
+          "thread": 7336,
+          "elapsed_seconds": 55.376927,
+          "thread_cpu_seconds": 39.015625
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 7336,
+          "elapsed_seconds": 0.040706,
+          "thread_cpu_seconds": 0.015625
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 7336,
+          "elapsed_seconds": 0.063353,
+          "thread_cpu_seconds": 0.0625
+        }
+      ],
+      "slowest_config_operation": {
+        "function": "config_operation",
+        "outcome": "returned",
+        "thread": 4044,
+        "elapsed_seconds": 1.413001,
+        "thread_cpu_seconds": 0.765625,
+        "acquisition_seconds": 0.586634,
+        "body_and_release_seconds": 0.826368
+      },
+      "sampled_frames": [
+        {
+          "file": "windows_events.py",
+          "function": "_poll",
+          "line": 774
+        },
+        {
+          "file": "windows_events.py",
+          "function": "select",
+          "line": 445
+        },
+        {
+          "file": "base_events.py",
+          "function": "_run_once",
+          "line": 1961
+        },
+        {
+          "file": "base_events.py",
+          "function": "run_forever",
+          "line": 645
+        },
+        {
+          "file": "windows_events.py",
+          "function": "run_forever",
+          "line": 322
+        },
+        {
+          "file": "base_events.py",
+          "function": "run_until_complete",
+          "line": 678
+        },
+        {
+          "file": "runners.py",
+          "function": "run",
+          "line": 118
+        },
+        {
+          "file": "plugin.py",
+          "function": "inner",
+          "line": 905
+        },
+        {
+          "file": "python.py",
+          "function": "pytest_pyfunc_call",
+          "line": 167
+        },
+        {
+          "file": "_callers.py",
+          "function": "_multicall",
+          "line": 121
+        },
+        {
+          "file": "_manager.py",
+          "function": "_hookexec",
+          "line": 120
+        },
+        {
+          "file": "_hooks.py",
+          "function": "__call__",
+          "line": 512
+        }
+      ]
+    },
+    {
+      "label": "dev",
+      "provider": "llamafile",
+      "records": 5,
+      "last_elapsed_seconds": 40.203,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "test_settle": 10,
+        "test_focus": 1,
+        "test_close": 1
+      },
+      "pending_tests": [],
+      "completed_tests": [
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 0.032296,
+          "thread_cpu_seconds": 0.0
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 1.291464,
+          "thread_cpu_seconds": 0.125
+        },
+        {
+          "function": "test_mount",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 10.750267,
+          "thread_cpu_seconds": 5.5625
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 0.065697,
+          "thread_cpu_seconds": 0.015625
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 0.08087,
+          "thread_cpu_seconds": 0.03125
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 0.034459,
+          "thread_cpu_seconds": 0.0
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 0.075386,
+          "thread_cpu_seconds": 0.046875
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 1.045677,
+          "thread_cpu_seconds": 0.265625
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 0.026257,
+          "thread_cpu_seconds": 0.015625
+        },
+        {
+          "function": "test_focus",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 12.558841,
+          "thread_cpu_seconds": 2.15625,
+          "completed_focus_steps": 39
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 0.293378,
+          "thread_cpu_seconds": 0.28125
+        },
+        {
+          "function": "test_settle",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 0.043077,
+          "thread_cpu_seconds": 0.03125
+        },
+        {
+          "function": "test_close",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 6.876097,
+          "thread_cpu_seconds": 0.1875
+        },
+        {
+          "function": "test_case",
+          "outcome": "returned",
+          "thread": 3568,
+          "elapsed_seconds": 36.493312,
+          "thread_cpu_seconds": 10.34375
+        }
+      ],
+      "slowest_config_operation": null,
+      "sampled_frames": []
+    },
+    {
+      "label": "candidate",
+      "provider": "llamafile",
+      "records": 6,
+      "last_elapsed_seconds": 60.032,
+      "counts": {
+        "test_case": 1,
+        "test_mount": 1,
+        "config_operation": 798,
+        "user_directory": 28,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "pending_tests": [
+        {
+          "function": "test_case",
+          "thread": 3700,
+          "phase": "running",
+          "elapsed_seconds": 55.985276,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "test_supported_width_keyboard_reaches_each_provider_source_and_actions",
+            "line": 1367
+          }
+        },
+        {
+          "function": "test_mount",
+          "thread": 3700,
+          "phase": "running",
+          "elapsed_seconds": 55.985221,
+          "suspended_at": {
+            "file": "test_llm_gguf_source_modes.py",
+            "function": "_mount_models",
+            "line": 116
+          }
+        }
+      ],
+      "completed_tests": [],
+      "slowest_config_operation": {
+        "function": "config_operation",
+        "outcome": "returned",
+        "thread": 6964,
+        "elapsed_seconds": 1.718771,
+        "thread_cpu_seconds": 0.78125,
+        "acquisition_seconds": 0.591765,
+        "body_and_release_seconds": 1.127005
+      },
+      "sampled_frames": [
+        {
+          "file": "windows_files.py",
+          "function": "info",
+          "line": 428
+        },
+        {
+          "file": "windows_files.py",
+          "function": "open_handle",
+          "line": 575
+        },
+        {
+          "file": "windows_files.py",
+          "function": "_parent",
+          "line": 646
+        },
+        {
+          "file": "contextlib.py",
+          "function": "__enter__",
+          "line": 137
+        },
+        {
+          "file": "windows_files.py",
+          "function": "stat",
+          "line": 738
+        },
+        {
+          "file": "bootstrap.py",
+          "function": "_control_records",
+          "line": 166
+        },
+        {
+          "file": "bootstrap.py",
+          "function": "_records",
+          "line": 253
+        },
+        {
+          "file": "config_participants.py",
+          "function": "companion_guard",
+          "line": 163
+        },
+        {
+          "file": "raw_participants.py",
+          "function": "_scope",
+          "line": 701
+        },
+        {
+          "file": "contextlib.py",
+          "function": "__enter__",
+          "line": 137
+        },
+        {
+          "file": "config_participants.py",
+          "function": "operation",
+          "line": 352
+        },
+        {
+          "file": "contextlib.py",
+          "function": "__enter__",
+          "line": 137
+        }
+      ]
+    }
+  ]
+}

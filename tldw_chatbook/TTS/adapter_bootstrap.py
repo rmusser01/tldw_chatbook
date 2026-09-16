@@ -117,6 +117,9 @@ def build_default_tts_service(
     clone_materializer = TTSCloneReferenceMaterializer(
         get_user_data_dir() / "tts_clone_materializations"
     )
+    from .profile_source import bind_default_materializer
+
+    bind_default_materializer(clone_materializer)
     return TTSService(
         registry,
         max_concurrent_operations=4,

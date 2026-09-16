@@ -1,0 +1,11 @@
+{
+  "candidate": "d3082ef98211e3ad42273ac2d2dcbbf43b6d93cc",
+  "dev": "4631b60f8dd9623fc55bf16f4a37e29fcb1240c7",
+  "run": 34831235874,
+  "job": 103934821964,
+  "raw_job_log_sha256": "4cd5b019a44bee3f0a06bcfe78cc14f0f821c5954835d083069e7c36f9a6908a",
+  "reports": {
+    "windows-startup-dev-candidate-d3082-profiles.json": "f7c8bc12993044f04b272fc23b3d779aca00f35816bc40a9090539d102c6ad06",
+    "windows-startup-dev-candidate-d3082-review.md": "ff5c2b90d160408d31f23a6786b90a575ef1ec0c07cf11ebece3d75fc94df7bd"
+  }
+}

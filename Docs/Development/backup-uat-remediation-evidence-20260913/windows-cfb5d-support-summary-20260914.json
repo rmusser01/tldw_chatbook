@@ -1,0 +1,482 @@
+{
+  "run": 34920105965,
+  "revision": "cfb5d35e7354b171215e17db261228f48832463a",
+  "selection": "support-diagnostic",
+  "verified_artifact_files": 162,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.418,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 348,
+      "counts": {
+        "passed": 346,
+        "failed": 2
+      },
+      "seconds": 2484.222,
+      "failures": [
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+          "status": "failed",
+          "seconds": 420.033,
+          "full_traceback_path": "/private/tmp/uat-windows-cfb5d-support/junit-failures/fba1b81bd111b8be.txt",
+          "failure_evidence": [
+            "a TimeoutExpired exception will be raised.",
+            ">               raise TimeoutExpired(self.args, orig_timeout)",
+            "E               subprocess.TimeoutExpired: Command '['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyri",
+            "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\subprocess.py:1630: TimeoutExpired"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+          "status": "failed",
+          "seconds": 420.217,
+          "full_traceback_path": "/private/tmp/uat-windows-cfb5d-support/junit-failures/344f17c907ca7f60.txt",
+          "failure_evidence": [
+            "a TimeoutExpired exception will be raised.",
+            ">               raise TimeoutExpired(self.args, orig_timeout)",
+            "E               subprocess.TimeoutExpired: Command '['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyri",
+            "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\subprocess.py:1630: TimeoutExpired"
+          ]
+        }
+      ],
+      "skips": []
+    }
+  },
+  "unfinished": 0,
+  "installed": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "7d4efde7522f633a890a56bd3c6b97971d014f27766f548ecf49101b88d55ecc",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    },
+    {
+      "fixture": "product-pytest/f9-native-package1/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "3222c019e655b3d6f64ad9929dbcd72fdabceaced796c38dc7e1a25c94df5506",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "git": {
+    "revision": "cfb5d35e7354b171215e17db261228f48832463a",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 2,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "failures": {
+    "settings": {
+      "phase_markers": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.031
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 30.875
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 30.875
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 57.406
+        }
+      ],
+      "immediate_wait_failure": {
+        "event": "exception",
+        "error": {
+          "error_class": "TimeoutError",
+          "frames": [
+            {
+              "file": "<string>",
+              "function": "main",
+              "line": 76
+            },
+            {
+              "file": "threads.py",
+              "function": "to_thread",
+              "line": 25
+            }
+          ],
+          "errno": null,
+          "winerror": null
+        }
+      },
+      "runtime_events": [
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 1,
+            "operations": 1,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 1,
+            "operations": 1,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 1,
+            "operations": 1,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 1,
+            "operations": 1,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 1,
+            "operations": 1,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_before",
+          "failed_hook": null,
+          "storage": {
+            "pending": 1,
+            "operations": 1,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_after",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 1,
+            "startups": 1
+          }
+        },
+        {
+          "event": "runtime_resume",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 0,
+            "startups": 0
+          }
+        }
+      ],
+      "inventory_observations": [
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "capture_service.py",
+              "function": "preview_capture",
+              "line": 77
+            },
+            {
+              "file": "recovery_service.py",
+              "function": "preview_backup",
+              "line": 1044
+            },
+            {
+              "file": "thread.py",
+              "function": "run",
+              "line": 59
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        },
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "capture_service.py",
+              "function": "capture",
+              "line": 180
+            },
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed_capture",
+              "line": 507
+            },
+            {
+              "file": "recovery_service.py",
+              "function": "backup",
+              "line": 1164
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        }
+      ],
+      "body_or_child_failure_present": false,
+      "recovery_failure_present": false
+    },
+    "library": {
+      "phase_markers": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.015
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 28.187
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 28.187
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 53.156
+        }
+      ],
+      "immediate_wait_failure": {
+        "event": "exception",
+        "error": {
+          "error_class": "TimeoutError",
+          "frames": [
+            {
+              "file": "<string>",
+              "function": "main",
+              "line": 76
+            },
+            {
+              "file": "threads.py",
+              "function": "to_thread",
+              "line": 25
+            }
+          ],
+          "errno": null,
+          "winerror": null
+        }
+      },
+      "runtime_events": [
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "settle_stage_begin",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_before",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 8,
+            "startups": 1
+          }
+        },
+        {
+          "event": "retire_caches_after",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 1,
+            "startups": 1
+          }
+        },
+        {
+          "event": "runtime_resume",
+          "failed_hook": null,
+          "storage": {
+            "pending": 0,
+            "operations": 0,
+            "raw_operations": 0,
+            "live_leases": 0,
+            "startups": 0
+          }
+        }
+      ],
+      "inventory_observations": [
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "capture_service.py",
+              "function": "preview_capture",
+              "line": 77
+            },
+            {
+              "file": "recovery_service.py",
+              "function": "preview_backup",
+              "line": 1044
+            },
+            {
+              "file": "thread.py",
+              "function": "run",
+              "line": 59
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        },
+        {
+          "event": "inventory",
+          "callers": [
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed",
+              "line": 501
+            },
+            {
+              "file": "capture_service.py",
+              "function": "capture",
+              "line": 180
+            },
+            {
+              "file": "thread_diagnostics.py",
+              "function": "observed_capture",
+              "line": 507
+            },
+            {
+              "file": "recovery_service.py",
+              "function": "backup",
+              "line": 1164
+            }
+          ],
+          "scope_changed": false,
+          "delta": [],
+          "delta_truncated": false,
+          "inventory_truncated": false,
+          "unavailable_dependencies": [],
+          "dependencies_truncated": false
+        }
+      ],
+      "body_or_child_failure_present": false,
+      "recovery_failure_present": false
+    }
+  },
+  "distinction": "cfb evidence only; latest8db offloaded watcher not present",
+  "evidence_hashes": {
+    "/private/tmp/uat-windows-cfb5d-support/backup-platform-windows-2022-py3.12-support-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/artifact-sha256.json": "d3291affea0a7ea22b3504ab7b9a537252227d74a88be5d0fa375882aafe199a",
+    "/private/tmp/uat-windows-cfb5d-support/backup-platform-windows-2022-py3.12-support-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/pytest.xml": "62074e133dac85208461bea3470207d6f9d89fb5f75190601dafe740e77d18e1",
+    "/private/tmp/uat-windows-cfb5d-support/backup-platform-windows-2022-py3.12-support-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/native-pytest.xml": "2c35f340ea14e8c47f42c156117d90d93b829e731b7616ad6bfb8ef0686c4768",
+    "/private/tmp/uat-windows-cfb5d-support/backup-platform-windows-2022-py3.12-support-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/source-receipt.json": "8340b359c97dddad76521d876d97cb2ed72110e45dc12ec548a5aaf10d431455",
+    "/private/tmp/uat-windows-cfb5d-support/backup-platform-windows-2022-py3.12-support-diagnostic-cfb5d35e7354b171215e17db261228f48832463a/installed-package-receipt.json": "babe5ef5c9b2a89084b7afcb055b634ce087700b6d4736ac2dbe930f9a3cde5a"
+  }
+}

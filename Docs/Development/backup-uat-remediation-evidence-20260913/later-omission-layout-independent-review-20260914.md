@@ -1,0 +1,7 @@
+# Independent later-omission keyboard layout review
+
+APPROVED. Exact two-file hash receipt: /private/tmp/uat-later-omission-layout-independent-hashes.json. The product delta only adds the existing backup-form class to the later credential container. Its auto height now follows its rendered contents, matching the existing create/restore credential areas. Existing descendant checkbox/static/input rules already apply through the parent backup-later-form, so no new checkbox behavior, acknowledgement state, display-mode selector or operation authority is introduced. No code queries backup-form as an action/state selector.
+
+The regression mounts the real screen with a real RecoveryService and injects only a synthetic existing review result. Eight boxes start unchecked; actual Tab/Space keyboard events visit and acknowledge each. Each focused box must fit entirely inside both its review container and scroll viewport. The final plan remains absent and start disabled, proving keyboard acknowledgement does not bypass review. This is a meaningful component regression for the observed clipped checkbox; it is not claimed as a full native rollback workflow.
+
+Independent new keyboard case passed in /private/tmp/uat-later-omission-layout-independent.log. Parent separately runs the complete UI module. No actionable findings; no edits performed by reviewer. Actual immutable keyboard/native workflow acceptance remains separate.

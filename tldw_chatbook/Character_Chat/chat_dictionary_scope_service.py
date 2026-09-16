@@ -101,6 +101,16 @@ class ChatDictionaryScopeService:
         if not inspect.iscoroutinefunction(method) and self._is_file_backed_local(
             backend
         ):
+            from ..Backup_Recovery.dictionary_source_job import _DictionaryJob, supports
+
+            if supports(backend, method):
+                with _DictionaryJob(backend, method) as job:
+                    outcome = await job.run((args, kwargs))
+                    if outcome.cancelled:
+                        raise asyncio.CancelledError
+                    if outcome.error is not None:
+                        raise outcome.error
+                    return outcome.value
             return await asyncio.to_thread(lambda: method(*args, **kwargs))
         return await self._maybe_await(method(*args, **kwargs))
 

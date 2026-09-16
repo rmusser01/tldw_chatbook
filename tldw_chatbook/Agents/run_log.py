@@ -602,43 +602,45 @@ class RunLogWriter:
             # `base` (the dotted target) is known.
             legacy_dir_name = dir_name
             dir_name = f".{dir_name}"
-        from tldw_chatbook.Tools.file_operation_tools import is_within
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(root):
+            from tldw_chatbook.Tools.file_operation_tools import is_within
 
-        base = root / dir_name
-        # Verify containment before creating any directories.
-        if not is_within(base, root):
-            logger.warning("run log: base directory escapes root; logging disabled")
-            self._active = False
-            return
-        if legacy_dir_name is not None:
-            # Best-effort, self-contained (never raises): see
-            # `_migrate_legacy_dir` for the full upgrade-safety policy.
-            self._migrate_legacy_dir(root, legacy_dir_name, base)
-        base.mkdir(parents=True, exist_ok=True)
-        gitignore = base / ".gitignore"
-        if not gitignore.exists():
-            # Created only if absent: writing into a user's repository
-            # is itself a mutation.
-            gitignore.write_text("*\n", encoding="utf-8")
-        run_dir = base / run_id
-        # Verify containment of run_dir before creating it.
-        if not is_within(run_dir, root):
-            logger.warning(
-                "run log: run directory escapes root; logging disabled"
-            )
-            self._active = False
-            return
-        run_dir.mkdir(parents=True, exist_ok=True)
-        self.log_dir = run_dir
-        self._active = True
-        if self._on_bound is not None:
-            try:
-                self._on_bound(run_id, root)
-            except Exception as exc:  # noqa: BLE001 -- observers never break logging
-                logger.debug(
-                    "run log: on_bound callback failed category={}",
-                    exc.__class__.__name__,
+            base = root / dir_name
+            # Verify containment before creating any directories.
+            if not is_within(base, root):
+                logger.warning("run log: base directory escapes root; logging disabled")
+                self._active = False
+                return
+            if legacy_dir_name is not None:
+                # Best-effort, self-contained (never raises): see
+                # `_migrate_legacy_dir` for the full upgrade-safety policy.
+                self._migrate_legacy_dir(root, legacy_dir_name, base)
+            base.mkdir(parents=True, exist_ok=True)
+            gitignore = base / ".gitignore"
+            if not gitignore.exists():
+                # Created only if absent: writing into a user's repository
+                # is itself a mutation.
+                gitignore.write_text("*\n", encoding="utf-8")
+            run_dir = base / run_id
+            # Verify containment of run_dir before creating it.
+            if not is_within(run_dir, root):
+                logger.warning(
+                    "run log: run directory escapes root; logging disabled"
                 )
+                self._active = False
+                return
+            run_dir.mkdir(parents=True, exist_ok=True)
+            self.log_dir = run_dir
+            self._active = True
+            if self._on_bound is not None:
+                try:
+                    self._on_bound(run_id, root)
+                except Exception as exc:  # noqa: BLE001 -- observers never break logging
+                    logger.debug(
+                        "run log: on_bound callback failed category={}",
+                        exc.__class__.__name__,
+                    )
 
     def _migrate_legacy_dir(self, root: Path, legacy_name: str, dotted: Path) -> None:
         """Move a pre-TASK-1270 undotted log tree under its dotted name.
@@ -761,13 +763,15 @@ class RunLogWriter:
             payload: Bytes to append.
             sync: Whether to force an ``fsync`` after flushing.
         """
-        import os
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(path):
+            import os
 
-        with open(path, "ab") as handle:
-            handle.write(payload)
-            handle.flush()
-            if sync:
-                os.fsync(handle.fileno())
+            with open(path, "ab") as handle:
+                handle.write(payload)
+                handle.flush()
+                if sync:
+                    os.fsync(handle.fileno())
 
     def append(
         self,
@@ -848,55 +852,58 @@ class RunLogWriter:
         """
         if not self._active or self.log_dir is None:
             return None
-        with self._lock:
-            truncated_from = 0
-            body = content.encode("utf-8")
-            if len(body) > self._max_record_bytes:
-                truncated_from = len(body)
-                # Cut on a character boundary, then re-encode.
-                body = body[: self._max_record_bytes]
-                content = body.decode("utf-8", "ignore")
-            self._counter += 1
-            record = RunLogRecord(
-                number=self._counter,
-                run_id=run_id,
-                kind=kind,
-                type=type,
-                ts=_now_iso(),
-                content=content,
-                tool=tool,
-                status=status,
-                call_id=call_id,
-                truncated_from=truncated_from,
-            )
-            payload = encode_record(record)
-            # Roll BEFORE writing: a record must never span segments, or
-            # bytes=-exact parsing (which assumes one file) breaks.
-            if self._segment_size and self._segment_size + len(payload) > (
-                self._segment_bytes
-            ):
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.log_dir):
+            with self._lock:
+                truncated_from = 0
+                body = content.encode("utf-8")
+                if len(body) > self._max_record_bytes:
+                    truncated_from = len(body)
+                    # Cut on a character boundary, then re-encode.
+                    body = body[: self._max_record_bytes]
+                    content = body.decode("utf-8", "ignore")
+                self._counter += 1
+                record = RunLogRecord(
+                    number=self._counter,
+                    run_id=run_id,
+                    kind=kind,
+                    type=type,
+                    ts=_now_iso(),
+                    content=content,
+                    tool=tool,
+                    status=status,
+                    call_id=call_id,
+                    truncated_from=truncated_from,
+                )
+                payload = encode_record(record)
+                # Roll BEFORE writing: a record must never span segments, or
+                # bytes=-exact parsing (which assumes one file) breaks.
+                if self._segment_size and self._segment_size + len(payload) > (
+                    self._segment_bytes
+                ):
+                    try:
+                        # fsync the segment being retired; it will not be
+                        # appended to again.
+                        self._write_bytes(self._segment_path(), b"", sync=True)
+                    except Exception as exc:  # noqa: BLE001 — durability is best-effort
+                        logger.warning(
+                            "run log: segment fsync failed category={}",
+                            exc.__class__.__name__,
+                        )
+                    self._segment_index += 1
+                    self._segment_size = 0
                 try:
-                    # fsync the segment being retired; it will not be
-                    # appended to again.
-                    self._write_bytes(self._segment_path(), b"", sync=True)
-                except Exception as exc:  # noqa: BLE001 — durability is best-effort
+                    self._write_bytes(self._segment_path(), payload)
+                except Exception as exc:
                     logger.warning(
-                        "run log: segment fsync failed category={}",
+                        "run log: append failed; logging disabled for this run category={}",
                         exc.__class__.__name__,
                     )
-                self._segment_index += 1
-                self._segment_size = 0
-            try:
-                self._write_bytes(self._segment_path(), payload)
-            except Exception as exc:
-                logger.warning(
-                    "run log: append failed; logging disabled for this run category={}",
-                    exc.__class__.__name__,
-                )
-                self._active = False
-                return None
-            self._segment_size += len(payload)
-            return RunLogRecordNumber(record.number, truncated=bool(truncated_from))
+                    self._active = False
+                    return None
+                self._segment_size += len(payload)
+                return RunLogRecordNumber(record.number, truncated=bool(truncated_from))
+
 
     def write_manifest(self, metadata: dict) -> None:
         """Write run-level metadata while holding configured file authority."""

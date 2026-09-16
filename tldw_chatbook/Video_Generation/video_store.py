@@ -37,13 +37,13 @@ from typing import BinaryIO, Iterator
 import portalocker
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.generated_media_lifetime import participant
 from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Video_Generation.config import (
     get_video_store_policy,
 )
 from tldw_chatbook.Video_Generation.video_formats import (
     SUPPORTED_VIDEO_FORMATS,
-    canonical_video_extension,
 )
 
 VIDEO_MARKER_PREFIX = "[video] "
@@ -165,9 +165,11 @@ class VideoStore:
             defaults to the live config at call time.
     """
 
-    def __init__(self, root: Path | None = None, *, config=None) -> None:
+    def __init__(self, root: Path | None = None, *, config=None, recovered_root=None, recovered_profile=None) -> None:
         self._root = (root or (get_user_data_dir() / "generated_videos")).expanduser()
         self._config = config
+        self._recovered_root = recovered_root or self._root.parent / "recovered_media"
+        self._recovered_profile = recovered_profile
         self._transaction_lock = threading.RLock()
 
     @property
@@ -199,47 +201,48 @@ class VideoStore:
     @contextmanager
     def _root_lease(self):
         """Take the bounded interprocess lease for one capacity transaction."""
-        try:
-            self._root.parent.mkdir(parents=True, exist_ok=True)
-            handle = self._lease_path.open("a+b")
-        except OSError as exc:
-            raise VideoStoreSaveError("managed store lease setup failed") from exc
+        with participant.operation((self._root, self._lease_path)):
+            try:
+                self._root.parent.mkdir(parents=True, exist_ok=True)
+                handle = self._lease_path.open("a+b")
+            except OSError as exc:
+                raise VideoStoreSaveError("managed store lease setup failed") from exc
 
-        flags = portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING
-        deadline = time.monotonic() + _ROOT_LEASE_TIMEOUT_SECONDS
-        locked = False
-        try:
-            while True:
+            flags = portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING
+            deadline = time.monotonic() + _ROOT_LEASE_TIMEOUT_SECONDS
+            locked = False
+            try:
+                while True:
+                    try:
+                        portalocker.lock(handle, flags)
+                        locked = True
+                        break
+                    except portalocker.exceptions.AlreadyLocked as exc:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise VideoStoreBusyError(
+                                "generated video store is busy"
+                            ) from exc
+                        time.sleep(min(_ROOT_LEASE_POLL_SECONDS, remaining))
+                    except portalocker.exceptions.LockException as exc:
+                        raise VideoStoreSaveError("managed store lease failed") from exc
+                    except Exception as exc:
+                        raise VideoStoreSaveError("managed store lease failed") from exc
+                yield
+            finally:
+                if locked:
+                    try:
+                        portalocker.unlock(handle)
+                    except Exception as exc:
+                        logger.warning(
+                            "VideoStore: lease unlock failed ({})", type(exc).__name__
+                        )
                 try:
-                    portalocker.lock(handle, flags)
-                    locked = True
-                    break
-                except portalocker.exceptions.AlreadyLocked as exc:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise VideoStoreBusyError(
-                            "generated video store is busy"
-                        ) from exc
-                    time.sleep(min(_ROOT_LEASE_POLL_SECONDS, remaining))
-                except portalocker.exceptions.LockException as exc:
-                    raise VideoStoreSaveError("managed store lease failed") from exc
-                except Exception as exc:
-                    raise VideoStoreSaveError("managed store lease failed") from exc
-            yield
-        finally:
-            if locked:
-                try:
-                    portalocker.unlock(handle)
+                    handle.close()
                 except Exception as exc:
                     logger.warning(
-                        "VideoStore: lease unlock failed ({})", type(exc).__name__
+                        "VideoStore: lease close failed ({})", type(exc).__name__
                     )
-            try:
-                handle.close()
-            except Exception as exc:
-                logger.warning(
-                    "VideoStore: lease close failed ({})", type(exc).__name__
-                )
 
     # -- path safety ------------------------------------------------------
 
@@ -255,12 +258,9 @@ class VideoStore:
         return self._root / message_id
 
     def _video_path(self, message_id: str, slug: str, extension: str) -> Path:
-        if not slug or not _SAFE_COMPONENT.fullmatch(slug):
-            raise ValueError(f"unsafe slug component: {slug!r}")
-        if slug.startswith(_STAGE_PREFIX):
-            raise ValueError("slug uses reserved internal stage namespace")
-        safe_ext = canonical_video_extension(extension)
-        candidate = (self._message_dir(message_id) / f"{slug}.{safe_ext}")
+        from .video_metadata import video_relative_path
+
+        candidate = self._root / video_relative_path(message_id, slug, extension)
         try:
             resolved_root = self._root.resolve()
             resolved = candidate.resolve()
@@ -460,11 +460,31 @@ class VideoStore:
         rather than raising -- resolution is a read path against durable,
         possibly hand-edited names.
         """
-        try:
-            path = self._video_path(message_id, slug, extension)
-        except (ValueError, VideoStoreSaveError):
-            return None
-        return path if self._is_safe_regular_file(path) else None
+        return self.resolve_state(message_id, slug, extension=extension)[1]
+
+    def resolve_state(self, message_id: str, slug: str, *, extension: str):
+        """Resolve durable recovery identity before the ephemeral filename."""
+        from tldw_chatbook.Backup_Recovery.recovered_media import (
+            RecoveredMedia,
+            current_profile_id,
+        )
+
+        with participant.operation((self._recovered_root,)):
+            catalog = self._recovered_root / "catalog.sqlite3"
+            if catalog.exists():
+                store = RecoveredMedia(self._recovered_root)
+                status, path = store.resolve_reference(
+                    profile=self._recovered_profile or current_profile_id(),
+                    message=message_id, slug=slug, media_type="video/" + extension,
+                )
+                if status != "unknown":
+                    return ("ready" if status == "ready" else "recovered_" + status), path
+            try:
+                path = self._video_path(message_id, slug, extension)
+            except (ValueError, VideoStoreSaveError):
+                return "expired", None
+            with participant.operation((self._root,)):
+                return ("ready", path) if self._is_safe_regular_file(path) else ("expired", None)
 
     def iter_stored(self) -> Iterator[StoredVideo]:
         """Return an iterator over one completed non-following snapshot."""

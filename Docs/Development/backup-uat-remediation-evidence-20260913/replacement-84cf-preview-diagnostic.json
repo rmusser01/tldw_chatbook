@@ -1,0 +1,50 @@
+{
+  "returncode": 0,
+  "diagnostic": {
+    "phase": "rollback_preview",
+    "inventory": {
+      "complete": true,
+      "count": 264,
+      "statuses": {
+        "intentionally_excluded": 49,
+        "unused": 65,
+        "included": 137,
+        "included_directory": 13
+      },
+      "unresolved": []
+    },
+    "exception": {
+      "class": "ValueError",
+      "frames": [
+        {
+          "file": "<string>",
+          "function": "<module>",
+          "line": 14
+        },
+        {
+          "file": "/private/tmp/chatbook-backup-uat-repeat-20260913-3iu2hvqg/installed/tldw_chatbook/Backup_Recovery/later_rollback.py",
+          "function": "preview_rollback",
+          "line": 1616
+        },
+        {
+          "file": "/private/tmp/chatbook-backup-uat-repeat-20260913-3iu2hvqg/installed/tldw_chatbook/Backup_Recovery/later_rollback.py",
+          "function": "_preview",
+          "line": 1533
+        },
+        {
+          "file": "/private/tmp/chatbook-backup-uat-repeat-20260913-3iu2hvqg/installed/tldw_chatbook/Backup_Recovery/later_rollback.py",
+          "function": "_created_destination_target",
+          "line": 1010
+        }
+      ],
+      "mapped_code": "backup_operation_failed",
+      "fixed_code": "local_snapshot_absence_unclassified"
+    }
+  },
+  "elapsed_seconds": 10.89,
+  "before_file_count": 1787,
+  "after_file_count": 1787,
+  "added": [],
+  "removed": [],
+  "changed": []
+}

@@ -1,0 +1,125 @@
+{
+  "reviewed_base": "b7f51bdc20e0355dce8ac630e0c1ddbe4fcdb8f3",
+  "reviewed_source": {
+    "base": "b7f51bdc20e0355dce8ac630e0c1ddbe4fcdb8f3",
+    "files": {
+      "tldw_chatbook/UI/Screens/chat_screen.py": "d80c6c8ec3d9e2e7303bda415dacc755e158748e876ac2c0b84ef5e74937b107",
+      "Tests/Backup_Recovery/test_console_guidance_readiness.py": "99c6c5cb55eb751cc864eff0f821ef17d2105c7688686a21a1512ccab105d427",
+      "Tests/Backup_Recovery/run_platform_product.py": "e17f81b162e64f0d9f9c0ee7fdbdff6521c0ea238a0ceab7bd40a132dc2d55e2"
+    },
+    "independent_native_test": {
+      "node": "Tests.Backup_Recovery.test_console_guidance_readiness::test_native_display_pairs_preserve_outputs_and_later_fresh_send_guard",
+      "outcome": "passed",
+      "case_seconds": 10.454,
+      "session_seconds": 10.52,
+      "log": "/private/tmp/uat-display-pair-independent.log",
+      "junit": "/private/tmp/uat-display-pair-independent.xml"
+    },
+    "static_proofs": {
+      "product_AST_only_approved_two_site_change": true,
+      "existing_guidance_child_AST_preserved": true,
+      "new_child_compiles": true,
+      "runner_AST_only_restore_diagnostic_expansion": true
+    },
+    "verdict": "APPROVED; no actionable findings; Windows acceptance/performance not established",
+    "restore_diagnostic_collection": {
+      "count": 3,
+      "log": "/private/tmp/uat-display-pair-collection.log",
+      "original_plaintext_node_retained": true,
+      "new_native_guidance_cases": 2
+    }
+  },
+  "root_native": {
+    "passed": 6,
+    "seconds": 57.01
+  },
+  "independent_native": {
+    "passed": 1,
+    "seconds": 10.52,
+    "call_seconds": 9.37
+  },
+  "existing_ui_cases": [
+    {
+      "node": "Tests.UI.test_console_fleet_wake_ui_freshness::test_composer_blocked_copy_names_the_wake_not_provider_setup",
+      "seconds": 8.553,
+      "root": "/private/tmp/uat-guidance-display-app-0-qmqodd8w",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_console_workbench_contract::test_prompts_provider_recovery_uses_existing_console_settings_seam",
+      "seconds": 2.911,
+      "root": "/private/tmp/uat-guidance-display-app-1-h0_f8uyu",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_console_right_rail::test_real_inspector_producer_variants_are_strictly_owned",
+      "seconds": 4.386,
+      "root": "/private/tmp/uat-guidance-display-app-2-ereq61k7",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_console_prompts_controller::test_prompts_modal_reads_provider_recovery_off_the_screen_at_open",
+      "seconds": 4.251,
+      "root": "/private/tmp/uat-guidance-display-app-3-jq7nxt1d",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_console_prompts_controller::test_improve_stays_unavailable_during_an_active_run_even_with_a_healthy_provider",
+      "seconds": 4.306,
+      "root": "/private/tmp/uat-guidance-display-app-4-wd1uuwqf",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_console_draft_sync_equality_gate::test_the_draft_sync_derives_the_provider_selection_once",
+      "seconds": 4.459,
+      "root": "/private/tmp/uat-guidance-display-app-5-okdrhnc4",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_console_draft_sync_equality_gate::test_the_derivation_memo_is_torn_down_even_when_a_leg_raises",
+      "seconds": 4.169,
+      "root": "/private/tmp/uat-guidance-display-app-6-iohg58h5",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_console_draft_sync_equality_gate::test_the_derivation_memo_is_off_outside_a_scope",
+      "seconds": 4.474,
+      "root": "/private/tmp/uat-guidance-display-app-7-yb9wzqzm",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_llm_gguf_source_modes::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]",
+      "seconds": 19.063,
+      "root": "/private/tmp/uat-guidance-display-app-8-hfx_c8wz",
+      "outcome": "passed"
+    },
+    {
+      "node": "Tests.UI.test_llm_gguf_source_modes::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]",
+      "seconds": 18.72,
+      "root": "/private/tmp/uat-guidance-display-app-9-hixs8mu6",
+      "outcome": "passed"
+    }
+  ],
+  "restore_diagnostic_collected": 3,
+  "static": {
+    "product_ruff_existing": 208,
+    "product_bandit_existing": 9,
+    "new_findings": 0,
+    "embedded_native_test_assertions": 57,
+    "runner_bandit": 0
+  },
+  "pending": [
+    "Windows unchanged startup",
+    "Windows native59 plusguidance2 andinstalledplaintext1",
+    "Linuxnative6"
+  ],
+  "artifacts": {
+    "/private/tmp/uat-display-pair-red.log": "7d4ea5b918d6652067e58c9dbf33a01c866d48956b31ef0da3840067ba4c1e02",
+    "/private/tmp/uat-display-pair-green.log": "578014042fc6cbc0d4d96be78ed8405574b740fefdb9f87aef7c1b56d40d719b",
+    "/private/tmp/uat-display-pair-independent.log": "fd68a2c6783af406c4ed26dfc1f0d9c3c61a3a138c5f819f354b500403d1796e",
+    "/private/tmp/uat-display-pair-independent.xml": "dbe677e84542ab65eb1ab6a5706adf0765b2605736a7f66d00101c2a323f62dc",
+    "/private/tmp/uat-display-pair-app-status.log": "156861512a8c0bab16ac6cc1b3cc548e7935bea645d07d7ffedba56fb64e3dce",
+    "/private/tmp/uat-display-pair-static.log": "bc1308d5f5e56d33bba77264f23fe660d16f9c938e958518ffc39560c4adfb4d",
+    "/private/tmp/uat-display-pair-collection.log": "09e75743dc8bde2ab19e83edae5c8293a9f4c87550e738569a9b4751910303e1"
+  }
+}

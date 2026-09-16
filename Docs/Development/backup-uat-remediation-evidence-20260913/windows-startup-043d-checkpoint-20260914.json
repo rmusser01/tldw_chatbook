@@ -1,0 +1,23 @@
+{
+  "revision": "043d2cb639eb6ca4a06d569425850dfff76de2d8",
+  "run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/34883779948",
+  "windows": {
+    "non_ui_pass": 31,
+    "full_app_timeout": 4,
+    "timeout_seconds": 60,
+    "dev_diagnostic": "1 pass52.89s",
+    "candidate_diagnostic": "60-second timeout",
+    "source_matched_profiles": 8
+  },
+  "other_platforms": {
+    "macos": "passed",
+    "linux": "passed"
+  },
+  "evidence_hashes": {
+    "/private/tmp/uat-windows-startup-043d-job.log": "5e27edcdfcf2cc5b2cd0860c49decb0bee07f98850d655448e2a37bdd0593a39",
+    "/private/tmp/uat-windows-startup-043d-profile-summary.json": "dfc00cb55a8adae92d5a40b55fc2fc0cfca91de937b14ce1cc1b6a9c8c18ca1e",
+    "/private/tmp/uat-windows-startup-043d-review.md": "b4ec73de44ca85f0ef547037d917cc8abf422023f2501661961d82bf0921ac86"
+  },
+  "correction": "Cached load_settings still enters its guarded decorator; previous review premise withdrawn.",
+  "conclusion": "Repeated native config admission is observed in actual store/view binding and settings derivation. No specific safe correction of that mixed-effect lifetime is yet proven; no limits or guards changed."
+}

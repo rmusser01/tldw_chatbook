@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from collections import Counter
 import ast
 import logging
+import os
+import subprocess  # nosec B404
+import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
-
 
 WIRING_METHODS = (
     "_wire_writing_services",
@@ -203,8 +205,7 @@ def test_app_composition_does_not_use_sync_config_factory() -> None:
     assert _server_sync_config_factory_calls() == []
 
 
-@pytest.mark.asyncio
-async def test_production_app_composes_one_stable_dependency_graph(
+async def _composes_one_stable_dependency_graph(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: Counter[str] = Counter()
@@ -280,8 +281,7 @@ async def test_production_app_composes_one_stable_dependency_graph(
         await _close_production_app(app)
 
 
-@pytest.mark.asyncio
-async def test_production_app_scheduler_worker_settles_without_contract_error(
+async def _scheduler_worker_settles_without_contract_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unmount must join the real Textual worker through its public API."""
@@ -312,6 +312,101 @@ async def test_production_app_scheduler_worker_settles_without_contract_error(
         await _close_production_app(app)
 
 
+_CHILD = r"""
+import asyncio
+import sys
+from Tests.network_guard import install, blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+import pytest
+from Tests.ProductionApp import test_service_composition_lifecycle as cases
+from tldw_chatbook.Chat import local_server_discovery
+from tldw_chatbook.UI.Screens import llm_screen
+
+async def offline_refresh(_app):
+    return None
+
+# Match Tests/conftest.py::_no_local_server_probes without retargeting config.
+async def no_endpoint(http_client, url, timeout, display):
+    return None, f"No models endpoint at {display}."
+
+async def no_ollama(host="127.0.0.1", port=11434):
+    return False
+
+with pytest.MonkeyPatch.context() as monkeypatch:
+    monkeypatch.setattr(local_server_discovery, "_get_models_payload", no_endpoint)
+    monkeypatch.setattr(llm_screen, "_probe_local_server", no_ollama)
+    monkeypatch.setattr(cases.TldwCli, "_refresh_model_catalogs", offline_refresh)
+    selected = {
+        "graph": cases._composes_one_stable_dependency_graph,
+        "scheduler": cases._scheduler_worker_settles_without_contract_error,
+    }[sys.argv[1]]
+    asyncio.run(selected(monkeypatch))
+assert not blocked_attempts(), blocked_attempts()
+print("LIFECYCLE_CASE_COMPLETE")
+"""
+
+
+def _run_lifecycle_case(tmp_path: Path, case: str) -> None:
+    """Import the actual app only after the child's private selection is fixed."""
+    directories = {
+        name: tmp_path / name for name in ("home", "config", "data", "cache", "tmp")
+    }
+    for directory in directories.values():
+        directory.mkdir(mode=0o700)
+    selector = directories["config"] / "config.toml"
+    selector.write_text(
+        '[general]\nusers_name="default_user"\n'
+        "[first_run]\nsetup_completed=true\n"
+        "[splash_screen]\nenabled=false\n",
+        encoding="utf-8",
+    )
+    selector.chmod(0o600)
+    repo_root = Path(__file__).resolve().parents[2]
+    env = {
+        name: os.environ[name]
+        for name in ("PATH", "LANG", "LC_ALL", "TERM", "COLORTERM")
+        if name in os.environ
+    }
+    env.update(
+        HOME=str(directories["home"]),
+        USERPROFILE=str(directories["home"]),
+        XDG_CONFIG_HOME=str(directories["config"]),
+        XDG_DATA_HOME=str(directories["data"]),
+        XDG_CACHE_HOME=str(directories["cache"]),
+        TMPDIR=str(directories["tmp"]),
+        TLDW_CONFIG_PATH=str(selector),
+        TLDW_TEST_MODE="1",
+        TLDW_DISABLE_CONFIG_WATCH="1",
+        PYTHONPATH=str(repo_root),
+    )
+    output_path = tmp_path / "child-output.log"
+    with output_path.open("w", encoding="utf-8") as output:
+        # Fixed interpreter, script and case; no shell or external executable.
+        result = subprocess.run(  # nosec B603
+            [sys.executable, "-c", _CHILD, case],
+            cwd=repo_root,
+            env=env,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=120,
+        )
+    captured = output_path.read_text(encoding="utf-8")
+    assert result.returncode == 0, captured
+    assert "LIFECYCLE_CASE_COMPLETE" in captured, captured
+
+
+def test_production_app_composes_one_stable_dependency_graph(tmp_path: Path) -> None:
+    _run_lifecycle_case(tmp_path, "graph")
+
+
+def test_production_app_scheduler_worker_settles_without_contract_error(
+    tmp_path: Path,
+) -> None:
+    _run_lifecycle_case(tmp_path, "scheduler")
 @pytest.mark.asyncio
 async def test_runtime_backend_transition_detaches_and_rebinds_notes_organization(
     monkeypatch: pytest.MonkeyPatch,

@@ -8,6 +8,9 @@ Chatbook Creator
 Handles the creation and packaging of chatbooks from database content.
 """
 
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import own_database
+
 import hashlib
 import html
 import json
@@ -83,6 +86,18 @@ def _coerce_media_timestamp(value: Any) -> Optional[datetime]:
         except ValueError:
             return None
     return None
+
+
+def _content_sources(values):
+    owner = values["self"]
+    if "db_paths" in values:
+        return (get_user_data_dir() / "temp" / "chatbooks",)
+    return (
+        *owner.db_paths.values(),
+        owner.temp_dir,
+        values.get("output_path"),
+        values.get("chatbook_path"),
+    )
 
 
 @dataclass(frozen=True)
@@ -167,6 +182,7 @@ _COLLECTED_CONTENT_TYPES = frozenset(
 class ChatbookCreator:
     """Service for creating chatbooks from database content."""
 
+    @content_call(_content_sources)
     def __init__(self, db_paths: Dict[str, str]):
         """
         Initialize the chatbook creator.
@@ -257,6 +273,7 @@ class ChatbookCreator:
                     f"ChatbookCreator: could not remove work_dir {work_dir}"
                 )
 
+    @content_call(_content_sources)
     def create_chatbook(
         self,
         name: str,
@@ -627,6 +644,7 @@ class ChatbookCreator:
             self._thread_local.progress_callback = None
             self._thread_local.cancel_check = None
 
+    @content_call(_content_sources)
     def _collect_conversations(
         self,
         conversation_ids: List[str],
@@ -646,11 +664,11 @@ class ChatbookCreator:
             )
             return
 
-        db = CharactersRAGDB(
+        db = own_database(CharactersRAGDB(
             db_path,
             "chatbook_creator",
             console_library_migration_seed=load_console_library_migration_seed(),
-        )
+        ))
         try:
             self._collect_conversations_with_database(
                 conversation_ids,
@@ -1385,6 +1403,7 @@ class ChatbookCreator:
         text = " ".join(sanitize_string(raw, max_length=max_length).split())
         return html.escape(text, quote=False).replace("|", "\\|")
 
+    @content_call(_content_sources)
     def _collect_notes(
         self,
         note_ids: List[str],
@@ -1397,11 +1416,11 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = CharactersRAGDB(
+        db = own_database(CharactersRAGDB(
             db_path,
             "chatbook_creator",
             console_library_migration_seed=load_console_library_migration_seed(),
-        )
+        ))
         notes_dir = work_dir / "content" / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1471,6 +1490,7 @@ class ChatbookCreator:
             except Exception as e:
                 logger.error(f"Error collecting note {note_id}: {e}")
 
+    @content_call(_content_sources)
     def _collect_characters(
         self,
         character_ids: List[str],
@@ -1483,11 +1503,11 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = CharactersRAGDB(
+        db = own_database(CharactersRAGDB(
             db_path,
             "chatbook_creator",
             console_library_migration_seed=load_console_library_migration_seed(),
-        )
+        ))
         chars_dir = work_dir / "content" / "characters"
         chars_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1538,6 +1558,7 @@ class ChatbookCreator:
             except Exception as e:
                 logger.error(f"Error collecting character {char_id}: {e}")
 
+    @content_call(_content_sources)
     def _collect_media(
         self,
         media_ids: List[str],
@@ -1552,7 +1573,7 @@ class ChatbookCreator:
             logger.warning("Media database path not configured")
             return
 
-        db = MediaDatabase(db_path, "chatbook_creator")
+        db = own_database(MediaDatabase(db_path, "chatbook_creator"))
         media_dir = work_dir / "content" / "media"
         media_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1662,6 +1683,7 @@ class ChatbookCreator:
             except Exception as e:
                 logger.error(f"Error collecting media {media_id}: {e}")
 
+    @content_call(_content_sources)
     def _collect_prompts(
         self,
         prompt_ids: List[str],
@@ -1677,7 +1699,7 @@ class ChatbookCreator:
             raise PromptChatbookExportError("item-000001", "source")
 
         try:
-            db = PromptsDatabase(db_path, "chatbook_creator")
+            db = own_database(PromptsDatabase(db_path, "chatbook_creator"))
         except Exception:
             raise PromptChatbookExportError("item-000001", "source") from None
         prompts_dir = work_dir / "content" / "prompts"
@@ -1759,6 +1781,7 @@ class ChatbookCreator:
             return value.isoformat()
         return str(value)
 
+    @content_call(_content_sources)
     def _collect_kept_briefings(
         self,
         kept_briefing_ids: List[str],
@@ -1783,11 +1806,11 @@ class ChatbookCreator:
             )
             return
 
-        db = CharactersRAGDB(
+        db = own_database(CharactersRAGDB(
             db_path,
             "chatbook_creator",
             console_library_migration_seed=load_console_library_migration_seed(),
-        )
+        ))
         kept_dir = work_dir / "content" / "kept_briefings"
         kept_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1944,6 +1967,7 @@ class ChatbookCreator:
                         )
                     f.write(f"- Kept at: {script.get('kept_at')}\n\n")
 
+    @content_call(_content_sources)
     def _add_character_dependency(
         self,
         character_id: int,
@@ -1974,11 +1998,11 @@ class ChatbookCreator:
                 )
                 return
 
-            db = CharactersRAGDB(
+            db = own_database(CharactersRAGDB(
                 db_path,
                 "chatbook_creator",
                 console_library_migration_seed=load_console_library_migration_seed(),
-            )
+            ))
 
             try:
                 # Get character card (which includes all details)

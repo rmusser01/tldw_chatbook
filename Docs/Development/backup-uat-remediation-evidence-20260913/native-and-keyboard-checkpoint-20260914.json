@@ -1,0 +1,40 @@
+{
+  "replacement-84cf-keyboard-checkpoint.json": {
+    "sha256": "706dbbe1b846037c004c755fce4499efb5b96c822810f091717a98f0e4c664b4",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3iu2hvqg/evidence/atime-current-result.json"
+  },
+  "replacement-84cf-normal-reopen-readback.json": {
+    "sha256": "77722f09218908ed98ae9cee3468aa5722fe2daf4059b72643705a58cc915cff",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3iu2hvqg/evidence/atime-normal-reopen-new-write-quit.json"
+  },
+  "replacement-84cf-validated.txt": {
+    "sha256": "f2ab12808bbdf658f258df7de2523f6fd8dc19c3ff6ee2c1134347ce1da106d9",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3iu2hvqg/evidence/atime-power-112-after.txt"
+  },
+  "replacement-84cf-later-review-failed.txt": {
+    "sha256": "a1c00ca18243d3de405f1745e340e19c0ad5a13928343d7726ee78956328e874",
+    "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3iu2hvqg/evidence/atime-power-132-after.txt"
+  },
+  "macos-4becc-replacement-metadata.json": {
+    "sha256": "8cf47d59358dea0dc4e64ad9d67993fbe011fbdc5fcec6a54940ea6ea1d32773",
+    "source": "/private/tmp/uat-macos-replacement-4becc-20260914-metadata.json"
+  },
+  "linux-9b7316-retirement-summary.json": {
+    "sha256": "77a6af9eaed0ad690b53c3d5dc7fb4ee20b8c4ee63ea3ed2ab260abc9f39e380",
+    "source": "/private/tmp/uat-linux-retirement-9b7316/summary.json"
+  },
+  "windows-9b7316-replacement-summary.json": {
+    "sha256": "1abf4fe90377629ec78233243647ac40115acd78f6b37127e7274e89a061d095",
+    "source": "/private/tmp/uat-windows-9b7316-replacement/backup-platform-windows-2022-py3.12-replacement-9b7316d2f423fe43ffff9c046b1a76c4f4defe06/summary.json",
+    "source_sha256": "d2ed0afd399394543fc58ac7503ff5fbd61eb50a3a5c3525b2572b299e087ec4",
+    "curation": "CRLF normalized to LF; JSON unchanged"
+  },
+  "library-overview-bounded-comparison.md": {
+    "sha256": "ec243f52732b817d2e4a50cbccead7d8173c94bc3cd871fc298b07fab3a83c23",
+    "source": "/private/tmp/uat-library-overview-comparison-final/review.md"
+  },
+  "replacement-84cf-preview-diagnostic.json": {
+    "sha256": "18a108188c10f4939546806f37edb3b111a23c9a3da7d281f3b061032430f18c",
+    "source": "/private/tmp/uat-atime-preview-diagnostic.json"
+  }
+}

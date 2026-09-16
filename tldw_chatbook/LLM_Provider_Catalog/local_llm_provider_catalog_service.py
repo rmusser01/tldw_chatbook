@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
@@ -475,6 +477,7 @@ class LocalLLMProviderCatalogService:
                     return record
         raise ValueError(f"Unknown local LLM model: {model_id}")
 
+    @_provider_recovery.catalog_call
     async def discover_models(
         self,
         *,
@@ -484,7 +487,8 @@ class LocalLLMProviderCatalogService:
     ) -> ModelDiscoveryResult:
         """Discover OpenAI-compatible models from a configured provider endpoint."""
         self._enforce("llm.catalog.models.discover.local")
-        catalog = self._catalog()
+        recovered = _provider_recovery.recovered_settings()
+        catalog = recovered.get("providers", {}) if recovered is not None else self._catalog()
         provider_resolution = resolve_provider_list_key(provider, catalog)
         if provider_resolution.status == "missing":
             return ModelDiscoveryResult(
@@ -511,7 +515,7 @@ class LocalLLMProviderCatalogService:
                 ),
             )
 
-        saved_settings = self._settings()
+        saved_settings = recovered if recovered is not None else self._settings()
         provider_key = provider_resolution.normalized_provider
         if self._has_ambiguous_provider_settings(
             staged_settings,
@@ -607,6 +611,7 @@ class LocalLLMProviderCatalogService:
             )
         return result
 
+    @_provider_recovery.unqualified
     async def refresh_stale_configured_providers(
         self,
         *,

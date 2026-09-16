@@ -13,6 +13,15 @@ from typing import Any, Iterable, Iterator
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
+
+from tldw_chatbook.Utils.private_paths import lexical_path
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 from .migrations import MIGRATIONS
@@ -86,6 +95,9 @@ class LocalResearchService:
         except TypeError:
             self.db = db_path
             self.db_path = None
+        self.is_memory_db = self.db_path is not None and str(self.db_path) == ":memory:"
+        if self.db_path is not None and not self.is_memory_db:
+            self.db_path = lexical_path(self.db_path)
         self.notification_dispatcher = (
             notification_dispatcher or notification_dispatch_service
         )
@@ -149,6 +161,7 @@ class LocalResearchService:
             self._init_schema()
             self._schema_ready = True
 
+    @_core_getter
     def _connect(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening it on first use.
 
@@ -161,6 +174,7 @@ class LocalResearchService:
         """
         if self.db_path is None:
             raise RuntimeError("Path-backed research database is not configured.")
+        _core_access(self)
         self._ensure_schema()
         if self._is_memory:
             # close() drops the connection AND clears _schema_ready, so the
@@ -174,6 +188,9 @@ class LocalResearchService:
         ident = threading.get_ident()
         with self._lifecycle:
             held = self._connections.get(ident)
+            if held is not None and _core_cached_connection(self, held) is None:
+                self._connections.pop(ident, None)
+                held = None
             if held is not None:
                 return held
 
@@ -225,22 +242,31 @@ class LocalResearchService:
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
+        _core_access(self)
         conn = connect_private_sqlite(
             "research.local",
             self.db_path,
             check_same_thread=False,
             isolation_level=None,
         )
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local research
-        # session/run store) and avoids an fsync per commit (task-15465). The
-        # connection is now HELD, so this runs once per thread rather than once
-        # per operation.
-        conn.execute("PRAGMA synchronous = NORMAL")
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit, acceptable for this local research
+            # session/run store) and avoids an fsync per commit (task-15465). The
+            # connection is now HELD, so this runs once per thread rather than once
+            # per operation.
+            conn.execute("PRAGMA synchronous = NORMAL")
+            _core_access(self)
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
+    @_core_transaction
     @contextmanager
     def _transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Run one explicit transaction on this thread's held connection.

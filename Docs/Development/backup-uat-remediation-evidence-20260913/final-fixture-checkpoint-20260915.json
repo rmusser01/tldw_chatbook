@@ -1,0 +1,69 @@
+{
+  "product_revision": "2031d0c5261c2b4781aba40752f228da9d19b4eb",
+  "base": "92f8f9224bc3cadfc22ba9fe997597b1ce89a05a",
+  "test_sha256": {
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "10c97ca5bc36e6e613269fa6f569b71f7820845ef14f7c9132b2ce3135794213",
+    "Tests/Backup_Recovery/test_console_bounded_layout.py": "80bf306861666c1bdd632aedc2441c72f58b1db4307550db09f35bf93ad5c203"
+  },
+  "root": {
+    "passed": 10,
+    "seconds": 20.7,
+    "xml": "/private/tmp/uat-final-fixture.xml",
+    "xml_sha256": "2b80030dec6ad366e37ee968004c85fca2122c971ca04fe8e260bed858d0e705"
+  },
+  "independent_layout": {
+    "passed": 8,
+    "seconds": 11.02,
+    "log": "/private/tmp/uat-bounded-quiescence-independent.log"
+  },
+  "independent_guidance_probe": {
+    "passed": 2,
+    "seconds": 12.13,
+    "promoted_script_AST_equal": true
+  },
+  "static": {
+    "_GUIDANCE_parent": {
+      "ruff": {
+        "I001": 3,
+        "B023": 4
+      },
+      "bandit": {
+        "B101": 57
+      },
+      "errors": []
+    },
+    "_GUIDANCE_candidate": {
+      "ruff": {
+        "I001": 3,
+        "B023": 4
+      },
+      "bandit": {
+        "B101": 57
+      },
+      "errors": []
+    },
+    "_BOUNDED_parent": {
+      "ruff": {},
+      "bandit": {
+        "B101": 16
+      },
+      "errors": []
+    },
+    "_BOUNDED_candidate": {
+      "ruff": {},
+      "bandit": {
+        "B101": 16
+      },
+      "errors": []
+    }
+  },
+  "assertions_preserved": {
+    "guidance": 57,
+    "layout": 16
+  },
+  "parent_timeout_seconds": 45,
+  "returned_layout_settlement_timeout_seconds": 2,
+  "windows_outcome": "pending",
+  "linux_outcome": "pending",
+  "startup_60_second_failures": "unresolved"
+}

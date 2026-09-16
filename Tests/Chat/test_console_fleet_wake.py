@@ -52,8 +52,9 @@ from Tests.Chat.test_console_agent_bridge import (
 )
 from Tests.Chat.test_fleet_attention import _AppStub
 from Tests.console_provider_doubles import provider_resolution
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat import console_fleet_wake
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import (
     FleetDrained,
     SettledChild,
@@ -354,7 +355,8 @@ def test_buddy_wake_callback_runs_outside_registry_lock_and_is_post_fenced():
 
 
 @pytest.mark.asyncio
-async def test_dispose_fences_delivery_completion_after_its_await(tmp_path):
+@private_profile_test
+async def test_dispose_fences_delivery_completion_after_its_await(tmp_path, request):
     """Interrupted accepted work remains recorded for review, never replayed."""
     rig = _controller_rig(tmp_path)
     chacha, _, runs_db, _, session, gateway, _, controller = rig
@@ -389,7 +391,9 @@ async def test_dispose_fences_delivery_completion_after_its_await(tmp_path):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_persona_buddy_wake_tracks_pending_delivery_and_exact_settlement(
+    request,
     tmp_path,
 ):
     """The real wake coordinator mirrors membership until delivery settles."""
@@ -422,7 +426,9 @@ async def test_persona_buddy_wake_tracks_pending_delivery_and_exact_settlement(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
+    request,
     tmp_path,
 ):
     """The reproduced gap, green: turn returns while the child runs; the
@@ -584,7 +590,8 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
 
 
 @pytest.mark.asyncio
-async def test_children_finishing_inside_their_turn_never_wake(tmp_path):
+@private_profile_test
+async def test_children_finishing_inside_their_turn_never_wake(tmp_path, request):
     """A within-turn child is the turn's own news. Survivor-proofing (the
     Task 3 M10 lesson): the same live coordinator then receives a REAL
     after-turn drain and does fire -- so the no-op was a decision, not a
@@ -629,7 +636,8 @@ async def test_children_finishing_inside_their_turn_never_wake(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_one_wake_bundles_every_undelivered_completion(tmp_path):
+@private_profile_test
+async def test_one_wake_bundles_every_undelivered_completion(tmp_path, request):
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
         tmp_path
     )
@@ -664,7 +672,8 @@ async def test_one_wake_bundles_every_undelivered_completion(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_redelivered_drain_cannot_double_deliver(tmp_path):
+@private_profile_test
+async def test_a_redelivered_drain_cannot_double_deliver(tmp_path, request):
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
         tmp_path
     )
@@ -683,7 +692,8 @@ async def test_a_redelivered_drain_cannot_double_deliver(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path):
+@private_profile_test
+async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path, request):
     """Refusal direction of notification dedupe: the provider blocks the first
     attempt -> no notice row, pending + mark retained; the retry
     delivers, and only THEN does the mark clear."""
@@ -736,7 +746,8 @@ async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_post_durable_runtime_failure_settles_bound_wake_once(tmp_path):
+@private_profile_test
+async def test_post_durable_runtime_failure_settles_bound_wake_once(tmp_path, request):
     chacha, app, runs_db, store, session, gateway, bridge, controller = (
         _controller_rig(tmp_path)
     )
@@ -775,7 +786,8 @@ async def test_post_durable_runtime_failure_settles_bound_wake_once(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_children_settling_during_a_wake_turn_ride_the_next_wake(tmp_path):
+@private_profile_test
+async def test_children_settling_during_a_wake_turn_ride_the_next_wake(tmp_path, request):
     """No double-delivery ACROSS the wake boundary: a child settling while
     the wake turn streams joins the NEXT wake, and the mark -- re-written
     by the attention consumer for that new settle -- survives the FIRST
@@ -852,7 +864,9 @@ async def test_children_settling_during_a_wake_turn_ride_the_next_wake(tmp_path)
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_a_busy_session_defers_the_wake_until_its_terminal_transition(
+    request,
     tmp_path,
 ):
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
@@ -887,7 +901,8 @@ async def test_a_busy_session_defers_the_wake_until_its_terminal_transition(
 
 
 @pytest.mark.asyncio
-async def test_the_global_cap_defers_a_wake_like_any_other_send(tmp_path):
+@private_profile_test
+async def test_the_global_cap_defers_a_wake_like_any_other_send(tmp_path, request):
     """max_parallel_runs applies to a wake exactly as to a manual send
     (spec: a wake turn is a normal turn under every cap)."""
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
@@ -928,7 +943,8 @@ async def test_the_global_cap_defers_a_wake_like_any_other_send(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_queue_owned_session_defers_the_wake(tmp_path):
+@private_profile_test
+async def test_a_queue_owned_session_defers_the_wake(tmp_path, request):
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
         tmp_path
     )
@@ -961,7 +977,8 @@ async def test_a_queue_owned_session_defers_the_wake(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_stop_fires_for_wake_run_terminal_state(tmp_path):
+@private_profile_test
+async def test_stop_fires_for_wake_run_terminal_state(tmp_path, request):
     """console run hooks Task 8: a headless wake turn reaching terminal
     state fires ``Stop`` exactly once -- no Console view is attached (the
     rig never wires a screen), so the run-state terminal stamp itself is
@@ -1002,7 +1019,8 @@ async def test_stop_fires_for_wake_run_terminal_state(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_user_wins_ties_a_composer_draft_defers_the_wake(tmp_path):
+@private_profile_test
+async def test_user_wins_ties_a_composer_draft_defers_the_wake(tmp_path, request):
     """The pinned tie-break: while the user-priority probe reports a claim
     (screen wiring: a non-empty composer draft -- which also covers the
     dispatch gap, since the composer clears only on ACCEPTED sends), a due
@@ -1050,7 +1068,8 @@ async def test_user_wins_ties_a_composer_draft_defers_the_wake(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_no_open_session_means_the_mark_is_the_staged_wake(tmp_path):
+@private_profile_test
+async def test_no_open_session_means_the_mark_is_the_staged_wake(tmp_path, request):
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
         tmp_path
     )
@@ -1076,7 +1095,8 @@ async def test_no_open_session_means_the_mark_is_the_staged_wake(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_wake_delivery_allows_two_conversations_at_a_time(tmp_path):
+@private_profile_test
+async def test_wake_delivery_allows_two_conversations_at_a_time(tmp_path, request):
     """Both automatic conversations progress while a manual slot remains free."""
     chacha, app, runs_db, store, session, gateway, bridge, controller = (
         _controller_rig(tmp_path)
@@ -1115,7 +1135,8 @@ async def test_wake_delivery_allows_two_conversations_at_a_time(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_wake_turn_occupies_the_sessions_send_slot(tmp_path):
+@private_profile_test
+async def test_a_wake_turn_occupies_the_sessions_send_slot(tmp_path, request):
     """A woken turn is a normal turn under the caps: while it streams, the
     session refuses a manual send exactly as any in-flight run does."""
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
@@ -1145,7 +1166,9 @@ async def test_a_wake_turn_occupies_the_sessions_send_slot(tmp_path):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_one_conversations_failed_delivery_does_not_strand_anothers(
+    request,
     tmp_path,
 ):
     """One conversation's preflight failure cannot hold another wake slot."""
@@ -1196,7 +1219,9 @@ async def test_one_conversations_failed_delivery_does_not_strand_anothers(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
+    request,
     tmp_path,
 ):
     """The second reproduced red, green: nothing in memory survived (the
@@ -1272,7 +1297,9 @@ async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_a_pending_run_the_ledger_shows_delivered_is_dropped_not_reannounced(
+    request,
     tmp_path,
 ):
     """The restart-race belt: the drain re-delivers (or a mount seeds) a
@@ -1320,7 +1347,9 @@ async def test_a_pending_run_the_ledger_shows_delivered_is_dropped_not_reannounc
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_agent_wake_origin_is_unreachable_without_the_coordinator_token(
+    request,
     tmp_path,
 ):
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
@@ -1367,7 +1396,8 @@ def test_wake_authority_key_is_module_private():
 
 
 @pytest.mark.asyncio
-async def test_autowake_off_records_everything_and_fires_nothing(tmp_path, monkeypatch):
+@private_profile_test
+async def test_autowake_off_records_everything_and_fires_nothing(tmp_path, monkeypatch, request):
     """OFF must not lose completions (the brief's own wording): the mark
     and the pending record still land; the wake simply never fires -- at
     the drain AND at the mount-claim -- and flipping the switch back on
@@ -1542,7 +1572,8 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_failed_runtime_admission_unwinds_delivery_and_keeps_pending(tmp_path):
+@private_profile_test
+async def test_failed_runtime_admission_unwinds_delivery_and_keeps_pending(tmp_path, request):
     """A synchronous custody refusal refunds the unaccepted durable attempt."""
     rig = _controller_rig(tmp_path)
     chacha, _, db, _, session, _, _, controller = rig

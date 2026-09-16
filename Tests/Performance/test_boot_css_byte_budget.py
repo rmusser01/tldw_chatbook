@@ -66,6 +66,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.css import build_css
 
 #: Drift budget for the total bytes of CSS parsed on the boot path.
@@ -195,7 +196,9 @@ def _boot_parsed_css_segment_census() -> dict[str, int]:
 
 
 @pytest.mark.unit
-def test_boot_parsed_css_bytes_stay_within_budget(ratchet) -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_boot_parsed_css_bytes_stay_within_budget(ratchet, request: pytest.FixtureRequest) -> None:
     """Total bytes of boot-parsed CSS stay within the pinned budget.
 
     Args:

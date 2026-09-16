@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -573,6 +574,32 @@ class AudioCppArtifactLeaseCoordinator:
         self._removal_tasks: set[asyncio.Task[str]] = set()
         self._shutdown_task: asyncio.Task[None] | None = None
         self._closed = False
+        self._maintenance_paused = False
+
+    def maintenance_close_admission(self) -> None:
+        """Pause new consumers/removals on the owning event loop."""
+        self._maintenance_paused = True
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Observe actual operations and retained cleanup without cancellation."""
+        if not self._maintenance_paused:
+            raise AudioCppArtifactDependencyError("artifact maintenance is not paused")
+        while (
+            self._operations
+            or self._removal_tasks
+            or self._blocking_tasks
+            or self._cleanup_owners
+            or self._cleanup_lock.locked()
+        ):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.01))
+        return True
+
+    def maintenance_resume(self) -> None:
+        """Reopen ordinary intake without changing terminal shutdown state."""
+        self._maintenance_paused = False
 
     @staticmethod
     def _default_catalog_entries() -> tuple[object, ...]:
@@ -740,6 +767,8 @@ class AudioCppArtifactLeaseCoordinator:
         async with self._admission_lock:
             if self._closed:
                 raise AudioCppArtifactDependencyError("lease coordinator is closed")
+            if self._maintenance_paused:
+                raise AudioCppArtifactDependencyError("artifact maintenance is paused")
             completion = asyncio.get_running_loop().create_future()
             self._operations[completion] = owner
             return completion
@@ -909,6 +938,8 @@ class AudioCppArtifactLeaseCoordinator:
         async with self._admission_lock:
             if self._closed:
                 raise AudioCppArtifactDependencyError("lease coordinator is closed")
+            if self._maintenance_paused:
+                raise AudioCppArtifactDependencyError("artifact maintenance is paused")
             task = asyncio.create_task(
                 self._remove_if_unchanged(reference, fingerprint, collect_fingerprint)
             )

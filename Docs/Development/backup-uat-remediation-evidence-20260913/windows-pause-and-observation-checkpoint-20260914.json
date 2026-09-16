@@ -1,0 +1,64 @@
+{
+  "date": "2026-09-14",
+  "task": "TASK-32562",
+  "status": "reviewed; native Windows repeat pending",
+  "preserved_native_failure_revision": "9e5914fca140e762b66ec4a7beb77cf2af450ca0",
+  "console": {
+    "author_passes": 21,
+    "independent_passes": 8,
+    "seconds": 24.71,
+    "new_ruff_findings": 0,
+    "new_bandit_findings": 0
+  },
+  "acl_fixture": {
+    "local_passes": 27,
+    "independent_helper_passes": 8,
+    "native_windows": "pending"
+  },
+  "observers": {
+    "combined_passes": 41,
+    "final_observer_passes": 7,
+    "independent_passes": 8,
+    "bandit_findings": 0
+  },
+  "focused_windows_selection": {
+    "retained_cases": 9,
+    "new_console_regressions": 21,
+    "total": 30
+  },
+  "product_safety_guards_and_deadlines": "unchanged",
+  "evidence": [
+    {
+      "path": "console-pause-retry-report-20260914.md",
+      "sha256": "031f0fbaa7f5694020f41e638364c0b34faf2a434136d890f60db9d5d87afa62"
+    },
+    {
+      "path": "console-pause-retry-hashes-20260914.json",
+      "sha256": "c07b7fcb6193301d407f1a700dcf87a6f673da72acfb9c814c920cb022d759c6"
+    },
+    {
+      "path": "console-pause-independent-review-20260914.md",
+      "sha256": "ec29f0680ff34f6a6de6e35fca9a20932a7955262034fcf3b7b9d77e8e91221b"
+    },
+    {
+      "path": "native-acl-fixture-report-20260914.md",
+      "sha256": "1429eb6d8d1a4343f116bf3b16cc558673754a73ee7b47427dd0e7dd2811a1f1"
+    },
+    {
+      "path": "native-acl-fixture-hashes-20260914.json",
+      "sha256": "b6a49295b72547b9213a30460a8afc9a4620f0b901e8f11d5d6303a10d9c5a59"
+    },
+    {
+      "path": "native-acl-independent-review-20260914.md",
+      "sha256": "29727f88fdcc0dcd5573019b71b204b697ad85363cb53a2458652e24819367da"
+    },
+    {
+      "path": "native-observers-review-20260914.md",
+      "sha256": "ab72d6d7526370f5442d231d73aa71cc19c18607461f017fda75b57968955b4f"
+    },
+    {
+      "path": "windows-gguf-comparison-20260914.md",
+      "sha256": "0cc889fcaa33ac579f293d3a386f78ba31d9faa7ee0c6d5e5ec2fe0e91b2876b"
+    }
+  ]
+}

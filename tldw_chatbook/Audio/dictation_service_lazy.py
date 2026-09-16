@@ -308,6 +308,8 @@ class LazyLiveDictationService:
 
         # Processing thread
         self.processing_thread = None
+        self._maintenance_lock = threading.Lock()
+        self._maintenance_threads: set[threading.Thread] = set()
         self.processing_queue = queue.Queue()
         self.stop_processing = threading.Event()
 
@@ -781,7 +783,14 @@ class LazyLiveDictationService:
             self.processing_thread = threading.Thread(
                 target=self._processing_loop, daemon=True, name="DictationProcessor"
             )
-            self.processing_thread.start()
+            with self._maintenance_lock:
+                self._maintenance_threads.add(self.processing_thread)
+            try:
+                self.processing_thread.start()
+            except BaseException:
+                with self._maintenance_lock:
+                    self._maintenance_threads.discard(self.processing_thread)
+                raise
 
             # Start audio recording
             success = audio_svc.start_recording(callback=self._audio_callback)
@@ -1357,6 +1366,16 @@ class LazyLiveDictationService:
             # `HandsFreeController.on_segment_no_final`'s docstring) has
             # something to consume it on.
             self._notify_segment_no_final()
+
+    @property
+    def maintenance_ready(self) -> bool:
+        """Include processors that outlived an ordinary bounded stop/join."""
+        with self._maintenance_lock:
+            self._maintenance_threads = {
+                thread for thread in self._maintenance_threads
+                if thread.ident is None or thread.is_alive()
+            }
+            return not self._maintenance_threads
 
     def _cleanup(self):
         """Clean up resources with privacy considerations."""

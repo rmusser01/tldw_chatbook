@@ -1,0 +1,46 @@
+{
+  "baseline": "18f7321c0a19e88828e39199c84d24c92f04903b",
+  "source_sha256": {
+    ".gitattributes": "38c0349908ea228a9192d7fe104d1137e7f5d3f8e6f22cc57a3a2bbd48410c7c",
+    "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py": "55d0294bc5cf8101cb079075e2c9338741cc91b91161fd59b8c61b552806f140",
+    "Tests/Backup_Recovery/windows_acl_fixture.py": "da74b01ad51c1328308126d88c56c9e6492b10d680ea98f81a8f7988724b9640",
+    "Tests/Backup_Recovery/test_windows_acl_fixture.py": "bc0e5d029fd383e56d90d7d50ad2fb8fc13c3f91c15fa32b2cc4126a72955ad1",
+    "Tests/Canvas/test_profiles.py": "623ef60a4a44342edc932dbff0b456c8df557575628e8a9240f8c459cda42cc4",
+    "Tests/Backup_Recovery/run_platform_product.py": "f13e464614c7db40510fb37eacadd3bb1b2091cfa0afc834df9bb29a5e8ecd10"
+  },
+  "root_tests": {
+    "canvas_profiles_and_native_effect": {
+      "passed": 44,
+      "seconds": 1.96
+    },
+    "acl_fixture": {
+      "passed": 22,
+      "seconds": 0.7
+    }
+  },
+  "acl_bandit": {
+    "baseline": 17,
+    "current": 35,
+    "new_test_assertions": 18,
+    "new_non_assert": 0
+  },
+  "next_windows_focused_selection": 100,
+  "native_windows_repeat": "pending",
+  "keyboard": "Fresh immutable18f journey in progress; original d308 refusal retained. Product source unchanged by these three corrections.",
+  "evidence": {
+    "windows-acl-baseline-review-20260914.md": "8a4dd1f402cc9c633f4fcf75cd319edfb90ebd8dcab9cd95d395f08d9eb09b70",
+    "windows-acl-baseline-design-20260914.md": "570b505c564e31d5d8e85ebc5ca93599547b6409b44ae9f48e19868783538af0",
+    "windows-persona-path-correction-20260914.md": "7160eb494b35bf1502afb3ea94e417fbce7842604158cdde64f9f4ef44d8807b",
+    "windows-persona-path-validation-20260914.json": "bdda42c1caf037a49930f2296baeec720beac2055506d032b8d2308a3ea3463c",
+    "windows-canvas-bytes-correction-20260914.md": "76bd1dd8b1f094341e8c95d6d80f87b317e165342ff993c9b2152f3df62ba63c",
+    "windows-canvas-bytes-independent-review-20260914.md": "2c5e1058d7aa30ce13f209404b974defbfdb72ec97d9905c09fa567821618672",
+    "windows-support-e683-review-20260914.md": "3d710582ed798656b8f88e9c496db8a052f1d37af1b4712bface8c0a00b463c4",
+    "windows-support-e683-verification-20260914.json": "277bc544409d810e2698d986d7dd70bcb1fdbc249015d3c25d0052e582f6a2ab",
+    "windows-support-e683-cases-20260914.json": "917e414327b5190086a7994da3ebea70a58873d01f551c81c964ab0cdec3cbf7",
+    "windows-replacement-d308-review-20260914.md": "c02d8c3fe829b4c657eb43597c5fc8ae6e7d6ac025b1a2e2063633f3bc00d038",
+    "windows-replacement-d308-verification-20260914.json": "ff699f25f0e5f6d923bd4b3d707ba980b74003381f3f7accad6bcff1b064f5f6",
+    "windows-replacement-d308-cases-20260914.json": "5d4ae10c3572da5b8d5db9fe9ba3f03b48196da605734641afae3fd616763db3",
+    "windows-canvas-bytes-root-tests-20260914.xml": "b87a8294bdb3c42f70a0f8538360e96a210cbcc0dd5891bd99449d22ca6df0cf",
+    "windows-acl-baseline-tests-20260914.xml": "ac20735e4c32c872fd12d8393493b75e7d16aa16b961e1937bc3f40cfce71f38"
+  }
+}

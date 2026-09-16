@@ -1,0 +1,141 @@
+{
+  "revision": "9affd29ca07530528bfb408899fd6bf82d3866d4",
+  "product_selection": "replacement",
+  "verified_artifact_files": 69,
+  "summary_effective_returncode": 1,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.465
+    },
+    "product": {
+      "collected": 31,
+      "counts": {
+        "passed": 3
+      },
+      "junit_available": false,
+      "completed_log_outcomes": 3,
+      "terminal_pending": [
+        "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py::test_native_persona_mapping_refuses_unproved_graph[source-parent]"
+      ]
+    }
+  },
+  "failures": [],
+  "installed_receipts": [
+    {
+      "files": 2866,
+      "wheel_sha256": "78dbfe47dd0aa6485b3ef8858f81a2a40489090fd759f7f5f998aecd6612fdfc",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    },
+    {
+      "files": 2866,
+      "wheel_sha256": "497d56436fcbfc25bd8bc67852c14d38410a5bec0acb2245746e434501f49bf4",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    }
+  ],
+  "git_blob_verification": {
+    "revision": "9affd29ca07530528bfb408899fd6bf82d3866d4",
+    "source_clean": true,
+    "python_git_blobs": 2474,
+    "installed_receipts": 2,
+    "matching_modes": {
+      "windows_crlf": 2442,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "product_passes": [
+    "Tests.Backup_Recovery.test_f9_replacement_workflow::test_full_f9_replacement_after_explicit_safety_and_credential_review",
+    "Tests.Backup_Recovery.test_default_service_replacement::test_default_profile_service_replacement_and_later_rollback",
+    "Tests.Backup_Recovery.test_created_persona_subtree_rollback::test_native_nested_persona_pack_survives_reopen_and_later_rollback"
+  ],
+  "product_without_terminal_result": 28,
+  "later_child_elapsed": [
+    {
+      "checkpoint": "later_child_begin",
+      "seconds": 0.0
+    },
+    {
+      "checkpoint": "verified_copy_listed",
+      "seconds": 1.312
+    },
+    {
+      "checkpoint": "stale_native_preview_discarded",
+      "seconds": 80.797
+    },
+    {
+      "checkpoint": "later_rollback_reviewed",
+      "seconds": 159.922
+    },
+    {
+      "checkpoint": "later_rollback_terminal",
+      "seconds": 360.265
+    },
+    {
+      "checkpoint": "later_omissions_visible_unchecked",
+      "seconds": 360.297
+    },
+    {
+      "checkpoint": "later_aborted_untouched",
+      "seconds": 380.015
+    },
+    {
+      "checkpoint": "omissions_reviewed",
+      "seconds": 462.687
+    },
+    {
+      "checkpoint": "changed_acknowledgement_reviewed_again",
+      "seconds": 543.437
+    },
+    {
+      "checkpoint": "later_rollback_complete",
+      "seconds": 888.375
+    },
+    {
+      "checkpoint": "later_copy_catalog_begin",
+      "seconds": 888.375
+    },
+    {
+      "checkpoint": "later_copy_catalog_complete",
+      "seconds": 891.265
+    },
+    {
+      "checkpoint": "next_copy_selection_begin",
+      "seconds": 891.703
+    },
+    {
+      "checkpoint": "next_copy_selection_complete",
+      "seconds": 892.078
+    },
+    {
+      "checkpoint": "new_safety_copy_inspection_begin",
+      "seconds": 892.078
+    },
+    {
+      "checkpoint": "new_safety_copy_inspection_complete",
+      "seconds": 896.468
+    },
+    {
+      "checkpoint": "later_body_complete",
+      "seconds": 896.531
+    },
+    {
+      "checkpoint": "later_app_closed",
+      "seconds": 896.562
+    },
+    {
+      "checkpoint": "later_loop_closed",
+      "seconds": 896.593
+    }
+  ],
+  "limits": [
+    "Overall product phase failed at80minute limit. Three workflows passed;28 cases have no terminal result.",
+    "No product JUnit was produced. Per-case durations are unknown.",
+    "The completed later child does not explain prior intermittent failures."
+  ]
+}

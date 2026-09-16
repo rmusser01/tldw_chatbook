@@ -1,0 +1,29 @@
+{
+  "base": "b7f51bdc20e0355dce8ac630e0c1ddbe4fcdb8f3",
+  "files": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "d80c6c8ec3d9e2e7303bda415dacc755e158748e876ac2c0b84ef5e74937b107",
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "99c6c5cb55eb751cc864eff0f821ef17d2105c7688686a21a1512ccab105d427",
+    "Tests/Backup_Recovery/run_platform_product.py": "e17f81b162e64f0d9f9c0ee7fdbdff6521c0ea238a0ceab7bd40a132dc2d55e2"
+  },
+  "independent_native_test": {
+    "node": "Tests.Backup_Recovery.test_console_guidance_readiness::test_native_display_pairs_preserve_outputs_and_later_fresh_send_guard",
+    "outcome": "passed",
+    "case_seconds": 10.454,
+    "session_seconds": 10.52,
+    "log": "/private/tmp/uat-display-pair-independent.log",
+    "junit": "/private/tmp/uat-display-pair-independent.xml"
+  },
+  "static_proofs": {
+    "product_AST_only_approved_two_site_change": true,
+    "existing_guidance_child_AST_preserved": true,
+    "new_child_compiles": true,
+    "runner_AST_only_restore_diagnostic_expansion": true
+  },
+  "verdict": "APPROVED; no actionable findings; Windows acceptance/performance not established",
+  "restore_diagnostic_collection": {
+    "count": 3,
+    "log": "/private/tmp/uat-display-pair-collection.log",
+    "original_plaintext_node_retained": true,
+    "new_native_guidance_cases": 2
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "tested_revision": "dc96b849dc4f05e64843572016c63f645753b150",
+  "product_revision": "2031d0c5261c2b4781aba40752f228da9d19b4eb",
+  "backup_acceptance": "Original UAT findings and blocked journeys map to revision-qualified passing evidence.",
+  "windows_final": {
+    "run": 34942614500,
+    "job": 104294555043,
+    "native_pass": 59,
+    "product_pass": 16,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "missing_terminal_results": 0,
+    "indexed_hashes_verified": 22,
+    "installed_python_git_matches": 2475,
+    "installed_files": 2867,
+    "f9_plaintext_restore_open_seconds": 220.386
+  },
+  "linux_final": {
+    "revision": "dc96b849dc4f05e64843572016c63f645753b150",
+    "selected_pass": 10,
+    "tracked_source_unchanged": true,
+    "raw_logs_retained_on_host": true
+  },
+  "prior_product_revision": {
+    "macos_installed_capture_routes_pass": 3,
+    "linux_selected_pass": 22,
+    "windows_installed_settings_and_library_pass": true
+  },
+  "ci_contract": {
+    "original_failures": 2,
+    "original_passes": 3,
+    "corrected_passes": 5,
+    "seconds": 1.06,
+    "ruff": "pass",
+    "bandit_baseline": {
+      "B101": 34
+    },
+    "bandit_current": {
+      "B101": 34
+    },
+    "workflow_changed": false,
+    "models_ui_fixture_changed": false,
+    "remote_repeat": "pending",
+    "independent_pure_functions_pass": 5,
+    "invalid_workflow_mutations_rejected": 7,
+    "original_assertions_retained": 34,
+    "review": "approved"
+  },
+  "scope_limits": [
+    "Agent-executed UAT, not a human participant study.",
+    "Historical encrypted/replacement/rollback permutations retain their tested revisions.",
+    "Final Open workflow uses a bounded verification child with the actual launch environment/profile arguments.",
+    "Separate Windows Models startup remains failed; fixture proposal unapplied after automatic approval review rejected out-of-scope edit/test, pending user scope approval.",
+    "PR remains open against dev; no merge or whole-PR green claim."
+  ],
+  "evidence_sha256": {
+    "windows-dc96b-restore-independent-review-20260915.md": "3a580e4217e107e23b901bfb348ac75b395517adfe698e340350e6fe3ee1a081",
+    "windows-dc96b-restore-independent-summary-20260915.json": "005050d913f287acddb8e38570e2f0d2b582dbf9fce642f9eb3a1eb36e830b4b",
+    "final-fixture-linux-dc96b-20260915.json": "6c6194748232ebb9049adf1c42ef6df767f0313afafd86cab219d0c81c7a7b24",
+    "windows-92f8-ci-review-20260915.md": "378d459602f80fa1144a865d5a1d85868d96ec122a129b74e47582fc1f5bddcd",
+    "windows-92f8-ci-summary-20260915.json": "ed91838f2084158fbc528dfc9c5b13e31655026699a857c39210fc79f6c2f13b",
+    "diagnostic-contract-cause-review-20260915.md": "e5356c0d1f716679f73f21702c25106a3c5934b2a0dcd8359121f85a15cb5316",
+    "diagnostic-contract-final-review-20260915.md": "1b0d586394450e127698c438e67d74b9340f5b2e83de7fe665006cd6dab34297",
+    "diagnostic-contract-independent-20260915.json": "665b2ae5b51f31b2b36308af21618e8f26b431c7aa263ca2192107d0a7fc5067"
+  }
+}

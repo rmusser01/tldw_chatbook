@@ -1,0 +1,26 @@
+{
+  "task": "TASK-32562",
+  "stage": "reviewed corrections; final native acceptance pending",
+  "base_revision": "0be18bfb6d2852d94c751fbde35bee5a97895812",
+  "reports": {
+    "recovery-restart-safe-path-report-20260914.md": "3ed095329650663276a653cc3d8ff04cacb8b5d198ba1ec88d7acb95e7a12245",
+    "recovery-restart-safe-path-hashes-20260914.json": "4e09d41e3718f7127c3c15aef47e385139d60bcc7d41d2fc5734ad7d203a0905",
+    "recovery-restart-safe-path-review-20260914.md": "5f74bc4d36d665af4fa3e388fd4dcfcc331ea96f2db2165a58a13c135299134f",
+    "windows-replacement-9e5914-review-20260914.md": "041e2e3d1db0f3f9629fb829609c1310d276bee0404af136137dda101371f5bf",
+    "keyboard-mixed-origin-stopped-20260914.md": "94213e06e06704e7903e0d07826c45e1f1a21a908c549258223631e7ad27bcd6",
+    "portable-persona-seed-independent-review-20260914.md": "18ac3da5ae23cb4e0da30144793eeece4a40adb76e84a03b9a7b396c65c3c205",
+    "portable-persona-seed-report-20260914.md": "8b01f2f00e7ea59a382a1d7fdc17da8b17644000a06683000182d69e90f935b2",
+    "portable-persona-seed-hashes-20260914.json": "a4ae80dec95a2c501cfaadfab6c6852a3fefbe66bcc618c8bce868c8d987db06"
+  },
+  "support_diagnostic_cases": 31,
+  "guard_or_deadline_changes": false,
+  "linux_diagnostic_access": "blocked by automatic approval review; explicit metadata-read approval pending",
+  "persona_seed": {
+    "source_sha256": "fe009977d205c74d1428d3611c73e1e60ea7d023c9462b99db47e986bf0a5033",
+    "passed": 20,
+    "seconds": 482.2,
+    "log_sha256": "b7e9caf7d846a1576a7d5b4c483f787473da42313a31e7f903e4b4320247d42e",
+    "native_platform": "macOS",
+    "windows_acceptance": "pending"
+  }
+}

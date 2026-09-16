@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Backup_Recovery import persona_visual_participants as visual_lifetime
+from tldw_chatbook.Backup_Recovery.persona_visual_participants import (
+    native_open as _native_open, native_close as _native_close,
+)
+
 import hashlib
 import os
 import re
@@ -227,15 +232,17 @@ def _read_profile_file(
     parts: tuple[str, ...],
     expected_bytes: int,
 ) -> bytes:
-    root = os.fspath(profile_root)
-    if type(root) is not str or "\x00" in root:
-        raise ValueError
-    root_path = Path(root)
-    if not root_path.is_absolute() or str(root_path) != root:
-        raise ValueError
-    if _supports_secure_descriptor_walk():
-        return _read_profile_file_secure(root, parts, expected_bytes)
-    return _read_profile_file_fallback(root_path, parts, expected_bytes)
+    with visual_lifetime.request():
+        root = os.fspath(profile_root)
+        if type(root) is not str or "\x00" in root:
+            raise ValueError
+        root_path = Path(root)
+        if not root_path.is_absolute() or str(root_path) != root:
+            raise ValueError
+        with visual_lifetime.files(visual_lifetime.source_for(root_path), (root_path.joinpath(*parts),)):
+            if _supports_secure_descriptor_walk():
+                return _read_profile_file_secure(root, parts, expected_bytes)
+            return _read_profile_file_fallback(root_path, parts, expected_bytes)
 
 
 def _supports_secure_descriptor_walk() -> bool:
@@ -265,9 +272,9 @@ def _read_profile_file_secure(
         current = _open_profile_root(root, directory_flags)
         opened.append(current)
         for component in parts[:-1]:
-            current = os.open(component, directory_flags, dir_fd=current)
+            current = _native_open(component, directory_flags, dir_fd=current)
             opened.append(current)
-        file_fd = os.open(parts[-1], flags | nonblock, dir_fd=current)
+        file_fd = _native_open(parts[-1], flags | nonblock, dir_fd=current)
         opened.append(file_fd)
         before = os.fstat(file_fd)
         if not stat.S_ISREG(before.st_mode) or before.st_size != expected_bytes:
@@ -288,7 +295,7 @@ def _read_profile_file_secure(
     finally:
         for descriptor in reversed(opened):
             try:
-                os.close(descriptor)
+                _native_close(descriptor)
             except OSError:
                 pass
 
@@ -309,7 +316,7 @@ def _read_profile_file_fallback(
     nonblock = getattr(os, "O_NONBLOCK", 0)
     if isinstance(nonblock, int) and nonblock > 0:
         flags |= nonblock
-    descriptor = os.open(candidate, flags)
+    descriptor = _native_open(candidate, flags)
     try:
         opened = os.fstat(descriptor)
         _verify_fallback_leaf(candidate, leaf_before, opened)
@@ -320,7 +327,7 @@ def _read_profile_file_fallback(
         _verify_directory_snapshot(snapshot)
         return data
     finally:
-        os.close(descriptor)
+        _native_close(descriptor)
 
 
 def _fallback_directories(root: Path, parts: tuple[str, ...]) -> tuple[Path, ...]:
@@ -388,15 +395,15 @@ def _read_fd_bounded(descriptor: int, expected_bytes: int) -> bytes:
 def _open_profile_root(root: str, directory_flags: int) -> int:
     components = Path(root).parts[1:]
 
-    current = os.open(os.sep, directory_flags)
+    current = _native_open(os.sep, directory_flags)
     try:
         for component in components:
-            child = os.open(component, directory_flags, dir_fd=current)
-            os.close(current)
+            child = _native_open(component, directory_flags, dir_fd=current)
+            _native_close(current)
             current = child
         return current
     except Exception:
-        os.close(current)
+        _native_close(current)
         raise
 
 
