@@ -15,8 +15,8 @@ existing SQLite/Notes services, pytest. No new dependencies.
 
 **Spec:** [Approved first-run design](../specs/2026-09-16-workflows-first-run-design.md).
 **Backlog:** TASK-32691; approved design task TASK-32690.
-**Status:** Planning complete; execution has not started. All task checkboxes
-below are deliberately unchecked.
+**Status:** Approved; execution in progress using subagents with per-task spec
+and quality review. Checkboxes record completed, verified steps only.
 
 ADR required: no new ADR; direct implementation of the approved amendment.
 ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
@@ -58,6 +58,15 @@ this plan appears to require changing those boundaries.
   the bundle, never hand-edit it. No terminal-convention or global-key shadowing.
 - Targeted verification only. Never start a live app or import profile-owning
   code from a bare probe before establishing disposable config/data isolation.
+
+Task5 review clarification (existing ADR-138, no new ownership boundary): prepare
+authoring quit reversibly on the same owners; retain/drain accepted work without
+closing their DB before final Console consent. Renewed Stay/cancelled confirmation
+restores authoring and successfully drained session admission for a new run only.
+Persistence/physical-drain failure still blocks exit; final resource-close errors
+follow existing committed-exit teardown policy. Narrow methods may be added to
+Workflows/authoring.py, draft_session.py and session.py, with real-owner lifecycle
+regressions; no owner replacement, generalized lifecycle framework or storage change.
 
 ## Baseline and working rules
 
@@ -132,7 +141,7 @@ and `output_tokens`. Expose these functions:
 - `BoundedLlamaError(code: str)`: payload-free exception for validation,
   transport/status, deadline, oversized body, malformed/incomplete answer.
 
-- [ ] **1. Write a failing reservation and captured-request test.** Use an owned
+- [x] **1. Write a failing reservation and captured-request test.** Use an owned
   loopback listener, not a fake that copies the expected endpoint. Start with:
 
 ```python
@@ -162,11 +171,11 @@ await writer.wait_closed()
   Use `asyncio.start_server(handler, "127.0.0.1", 0)` in an async context; retain
   and join accepted handler tasks in fixture cleanup. Assert the actual request
   URL/model, no Authorization/tools, and no change after mutating live config.
-- [ ] **2. Run RED:**
+- [x] **2. Run RED:**
   `"$WORKFLOW_PY" -m pytest -o addopts= -q Tests/LLM_Calls/test_llamacpp_bounded.py`.
   Confirm failure is the missing implementation/behavior, not a profile import,
   unavailable dependency, or blocked socket fixture.
-- [ ] **3. Implement the closed request function.** Validate before any I/O;
+- [x] **3. Implement the closed request function.** Validate before any I/O;
   reject booleans/nonfinite budgets, userinfo/query/fragment and non-loopback
   dispatch. Resolve literal localhost only in the retained setup worker; reject
   non-loopback DNS answers, display/pin one address, and do not retry another.
@@ -211,7 +220,7 @@ deadline = min(deadline_at, asyncio.get_running_loop().time()
   even when usage is absent. Use existing sensitive-request context; if DEBUG
   transport-header canaries leak, add a context-local filter for this path to
   `httpx`/`httpcore` loggers, never global level changes or a logging framework.
-- [ ] **4. Add/execute focused qualification cases:** 429/500/disconnect causes
+- [x] **4. Add/execute focused qualification cases:** 429/500/disconnect causes
   one POST; poisoned HTTP(S)_PROXY is ignored; redirects are not followed;
   1 MiB/overflow, chunked bodies and compressed bodies; continuous trickle exceeds
   absolute deadline; cancelled body closes the real connection; held cleanup
@@ -220,7 +229,7 @@ deadline = min(deadline_at, asyncio.get_running_loop().time()
   Run Task 1 tests plus `Tests/Chat/test_provider_endpoint_contract.py`,
   `Tests/Chat/test_local_server_discovery.py` and
   `Tests/Chat/test_sensitive_llm_logging.py`; run scoped Ruff/format checks.
-- [ ] **5. Review and commit only the new module/tests:**
+- [x] **5. Review and commit only the new module/tests:**
 
 ```sh
 git add -- tldw_chatbook/LLM_Calls/llamacpp_bounded.py Tests/LLM_Calls/test_llamacpp_bounded.py
@@ -256,7 +265,7 @@ Only the coordinator may supply `approved_once`, after matching its current
 pending effect identity; no imported JSON field maps to it. This wrapper is not
 an alternative resolver.
 
-- [ ] **1. Add missing-file strict refusal RED test** using the actual store:
+- [x] **1. Add missing-file strict refusal RED test** using the actual store:
 
 ```python
 def test_missing_strict_authority_is_not_a_default_grant(tmp_path):
@@ -277,9 +286,9 @@ def test_missing_strict_authority_is_not_a_default_grant(tmp_path):
 
   These gate/store constructor signatures were checked against the pinned source;
   recheck them if the execution baseline changes.
-- [ ] **2. Run RED:**
+- [x] **2. Run RED:**
   `"$WORKFLOW_PY" -m pytest -o addopts= -q Tests/Workflows/test_session_permissions.py Tests/Agents/test_builtin_tool_gate.py`.
-- [ ] **3. Implement one-snapshot strict verdicts.** Strict checks call
+- [x] **3. Implement one-snapshot strict verdicts.** Strict checks call
   `service.permission_store.read_snapshot_strict()` freshly; require
   `file_exists=True` and the captured permission profile to be available. Derive
   kill-switch and effective state from that same immutable payload through the
@@ -312,13 +321,13 @@ finally:
   added. The coordinator consumes a pending approval exactly once to dispatch
   that effect, while immediate pre-write rechecks may reuse that same approved
   effect only during its still-owned physical operation.
-- [ ] **4. Cover corrupt/unreadable/missing snapshots, stale cached allow,
+- [x] **4. Cover corrupt/unreadable/missing snapshots, stale cached allow,
   absent captured profile, deny/kill after approval, changed effect arguments,
   duplicate approval, and ordinary nonstrict behavior.** Assert strict reads
   never call `.load()`/`.save()` or create repair backups. Run the task tests,
   `Tests/MCP/test_permission_store.py`, `Tests/MCP/test_permission_resolution.py`;
   scoped Ruff/format checks must pass.
-- [ ] **5. Review and commit:**
+- [x] **5. Review and commit:**
 
 ```sh
 git add -- tldw_chatbook/Agents/builtin_tool_gate.py tldw_chatbook/Workflows/session_permissions.py Tests/Agents/test_builtin_tool_gate.py Tests/Workflows/test_session_permissions.py
@@ -331,7 +340,13 @@ git commit -m "feat(workflows): add strict effect-time permission checks"
 `Tests/Workflows/test_local_steps.py`; narrowly extend
 `tldw_chatbook/Notes/Notes_Library.py` with the bound-cache context manager below;
 add its tests to `Tests/Workflows/test_local_steps.py`. Reuse `NotesScopeService`
-without duplicating Note business logic.
+without duplicating Note business logic. Qualification also covers existing
+title-bearing error diagnostics: remove the private title from the null-ID
+message in `Notes_Library.py` and the `CharactersRAGDBError` message in
+`DB/ChaChaNotes_DB.py`, without changing storage behavior. A resolved Note title
+can contain private workflow output; test the actual bridge error paths.
+Update the existing title-bearing log assertion in
+`Tests/Notes/test_notes_library_unit.py` to match the payload-free diagnostic.
 
 **Consumes:** `validate_path_simple(..., probe_existing=False)`, `lexical_path`,
 `verify_trusted_directory`, `NotesInteropService.notes_db`,
@@ -347,9 +362,10 @@ without duplicating Note business logic.
 - `create_local_note(destination: LocalNoteDestination, *, create_note_id: str,
   title: str, content: str, before_write: Callable[[], None]) -> str`.
 - `read_local_note(destination: LocalNoteDestination, *, note_id: str) -> dict[str, Any] | None`.
+- `LocalNoteCleanupError`: fixed payload-free `note_cleanup_failed` signal if the existing DB owner's current-thread close call raises. Do not change the owner or infer failures it swallows internally.
 - `NotesInteropService.bound_notes_db(user_id: str, expected_db: CharactersRAGDB) -> Iterator[CharactersRAGDB]`, a context manager over its existing `_db_lock`.
 
-- [ ] **1. Write the non-mutating source test first:**
+- [x] **1. Write the non-mutating source test first:**
 
 ```python
 def test_source_read_does_not_change_permissions(tmp_path):
@@ -367,9 +383,9 @@ def test_source_read_does_not_change_permissions(tmp_path):
   services for create/readback; in-memory mocks cannot prove worker-thread
   routing or commit outcomes. Seed the existing runtime policy/permission
   fixtures explicitly rather than substituting an allow-all service.
-- [ ] **2. Run RED:**
+- [x] **2. Run RED:**
   `"$WORKFLOW_PY" -m pytest -o addopts= -q Tests/Workflows/test_local_steps.py`.
-- [ ] **3. Implement file reading without mutation.** Do not use
+- [x] **3. Implement file reading without mutation.** Do not use
   `open_private_binary()` here: it chmods selected files. Validate the lexical
   path and trusted directory through current utilities; reject unverified
   platform safety, wrong-owner/symlink/nonregular/multiple-link files and visible identities
@@ -389,7 +405,7 @@ text = raw.decode("utf-8", errors="strict")
 
   Do not add line numbers, UTF-8 replacement, chmod, ingestion records or fallback.
   Check resulting serialized output against the session's result budget as well.
-- [ ] **4. Implement the Notes bridge.** Capture the actual cached Notes DB
+- [x] **4. Implement the Notes bridge.** Capture the actual cached Notes DB
   off-loop, then close only that worker thread's connection. Bound operations
   refuse a changed service, user/client, DB object/path or missing cached owner.
   `bound_notes_db` checks the existing cache while holding the existing lock;
@@ -419,7 +435,7 @@ with destination.owner.bound_notes_db(destination.user_id, destination.db):
   same bound route and current-thread cleanup for `get_note_detail`. Do not call
   cache-evicting `close_user_connection`. Require nonblank normalized title and
   exact accepted content; the coordinator retains the attempted ID even on error.
-- [ ] **5. Prove refusal/commit outcomes and commit.** Test source overflow,
+- [x] **5. Prove refusal/commit outcomes and commit.** Test source overflow,
   invalid UTF-8, links/FIFO/DB aliases before raw-open, policy denial, destination
   replacement, transaction rollback, lost response after commit, duplicate ID,
   deleted/mismatched readback, and cleanup on the actual worker thread. Hold
@@ -428,7 +444,7 @@ with destination.owner.bound_notes_db(destination.user_id, destination.db):
   `Tests/Notes/test_notes_scope_service.py`, plus scoped Ruff/format checks.
 
 ```sh
-git add -- tldw_chatbook/Workflows/local_steps.py tldw_chatbook/Notes/Notes_Library.py Tests/Workflows/test_local_steps.py
+git add -- tldw_chatbook/Workflows/local_steps.py tldw_chatbook/Notes/Notes_Library.py tldw_chatbook/DB/ChaChaNotes_DB.py Tests/Workflows/test_local_steps.py Tests/Notes/test_notes_library_unit.py
 git commit -m "feat(workflows): add bounded local file and Note effects"
 ```
 
@@ -453,6 +469,8 @@ with `source: Path`, `model: ModelSelection`, `review_actor: str` and
 Frozen `RunView` contains `run_id`, `workflow_id`, `revision_id`, `step_id`,
 `state`, `message_code`, `review_text`, `note_id`, `generation` and
 `pending_effect: EffectRequest | None`. Optional IDs/text are `None` when absent;
+`review_instructions: str | None` exposes the resolved human-step instructions
+with private repr so the remounted UI need not inspect session internals.
 generation is a monotonic integer for stale-control/quit checks. States are
 `ready`, `running`, `approval`, `review`, `stopping`, `cancelled`, `rejected`,
 `failed`, `uncertain`, `completed`. Payload fields have private repr.
@@ -475,6 +493,9 @@ on the app loop. It exposes:
   delivery of the current consumed ticket returns that ID, never dispatches.
   Older tickets remain invalid even after a newer run; no growing run-history set.
 - `view() -> RunView | None`; `subscribe(callback: Callable[[], None]) -> Callable[[], None]`.
+- `run_bindings(run_id: str) -> RunBindings`: read-only binding of the matching
+  current singleton run, including its terminal result for Open Note validation;
+  stale/wrong IDs fail. This does not expose a run history or reopen setup tickets.
 - `update_review(run_id: str, step_id: str, text: str) -> bool` and
   `answer_review(run_id: str, step_id: str, *, accept: bool) -> bool`.
 - `answer_effect(run_id: str, step_id: str, payload_json: str, *, approve: bool) -> bool`.
@@ -485,7 +506,7 @@ on the app loop. It exposes:
 discarding current work. `abort_close` reopens admission only before actual
 session cancellation/terminal close; it never resurrects a cancelled run.
 
-- [ ] **1. Start with whole-definition admission RED:**
+- [x] **1. Start with whole-definition admission RED:**
 
 ```python
 def test_retry_is_refused_not_silently_removed():
@@ -505,7 +526,7 @@ def test_retry_is_refused_not_silently_removed():
 ```
 
   Run the three task test files with `-o addopts= -q`; confirm RED before code.
-- [ ] **2. Implement bounded admission, not another schema/expression engine.**
+- [x] **2. Implement bounded admission, not another schema/expression engine.**
   Check raw/canonical size before expensive copies. Project with the existing
   parser, then call `json_copy(..., byte_limit=2 * 1024 * 1024)` to reject opaque
   numbers rather than interpreting display projection as execution data. Validate
@@ -533,7 +554,7 @@ def test_retry_is_refused_not_silently_removed():
   Validate concrete types again after expression resolution. `step.retry` must be
   integer zero, excluding bool; timeout and all budgets reject bool/nonfinite
   values. Error copy names the field/code, not private payloads.
-- [ ] **3. Implement detached state and closed sequential dispatch.** Keep only
+- [x] **3. Implement detached state and closed sequential dispatch.** Keep only
   current session state/results. Use a normal tuple/list of validated steps and
   an explicit five-way dispatch; no plugin/runtime base classes. For each step:
 
@@ -558,7 +579,7 @@ context[step["id"]] = result
   already consumed, expired, cancelled, or from another run/step cannot advance.
   Accepted `review.text` is exactly the displayed edited text. The fixture's Note
   content resolves from that value; no automatic save after rejection.
-- [ ] **4. Implement physical retention and commit reconciliation.** Retain
+- [x] **4. Implement physical retention and commit reconciliation.** Retain
   `asyncio.create_task(asyncio.to_thread(...))` for file/Notes work and shield its
   wait. Cancellation sets stop intent; it does not cancel a thread's asyncio
   wrapper or mark the slot free. Async model work may receive one cancellation
@@ -574,7 +595,9 @@ context[step["id"]] = result
   but never forwards an output to another step. Domain data is never deleted to
   simulate rollback. `close()` returns only after all setup/effect/cleanup tasks
   settle; failures preserve a nonaccepting state and remain observable.
-- [ ] **5. Prove lifecycle cases, then commit.** Use releasable `threading.Event`
+  Catch Task 3's `LocalNoteCleanupError` separately from ordinary uncertain-write
+  errors: even confirmed readback cannot erase failed physical-cleanup status.
+- [x] **5. Prove lifecycle cases, then commit.** Use releasable `threading.Event`
   gates and real file-backed Notes fixtures, not sleeps. For a blocked writer,
   the essential assertions before releasing it are:
 
@@ -611,7 +634,14 @@ git commit -m "feat(workflows): execute one session-owned sequential run"
 `tldw_chatbook/UI/Workflows_Modules/run_controls.py`,
 `Tests/UI/test_workflows_run.py` and
 `Tests/ProductionApp/test_workflows_session_lifecycle.py`; extend
-`Tests/UI/test_app_quit_guard.py`. Regenerate the committed CSS bundles through
+`Tests/UI/test_app_quit_guard.py`. At the app/session integration boundary,
+also update `Workflows/session.py` and `Tests/Workflows/test_session.py` so the
+captured actual Notes DB path always joins app-supplied protected DB paths in
+`RunBindings` (no second capture/owner or raw DB inspection).
+The reviewed shutdown correction also touches existing `Workflows/authoring.py`,
+`Workflows/draft_session.py` and `Tests/Workflows/test_authoring.py` for reversible
+preparation and real same-owner usability after renewed confirmation is aborted.
+Regenerate the committed CSS bundles through
 `tldw_chatbook/css/build_css.py`.
 
 **Consumes:** Task 4 session, actual app `notes_scope_service`, `notes_user_id`,
@@ -625,7 +655,7 @@ inputs plus `RunSetup` or None. The session's `prepare()` captures the concrete
 bindings in retained workers, then the UI displays `bindings(ticket)` for final
 confirmation before `start(ticket)`; cancelling discards that setup ticket.
 
-- [ ] **1. Add actual-control RED tests.** Extend the existing production-CSS
+- [x] **1. Add actual-control RED tests.** Extend the existing production-CSS
   `WorkflowEditorHarness` pattern with real services and the session owner. Do
   not replace the screen's Run handler or quit implementation in the test.
   Test a real Button press and actual navigation, including different selected
@@ -642,7 +672,7 @@ await pilot.pause()
 
   Assert the actual saved Note content and the Library landing, not merely that
   `NavigateToScreen` was posted. Run the new UI/lifecycle tests to capture RED.
-- [ ] **2. Compose the owner and safe quit path.** Add one `_workflow_session`
+- [x] **2. Compose the owner and safe quit path.** Add one `_workflow_session`
   field beside the authoring owner; constructing/visiting the editor must not
   start effects or initialize a second storage owner. Capture Notes identity,
   user, permission profile and provider facts once for setup. Retain resolver/
@@ -655,6 +685,10 @@ await pilot.pause()
   generation, recheck after other awaited confirmations, fence controls/effects,
   flush drafts, drain the workflow, then allow existing service-close/exit work.
   Stay, failed draft flush or stale confirmation must not silently cancel a run.
+  This applies before run cancellation is accepted. A later Console Stay after
+  accepted cancellation restores future admission only after successful physical
+  settlement; the cancelled attempt is not resumed. Pre-quit authoring uses its
+  reversible preparation barrier; permanent authoring close is final teardown.
   If physical drain fails, remain open with a stopping/error indication and do
   not enter unconditional cleanup. Normal teardown calls the same idempotent
   drain before closing Notes; unrelated lifecycle owners retain their behavior.
@@ -664,13 +698,13 @@ owner.begin_close()
 try:
     if workflow_authoring is not None:
         await workflow_authoring.flush()
-except Exception:
+except (Exception, asyncio.CancelledError):
     owner.abort_close()  # No cancellation was accepted by close yet.
     raise
 await owner.close()  # Failure stays fenced; caller must not enter exit cleanup.
 ```
 
-- [ ] **3. Wire the existing Run button and minimal UI.** Keep library,
+- [x] **3. Wire the existing Run button and minimal UI.** Keep library,
   navigator and continuous collapsed authoring form unchanged. Dirty drafts
   require Save revision or an explicit Run saved revision choice; show the exact
   workflow/revision that will run. History inspection can run only its selected
@@ -704,7 +738,7 @@ self.app_instance.post_message(NavigateToScreen(
   destination instead of routing an old ID into whichever library is now selected.
   Note-step readback and open routing are distinct: later legitimate edits are
   not a reason to overwrite or recreate the saved Note.
-- [ ] **4. Test interactions and shutdown order.** Cover stale/double button
+- [x] **4. Test interactions and shutdown order.** Cover stale/double button
   delivery, blocked setup, invalid edited review, expiry while off-screen,
   rejection, cancellation while Note commit is held, navigation away/back,
   quit from another screen, Stay, failing draft flush, cancelled quit waiter,
@@ -717,12 +751,28 @@ self.app_instance.post_message(NavigateToScreen(
 "$WORKFLOW_PY" -m pytest -o addopts= -q Tests/UI/test_workflows_run.py Tests/UI/test_workflows_editor.py Tests/UI/test_workflows_paging.py Tests/UI/test_app_quit_guard.py Tests/ProductionApp/test_workflows_session_lifecycle.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py Tests/UI/test_workflows_stylesheet_loading.py
 ```
 
-- [ ] **5. Self-review, scoped lint/format and commit exact paths.** Stage the
+- [x] **5. Self-review, scoped lint/format and commit exact paths.** Stage the
   source/test files above and only generated CSS outputs changed by the builder;
   inspect the staged diff before `git commit -m "feat(workflows): wire session execution into the app"`.
   Do not stage unrelated task files, fixtures or UAT scratch.
 
 ## Task 6: End-to-end qualification and user documentation
+
+Qualification amendment: the merged Open Note test exposed a deterministic
+nested-mount race in `Widgets/Library/library_notes_canvas.py`. The old readiness
+guard sees authority/title before deeper mode buttons exist. A canvas-local
+readiness flag may defer presentation updates until the existing completed-mount
+hook applies the latest retained state. Cover it with a permanent held-mount
+regression and existing Library recompose/Workflow Open Note tests; no framework,
+storage, owner, or design change. This routine fix needs no new ADR. Separately,
+the existing sensitive-logging test capture may snapshot/set/restore downstream
+logger levels to remove proven test-order dependence without weakening checks.
+
+A second held-callback reproduction found stale `WorkflowEditor.restore_view`
+focus/scroll restoration overriding a newer field selection. Permit a narrow
+focus-identity guard in `UI/Workflows_Modules/editor.py` and a permanent regression
+in `Tests/UI/test_workflows_editor.py`; preserve invalid-field visibility and
+ordinary restoration without timing delays or a new focus framework. No new ADR.
 
 **Files:** Add `Tests/Workflows/test_file_to_note_integration.py` and
 `Docs/Developer/Workflows/2026-09-16-first-run-uat.md`; update
@@ -733,7 +783,7 @@ self.app_instance.post_message(NavigateToScreen(
 test counts, real Notes readback, UI captures and explicit limitations, not a
 schema-parity or exactly-once claim.
 
-- [ ] **1. Add a failing joined-boundary test.** Load the saved fixture through
+- [x] **1. Add a failing joined-boundary test.** Load the saved fixture through
   real document services, mount the actual Run/setup/review controls, dispatch
   the Task 1 real HTTP path to an owned loopback fixture, accept modified text,
   and read the real Note through captured NotesScopeService. Test with tldw_server
@@ -749,7 +799,7 @@ assert request_count == 1
 assert inserted_note_count == 1
 ```
 
-- [ ] **2. Run the targeted merged set and static checks.** Include Tasks 1–5
+- [x] **2. Run the targeted merged set and static checks.** Include Tasks 1–5
   test paths, all `Tests/Workflows/`, touched Notes/gate/MCP regressions and
   `Tests/UI/test_workflows_projection_performance.py`. Run Ruff and formatter
   on new/changed scope. New files must be clean; for touched large legacy files,
@@ -757,7 +807,7 @@ assert inserted_note_count == 1
   findings. Do not assume the prior authoring task's exception waives this
   task's no-new-debt criterion. Save complete outputs and actual counts, not a
   truncated failure list. No full repository sweep without explicit permission.
-- [ ] **3. Run isolated live UAT with the user's llama.cpp at localhost:9099.**
+- [x] **3. Run isolated live UAT with the user's llama.cpp at localhost:9099.**
   Allocate a private scratch directory, create/parse a complete disposable TOML
   before app import, and verify config, data, cache, permission and all DB paths
   resolve into it. Disable unrelated model-catalog/provider networking. Check
@@ -772,7 +822,7 @@ assert inserted_note_count == 1
   the same scratch profile: definitions/Note survive, active run/review does not
   return and no POST/write is replayed. If the endpoint is unavailable, report
   live UAT blocked; do not replace it with Ollama, a mock or a health-check claim.
-- [ ] **4. Record evidence and update the guide.** Record commit, Python/Textual/
+- [x] **4. Record evidence and update the guide.** Record commit, Python/Textual/
   HTTPX versions, effective isolated paths, actual provider/model/endpoint,
   request/effect counts, reviewed Note identity/content comparison, terminal
   sizes/captures and log scan for `unhandled_exception|app_stopping`. Explain

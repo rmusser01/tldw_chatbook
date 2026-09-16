@@ -186,6 +186,12 @@ assertions that current service signatures already satisfy them:
   Navigation only detaches the view. Timeout/cancellation cannot free the run slot
   while work remains live. A drain failure keeps an explicit stopping/error state;
   it does not force-close a database still in use or announce successful shutdown.
+  Pre-exit authoring preparation retains the existing draft/DB owners and can be
+  aborted when renewed confirmation chooses Stay. Only successful physical
+  settlement may restore admission for a new run; the cancelled run and its
+  setup/approval authority stay cancelled. Final resource destruction belongs
+  to committed-exit teardown under its existing error policy, after fallible
+  persistence and physical settlement have succeeded.
 
 ### Bounds and timing
 

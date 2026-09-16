@@ -144,6 +144,15 @@ Note ID for readback after an uncertain response; never blindly retry with a new
 ID. A crash can leave a Note without a workflow receipt; expose that limitation
 and require inspection before rerunning rather than claim exactly-once recovery.
 
+Pre-exit authoring preparation is reversible and retains the same draft and DB
+owners until the final application quit decision. If renewed confirmation stays
+in the app, authoring remains usable; successful physical settlement can reopen
+admission for a separately prepared run, never revive the cancelled run or old
+approval/setup authority. Failed or unfinished drain cannot reopen admission.
+Persistence and physical-drain failures block exit before permanent Console
+disposal. Permanent authoring resource close belongs to committed-exit teardown
+and follows its existing error policy, not a reversible Stay boundary.
+
 Review edits, intermediate outputs, counters and run history are not durable in
 this slice. Saved definitions, authoring drafts and committed domain Notes retain
 their existing durability. Disclose the distinction before Run and when quitting
