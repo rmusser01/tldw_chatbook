@@ -214,3 +214,74 @@ def test_file_count_limit_counts_files_without_charging_parent_directories(
     root = native_package()
     monkeypatch.setattr(package_files, "MAX_FILES", 2)
     assert package_files.materialize_package(root, tmp_path / "snapshot").content_digest
+
+
+@pytest.mark.parametrize("directories", [False, True])
+def test_rejected_entries_consume_traversal_and_diagnostic_budgets(
+    native_package, tmp_path, monkeypatch, directories
+):
+    from tldw_chatbook.Plugins import package_files
+
+    monkeypatch.setattr(package_files, "MAX_FILES", 2)
+    control = inspect_package(native_package())
+    assert not control.rejected and control.content_digest
+    root = tmp_path / "invalid-names"
+    root.mkdir()
+    for index in range(8):
+        path = root / f"CON.{index}"
+        if directories:
+            path.mkdir()
+        else:
+            path.write_text("invalid portable spelling")
+    result = inspect_package(root)
+    assert result.rejected
+    expected = (
+        "package_diagnostics_limit" if directories else "package_file_count_limit"
+    )
+    assert expected in result.activation_blockers
+    assert len(result.diagnostics) <= 2
+    with pytest.raises(ValueError, match=expected):
+        package_files.materialize_package(root, tmp_path / "snapshot-invalid")
+    assert not (tmp_path / "snapshot-invalid").exists()
+
+
+def test_stat_failures_consume_visited_entry_budget(native_package, monkeypatch):
+    from tldw_chatbook.Plugins import package_files
+
+    root = native_package()
+    monkeypatch.setattr(package_files, "MAX_FILES", 2)
+    assert not inspect_package(root).rejected
+    real_scandir = os.scandir
+    visits = 0
+
+    class UnreadableEntry:
+        name = "unreadable"
+
+        def stat(self, **kwargs):
+            raise OSError("controlled unreadable entry")
+
+    class UnreadableScan:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            nonlocal visits
+            for _ in range(100):
+                visits += 1
+                yield UnreadableEntry()
+
+    def unreadable_scan(descriptor):
+        return (
+            UnreadableScan()
+            if isinstance(descriptor, int)
+            else real_scandir(descriptor)
+        )
+
+    monkeypatch.setattr(package_files.os, "scandir", unreadable_scan)
+    result = inspect_package(root)
+    assert result.rejected
+    assert "package_file_count_limit" in result.activation_blockers
+    assert visits == 3

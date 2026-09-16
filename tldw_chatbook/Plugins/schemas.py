@@ -353,7 +353,7 @@ def validate_hook(value: object, capture) -> dict:
     require(not value.get("require_context") or "context" in effects)
     timeout = value.get("timeout_seconds", 10)
     require(
-        type(timeout) in (int, float) and math.isfinite(timeout) and 0 < timeout <= 60
+        type(timeout) in (int, float) and 0 < timeout <= 60 and math.isfinite(timeout)
     )
     if "match" in value:
         match = closed(value["match"], {"tool_id", "provider", "operation", "reason"})

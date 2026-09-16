@@ -634,3 +634,101 @@ def test_native_hook_relative_executable_cannot_escape(native_package):
         },
     )
     assert inspect_package(root).inventory["skill:review"].activation_blockers
+
+
+@pytest.mark.parametrize("description", [chr(0xD800), chr(0xDFFF), float("inf")])
+def test_unrepresentable_manifest_values_return_diagnostics(
+    native_package, description
+):
+    control = native_package()
+    edit_manifest(control, description="Review \U0001f50d")
+    assert not inspect_package(control).rejected
+    root = native_package()
+    edit_manifest(root, description=description)
+    # Exercise a legal JSON exponent that overflows float conversion, not only
+    # the explicit Infinity spelling already rejected by the JSON decoder.
+    if description == float("inf"):
+        path = root / "plugin.json"
+        path.write_text(path.read_text().replace("Infinity", "1e999"))
+    result = inspect_package(root)
+    assert result.rejected
+    assert {d.code for d in result.diagnostics} & {
+        "json_unicode_invalid",
+        "json_nonfinite",
+    }
+
+
+def test_unpaired_surrogate_json_key_returns_diagnostic(native_package):
+    root = native_package()
+    edit_manifest(root, extensions={"org.example.client": {"\ud800": "value"}})
+    result = inspect_package(root)
+    assert result.rejected
+    assert "json_unicode_invalid" in {d.code for d in result.diagnostics}
+    assert not inspect_package(native_package()).rejected
+
+
+@pytest.mark.parametrize("timeout_json", [str(10**400), "1e999", "-1e999"])
+def test_unrepresentable_hook_timeout_is_blocked_without_crashing(
+    native_package, timeout_json
+):
+    root = native_package()
+    folder = root / NS
+    folder.mkdir()
+    path = folder / "hooks.json"
+    hook = {
+        "id": "guard",
+        "event": "PreToolUse",
+        "type": "command",
+        "argv": ["python3"],
+        "effects": ["deny"],
+        "timeout_seconds": 10,
+    }
+    path.write_text(json.dumps({"version": 2, "hooks": [hook]}))
+    edit_manifest(
+        root,
+        extensions={
+            NS: {
+                "version": 1,
+                "hooks": f"./{NS}/hooks.json",
+                "requires": {"skill:review": ["hook:guard"]},
+            }
+        },
+    )
+    control = inspect_package(root)
+    assert not control.inventory["skill:review"].activation_blockers
+    path.write_text(
+        path.read_text().replace(
+            '"timeout_seconds": 10', f'"timeout_seconds": {timeout_json}'
+        )
+    )
+    result = inspect_package(root)
+    assert result.inventory["skill:review"].activation_blockers
+    assert {d.code for d in result.diagnostics} & {"hook_invalid", "json_nonfinite"}
+
+
+@pytest.mark.parametrize(
+    "shape", ["native", "rejected", "unavailable", "ambiguous", "vendor"]
+)
+def test_every_inspection_result_has_immutable_mapping_defaults(native_package, shape):
+    root = native_package()
+    assert "skill:review" in inspect_package(root).inventory
+    if shape == "rejected":
+        (root / "plugin.json").write_text("{}")
+    elif shape == "unavailable":
+        root = root / "missing"
+    elif shape in {"ambiguous", "vendor"}:
+        (root / "plugin.json").unlink()
+        folders = (
+            (".cursor-plugin", ".codex-plugin")
+            if shape == "ambiguous"
+            else (".cursor-plugin",)
+        )
+        for folder in folders:
+            (root / folder).mkdir()
+            (root / folder / "plugin.json").write_text('{"name":"vendor"}')
+    result = inspect_package(root)
+    before = result.model_dump()
+    for field in ("inventory", "dependency_edges", "link_targets"):
+        with pytest.raises(TypeError):
+            getattr(result, field)["injected"] = "invalid and mutable"
+    assert result.model_dump() == before

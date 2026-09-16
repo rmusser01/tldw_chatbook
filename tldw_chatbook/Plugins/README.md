@@ -64,9 +64,13 @@ against arbitrary same-user code or a substitute for the later trust/lease owner
 
 Limits: 256 KiB/depth 32 per definition JSON; 100 MiB expanded, 10,000 files,
 10 MiB/file, path depth 32; 512 normalized components; 64 native hooks. Traversal
-also caps directories at `10,000 * 32`, bounding empty-directory trees. Files are
-read in 64 KiB chunks and counted before retention. Frontmatter is bounded to
-256 KiB and rejects aliases, duplicate fields, and non-JSON values.
+also caps directories at `10,000 * 32`, bounding empty-directory trees. Every
+visited entry consumes its file/directory budget before filename validation;
+unreadable entry metadata consumes the file budget. Retained filesystem diagnostics
+share a 10,000-entry cap. Files are read in 64 KiB chunks and counted before retention. Frontmatter is bounded to
+256 KiB and rejects aliases, duplicate fields, and non-JSON values. JSON rejects
+nonfinite numbers (including exponent overflow) and non-UTF-8-representable strings
+or keys before normalization. Numeric timeout bounds precede float conversion.
 
 ## Qualification boundaries
 

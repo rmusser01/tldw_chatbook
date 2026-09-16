@@ -7,6 +7,7 @@ No package file is executed, and links are never copied as links.
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -102,8 +103,16 @@ def parse_document(data: bytes) -> dict:
             raise PackageFileError("document_depth_limit")
         if isinstance(node, dict):
             stack.extend((child, depth + 1) for child in node.values())
+            stack.extend((key, depth + 1) for key in node)
         elif isinstance(node, list):
             stack.extend((child, depth + 1) for child in node)
+        elif isinstance(node, str):
+            try:
+                node.encode("utf-8")
+            except UnicodeEncodeError:
+                raise PackageFileError("json_unicode_invalid") from None
+        elif isinstance(node, float) and not math.isfinite(node):
+            raise PackageFileError("json_nonfinite")
     if not isinstance(value, dict):
         raise PackageFileError("document_object_required")
     return value
@@ -220,27 +229,44 @@ def capture_package(root: Path) -> PackageCapture:
         with _directory_fd(root) as root_fd:
             root_identity = _identity(os.fstat(root_fd))
 
+            def account_entry(is_directory: bool):
+                nonlocal count, directory_count
+                if is_directory:
+                    directory_count += 1
+                    if directory_count > MAX_FILES * MAX_PATH_DEPTH:
+                        raise PackageFileError("package_directory_count_limit")
+                else:
+                    # An entry with unreadable metadata consumes the file budget.
+                    count += 1
+                    if count > MAX_FILES:
+                        raise PackageFileError("package_file_count_limit")
+
+            def retain_diagnostic(diagnostic: Diagnostic, *, error: bool = False):
+                if len(capture.errors) + len(capture.diagnostics) >= MAX_FILES:
+                    raise PackageFileError("package_diagnostics_limit")
+                (capture.errors if error else capture.diagnostics).append(diagnostic)
+
             def walk(directory_fd: int, prefix: PurePosixPath):
-                nonlocal total, count, directory_count
+                nonlocal total
                 before = os.fstat(directory_fd)
                 with os.scandir(directory_fd) as entries:
                     for entry in entries:
                         member = prefix / entry.name
                         path = member.as_posix()
                         try:
+                            try:
+                                info = entry.stat(follow_symlinks=False)
+                            except OSError:
+                                account_entry(False)
+                                raise
+                            account_entry(stat.S_ISDIR(info.st_mode))
                             validate_relative_member(path)
                             key = collision_key(path)
                             if key in seen:
                                 raise PackageFileError("package_path_collision")
                             seen.add(key)
-                            info = entry.stat(follow_symlinks=False)
                             _check_reparse(info)
                             if stat.S_ISDIR(info.st_mode):
-                                directory_count += 1
-                                if directory_count > MAX_FILES * MAX_PATH_DEPTH:
-                                    raise PackageFileError(
-                                        "package_directory_count_limit"
-                                    )
                                 child_fd = os.open(
                                     entry.name,
                                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
@@ -254,9 +280,6 @@ def capture_package(root: Path) -> PackageCapture:
                                 finally:
                                     os.close(child_fd)
                                 continue
-                            count += 1
-                            if count > MAX_FILES:
-                                raise PackageFileError("package_file_count_limit")
                             target = member
                             if stat.S_ISLNK(info.st_mode):
                                 resolved = (root / path).resolve(strict=True)
@@ -306,7 +329,7 @@ def capture_package(root: Path) -> PackageCapture:
                             )
                             if stat.S_ISLNK(info.st_mode):
                                 capture.link_targets[path] = target.as_posix()
-                                capture.diagnostics.append(
+                                retain_diagnostic(
                                     Diagnostic(
                                         code="internal_link_materialized", path=path
                                     )
@@ -319,7 +342,9 @@ def capture_package(root: Path) -> PackageCapture:
                             )
                             if "limit" in code or code == "package_changed":
                                 raise PackageFileError(code) from None
-                            capture.errors.append(Diagnostic(code=code, path=path))
+                            retain_diagnostic(
+                                Diagnostic(code=code, path=path), error=True
+                            )
                 if _unchanged(before) != _unchanged(os.fstat(directory_fd)):
                     raise PackageFileError("package_changed")
 
