@@ -542,10 +542,34 @@ budget by changing text or requesting another child.
 
 ## 8. Cancellation, revocation and cleanup
 
-Capture owner generations on admission; validate before command launch, MCP
-dispatch, result acceptance and scheduling. Disable/uninstall seals admission
-durably before cleanup and suppresses that plugin's pending events, including
-Stop, Interrupt and SessionEnd. Cancellation cannot turn a revoked hook back on.
+Capture workspace/run owner identities and generations on admission; plugin
+handlers also capture installation-wide authority generations. Validate before
+command launch, MCP dispatch, result acceptance and scheduling. Disable here
+fences the affected workspace immediately under admission synchronization;
+Disable everywhere/uninstall fences all installation
+scopes. Invalidate live ownership and begin host cancellation before awaiting
+durable writes, trust unlock or mutation completion. Suppress the affected scope's
+pending plugin events, including Stop, Interrupt and SessionEnd, from that live
+fence onward. Close affected approvals/checkpoints/waiters through their existing
+cancellation paths; a late result cannot release a checkpoint into runnable work.
+Cancellation cannot turn a fenced hook back on.
+
+Persistence failure keeps that live fence in place while host cleanup continues.
+The plugin coordinator distinguishes a session-only block from committed disable
+or uninstall; a failed write cannot establish a durable outcome or prove process
+termination. Retry/reconciliation cannot silently reopen the live scope or release
+unresolved process ownership. Durable revocation and file/data deletion follow
+the companion plugin spec's separate commit and exact-root drain contracts.
+
+Requests and callbacks retain their original workspace/run ownership even on a
+shared MCP connection. Disabling A must preserve authorized B work, approvals and
+callbacks. Share only equivalent reviewed execution/configuration/credential
+authority and compatible session state, as the plugin spec requires. Cancel or
+detach A's requests without killing a transport still serving B; discard A's late
+effects while retaining uncertain outcomes and resource ownership. Terminate a
+shared process only when all its owners are affected or have drained. Independently
+configured user hooks/connections keep their own authority; they cannot revive
+the fenced plugin scope.
 
 Host cleanup owns process termination, waiter settlement and final resource
 release. A cancelled waiter must not abandon cleanup or release a lease before
@@ -554,15 +578,18 @@ shutdown drains. Preserve the caller's cancellation/error when cleanup also
 fails; record unresolved resources separately.
 
 Track pending launch ownership before a process becomes publicly usable.
-Kill and reap the owned process group/tree on timeout or cancellation using
-platform-qualified mechanisms. Deliberately escaped descendants remain
+For exclusively owned processes, kill and reap the owned process group/tree on
+timeout or cancellation using platform-qualified mechanisms; shared processes
+follow the scoped request rule above. Deliberately escaped descendants remain
 outside the guarantee. An unclean owner shutdown follows the companion plugin
 spec's surviving-child recovery rule; lock acquisition does not establish
 that the previous hook/MCP processes stopped.
 
-User stop seals new work first. Interrupt gets a bounded observation window
-afterward and cannot extend it. Its deadline includes queueing and dispatch;
-on expiry, accept no further hook output and start host termination. The separate
+User stop seals new work first. Still-authorized Interrupt handlers get a bounded
+observation window afterward and cannot extend it; plugin disable/uninstall
+suppresses affected handlers rather than waiting for them. The notification
+deadline includes queueing and dispatch; on expiry, accept no further hook output
+and start host cleanup under the scoped process/request rules above. The separate
 post-kill reap allowance is host cleanup time, not an extension in which hooks
 may run, prompt or submit effects. The maximum awaited teardown path is the
 notification window plus the reap allowance (at most 3 + 5 seconds); unresolved
@@ -585,7 +612,7 @@ visible adaptation or remain unsupported.
 | Effectful event execution | 60 s total active execution | Stop launching further handlers; fail controlling required effects. |
 | Effectful event wall time | 180 s total including queue and all approval waits | Settle the required event as failed; no repeated wait can extend the deadline. |
 | Interactive MCP approval wait | 120 s separate wall-time ceiling | Cancel pending hook call; deny required parent guard, otherwise diagnose omission. |
-| Interrupt/SessionEnd notification | 1 s / 3 s wall time per event, including queue and execution | End notification/output acceptance at deadline; no new approval, connection or continuation; initiate host termination. |
+| Interrupt/SessionEnd notification | 1 s / 3 s wall time per event, including queue and execution | End notification/output acceptance at deadline; no new approval, connection or continuation; initiate scoped host cleanup. |
 | Post-kill reap | 5 s maximum host cleanup allowance after notification/execution ends | Outside the handler/event window; preserve cleanup-pending ownership if unresolved. |
 | Input envelope | 1 MiB UTF-8, depth 32, 16,384 JSON nodes | Required guard rejects the parent operation whole; optional observation drops with diagnostic. |
 | Structured stdout / MCP tool-result payload | 16 KiB UTF-8 | Bound capture; MCP includes content, structuredContent and metadata before v2 normalization. Overflow fails the handler; protocol framing is independently bounded. |
@@ -757,6 +784,17 @@ Written-spec amendment scenarios are mandatory acceptance evidence:
   exit and cleanup-pending outcomes; the latter remains counted and cannot
   advertise that the child stopped. Use real controlled child processes for
   the successful kill/reap control on each qualified platform.
+- **Scoped shutdown with failed persistence:** hold/fail each plugin persistence
+  boundary while A/B have pending hooks, approvals and post-event checkpoints.
+  A's disable immediately fences output/admission and starts host cancellation;
+  A's late success cannot release its checkpoint or start a continuation. B's
+  authorized work still settles on a qualified shared MCP connection. A's
+  uncertain request retains ownership without killing B's transport; global
+  disable affects both. Successful durable retry never revives stale events,
+  and failed persistence remains visibly session-only. Independently configured
+  user handlers retain normal Stop/Interrupt behavior. Exercise the companion
+  plugin spec's data-drain scenarios with idle and cleanup-pending hook/MCP
+  processes; waiter settlement alone cannot prove root users have stopped.
 
 Initial implementation targets include Agents/run_hooks.py, existing agent
 dispatch/child lifecycle seams, Console runtime/submit/interrupt owners,

@@ -66,9 +66,15 @@ Package discovery and shared execution need separate module boundaries.
 7. Stop continuation is one deduplicated scheduler proposal with chain/time
    limits and inherited budgets. User work, cancellation, revocation and update
    draining prevent stale automatic follow-up.
-8. Seal admission before cancellation/cleanup. Revoked plugin hooks do not
-   receive cleanup callbacks. Host cleanup owns process reaping and uncertain
-   surviving-child recovery, without claiming sandbox containment.
+8. Seal the affected live installation/workspace/run scope and begin host
+   cancellation before waiting for durable writes or trust unlock. Suppress
+   affected plugin cleanup callbacks and stale checkpoint results immediately;
+   persistence failure cannot reopen live admission or claim durable disable.
+   Workspace disable preserves other scopes' authorized hooks and approvals;
+   shared MCP requests retain scope ownership and cannot kill another authorized
+   user's transport. Host cleanup owns process reaping, counted unresolved
+   resources and surviving-child recovery, without claiming sandbox containment.
+   File/data deletion follows ADR-162's durable fence and confirmed drain rules.
 9. V2 has explicit input/output/time/concurrency/context limits and safe
    metadata-only ordinary diagnostics. Legacy output/logging remains its named
    contract; plugins are never silently placed into legacy raw-output logging.
