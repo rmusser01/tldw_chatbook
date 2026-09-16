@@ -14,19 +14,19 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.test_library_notes_w4_editor import (
+    _build_notes_host,
+    _open_first_note,
+)
 from Tests.UI.test_library_shell import (
     _active_library_screen,
     _wait_for_condition,
     _wait_for_library_shell,
-)
-from Tests.UI.test_library_notes_w4_editor import (
-    _build_notes_host,
-    _open_first_note,
 )
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     library_note_location_line,
@@ -284,7 +284,7 @@ async def test_a_synced_note_names_its_file_and_when_it_was_written(tmp_path):
     note_file = tmp_path / "vault" / "People" / "Sam.md"
     note_file.parent.mkdir(parents=True)
     note_file.write_text("# Sam\n", encoding="utf-8")
-    written_at = datetime(2026, 9, 15, 8, 6).timestamp()
+    written_at = datetime(2026, 9, 15, 8, 6, tzinfo=UTC).timestamp()
     os.utime(note_file, (written_at, written_at))
 
     host = _build_notes_host(notes=_DATED_NOTE)
@@ -307,7 +307,12 @@ async def test_a_synced_note_names_its_file_and_when_it_was_written(tmp_path):
         assert runtime.asked == ["note-dated"], runtime.asked
         assert "Sam.md" in line, line
         # The clock is the file's own mtime, stated in local time.
-        assert "file written 2026-09-15 08:06" in line, line
+        expected = (
+            datetime.fromtimestamp(written_at, tz=UTC)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M")
+        )
+        assert f"file written {expected}" in line, line
 
 
 def test_the_location_line_truncates_the_path_and_never_the_world():
@@ -355,7 +360,9 @@ def _recognition_controller(tmp_path):
     )
 
     published: list[object] = []
-    unused = lambda *args, **kwargs: None  # noqa: E731 - phases not entered here
+    def unused(*args, **kwargs):
+        """Stand in for the phases this path never enters."""
+
     controller = LibraryNoteImportController(
         bounds=ImportBounds(
             max_files=1_000,

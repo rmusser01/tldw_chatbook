@@ -505,7 +505,7 @@ import dataclasses
 import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
@@ -3578,7 +3578,16 @@ class LibraryNotesController:
             modified = os.stat(path).st_mtime
         except OSError:
             return ""
-        return datetime.fromtimestamp(modified).strftime("%Y-%m-%d %H:%M")
+        # Local time in the codebase's established absolute-timestamp
+        # spelling -- the same one ``_absolute_local_label`` gives Info's
+        # Created/Modified rows, so the header and Info cannot disagree
+        # about which clock they are on. Built tz-aware, then localised,
+        # rather than through a naive ``fromtimestamp``.
+        return (
+            datetime.fromtimestamp(modified, tz=UTC)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M")
+        )
 
     @on(Button.Pressed, ".library-note-backlink")
     async def handle_library_note_backlink(self, event: Button.Pressed) -> None:
