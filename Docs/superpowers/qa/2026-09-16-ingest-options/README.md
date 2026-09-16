@@ -74,9 +74,11 @@ sizes. No production profile was used.
 
 ## Remaining review
 
-The compact picker capture has no visible folder rows despite reporting one
-loaded entry; its typed-path field is also narrow. This pass qualifies typed-path
-Select/Cancel and the caller's return, not folder-list navigation at 80×24.
-Review compact picker layout next, then remaining per-type options and queue
-activity/recovery. Actual import execution, installation, remote/provider actions
-and restart remain outside this evidence. No push or integration into `dev`.
+At this checkpoint the compact picker capture had no visible folder rows despite
+reporting one loaded entry; its typed-path field was also narrow. This pass
+qualifies typed-path Select/Cancel and the caller's return. The subsequent
+[TASK-32665 review](../2026-09-16-compact-picker/README.md) repairs and qualifies
+compact listing/navigation, validation and resize continuity. Continue remaining
+per-type options and queue activity/recovery. Actual import execution,
+installation, remote/provider actions and restart remain outside this evidence.
+No push or integration into `dev`.

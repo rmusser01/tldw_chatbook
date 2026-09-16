@@ -60,6 +60,48 @@ FileSystemPickerScreen Button:focus {
     outline-right: heavy $ds-focus-accent;
 }
 
+/* TASK-32665: preserve listing rows and path space in compact folder dialogs.
+   Class changes retain the inputs, listing, focus and selection on resize. */
+SelectDirectory.-compact Dialog {
+    width: $ds-percent-95;
+    height: $ds-percent-95;
+}
+
+SelectDirectory.-compact #current_path_display {
+    margin-bottom: $ds-space-0;
+}
+
+SelectDirectory.-compact #path-breadcrumbs {
+    height: $ds-control-height-compact;
+    padding: $ds-space-0 $ds-space-inline;
+    margin-bottom: $ds-space-0;
+}
+
+SelectDirectory.-compact InputBar {
+    padding: $ds-space-0 $ds-space-inline;
+}
+
+SelectDirectory.-compact InputBar Input {
+    width: $ds-width-fill;
+}
+
+SelectDirectory.-compact InputBar Button {
+    width: auto;
+    min-width: $ds-size-8;
+}
+
+SelectDirectory #picker-error-line {
+    color: $ds-status-error-readable;
+}
+
+/* The path remains editable in its field; its repeated diagnostic must not
+   consume all folder rows when the missing path contains many components. */
+SelectDirectory.-compact #picker-error-line {
+    height: $ds-control-height-compact;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 /* The EnhancedFileDialog selector above (TASK-16478) also defends the
    enhanced picker's own input-bar row (`Widgets/enhanced_file_picker.py`):
    its class-level DEFAULT_CSS cannot beat the bare `Select { width: 100% }`

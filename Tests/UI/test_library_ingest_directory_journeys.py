@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import replace
 
 import pytest
-from textual.widgets import Button, Collapsible, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_ingest_entry_journeys import _painted
@@ -14,6 +14,7 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _wait_for_condition,
     _wait_for_library_shell,
+    _wait_for_selector,
 )
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
@@ -86,9 +87,10 @@ async def test_model_directory_picker_preserves_draft_and_keyboard_context(
             message="Audio preflight did not settle",
         )
         screen.query_one("#type-group-audio_video", Collapsible).collapsed = False
-        screen.query_one(
-            "#opt-audio_video-transcription_provider", Select
-        ).value = "parakeet-onnx"
+        provider = await _wait_for_selector(
+            screen, pilot, "#opt-audio_video-transcription_provider"
+        )
+        provider.value = "parakeet-onnx"
         await _wait_for_condition(
             pilot,
             lambda: not screen.query_one(BROWSE, Button).disabled,

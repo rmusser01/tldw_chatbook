@@ -26,3 +26,15 @@ it infrequently. Missing or unreadable row details appear as a dash.
 
 Search results grow as more matching files are discovered. Refresh rereads the
 folder and its metadata; changing a filter or sort uses the current scan's data.
+
+## Choosing a folder in a compact terminal
+
+The folder picker keeps its listing, editable path and **Select**/**Cancel**
+actions visible at 80×24. Use the arrow keys and Enter to open a folder or its
+parent, or enter a path directly. Resizing preserves the typed path, selection
+and keyboard focus.
+
+Invalid paths leave the picker open so you can correct them. Submitting a valid
+path clears the error even when it names the current folder. Long diagnostics
+are shortened on screen in compact terminals to leave room for folder rows;
+the full typed path stays in the editable field.

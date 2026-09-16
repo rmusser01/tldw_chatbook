@@ -582,3 +582,28 @@ folder but has no visible list rows, and the typed path field is narrow.
 Then continue remaining per-type options and queue activity/recovery. Typed-path
 selection is qualified; compact list navigation, extraction, remote authorities
 and restart remain unqualified. No full suite, push or integration into dev.
+
+## Compact folder listing and validation — TASK-32665
+
+The [compact picker review](../qa/2026-09-16-compact-picker/README.md) repairs
+the missing folder rows at 80×24. Scoped compact layout gives the dialog more
+space, reduces chrome and keeps its path and actions readable. Long validation
+messages no longer consume the list; correcting to the current folder clears
+stale errors, and overlong names return a validation message instead of raising.
+Mounted inputs, selection, highlighted folder and focus survive resizing.
+
+**154 distinct targeted checks pass**, including empty/scrolling folders,
+keyboard parent/child navigation, selection/cancellation, validation recovery,
+Library caller continuity and token/bundle governance. Boot CSS remains within
+the unchanged limit at 615,348/634,050 bytes. No new Ruff diagnostics or increased
+budgets; final independent review found no actionable issue.
+
+Private native journeys pass at 170×48 dark and 80×24 light, including a real
+terminal resize while the picker is open. Captures show visible rows and readable
+errors. Ten healthy databases, zero media/messages/jobs, unchanged source content
+and normal exit 0 are recorded. Parakeet availability is explicitly simulated
+only to enable the UI controls; nothing installs, imports or executes a model.
+
+Next review: remaining per-type ingest options, then queue activity/recovery.
+Actual import execution, remote authorities and restart remain outside this
+evidence. No full suite, push or integration into dev was performed.

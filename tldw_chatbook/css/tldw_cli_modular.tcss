@@ -2170,6 +2170,46 @@ FileSystemPickerScreen Button:focus {
 }
 
 
+SelectDirectory.-compact Dialog {
+    width: $ds-percent-95;
+    height: $ds-percent-95;
+}
+
+SelectDirectory.-compact #current_path_display {
+    margin-bottom: $ds-space-0;
+}
+
+SelectDirectory.-compact #path-breadcrumbs {
+    height: $ds-control-height-compact;
+    padding: $ds-space-0 $ds-space-inline;
+    margin-bottom: $ds-space-0;
+}
+
+SelectDirectory.-compact InputBar {
+    padding: $ds-space-0 $ds-space-inline;
+}
+
+SelectDirectory.-compact InputBar Input {
+    width: $ds-width-fill;
+}
+
+SelectDirectory.-compact InputBar Button {
+    width: auto;
+    min-width: $ds-size-8;
+}
+
+SelectDirectory #picker-error-line {
+    color: $ds-status-error-readable;
+}
+
+
+SelectDirectory.-compact #picker-error-line {
+    height: $ds-control-height-compact;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+
 
 .dialog-title {
     text-align: center;

@@ -12,6 +12,7 @@ from pathlib import Path
 # Textual imports.
 from textual import on
 from textual.app import ComposeResult
+from textual.events import Resize
 from textual.widgets import Button, Input, Label
 
 ##############################################################################
@@ -79,6 +80,10 @@ class SelectDirectory(FileSystemPickerScreen):
         path_input.value = str(navigation.location)
         # navigation.focus() # Focus is handled by super().on_mount or should be reconsidered
 
+    def on_resize(self, event: Resize) -> None:
+        """Keep folder rows usable when dialog chrome competes for space."""
+        self.set_class(event.size.width < 96 or event.size.height < 30, "-compact")
+
     def _input_bar(self) -> ComposeResult:
         """Provide the labelled path input for direct navigation.
 
@@ -117,6 +122,7 @@ class SelectDirectory(FileSystemPickerScreen):
             event.value, self.query_one(DirectoryNavigation).location
         )
         if isinstance(result, Path):
+            self._clear_error()
             # This will trigger DirectoryNavigation.Changed.
             self.query_one(DirectoryNavigation).location = result
             return
