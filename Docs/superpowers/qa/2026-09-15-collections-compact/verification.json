@@ -1,0 +1,56 @@
+{
+  "base": "72d59ca88f",
+  "distinct_passed": 137,
+  "distinct_inherited_failures": 1,
+  "count_basis": "29 existing browse/reader + 12 final compact + 88 neighboring checks + 8 size/inventory = 137; overlapping reruns counted once.",
+  "full_suite_run": false,
+  "runs": [
+    {
+      "log": "journeys-final.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_collection_compact_journeys.py Tests/UI/test_library_collection_browse_journeys.py Tests/UI/test_library_collection_reader_journeys.py",
+      "passed": 39,
+      "failed": 2,
+      "seconds": 234.86,
+      "note": "Both failures were immediate focus assertions in new compact search cases. Result state was correct; the repaired tests await visible natural focus. Existing browse and reader cases account for 29 passes.",
+      "log_sha256": "87e0274432f59da579fc39ff6f392e12eea73aabd1170cbb3ea44b7fb34747c7"
+    },
+    {
+      "log": "compact-final.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_collection_compact_journeys.py",
+      "passed": 12,
+      "failed": 0,
+      "seconds": 64.88,
+      "note": "Final new-test run after waiting for natural focus restoration and adding the wide single-row recovery assertion. Replaces the ten overlapping compact passes and two compact failures above.",
+      "log_sha256": "8dcf0603fa544039ab3a03463407a6ab65a85ea414b382d619a949ae74db5634"
+    },
+    {
+      "log": "neighbors-final.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_collections_capture_reader.py Tests/UI/test_library_collections_capture_controller.py Tests/UI/test_library_collections_reader_geometry.py Tests/UI/test_library_resize_focus_gates_t23025.py Tests/Architecture/test_library_collections_wiring.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py",
+      "passed": 88,
+      "failed": 0,
+      "seconds": 90.74,
+      "log_sha256": "d8d4b0aac26950741cf2ed80fcef5c2d92c7821a1f2426ca1749feb132855ed7"
+    },
+    {
+      "log": "size-final.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/Architecture/test_library_modules_size_ratchet.py Tests/Architecture/test_screen_size_ratchet.py -k 'collections or every_controller or library_screen'",
+      "passed": 8,
+      "failed": 1,
+      "deselected": 41,
+      "seconds": 1.1,
+      "note": "LibraryScreen ceiling failure is unchanged from base; no budget was raised.",
+      "log_sha256": "dc0e7c38aa1a35c72a80c3038b8470cdb95e6a618fec9f214b391f2d21bac23b"
+    }
+  ],
+  "native": {
+    "passed": true,
+    "result": "result.json",
+    "persistence": "persistence.json",
+    "visual_inspection": "Four rendered SVGs inspected in one batched pass: 170x48 dark, 80x24 light."
+  },
+  "static": {
+    "new_ruff_diagnostics": 0,
+    "comparison": "static-comparison.json"
+  },
+  "review": "Independent read-only review found no actionable correctness or scope findings."
+}

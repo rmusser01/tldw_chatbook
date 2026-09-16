@@ -730,6 +730,25 @@ def _open_original_button(
     )
 
 
+class LibraryCollectionsActionBar(Horizontal):
+    """Stack complete controls when their measured row would overflow."""
+
+    def on_resize(self) -> None:
+        """Change layout in place so focus and reader drafts stay mounted."""
+        if self.content_size.width <= 0:
+            return
+        required = sum(
+            button.get_content_width(self.size, self.size)
+            + button.styles.gutter.width
+            + button.styles.margin.width
+            for button in self.children
+            if isinstance(button, Button) and button.display
+        )
+        self.set_class(
+            required > self.content_size.width, "collections-actions-stacked"
+        )
+
+
 class LibraryCollectionsWorkPane(VerticalScroll):
     """Permanent reading-first Work region for one loaded capture."""
 
@@ -839,7 +858,9 @@ class LibraryCollectionsWorkPane(VerticalScroll):
             markup=False,
         )
 
-        with Horizontal(classes="ds-toolbar", id="library-collections-primary-toolbar"):
+        with LibraryCollectionsActionBar(
+            classes="ds-toolbar", id="library-collections-primary-toolbar"
+        ):
             yield _action_button(
                 self.presentation,
                 "update",
@@ -858,7 +879,7 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 "Archived" if capture.status == "archived" else "Move to Archive",
                 button_id="library-collections-archive",
             )
-        with Horizontal(
+        with LibraryCollectionsActionBar(
             classes="ds-toolbar",
             id="library-collections-secondary-toolbar",
         ):
@@ -869,7 +890,9 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 compact=True,
             )
 
-        with Horizontal(classes="ds-toolbar", id="library-collections-mode-toolbar"):
+        with LibraryCollectionsActionBar(
+            classes="ds-toolbar", id="library-collections-mode-toolbar"
+        ):
             for mode in ("read", "highlights", "notes", "info"):
                 label = f"✓ {mode.title()}" if self.presentation.mode == mode else mode.title()
                 yield Button(

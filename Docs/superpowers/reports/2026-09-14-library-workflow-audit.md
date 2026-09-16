@@ -506,3 +506,29 @@ The compact Clear capture records the toolbar limitation; this is not a complete
 Collections qualification. Ingestion/import and the other application
 destinations remain in the broader feature review. No full suite, remote/provider
 request, push or integration into dev was performed.
+
+## Compact Collections controls — TASK-32662
+
+The [compact review](../qa/2026-09-15-collections-compact/README.md) repairs
+clipped Work action and mode labels when Items is open. Bars stack according to
+their measured content width and return to rows when space permits, preserving
+mounted controls and unsaved notes. Empty or whitespace-only text submission
+under relevance now restores unfiltered results with valid sorting and the
+selected scope intact.
+
+**137 distinct targeted checks pass**, including actual Tab/Shift+Tab and Enter,
+draft retention on resize, search recovery, existing Collections journeys,
+controller/query budgets and token/bundle governance. The unchanged
+LibraryScreen size check still fails its existing ceiling; Collections budgets
+pass without increases. Changed Python has zero new Ruff diagnostics against
+base, and independent read-only review found no actionable issue.
+
+Private native journeys passed at 170×48 dark and 80×24 light. Four rendered
+captures show readable controls, visible focus and recovered search results.
+Read-only persistence confirms two exact Saved captures, unchanged notes, ten
+healthy SQLite databases and zero messages. Normal terminal Quit returned exit
+0, and the owned session was closed.
+
+Next review: Library ingestion/import journeys. Full form traversal, remote
+authorities, extraction/provider actions and restart remain outside this
+evidence. No full suite, push or integration into dev was performed.

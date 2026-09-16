@@ -637,6 +637,8 @@ class LibraryCollectionsController:
         event.stop()
         controller = self._library_collections_capture_controller
         current = controller.state.requested_scope if controller is not None else None
+        if current and current.sort == "relevance" and not event.value.strip():
+            current = dataclasses.replace(current, sort="saved_desc")
         request = (
             dataclasses.replace(current, search=event.value, page=1)
             if current is not None

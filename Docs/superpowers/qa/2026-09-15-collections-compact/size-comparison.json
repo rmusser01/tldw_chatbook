@@ -1,0 +1,54 @@
+{
+  "base": "72d59ca88f",
+  "screen": {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "base": {
+      "lines": 35210,
+      "methods": 1320
+    },
+    "current": {
+      "lines": 35210,
+      "methods": 1320
+    },
+    "budget": {
+      "lines": 33204,
+      "methods": 1276
+    },
+    "unchanged": true
+  },
+  "controllers": [
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py",
+      "base": {
+        "lines": 699
+      },
+      "current": {
+        "lines": 699
+      },
+      "budget": 699,
+      "passes": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_controller.py",
+      "base": {
+        "lines": 1687
+      },
+      "current": {
+        "lines": 1689
+      },
+      "budget": 1689,
+      "passes": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py",
+      "base": {
+        "lines": 49
+      },
+      "current": {
+        "lines": 49
+      },
+      "budget": 49,
+      "passes": true
+    }
+  ]
+}

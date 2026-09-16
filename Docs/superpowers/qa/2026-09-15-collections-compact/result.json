@@ -1,0 +1,57 @@
+{
+  "pid": 16211,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "items_open": true,
+      "tab_and_reverse_tab_labels_readable": true,
+      "favorite_enter_persisted": true,
+      "focus_retained_after_action": true,
+      "draft_retained": true,
+      "empty_search_recovered": true,
+      "valid_sort_and_saved_scope": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "items_open": true,
+      "tab_and_reverse_tab_labels_readable": true,
+      "favorite_enter_persisted": true,
+      "focus_retained_after_action": true,
+      "draft_retained": true,
+      "empty_search_recovered": true,
+      "valid_sort_and_saved_scope": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "capture_ids": [
+    "capture-08908e874b644ae2b5d26f970c4ab158",
+    "capture-552efad7b0e24cb382276e5eb5850dc6"
+  ],
+  "persisted": [
+    {
+      "capture_id": "capture-08908e874b644ae2b5d26f970c4ab158",
+      "title": "Alpha",
+      "note": "Saved Alpha note",
+      "status": "saved",
+      "favorite": false
+    },
+    {
+      "capture_id": "capture-552efad7b0e24cb382276e5eb5850dc6",
+      "title": "Beta",
+      "note": "Saved Beta note",
+      "status": "saved",
+      "favorite": false
+    }
+  ],
+  "passed": true,
+  "app_run_returned": true
+}

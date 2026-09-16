@@ -297,6 +297,11 @@
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
+/* Keep action identity and tab order while a narrow Work pane needs more rows. */
+#library-collections-work .collections-actions-stacked {
+    layout: vertical;
+}
+
 #library-collections-primary-toolbar > Button:focus,
 #library-collections-secondary-toolbar > Button:focus,
 #library-collections-mode-toolbar > Button:focus,

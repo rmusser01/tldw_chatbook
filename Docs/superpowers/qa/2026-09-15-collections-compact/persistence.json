@@ -1,0 +1,87 @@
+{
+  "run": "run-001",
+  "app_run_returned": true,
+  "exit_code": 0,
+  "observed_shell": "zsh",
+  "owned_session_closed": true,
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": [
+        "ok"
+      ]
+    }
+  ],
+  "captures": [
+    {
+      "capture_id": "capture-08908e874b644ae2b5d26f970c4ab158",
+      "title": "Alpha",
+      "note": "Saved Alpha note",
+      "status": "saved",
+      "favorite": false
+    },
+    {
+      "capture_id": "capture-552efad7b0e24cb382276e5eb5850dc6",
+      "title": "Beta",
+      "note": "Saved Beta note",
+      "status": "saved",
+      "favorite": false
+    }
+  ],
+  "messages": 0,
+  "app_log_error_lines": []
+}

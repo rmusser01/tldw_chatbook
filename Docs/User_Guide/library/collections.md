@@ -74,7 +74,8 @@ right.
 - **Sort: saved desc** — one button that cycles the sort: saved desc,
   saved asc, updated desc, updated asc, title asc, title desc, relevance.
 - **Filter captures** — free-text search over the current scope. Press
-  Enter to apply.
+  Enter to apply. Empty the field and press Enter to remove text search;
+  relevance sorting returns to saved desc, while other sort choices remain.
 - **Capture rows**, two lines each: `▸ <title>` on the first, then
   `<domain> · <date> · <Status>` on the second, with `Favorite` and
   `Extraction failed` / `Extraction interrupted` appended when they apply.
@@ -111,8 +112,14 @@ right.
   while a page is stale — the controls stay, disabled, reading "No current
   next page is available.".
 
-**Reader (right):** empty until you select a capture ("Select a capture to
-read it here."), then:
+**Reader (right):**
+
+Action and mode bars stack when their complete labels cannot fit across Work.
+They return to horizontal rows as the pane expands. Tab and Shift+Tab follow
+the same control order in either layout; Enter activates the focused control.
+The reader scrolls vertically to keep focused controls reachable.
+
+It is empty until you select a capture ("Select a capture to read it here."), then:
 
 - **`<Local|Server> Collections · <domain>`**, the capture title, and a
   byline: author or publication date, estimated `N min read`, the status,
@@ -324,3 +331,9 @@ resets all search/form predicates, saved searches page with retry and focus
 continuity, and repeated Archive preserves the original Undo. Automated
 journeys cover both themes at 170×48 and 80×24; native checks use wide dark and
 compact light. The wider compact reader toolbar review remains pending.*
+
+*Reviewed on feat/component-pattern-library — 2026-09-15 (TASK-32662):
+compact action/mode bars retain readable keyboard focus with Items open;
+resizing preserves mounted note drafts. Empty or whitespace-only text search
+recovers from relevance sorting. Native checks cover 170×48 dark and 80×24
+light with forward/reverse Tab and Enter; no provider request was made.*

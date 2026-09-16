@@ -9789,6 +9789,11 @@ WorktreeRecoveryDialog {
 
 .tldw-split-source-header-end { }
 
+
+#library-collections-work .collections-actions-stacked {
+    layout: vertical;
+}
+
 .library-notes-folder-row.is-selected,
 .library-notes-tree-note-row.is-selected {
     text-style: bold;
