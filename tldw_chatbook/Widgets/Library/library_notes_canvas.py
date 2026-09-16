@@ -28,11 +28,11 @@ from tldw_chatbook.Library.library_notes_state import (
     build_library_note_template_rows,
     ellipsize_note_title_cells,
 )
-from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Library.library_note_import_state import LibraryNoteImportSnapshot
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
 )
+from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Notes.agent_lessons import (
     AGENT_LESSONS_FOLDER,
     AGENT_LESSONS_FOLDER_GLOSS,
@@ -283,8 +283,9 @@ def library_note_property_block(
     task-32642: Info rendered every property as one " · "-joined sentence,
     so four facts shared a row in a pane 185 columns wide and 36 rows tall
     -- and in the compact pane, 46 columns wide, that same sentence ran to
-    roughly 85 characters against a sheet that pins the Static to one row,
-    which truncated the values it was supposed to state.
+    84 characters against a sheet that pins the Static to one row. Measured
+    at dev 67bfde41d1, it painted "Created 2026-06-30 20:00 · 10w ago ·
+    Modified" and stopped: three of the four properties were off the pane.
 
     One property per row either way. Wide, the values are aligned into a
     second column; compact drops the padding and keeps a single column, so

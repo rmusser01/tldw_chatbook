@@ -3531,9 +3531,10 @@ class LibraryNotesController:
         Both facts are read LIVE every time this runs -- the binding from
         the sync runtime, the write time from the file itself -- rather than
         being carried on the note record, which is what a note looked like
-        when it was opened. Re-run after a save (see
-        ``_settle_library_note_save``), so a file this session has just
-        written reports its new time instead of the one it had at open.
+        when it was opened. Re-run after a save settles (see
+        ``_apply_library_note_saved_presentation``), so a file this session
+        has just written reports its new time rather than the one it had
+        when the note opened.
 
         A runtime that is absent, inert or not yet started answers ""; the
         header then says the note is in the Library database only, which is
