@@ -330,3 +330,23 @@ dependency, resource-fallback and old temporary-cleanup warnings remain disclose
 No full sweep, model call, suppression or unrelated cleanup occurred. Final
 list_workflows documentation spells out the changed boundary without executable
 changes; scoped Ruff/format/diff checks pass. Exact-head GitHub gates remain pending.
+
+## Shared SQLite bound (2026-09-16 UTC)
+
+Head `f67867129b8038cae9d681426ec8ae13463daaad` passed Fast Lane, required
+derived artifacts and UI latency. Qodo review `5217694677` raised only
+`4021826851`: the shared search model duplicated the SQLite integer maximum.
+`SQLITE_INTEGER_MAX` now names that value in the existing input-validation module;
+the search model uses it and document_service imports it as `MAX_GENERATION`.
+This is mechanical consolidation, not a behavior, schema or infrastructure change.
+
+A real SQLite characterization accepted/stored/reloaded the maximum generation
+and accepted maximum offsets in all collection paths before the refactor, then
+passed afterward. No failing behavioral test is claimed for an unchanged value.
+Fresh service, summary, draft-owner and mounted-paging selection: **244 passed**,
+22.96s, including existing one-over/type rejection. Both changed implementation
+files and the test are formatted; new-code Ruff and diff checks pass. The eight
+shared-module Ruff findings remain exactly source-attributed with zero unmatched.
+Independent review found no issues and checked maximum/one-over behavior and
+unchanged import dependencies. Exact-head CI/Qodo remains required before merge.
+All seven derived-artifact preflight guards also passed on this corrected tree.

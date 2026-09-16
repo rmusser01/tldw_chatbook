@@ -12,6 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
 from tldw_chatbook.Utils.input_validation import (
+    SQLITE_INTEGER_MAX as MAX_GENERATION,
+)
+from tldw_chatbook.Utils.input_validation import (
     WORKFLOW_MAX_PAGE_SIZE as MAX_PAGE_SIZE,
 )
 from tldw_chatbook.Utils.input_validation import (
@@ -37,7 +40,6 @@ MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
 MAX_DOCUMENT_STEPS = 500
 MAX_DOCUMENT_DEPTH = 64
 MAX_DOCUMENT_NODES = 100000
-MAX_GENERATION = 2**63 - 1
 PAGE_SIZE = 20
 # A validation state, never serialized provenance or user-controlled error text.
 FRAGMENT_ERROR = "Incomplete field edit; repair the field or explicitly accept repaired Advanced JSON"

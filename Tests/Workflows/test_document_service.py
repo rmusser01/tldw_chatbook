@@ -132,6 +132,21 @@ def test_legacy_fragment_edit_cannot_adopt_sibling_injection(documents):
         )
 
 
+def test_sqlite_integer_maximum_is_accepted_for_generations_and_paging(documents):
+    maximum = 2**63 - 1
+    base = documents.create(json.dumps(prompt_definition()))
+    draft = documents.put_draft(
+        base.workflow_id, base.revision_id, base.raw_json, maximum
+    )
+    assert draft.generation == maximum
+    assert documents.get_draft(base.workflow_id, base.revision_id) == draft
+    assert documents.list_workflows(offset=maximum) == ()
+    assert documents.list_workflow_summaries(offset=maximum) == ()
+    assert documents.list_workflow_summaries(offset=maximum, query="missing") == ()
+    assert documents.list_revisions(base.workflow_id, offset=maximum) == ()
+    assert documents.list_drafts(base.workflow_id, offset=maximum) == ()
+
+
 @pytest.mark.parametrize(
     "pointer,want",
     [

@@ -120,6 +120,19 @@ Reason: address findings 4021705887/4021705892 without new storage infrastructur
 4. Verify targeted regressions, mounted search/error recovery, shared validation
    consumers and preflight; obtain review, push, reply and await final-head gates.
 
+### Shared bound follow-up (2026-09-16 UTC)
+
+ADR required: no; mechanical consolidation under existing ADR-138.
+ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
+Reason: Qodo 4021826851 identifies the duplicated signed-SQLite-integer bound.
+
+1. Define SQLITE_INTEGER_MAX in the existing input-validation module, use it in
+   WorkflowSearchInput and alias the existing document-service MAX_GENERATION to
+   it. Preserve all public values, bounds and behavior.
+2. Verify existing generation/paging boundary and search regressions, scoped
+   static attribution and preflight. Obtain scoped review, push, reply and wait
+   for exact-head CI/Qodo before merge.
+
 ## ID provenance
 
 The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans already contained IDs through 32600. Only this newly created file/header was moved to the checked-free TASK-32601 before implementation. No existing task was renumbered.
@@ -128,6 +141,15 @@ The CLI offered TASK-32591; the all-ref object-path and 38-worktree scans alread
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Shared-bound follow-up: sole Qodo finding 4021826851 on f67867129b is addressed
+by one SQLITE_INTEGER_MAX constant in existing shared validation, aliased as the
+existing MAX_GENERATION in document_service. Values and behavior are unchanged;
+no new ADR or infrastructure. Real SQLite maximum-bound characterization passed
+before/after extraction; 244 service/summary/draft-owner/mounted-paging tests pass.
+Independent review has no findings. Source-attributed static debt is unchanged,
+all three files are formatted, and new-code Ruff/diff checks pass. Evidence is in
+Docs/UAT/2026-09-15-workflows-qodo-remediation.md. Exact-head gates/merge pending.
+
 Search-boundary follow-up: Qodo findings 4021705887/4021705892 on af041970e9
 reproduced oversized-query admission and 10/11 repeated search statements over
 1,000 heads. Both read APIs now validate through one shared strict Pydantic model

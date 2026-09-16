@@ -34,6 +34,7 @@ CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
 CONSOLE_CHARACTER_QUERY_MAX_LENGTH = 200
 WORKFLOW_SEARCH_MAX_LENGTH = 512
 WORKFLOW_MAX_PAGE_SIZE = 100
+SQLITE_INTEGER_MAX = 2**63 - 1
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
 RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
 _VLLM_DRAFT_INPUT_LIMITS = {
@@ -633,7 +634,7 @@ class WorkflowSearchInput(BaseModel):
 
     query: str
     page_size: int = Field(ge=1, le=WORKFLOW_MAX_PAGE_SIZE)
-    offset: int = Field(ge=0, le=2**63 - 1)
+    offset: int = Field(ge=0, le=SQLITE_INTEGER_MAX)
 
     @field_validator("query", mode="plain")
     @classmethod
