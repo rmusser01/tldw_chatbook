@@ -620,3 +620,52 @@ async def test_picking_a_vault_folder_recognises_it_on_the_real_screen(tmp_path)
         )
         assert line.startswith("Obsidian vault · 2 notes to read"), line
         assert line.endswith("· this folder is already kept in sync"), line
+
+
+def test_every_vault_skipped_folder_has_a_label():
+    """The label map is complete, by test rather than by comment.
+
+    Review round 1: the comment claimed a fourth entry in
+    ``OBSIDIAN_SKIPPED_ROOT_FOLDERS`` "cannot go unnamed here", which was
+    false -- it is a second hand-maintained map and nothing tied the two
+    together. This is that tie. The labels keep Obsidian's own casing
+    (``Templates/``, not the casefolded match key), which is why they are
+    written out rather than derived.
+    """
+    from tldw_chatbook.Notes.note_import_discovery import (
+        OBSIDIAN_SKIPPED_ROOT_FOLDERS,
+    )
+    from tldw_chatbook.UI.Library_Modules.library_note_import_controller import (
+        _VAULT_SKIPPED_FOLDER_LABELS,
+    )
+
+    assert set(_VAULT_SKIPPED_FOLDER_LABELS) == set(
+        OBSIDIAN_SKIPPED_ROOT_FOLDERS.values()
+    )
+    # Each label names its folder: the map's key is casefolded, the label
+    # is what the user sees.
+    for name, reason in OBSIDIAN_SKIPPED_ROOT_FOLDERS.items():
+        assert _VAULT_SKIPPED_FOLDER_LABELS[reason].casefold() == f"{name}/"
+
+
+async def test_the_recognition_asks_the_shared_vault_predicate(tmp_path, monkeypatch):
+    """task-32641 AC#1: it CALLS the existing detection, not a copy of it.
+
+    Review round 1: bypassing ``folder_is_obsidian_vault`` left all 19
+    tests green, because ``discovery.vault_detected`` catches a non-vault
+    folder one line later -- so "one predicate" was a code-reading fact,
+    not a tested one. Here the predicate is the only thing that changes,
+    over a folder the scanner itself would recognise.
+    """
+    from tldw_chatbook.UI.Library_Modules import (
+        library_note_import_controller as controller_module,
+    )
+
+    controller, _ = _recognition_controller(tmp_path)
+    controller.accept_selected_path(_vault(tmp_path), is_folder=True)
+    monkeypatch.setattr(
+        controller_module, "folder_is_obsidian_vault", lambda folder: False
+    )
+    await controller.recognise_selected_folder(already_synced=False)
+
+    assert controller.presentation_snapshot.vault_recognition == ""

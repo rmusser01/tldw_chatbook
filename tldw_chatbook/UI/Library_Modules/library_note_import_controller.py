@@ -52,8 +52,12 @@ from tldw_chatbook.Notes.note_import_plan_models import (
 
 #: task-32641: the vault-owned folders a reader sees named on the
 #: recognition line, keyed by the skip reason ``note_import_discovery``
-#: already records for them. One map, so a fourth skipped folder there
-#: cannot go unnamed here.
+#: already records for them. It is a SECOND hand-maintained map -- the
+#: labels keep Obsidian's own casing where the match keys are casefolded,
+#: so they cannot simply be derived -- and
+#: ``test_every_vault_skipped_folder_has_a_label`` is what stops a fourth
+#: entry in ``OBSIDIAN_SKIPPED_ROOT_FOLDERS`` going unnamed here (review
+#: round 1: this comment used to claim that coupling without having it).
 _VAULT_SKIPPED_FOLDER_LABELS = {
     "obsidian_config": ".obsidian/",
     "obsidian_trash": ".trash/",
