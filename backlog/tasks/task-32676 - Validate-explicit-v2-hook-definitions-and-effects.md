@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:22'
-updated_date: '2026-09-16 21:39'
+updated_date: '2026-09-16 21:55'
 labels:
   - plugins
   - implementation
@@ -53,4 +53,6 @@ Reason: Direct implementation of accepted v2 hook validation, with R41 closing n
 10. Include Tests/Chat/test_run_hooks_metadata.py as the explicit additional test path for the existing real configuration load/save production entry. Prove mixed legacy/v2 preservation across hooks.enabled saves, including required and invalid-required v2 state while disabled. This implements existing R41 and AC1-2; do not expand to unrelated settings or runtime wiring.
 
 11. Fix independent-review H1-R1 through H1-R4 within the existing authorized H1 source/test/contract paths before dependent runtime work: preserve bounded explicit-required versus event-policy invalid-state scope without promoting optional require_context; reject forbidden dependency_required event combinations; translate out-of-range numeric durations into validation refusal with retained config state; enforce byte/node/depth budgets during object/template copying before excessive allocation. Establish actual public-entry RED and positive controls, complete the already-planned invalid-required mixed save/load case, then freeze and rerun the exact three H1 feature/legacy/config test files plus static baseline checks. Append the fix report and corrected H2 config-state API; controller owns fresh scoped re-review.
+
+12. Fix remaining H1-R1 malformed-effect metadata classification after scoped fix1 review. In Agents/run_hooks.py and Tests/Agents/test_run_hooks.py, positively validate the full supported effect-array shape before labeling a rejected entry optional, preserve recognized explicit/event controls, and retain all other malformed/unsupported shapes as unresolved. Cover types, unknown/event-incompatible effects and duplicate/invalid entries with public loader RED and optional/control positives. Run only Tests/Agents/test_run_hooks.py and the existing Tests/Chat/test_run_hooks_metadata.py neighbor for final qualification unless another changed boundary/failure justifies more; preserve unchanged Fix1 schema/matching evidence. Freeze changed files, run static baseline parity/whitespace and append Fix2 report before fresh scoped review.
 <!-- SECTION:PLAN:END -->

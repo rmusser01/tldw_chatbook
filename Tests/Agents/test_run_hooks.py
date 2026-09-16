@@ -181,6 +181,32 @@ class TestLoadHooksConfig:
                 (item.event, item.policy) for item in result.v2_invalid_admissions
             ] == [(event, "event_control")]
 
+    @pytest.mark.parametrize(
+        ("effects", "expected_policy"),
+        [
+            ([], "optional"),
+            (["context"], "optional"),
+            ([None], "unresolved"),
+            (["typo"], "unresolved"),
+            ([{"deny": True}], "unresolved"),
+            (["context", "context"], "unresolved"),
+            (["child_limits"], "unresolved"),
+            (["deny", "typo"], "event_control"),
+            (["deny", "deny"], "event_control"),
+        ],
+    )
+    def test_rejected_effect_array_keeps_supported_scope(self, effects, expected_policy):
+        base = {"id": "review", "event": "PreToolUse", "type": "command", "effects": effects}
+        valid = load_hooks_config(
+            {"hooks": {"handler": [{**base, "argv": ["review"], "effects": []}]}}
+        )
+        assert len(valid.v2_handlers) == 1
+        result = load_hooks_config({"hooks": {"handler": [{**base, "argv": []}]}})
+        assert result.v2_invalid
+        assert result.v2_invalid_admissions == (
+            run_hooks.V2InvalidAdmission(0, "PreToolUse", expected_policy),
+        )
+
     def test_invalid_optional_entry_retains_another_required_entry(self):
         result = load_hooks_config(
             {

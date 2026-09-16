@@ -171,6 +171,12 @@ def _invalid_v2_admissions(raw: object) -> tuple[V2InvalidAdmission, ...]:
             if type(effect) is str
         ):
             policy = "event_control"
+        elif (
+            any(type(effect) is not str for effect in effects)
+            or len(set(effects)) != len(effects)
+            or not set(effects) <= EFFECTS[event]
+        ):
+            policy = "unresolved"
         else:
             policy = "optional"
         records.append(V2InvalidAdmission(index, event, policy))
