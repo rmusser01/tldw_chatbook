@@ -7832,9 +7832,10 @@ class LibraryScreen(BaseAppScreen):
         if self._library_selected_row_id in {
             LIBRARY_ROW_BROWSE_PROMPTS,
             LIBRARY_ROW_CREATE_PROMPT,
+            LIBRARY_ROW_INGEST_MEDIA,
         }:
-            # Prompt work fields have no Notes semantic role. Restoring that
-            # tuple falls back to the rail and steals the retained editor focus.
+            # These retained work controls have no Notes semantic role. Restoring
+            # that tuple falls back to the rail and steals their live focus.
             return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA and self.query(
             ".library-media-route"

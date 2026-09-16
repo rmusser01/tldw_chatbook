@@ -2181,8 +2181,9 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             picker.set_options(options)
 
     def on_resize(self, _event: Any) -> None:
-        """A viewport change can (un)cover the fold -- re-derive the hint."""
+        """Re-derive the fold and reveal current focus after viewport layout."""
         self.sync_fold_hint()
+        self.call_after_refresh(self._reveal_focused_control)
 
     def watch_virtual_size(self) -> None:
         """Reveal retained focus after preflight or queue content changes height."""

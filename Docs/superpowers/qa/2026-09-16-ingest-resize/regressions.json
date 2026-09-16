@@ -1,0 +1,13 @@
+{
+  "baseline": "d45f55cde0",
+  "original_failure": {
+    "test": "test_import_resize_preserves_visible_control_and_draft_without_data_work[textual-dark-title]",
+    "result": "Focus moved to library-row-ingest-import-media on resize."
+  },
+  "mutation_probe": {
+    "change": "Override canvas on_resize in a separate test subprocess to run only sync_fold_hint, preserving the new screen guard.",
+    "result": "First dark/title case failed painted-content assertion while the same field remained focused.",
+    "production_files_mutated": false
+  },
+  "fixture_correction": "Newer outside-focus case now targets the compact rail Open button instead of its non-focusable container."
+}

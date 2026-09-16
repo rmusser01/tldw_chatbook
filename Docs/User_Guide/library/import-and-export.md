@@ -264,6 +264,10 @@ checkpoint before any tool is allowed to run, as required by
 | "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
 | "Retry this batch" | Below the queue, once your last import of the session has settled (while a job is still queued/parsing/writing it is hidden, and `r` is inert too — re-staging mid-run invites a duplicate batch): one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. If the form currently holds work the re-stage would overwrite (a different path, a title you started typing, an option you flipped), it takes two presses: the first renames the button "Press again to replace form" and changes nothing. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
 
+Resizing the terminal keeps the current Import control focused and visible,
+including metadata fields, options, queue Details and Recent imports. Your draft,
+text selection and open Recent imports history stay in place.
+
 **Consent for risky imports** — starting with "⚠" tooling warnings
 outstanding takes two presses, right at the Start button (task-3314
 retired the old "Some files may fail to import:" dialog). The first press
