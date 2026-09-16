@@ -109,6 +109,12 @@ class LibraryCollectionsState:
     capture_capabilities: CaptureCapabilities | None = None
     saved_searches: tuple[SavedCaptureSearch, ...] = ()
     saved_searches_total: int = 0
+    saved_searches_page: int = 1
+    saved_searches_requested_page: int = 1
+    saved_searches_authority: str | None = None
+    saved_searches_generation: int = 0
+    saved_searches_loading: bool = False
+    saved_searches_error: str = ""
     active_scope: str = "all"
     requested_page: int = 1
     reader_mode: CollectionsReaderMode = "read"

@@ -1522,6 +1522,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-collections-items {
     padding: $ds-space-0;
+    /* Expanded filters must remain reachable when taller than the compact pane. */
+    overflow-y: auto;
 }
 
 #library-collections-work {

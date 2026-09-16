@@ -477,3 +477,32 @@ Tab traversal, remote execution and restart are not claimed.
 Next: TASK-32659, covering Clear/search, More saved searches and repeated Archive
 receipts, then the remaining Library destinations. Integration into `dev`
 remains pending.
+
+
+## Collections browse controls — TASK-32659
+
+The [browse review](../qa/2026-09-15-collections-browse/README.md) repairs all
+three remaining control-path findings: Clear removes text and form filters with
+valid sorting, saved searches page in bounded windows with failure/retry, and
+repeated Archive preserves the original Undo status. Compact filter actions are
+fully readable and reachable. Paging preserves newer surviving focus and falls
+back to a real destination when the focused outgoing search disappears.
+
+**118 distinct targeted checks pass.** The unchanged LibraryScreen size check
+still fails its existing ceiling; all Collections controller/inventory checks
+pass without increasing existing budgets. New Python passes Ruff and formatting;
+changed ranges are formatted with zero new diagnostics against base. Final
+independent read-only review found no unresolved issue within this slice.
+
+Private native journeys passed at 170×48 dark and 80×24 light. Six final rendered
+captures confirm visible Clear, the next saved-search window, disabled Archived
+and Undo. Read-only persistence checks confirm the exact two captures, all 21
+unchanged saved searches, ten healthy SQLite databases and zero messages. Normal
+terminal Quit returned to the shell with exit 0, and the owned session was closed.
+
+Next review: the compact Collections Work pane's toolbar clipping while Items
+is open, keyboard traversal, and manual text-search clearing under relevance.
+The compact Clear capture records the toolbar limitation; this is not a complete
+Collections qualification. Ingestion/import and the other application
+destinations remain in the broader feature review. No full suite, remote/provider
+request, push or integration into dev was performed.

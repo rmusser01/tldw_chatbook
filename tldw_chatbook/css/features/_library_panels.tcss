@@ -71,6 +71,8 @@
 
 #library-collections-items {
     padding: $ds-space-0;
+    /* Expanded filters must remain reachable when taller than the compact pane. */
+    overflow-y: auto;
 }
 
 #library-collections-work {

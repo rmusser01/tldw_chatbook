@@ -93,6 +93,7 @@ from .library_collections_capture_controller import (
     CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
 )
+from .library_collections_saved_search_controller import load_saved_search_page
 from .library_collections_state import LibraryCollectionsState
 from .screen_constants import LIBRARY_COLLECTIONS_READER_PROFILE
 
@@ -303,7 +304,9 @@ class LibraryCollectionsController:
                 page_error="capture_authority_unavailable"
             )
         )
-        drafts = self._collections_state_accessor().annotation_drafts
+        ui = self._collections_state_accessor()
+        searches_current = ui.saved_searches_authority == state.authority_key
+        drafts = ui.annotation_drafts
         for identity in tuple(drafts):
             if identity.authority_key != state.authority_key:
                 del drafts[identity]
@@ -318,8 +321,11 @@ class LibraryCollectionsController:
         return CollectionsCaptureReaderPresentation(
             state=state,
             capabilities=self._library_collections_capture_capabilities,
-            saved_searches=self._library_collections_saved_searches,
-            saved_searches_total=self._library_collections_saved_searches_total,
+            saved_searches=ui.saved_searches if searches_current else (),
+            saved_searches_total=ui.saved_searches_total if searches_current else 0,
+            saved_searches_page=ui.saved_searches_page if searches_current else 1,
+            saved_searches_requested_page=ui.saved_searches_requested_page,
+            saved_searches_error=ui.saved_searches_error if searches_current else "",
             active_scope=self._library_collections_active_scope,
             authority_label="Server" if active_source == "server" else "Local",
             mode=self._library_collections_reader_mode,
@@ -398,7 +404,17 @@ class LibraryCollectionsController:
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
         ):
             self._capture_reader_annotation_draft()
+            focus_id = getattr(self._screen.focused, "id", None)
             self.refresh(recompose=True)
+
+            def reveal_current_focus() -> None:
+                focused = self._screen.focused
+                if focus_id and focused is not None and focused.id == focus_id:
+                    focused.scroll_visible(animate=False)
+
+            self.call_after_refresh(
+                lambda: self.call_after_refresh(reveal_current_focus)
+            )
 
     def _capture_reader_annotation_draft(self) -> None:
         """Retain only live, editable fields under their painted capture identity."""
@@ -456,14 +472,7 @@ class LibraryCollectionsController:
             )
         except Exception:
             self._library_collections_capture_capabilities = None
-        try:
-            saved = await scope.list_saved_searches(1)
-        except Exception:
-            self._library_collections_saved_searches = ()
-            self._library_collections_saved_searches_total = 0
-        else:
-            self._library_collections_saved_searches = tuple(saved.items)
-            self._library_collections_saved_searches_total = saved.total
+        await load_saved_search_page(self._collections_state_accessor(), scope, 1)
         recovery = getattr(
             self.app_instance, "collections_legacy_recovery_service", None
         )
@@ -570,6 +579,10 @@ class LibraryCollectionsController:
         """Apply one built-in or saved capture scope from the Library rail."""
         event.stop()
         button_id = event.button.id or ""
+        page = getattr(event.button, "saved_search_page", None)
+        if page is not None:
+            await self._page_library_collection_saved_searches(page, event.button)
+            return
         prefix = "library-collections-scope-"
         if button_id.startswith(prefix):
             self._library_collections_active_scope = button_id[len(prefix) :]
@@ -594,14 +607,27 @@ class LibraryCollectionsController:
         controller = self._library_collections_capture_controller
         if controller is None or request is None:
             return
-        self._library_collections_requested_page = 1
-        await self._run_library_collections_capture_transition(
-            controller.load_page(request)
-        )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
+        await self._apply_library_collection_capture_request(request)
+
+    async def _page_library_collection_saved_searches(
+        self, page: int, opener: Button
+    ) -> None:
+        ui = self._collections_state_accessor()
+        controller = self._library_collections_capture_controller
+        if controller is None or ui.saved_searches_loading:
+            return
+        opener.label = "Loading searches…"
+        await load_saved_search_page(ui, controller.scope_service, page)
+        if (
+            not self.is_mounted
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
+        ):
+            return
+        try:
+            rows = self.query_one("#library-collections-scopes")
+        except (NoMatches, QueryError):
+            return
+        await rows.show_page(self._library_collections_capture_presentation(), opener)
 
     @on(Input.Submitted, "#library-collections-filter")
     async def filter_library_collection_captures(
@@ -618,14 +644,7 @@ class LibraryCollectionsController:
         )
         if controller is None or request is None:
             return
-        self._library_collections_requested_page = 1
-        await self._run_library_collections_capture_transition(
-            controller.load_page(request)
-        )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
+        await self._apply_library_collection_capture_request(request)
 
     @on(Button.Pressed, "#library-collections-quick-capture")
     def toggle_library_collection_quick_capture(
@@ -898,6 +917,8 @@ class LibraryCollectionsController:
         if clear:
             return dataclasses.replace(
                 current,
+                search="",
+                sort="saved_desc" if current.sort == "relevance" else current.sort,
                 domain=None,
                 tags=(),
                 date_from=None,
@@ -1007,14 +1028,9 @@ class LibraryCollectionsController:
         page = max(1, current.page + delta)
         if page == current.page:
             return
-        self._library_collections_requested_page = page
-        await self._run_library_collections_capture_transition(
-            controller.load_page(dataclasses.replace(current, page=page))
+        await self._apply_library_collection_capture_request(
+            dataclasses.replace(current, page=page)
         )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
 
     @on(Button.Pressed, "#library-collections-page-previous")
     async def previous_library_collection_captures(
@@ -1366,19 +1382,6 @@ class LibraryCollectionsController:
             self._library_collections_action_status = "Capture note saved."
             self._library_collections_action_content = ""
             self._refresh_library_collections_capture_reader()
-
-            def reveal_saved_action() -> None:
-                focused = self._screen.focused
-                if (
-                    self._library_collection_capture_is_current(capture.identity)
-                    and focused is not None
-                    and focused.id == "library-collections-freeform-note-save"
-                ):
-                    focused.scroll_visible(animate=False)
-
-            self.call_after_refresh(
-                lambda: self.call_after_refresh(reveal_saved_action)
-            )
 
     @on(Button.Pressed, "#library-collections-linked-note-save")
     async def link_library_collection_capture_note(

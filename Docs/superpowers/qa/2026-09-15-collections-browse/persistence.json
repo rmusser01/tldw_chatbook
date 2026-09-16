@@ -1,0 +1,119 @@
+{
+  "run": "run-002",
+  "app_run_returned": true,
+  "exit_code": 0,
+  "terminal_quit": "C-q through the owned terminal completed normal shutdown.",
+  "observed_shell": "zsh",
+  "owned_session_closed": true,
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": [
+        "ok"
+      ]
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": [
+        "ok"
+      ]
+    }
+  ],
+  "captures": [
+    {
+      "capture_id": "capture-3f416908f4e44451baf7c053190d22c1",
+      "title": "Alpha",
+      "freeform_note": "Saved Alpha note",
+      "status": "read"
+    },
+    {
+      "capture_id": "capture-e51acec1aee64ffdb3aabd1728709146",
+      "title": "Beta",
+      "freeform_note": "Saved Beta note",
+      "status": "saved"
+    }
+  ],
+  "messages": 0,
+  "capture_count": 2,
+  "saved_searches": {
+    "count": 21,
+    "names": [
+      "Research 00",
+      "Research 01",
+      "Research 02",
+      "Research 03",
+      "Research 04",
+      "Research 05",
+      "Research 06",
+      "Research 07",
+      "Research 08",
+      "Research 09",
+      "Research 10",
+      "Research 11",
+      "Research 12",
+      "Research 13",
+      "Research 14",
+      "Research 15",
+      "Research 16",
+      "Research 17",
+      "Research 18",
+      "Research 19",
+      "Research 20"
+    ],
+    "search": "Alpha",
+    "statuses": [
+      "saved"
+    ],
+    "all_revisions": 1,
+    "same_authority": true
+  },
+  "app_log_error_lines": []
+}

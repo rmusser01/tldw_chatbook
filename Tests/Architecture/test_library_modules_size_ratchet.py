@@ -147,6 +147,8 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 502,
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
+    # TASK-32659: bounded saved-search loading, including authority/request fencing.
+    "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1738,
     "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1307,

@@ -105,6 +105,16 @@ class LibraryCollectionsItemButton(Button):
         self.capture_identity = capture_identity
 
 
+class LibraryCollectionsSavedSearchPageButton(Button):
+    """Rail continuation carrying the page represented by this control."""
+
+    def __init__(self, label: str, *, page: int, **kwargs: Any) -> None:
+        super().__init__(
+            label, compact=True, classes="library-collections-scope-row", **kwargs
+        )
+        self.saved_search_page = page
+
+
 class LibraryCollectionsArchiveUndoButton(Button):
     """Undo action carrying the archived capture's stable identity."""
 
@@ -142,6 +152,9 @@ class CollectionsCaptureReaderPresentation:
     capabilities: CaptureCapabilities | None = None
     saved_searches: tuple[SavedCaptureSearch, ...] = ()
     saved_searches_total: int = 0
+    saved_searches_page: int = 1
+    saved_searches_requested_page: int = 1
+    saved_searches_error: str = ""
     active_scope: str = "all"
     authority_label: str = "Local"
     mode: CollectionsReaderMode = "read"
@@ -166,6 +179,13 @@ class CollectionsCaptureReaderPresentation:
 
     def capability(self, action: str) -> tuple[bool, str]:
         """Return enabled state and a truthful reason for one action."""
+        loaded = self.state.loaded_detail
+        if (
+            action == "archive"
+            and loaded is not None
+            and loaded.capture.status == "archived"
+        ):
+            return False, "This capture is already archived."
         if self.capabilities is None:
             return False, "Availability has not been checked."
         capability = self.capabilities.for_action(action)
@@ -187,6 +207,35 @@ class LibraryCollectionsScopeRows(Vertical):
         super().__init__(**kwargs)
         self.presentation = presentation
         self.add_class("h-auto")
+
+    async def show_page(
+        self, presentation: CollectionsCaptureReaderPresentation, opener: Button
+    ) -> None:
+        """Replace only the saved-search rail, preserving newer focus elsewhere."""
+        focused = self.screen.focused
+        restore = focused is not None and self in focused.ancestors
+        retained_id = focused.id if restore and focused.id != opener.id else None
+        self.presentation = presentation
+        await self.recompose()
+        focused_id = getattr(self.screen.focused, "id", None)
+        if restore and focused_id in {
+            None,
+            opener.id,
+            retained_id,
+            "library-row-browse-collections",
+        }:
+            selector = (
+                "#library-collections-retry-saved-searches"
+                if presentation.saved_searches_error
+                else "#library-collections-more-saved-searches"
+                if presentation.saved_searches_page == 1
+                else ".library-collections-saved-search-row"
+            )
+            targets = self.query(f"#{retained_id}") if retained_id else []
+            if not targets:
+                targets = self.query(selector)
+            if targets:
+                targets.first().focus()
 
     def compose(self) -> ComposeResult:
         """Render bounded built-ins, saved searches, and continuation."""
@@ -215,13 +264,37 @@ class LibraryCollectionsScopeRows(Vertical):
                 classes="library-collections-scope-row library-collections-saved-search-row",
                 compact=True,
             )
-        if self.presentation.saved_searches_total > len(
-            self.presentation.saved_searches
-        ):
-            yield Button(
-                "More saved searches…",
+        page = self.presentation.saved_searches_page
+        total = self.presentation.saved_searches_total
+        if total > CAPTURE_PAGE_SIZE:
+            start = (page - 1) * CAPTURE_PAGE_SIZE + 1
+            end = start + len(self.presentation.saved_searches) - 1
+            yield Static(
+                f"Searches {start}–{end} of {total}"
+                if end >= start
+                else "No searches on this page.",
+                classes="h-auto",
+            )
+        if self.presentation.saved_searches_error:
+            yield Static(
+                self.presentation.saved_searches_error, classes="h-auto ds-text-error"
+            )
+            yield LibraryCollectionsSavedSearchPageButton(
+                "Retry searches",
+                page=self.presentation.saved_searches_requested_page,
+                id="library-collections-retry-saved-searches",
+            )
+        if page > 1:
+            yield LibraryCollectionsSavedSearchPageButton(
+                "Previous",
+                page=page - 1,
+                id="library-collections-previous-saved-searches",
+            )
+        if page * CAPTURE_PAGE_SIZE < total:
+            yield LibraryCollectionsSavedSearchPageButton(
+                "More searches…",
+                page=page + 1,
                 id="library-collections-more-saved-searches",
-                compact=True,
             )
 
 
@@ -437,7 +510,7 @@ class LibraryCollectionsItemsPane(Vertical):
                     placeholder="To date (YYYY-MM-DD)",
                     id="library-collections-filter-date-to",
                 )
-                with Horizontal(classes="ds-toolbar"):
+                with Vertical(classes="ds-toolbar"):
                     yield Button(
                         "Apply filters",
                         id="library-collections-filters-apply",
@@ -782,7 +855,7 @@ class LibraryCollectionsWorkPane(VerticalScroll):
             yield _action_button(
                 self.presentation,
                 "archive",
-                "Move to Archive",
+                "Archived" if capture.status == "archived" else "Move to Archive",
                 button_id="library-collections-archive",
             )
         with Horizontal(

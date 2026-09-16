@@ -47,7 +47,10 @@ number. At narrow rail widths the row abbreviates to **Captures (N)**.
 
 Selecting the row mounts six scope sub-rows underneath it — **All
 Captures**, **Saved**, **Reading**, **Read**, **Archived**,
-**Favorites** — plus one row per saved search. Those sub-rows are part of
+**Favorites** — plus up to 20 saved searches at a time. **More searches…**
+and **Previous** move between saved-search pages without changing the active
+capture scope. A failed load retains the last good rows and offers **Retry
+searches**. Those sub-rows are part of
 the Collections destination; selecting the row does not change any other
 rail section's open/collapsed state, and nothing about visiting it is
 written to `[library.rail_state]`.
@@ -66,7 +69,8 @@ right.
   when the active authority cannot capture.
 - **Filters** — a disclosure holding **Domain**, **Tags, comma separated**,
   **From date (YYYY-MM-DD)**, **To date (YYYY-MM-DD)**, then **Apply
-  filters** and **Clear**.
+  filters** and **Clear** on separate rows. At compact sizes the expanded
+  form scrolls vertically to keep both actions reachable.
 - **Sort: saved desc** — one button that cycles the sort: saved desc,
   saved asc, updated desc, updated asc, title asc, title desc, relevance.
 - **Filter captures** — free-text search over the current scope. Press
@@ -152,12 +156,12 @@ controls outside the current viewport.
 | Control | What it does |
 |---|---|
 | Quick Capture | Opens the save form: a URL box, optional Title, optional comma-separated Tags, and a note box, then **Save capture** / **Cancel**. |
-| Filters / Apply filters / Clear | Narrow the scope by domain, tags, and a saved-date range. Applying always returns to page 1. |
+| Filters / Apply filters / Clear | Apply domain, tags and a saved-date range. Clear removes those fields and text search while keeping the selected scope. Both return to page 1; Clear resets relevance sorting to saved desc. |
 | Sort: … | Cycles the sort order in place; the label always names the order in force. |
 | Filter captures | Free-text search inside the current scope. |
-| Scope sub-rows | All Captures, Saved, Reading, Read, Archived, Favorites, then your saved searches. The selected scope carries the count. |
+| Scope sub-rows | All Captures, Saved, Reading, Read, Archived, Favorites, then your saved searches in 20-row pages. The selected scope carries the capture count. |
 | Previous / Next | Move by exact 20-capture pages. Drawn only when a second page exists. |
-| Mark Read / Favorite / Move to Archive | Status actions on the loaded capture. Archiving leaves a `Moved to Archive · was <status>.` receipt with **Undo**. |
+| Mark Read / Favorite / Move to Archive | Status actions on the loaded capture. Archiving leaves a `Moved to Archive · was <status>.` receipt with **Undo**. An already archived capture shows disabled **Archived**, preserving the original Undo status. |
 | Open Original | Opens the capture's original URL in your browser. |
 | Read / Highlights / Notes / Info | Reader modes over the one loaded capture. |
 | Summarize / Listen | Produce a summary or an audio rendering, when the active authority supports them. |
@@ -243,8 +247,9 @@ and **Escape** returns focus to the rail, as on every Library canvas;
 - **A failed action stays visible.** The reader names the failure and offers
   **Refresh reader** to review the selected capture's current state. A revision
   conflict means the action was not applied.
-- **Clear currently leaves text search in place.** Empty **Filter captures**
-  and press Enter to remove a text search after clearing the form filters.
+- **Clear removes text search and form filters together.** The selected status
+  or Favorites scope remains; choose **All Captures** to remove that narrowing.
+  If the sort was relevance, Clear returns it to saved desc.
 - **Switching captures keeps the old one readable.** While a newly selected
   capture's detail is arriving, the reader says `Loading "<new>"… showing
   "<old>" until ready.` rather than blanking.
@@ -313,3 +318,9 @@ annotation continuity, capture-specific highlights, Archive successor, visible
 Undo and compact Save focus. Automated journeys cover 170×48 and 80×24 in both
 themes; native confirmation covers wide dark and compact light. Unsaved drafts
 are session-only. TASK-32659 tracks the remaining browse-control findings.*
+
+*Reviewed on feat/component-pattern-library — 2026-09-15 (TASK-32659): Clear
+resets all search/form predicates, saved searches page with retry and focus
+continuity, and repeated Archive preserves the original Undo. Automated
+journeys cover both themes at 170×48 and 80×24; native checks use wide dark and
+compact light. The wider compact reader toolbar review remains pending.*
