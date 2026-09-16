@@ -1,0 +1,36 @@
+{
+  "exercise": {
+    "pid": 62342,
+    "pid_absent": true,
+    "shell_exit_code": 0,
+    "app_run_returned": true,
+    "durable_conversations_before_restart": [
+      [
+        "76b3787e-1ab5-56cc-b96e-0682191f5012",
+        "Archive audit Alpha",
+        1,
+        26,
+        0
+      ],
+      [
+        "55bf029c-3626-538d-919e-1b7d35558719",
+        "Archive audit Beta",
+        0,
+        1,
+        0
+      ]
+    ]
+  },
+  "restart": {
+    "pid": 62973,
+    "pid_absent": true,
+    "shell_exit_code": 0,
+    "app_run_returned": true
+  },
+  "terminal_cleanup": {
+    "owned_socket": "codex32703",
+    "owned_session": "archive",
+    "only_owned_terminal_closed": true,
+    "after_both_app_exits": true
+  }
+}

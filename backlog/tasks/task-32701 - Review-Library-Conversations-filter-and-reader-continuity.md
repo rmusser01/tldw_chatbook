@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 13:35'
-updated_date: '2026-09-16 14:03'
+updated_date: '2026-09-16 21:44'
 labels:
   - ui
   - conversations
@@ -51,4 +51,6 @@ Validation:10 new production-style continuity cases plus2 adjusted F6/Escape che
 Real TldwCli/private-database run004 passed compact/wide/short-height journeys in both themes. Ten captures were inspected once,10 private DBs passed integrity,2 conversations/26 message bodies remained exact,3 default-profile config hashes were unchanged, and normal exit/PID absence preceded closing the owned terminal. Independent review found no actionable defects and confirmed keyboard expectations.
 
 Evidence and reproducible runner: Docs/superpowers/qa/2026-09-16-conversations-continuity/README.md. The nested-scroll incident is recorded in backlog/docs/lessons-testing-evidence.md. Changes are limited to Library screen/controller, conversation widgets/styles, focused tests and evidence. No new ADR: existing ADR-086, ADR-031, ADR-150 and ADR-161 apply. TASK-32700 remains independently blocked by host semaphore allocation; no Import success is claimed.
+
+2026-09-16 follow-up: TASK-32700 subsequently completed real local Import success and restart recovery after the semaphore gate cleared. The blocked statement above describes this Conversations checkpoint, not the current Import status. Evidence: Docs/superpowers/qa/2026-09-16-ingest-lifecycle/resume/README.md.
 <!-- SECTION:NOTES:END -->

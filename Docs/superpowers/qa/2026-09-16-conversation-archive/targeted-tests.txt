@@ -1,0 +1,8 @@
+........................................................                 [100%]
+============================= slowest 25 durations =============================
+3.14s call     Tests/UI/test_library_conversation_recovery_flow.py::test_real_saved_body_search_archive_restore_resume_and_undo[size0]
+3.04s call     Tests/UI/test_library_conversation_recovery_flow.py::test_real_saved_body_search_archive_restore_resume_and_undo[size1]
+1.29s call     Tests/DB/test_conversation_archive.py::test_exact_title_lookup_is_bounded_and_paginates_after_archive_filter
+
+(22 durations < 1s hidden.)
+56 passed in 21.64s

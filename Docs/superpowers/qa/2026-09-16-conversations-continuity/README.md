@@ -85,4 +85,6 @@ verify the recorded PID is gone before closing the terminal.
 These checks qualify list filtering, Read/Info, Find and resize continuity.
 They do not qualify Archive/Restore, Export, Resume, provider calls, every
 transcript shape or arbitrary terminal sizes. The separate TASK-32700 real
-Import lifecycle remains blocked by host semaphore allocation (errno 28).
+Import lifecycle was blocked at this checkpoint; its semaphore gate later
+recovered and the [native success/restart qualification](../2026-09-16-ingest-lifecycle/resume/README.md)
+is now complete.

@@ -1,5 +1,14 @@
 # Library workflow audit — 2026-09-14
 
+Current checkpoint (2026-09-16): the initial findings and subsequent bounded
+reviews have progressed through Prompts, Skills, Collections, Import and
+Conversations reading, Archive and Restore. Real local Import success/restart
+recovery and the caught Console sidebar startup error are now qualified and
+closed. The historical
+sections below retain their original scope limits; the latest continuation
+record at the end links the completed follow-ups. This is not a whole-application
+completion claim, and integration into current `dev` still needs review.
+
 The reviewed Library paths preserve their main reading, editing and recovery flows, but three issues need follow-up: the rail can hide keyboard focus, Workspace handoff UI can retain its initial no-sources state, and focus/resize paths exceed their query budgets. This is a bounded audit, not a declaration that every Library feature is verified.
 
 Baseline: `2939afda63` on `feat/component-pattern-library`, including the earlier component-pattern repairs and merged dev `fd30614dcdc1e6cbd39b1532769d3e10be9b12b6`. No production code or style was changed during this audit. Findings are present at this baseline; this audit does not attribute their introduction to the design-system branch.
@@ -669,3 +678,36 @@ Next review: grouped outcomes, Clear/Recent, recovery actions and live-resize
 focus ownership. A trial resize while still focused in Import transferred focus
 to the rail; this broader shell behavior remains unqualified. Re-entry after
 resize is covered. No full suite, push or dev integration.
+
+## Continuation checkpoint — 2026-09-16
+
+The gaps left after TASK-32667 are closed in their bounded follow-ups:
+
+- [TASK-32696](../qa/2026-09-16-recent-imports/README.md) preserves Recent imports
+  disclosure during queue updates.
+- [TASK-32697](../qa/2026-09-16-ingest-resize/README.md) preserves Import focus
+  across terminal resizing.
+- [TASK-32698](../qa/2026-09-16-ingest-recovery/README.md) preserves draft and
+  focus through provider recovery UI updates.
+- [TASK-32699](../qa/2026-09-16-filtered-picker/README.md) keeps filtered picker
+  controls usable at compact sizes.
+- [TASK-32700](../qa/2026-09-16-ingest-lifecycle/resume/README.md) qualifies real
+  local text/Markdown imports, duplicates, Retry, interruption recovery and
+  fresh-process reopening. The host semaphore failure is no longer blocking it.
+- [TASK-32701](../qa/2026-09-16-conversations-continuity/README.md) qualifies
+  Conversations filtering, Read/Info, Find and resize continuity.
+- [TASK-32388](../qa/2026-09-16-conversation-link-receipt/README.md) makes the
+  workspace-link receipt and Undo follow the workspace they name.
+- [TASK-32702](../qa/2026-09-16-sidebar-startup/README.md) fixes the caught sidebar
+  startup error and verifies saved state through a fresh native process.
+- [TASK-32703](../qa/2026-09-16-conversation-archive/README.md) qualifies Cancel,
+  Archive, version-aware Undo and Restore only at compact/wide sizes in both
+  themes, including a fresh-process restore of the same saved identity. All
+  four fixture messages and the current Console context remain unchanged;
+  56 targeted tests pass. No production fix was needed.
+
+Next bounded journeys: Conversations Export and exact Resume. The later
+Search/RAG, Settings and other application destinations remain governed by the
+original review sequence; a completed slice
+does not qualify every action in its destination. Full-suite verification has
+not been requested.

@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 10:30'
-updated_date: '2026-09-16 19:28'
+updated_date: '2026-09-16 21:44'
 labels:
   - library
   - conversations
@@ -56,4 +56,6 @@ Independent review and final follow-up found no actionable regressions. Native r
 Plan deviation: the proposed duplicate display-name fixture was invalid because registry validation requires unique workspace names; removed it and excluded its failures from red evidence. Workspace hops in native qualification use the real registry API while Library remains mounted, so Console workspace-switcher navigation is not qualified. The final typed registry-error catch was verified by the final mounted unavailable-context case after the native successful-path run.
 
 ADR required: no. Existing ADR-005 (backlog/decisions/005-console-workspace-server-readiness.md), ADR-150 (backlog/decisions/150-design-token-system-and-design-language.md) and ADR-161 (backlog/decisions/161-component-pattern-library.md) govern this repair. No new lesson or architecture decision was needed. TASK-32700 Import remains separately blocked by host semaphore allocation; its criteria are unchanged.
+
+2026-09-16 follow-up: TASK-32700 subsequently completed real local Import success and restart recovery after the semaphore gate cleared. The blocked statement above is historical; current evidence is Docs/superpowers/qa/2026-09-16-ingest-lifecycle/resume/README.md.
 <!-- SECTION:NOTES:END -->
