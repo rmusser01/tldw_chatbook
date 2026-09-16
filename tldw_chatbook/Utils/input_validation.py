@@ -624,7 +624,7 @@ class WorkflowNameInput(BaseModel):
     """Bounded New workflow input, not a portable document-name restriction.
 
     Attributes:
-        name: Nonempty trimmed text, admitted from at most 256 raw characters.
+        name: Nonempty trimmed Unicode text, from at most 256 raw characters.
     """
 
     model_config = ConfigDict(
@@ -642,6 +642,7 @@ class WorkflowNameInput(BaseModel):
             raise ValueError(
                 f"Workflow name must contain at most {WORKFLOW_NAME_MAX_LENGTH} characters"
             )
+        value.encode("utf-8")  # Server definition names are bound as database text.
         name = value.strip()
         if not name:
             raise ValueError("Name the workflow before creating it")
@@ -655,16 +656,16 @@ def validate_workflow_name(value: object) -> str:
         value: Raw creation name, bounded before whitespace trimming.
 
     Returns:
-        Nonempty trimmed text, without Unicode normalization.
+        Nonempty trimmed, UTF-8-encodable text, without Unicode normalization.
 
     Raises:
-        ValueError: The name is non-text, blank or longer than the raw limit.
+        ValueError: The name is non-text, blank, malformed Unicode or too long.
     """
     try:
         return WorkflowNameInput(name=value).name
     except (PydanticValidationError, TypeError):
         raise ValueError(
-            "Workflow name must be nonblank text, at most "
+            "Workflow name must be nonblank valid Unicode text, at most "
             f"{WORKFLOW_NAME_MAX_LENGTH} characters."
         ) from None
 

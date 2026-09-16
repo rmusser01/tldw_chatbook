@@ -97,11 +97,15 @@ in Python. It stops when the page is full; it does not rerun increasing SQL
 OFFSET scans. Non-search paging and exact-head reads retain their contracts.
 
 The New workflow dialog's creation boundary (2026-09-16 review follow-up) accepts
-only text of at most256 raw Python characters. It rejects oversized input before
-trimming or storage setup, trims surrounding whitespace, and requires a nonempty
-result. Shared Pydantic validation enforces this boundary without Unicode
-normalization or coercion. This is a local creation-input limit, not a portable
-schema restriction: imports, raw definitions and existing names retain their
+only valid Unicode text of at most 256 raw Python characters. It rejects oversized
+input before encoding, trimming or storage setup, rejects surrogate code points
+through strict UTF-8 encoding, trims surrounding whitespace, and requires a
+nonempty result. The server binds definition names directly as database text;
+surrogates cannot be encoded for that storage boundary. Shared Pydantic validation
+enforces this boundary without Unicode normalization, replacement or coercion;
+supplementary characters such as emoji remain valid. This is a local
+creation-input limit, not a portable schema restriction: imports, raw definitions
+and existing names retain their
 lossless document contracts and overall admission bounds.
 
 New structural admission also limits definitions to 500 steps, 64 container levels

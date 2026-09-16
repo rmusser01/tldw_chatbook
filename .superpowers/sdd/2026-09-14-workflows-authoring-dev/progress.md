@@ -628,3 +628,20 @@ resolve threads:1681=PRRT_kwDOOcyyl86ixO1S;1690=PRRT_kwDOOcyyl86ixO1a;
 1696=PRRT_kwDOOcyyl86ixO1d;1704=PRRT_kwDOOcyyl86ixO1i;
 1712=PRRT_kwDOOcyyl86ixO1o. Fresh/agentic_review thenexactheadgates/normalmerge.
 AC7stillopen. Heartbeatmustupdatewithnewhead;preserveUATandotherworktrees.
+
+### Creation-name portability correction (2026-09-16 UTC)
+
+acbbf6b3 passed required Derived/FastLane/UIlatency. Qodo5218124022 sole new
+4022157035 (threadPRRT_kwDOOcyyl86ixgAF) correctly identifies surrogate names
+cannot be UTF8-bound to server TEXT. Verified current serverdev59049e094:
+DB/schema identical to citedd9c245ac; endpoint changed tenant handling only,
+still forwards body.name. ActualSQLite D800/DFFF fail, emoji succeeds.
+Shared WorkflowNameInput now strictUTF8encodes after256rawbound beforetrim/setup;
+public guidance validUnicode, ValueError/InvalidDraft preserved. Imports/raw/
+legacy names untouched. New regression RED7fail18pass5.60s, GREEN25pass4.85s.
+Broad targeted547pass164.30s. BothPythonformatted,testRuffclean,shared8exact
+source-attributedbaseline0unmatched. Sevenpreflightpass. Independent reviewer
+Averroes no findings, probed every surrogate/control/rawpreservation, closed.
+ADR138/guide/task/UAT updated. 13performancechecks pass23.52s thencommit/push,
+reply/resolve4022157035,new/agentic_review,exactheadCI/Qodo thennormalmerge.
+Base65a143 unchanged; AC7open. PreserveUAT/backups/noinfra/models/fullsweep.

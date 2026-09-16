@@ -18,7 +18,24 @@ from tldw_chatbook.Workflows.models import DraftWriteFailed
 
 
 @pytest.mark.parametrize(
-    "name", ["x" * 257, " " * 257, "", " \t\n", None, 42, True, b"name", []]
+    "name",
+    [
+        "x" * 257,
+        " " * 257,
+        "",
+        " \t\n",
+        None,
+        42,
+        True,
+        b"name",
+        [],
+        pytest.param(chr(0xD800), id="high-surrogate-start"),
+        pytest.param(chr(0xDBFF), id="high-surrogate-end"),
+        pytest.param(chr(0xDC00), id="low-surrogate-start"),
+        pytest.param(chr(0xDFFF), id="low-surrogate-end"),
+        pytest.param(" name" + chr(0xD800) + " ", id="embedded-surrogate"),
+        pytest.param(chr(0xD83D) + chr(0xDE00), id="uncombined-surrogate-pair"),
+    ],
 )
 async def test_creation_rejects_invalid_name_before_opening_storage(tmp_path, name):
     path = tmp_path / "unopened.sqlite3"
@@ -46,7 +63,7 @@ async def test_creation_rejects_invalid_name_before_opening_storage(tmp_path, na
         ("  A name\t", "A name"),
         ("é" * 256, "é" * 256),
         ("e\u0301", "e\u0301"),
-        (chr(0xD800), chr(0xD800)),
+        ("😀" * 256, "😀" * 256),
     ],
 )
 async def test_creation_persists_trimmed_bounded_name_without_normalization(
@@ -75,10 +92,13 @@ async def test_invalid_creation_retains_current_draft_and_saved_heads(tmp_path):
         await owner.close()
 
 
-async def test_creation_name_limit_does_not_rewrite_imported_names(tmp_path):
+@pytest.mark.parametrize(
+    "name", ["é" * 1024, pytest.param(chr(0xD800), id="legacy-surrogate")]
+)
+async def test_creation_name_limit_does_not_rewrite_imported_names(tmp_path, name):
     source = tmp_path / "portable.json"
     content = prompt_definition()
-    content["name"] = "é" * 1024
+    content["name"] = name
     source.write_text(json.dumps(content), encoding="utf-8")
     owner = WorkflowAuthoring(lambda: tmp_path / "imported.sqlite3")
     try:
@@ -88,7 +108,8 @@ async def test_creation_name_limit_does_not_rewrite_imported_names(tmp_path):
         await owner.close()
 
 
-async def test_standalone_controller_rejects_oversized_creation_name(tmp_path):
+@pytest.mark.parametrize("name", ["x" * 257, pytest.param(chr(0xDFFF), id="surrogate")])
+async def test_standalone_controller_rejects_invalid_creation_name(tmp_path, name):
     from tldw_chatbook.UI.Workflows_Modules.controller import WorkflowsController
 
     owner = WorkflowAuthoring(lambda: tmp_path / "controller.sqlite3")
@@ -97,7 +118,7 @@ async def test_standalone_controller_rejects_oversized_creation_name(tmp_path):
         pending = owner.drafts.update('{"unfinished":')
         controller = WorkflowsController(owner.documents, owner.drafts)
         with pytest.raises(ValueError):
-            await controller.create("x" * 257)
+            await controller.create(name)
         assert owner.drafts.current == pending
         assert owner.documents.list_workflows() == (revision,)
     finally:

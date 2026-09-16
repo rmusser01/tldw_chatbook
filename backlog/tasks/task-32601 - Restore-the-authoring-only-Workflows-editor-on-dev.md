@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-15 04:09'
-updated_date: '2026-09-16 03:04'
+updated_date: '2026-09-16 03:27'
 labels: []
 dependencies: []
 ---
@@ -170,6 +170,24 @@ definition admission or adding dependency/storage infrastructure.
 5. Run affected boundary/authoring/exchange/paging/catalog/shared-consumer tests,
    source-attributed static checks and preflight; obtain scoped review, push,
    reply to all five threads and await exact-head review/checks before merge.
+
+### Creation-name portability correction (2026-09-16 UTC)
+
+ADR required: amend existing ADR-138's local creation boundary; no new ADR.
+ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md.
+Reason: Qodo4022157035 identifies names admitted locally but unencodable by the
+server's direct text binding. Preserve existing/imported JSON rather than rewriting it.
+
+1. Verify the current server dev name binding and reproduce SQLite surrogate
+   encoding failures alongside a valid supplementary-character control.
+2. Replace the new-creation surrogate acceptance test with unopened-store
+   rejection cases across the surrogate range. Preserve valid composed,
+   decomposed and supplementary Unicode and the 256-character boundary.
+3. Reject surrogates through strict UTF-8 encoding in the existing bounded
+   validator; keep concise error guidance, controller category and lossless
+   imported/raw-name contracts. No replacement or Unicode normalization.
+4. Run affected creation/retention/import/search/UI checks, static attribution
+   and preflight; obtain scoped review, push, reply and await exact-head gates.
 
 ## ID provenance
 
@@ -374,4 +392,6 @@ New-base integration: rebased 21 patches onto dev65a1437183, preserving both ind
 Independent review of the new-base six-selector correction is complete: no Critical/Important/Minor findings; ready for push. Reviewer independently verified unchanged declarations, unique ID owners, route loading, generated partition, boot-byte count and mounted-fixture computed-style/geometry parity at160x48,110x36,60x20. Exact-head GitHub review/checks and verified merge still required.
 
 Creation/API review round: Qodo4022051681/1690/1696/1704/1712 addressed. Shared Pydantic creation-name boundary (256 raw characters, strict text, trim/nonblank, preserved Unicode) runs before authoring setup and standalone-controller creation; imported/raw names remain lossless. Concise errors are painted and valid retry is tested in the actual app. Capture checks existing SVG availability with installation guidance. Paging annotations and catalog/create/import/export contracts completed. Initial regressions reproduced name/dependency failures; corrected verification:539 targeted tests,18 focused final-boundary cases,13 performance checks and all7preflight guards pass. Eight shared-module Ruff findings are exactly baseline-attributed, no new debt; eight touched Python files formatted. Independent review reports no issues. Existing ADR138 amended; full evidence in Docs/UAT/2026-09-15-workflows-qodo-remediation.md. Exact-head Qodo/CI and merge remain pending; AC7 open.
+
+Creation portability follow-up: Qodo4022157035 verified against current tldw_server dev59049e094 (unchanged direct name TEXT binding) and a real SQLite encoding probe. Existing creation validator now rejects surrogate code points through bounded strict UTF-8 encoding, preserving valid Unicode, the raw256 limit, concise ValueError/InvalidDraft guidance, and imported/raw legacy names. RED7failed18passed; GREEN25focused and547broad targeted tests passed (4.85s/164.30s). All7preflight guards pass; two Python files formatted, tests Ruffclean and shared8baseline findings exactly source-attributed with zero new debt. Independent review found no issues. ADR138 amended; detailed evidence in Docs/UAT/2026-09-15-workflows-qodo-remediation.md. No new infrastructure, models or full-suite. Exact-head review/checks and merge remain pending; AC7 open.
 <!-- SECTION:NOTES:END -->

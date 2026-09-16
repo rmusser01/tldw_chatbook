@@ -458,3 +458,46 @@ Independent review found no Critical/Important/Minor findings, checked the final
 production boundary and retained controller exception category, and cleared
 commit/push. No new architecture, model calls, full sweep or baseline cleanup.
 Exact-head review/checks and merge remain pending; AC7 is not yet complete.
+
+## Creation-name portability correction (2026-09-16 UTC)
+
+Qodo review5218124022 on acbbf6b3 raised comment4022157035: the preceding
+creation boundary admitted surrogate code points which cannot be bound as server
+database text. Verified the cited server d9c245ac against current server dev
+59049e094e0845a4611ea725ae19b7c1754ea709: workflow schema and database code are
+unchanged, and the endpoint's intervening tenant changes still pass name=body.name
+directly. A real in-memory SQLite probe rejected U+D800 and U+DFFF with
+UnicodeEncodeError while accepting U+1F600. No server writes or model calls.
+
+The regression selection initially had **7 failed, 18 passed** (5.60s): all six
+surrogate creation inputs were accepted, as was the standalone-controller case.
+Strict UTF-8 encoding now rejects them in the existing shared creation validator,
+after the raw 256-character bound but before trimming or storage setup. The
+public wrapper supplies concise, input-free valid-Unicode guidance and retains
+ValueError/InvalidDraft contracts. No Unicode replacement or normalization occurs.
+This supersedes the prior round's new-name surrogate acceptance, not its lossless
+import/raw-definition contract. ADR-138 and the guide explicitly distinguish them.
+
+The corrected focused selection has **25 passed** (4.85s). Cases cover the
+surrogate range's endpoints, embedded surrogates and an uncombined pair, unopened
+storage, preserved pending drafts, 256 emoji, composed/decomposed valid Unicode,
+trimming, imported legacy names and actual-app invalid-name feedback/valid retry.
+Both touched Python files pass format checks; the test file passes Ruff. Shared
+input-validation retains eight exactly source-attributed baseline diagnostics,
+with zero unmatched findings. All seven preflight guards pass.
+
+Independent review found no Critical/Important/Minor findings, separately probing
+every surrogate, limit-before-encoding, error categories, valid Unicode and
+unchanged raw/legacy search. This is a creation-boundary correction only; no
+runtime, schema, synchronization or SQLite infrastructure was added. Broad
+targeted verification and exact-head GitHub review/checks remain required.
+
+The final broad targeted run passed **547 tests** in 164.30s, including Workflows,
+real authoring storage, editor/paging/projection/route entry and shared validation
+consumers. Existing dependency and unrelated old pytest-cleanup warnings remain
+disclosed; no warning suppression or baseline cleanup. No full-suite run.
+
+All **13 startup/import/CSS checks** also pass (23.52s). Boot CSS remains
+767878/768000 bytes; broad selectors remain 271/274. Existing headroom warnings,
+joblib serial fallback and datetime deprecation remain unchanged. The reviewed
+tree is ready for push; exact-head Qodo and GitHub gates still precede merge.
