@@ -3583,7 +3583,17 @@ LibraryIngestCanvas .type-group-contents {
 }
 LibraryIngestCanvas .type-group-contents Checkbox {
     width: auto;
+    max-width: $ds-width-full;
     height: auto;
+    text-wrap: wrap;
+}
+
+LibraryIngestCanvas #opt-audio_video-install-parakeet-v2,
+#library-shell-grid LibraryIngestCanvas #opt-audio_video-install-parakeet-v2 {
+    max-width: $ds-width-full;
+    height: auto;
+    max-height: $ds-height-full;
+    text-wrap: wrap;
 }
 LibraryIngestCanvas .type-group-field-label {
     color: $text-muted;

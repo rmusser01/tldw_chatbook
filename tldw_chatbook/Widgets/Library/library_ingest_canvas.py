@@ -14,6 +14,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
+from textual.geometry import Size
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Checkbox,
@@ -26,6 +28,7 @@ from textual.widgets import (
 
 from tldw_chatbook.Library.ingest_capabilities import (
     ANALYSIS_STATE_FIELD,
+    OptionField,
     TypeGroupCapabilities,
     _is_installed,
     capabilities_for_backend,
@@ -1153,6 +1156,21 @@ def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:
     )
 
 
+def _option_label(field: OptionField, disabled_note: str = "") -> str:
+    """Keep field hints and disabled reasons identical on mount and updates."""
+    label = field.label
+    if field.type != "select" and field.hint:
+        label += f" ({field.hint})"
+    return f"{label} — {disabled_note}" if disabled_note else label
+
+
+def _parakeet_install_label(provider: str) -> str:
+    label = "Install verified Parakeet v2 INT8 (630.6 MiB)…"
+    if provider != "parakeet-onnx":
+        label += " — needs the parakeet-onnx provider"
+    return label
+
+
 class StateGlyphCheckbox(Checkbox):
     """Checkbox whose glyph carries on/off without color (task-2043).
 
@@ -1165,6 +1183,10 @@ class StateGlyphCheckbox(Checkbox):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.BUTTON_INNER = "✓" if self.value else " "
+
+    def get_content_height(self, container: Size, viewport: Size, width: int) -> int:
+        """Measure wrapped option labels instead of ToggleButton's one-row cap."""
+        return self.render().get_height(self.styles, width) if width else 0
 
     def watch_value(self) -> None:
         self.BUTTON_INNER = "✓" if self.value else " "
@@ -1206,11 +1228,19 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     class OptionValueChanged(Message):
         """A per-type option value changed."""
 
-        def __init__(self, group: str, name: str, value: Any) -> None:
+        def __init__(
+            self,
+            group: str,
+            name: str,
+            value: Any,
+            *,
+            source_widget: Widget | None = None,
+        ) -> None:
             super().__init__()
             self.group = group
             self.name = name
             self.value = value
+            self.source_widget = source_widget
 
     class OptionPanelToggled(Message):
         """A per-type options panel was expanded or collapsed."""
@@ -1287,6 +1317,138 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         self._reported_option_values.clear()
         self.refresh(recompose=True)
 
+    def sync_option_group(
+        self, group: str, state: LibraryIngestCanvasState, *, apply_values: bool = True
+    ) -> None:
+        """Update one group's values and dependencies without replacing editors.
+
+        Args:
+            group: Existing capability group whose options changed or reset.
+            state: Fresh snapshot after applying the user's option change.
+            apply_values: Apply a reset/snapshot to editors. False refreshes
+                dependencies while preserving newer edits awaiting delivery.
+        """
+        self.state = state
+        # An outgoing group's last event can arrive after its source was removed.
+        if group not in state.type_groups or not self.query(f"#type-group-{group}"):
+            return
+        cap = capabilities_for_backend(get_capabilities(group), state.ingest_backend)
+        # sync_state assigns its snapshot before the backend's new controls
+        # mount. Let that pending compose consume this snapshot rather than
+        # querying the outgoing backend's incompatible body.
+        required_ids = [f"opt-{group}-{field.name}" for field in cap.fields]
+        if group == "generic" and state.ingest_backend != "server":
+            required_ids.append(INGEST_CHUNK_TEMPLATE_PICKER_ID)
+        if any(not self.query(f"#{widget_id}") for widget_id in required_ids):
+            return
+        values = state.form.type_options.get(group, {})
+        for field in cap.fields:
+            widget_id = f"opt-{group}-{field.name}"
+            widget = self.query_one(f"#{widget_id}")
+            value = values.get(field.name, field.default)
+            disabled, reason = field_disabled_state(
+                field, cap, values, is_installed=_is_installed
+            )
+            label = _option_label(field, reason if disabled else "")
+            if isinstance(widget, Checkbox):
+                value = bool(value)
+                widget.label = label
+            else:
+                self.query_one(f"#{widget_id}-label", Static).update(label)
+                if isinstance(widget, Select):
+                    if value not in field.options:
+                        value = (
+                            field.default
+                            if field.default in field.options
+                            else field.options[0]
+                        )
+                else:
+                    value = str(value)
+            if apply_values:
+                # Seed before assigning so reset events cannot resurrect stale values.
+                self._reported_option_values[(group, field.name)] = value
+                # These are state echoes, not edits. Two queued snapshots otherwise
+                # emit alternating Changed events and can keep replaying each other.
+                with widget.prevent(
+                    Checkbox.Changed, Select.Changed, Input.Changed, TextArea.Changed
+                ):
+                    if isinstance(widget, TextArea):
+                        if widget.text != value:
+                            widget.load_text(value)
+                    elif widget.value != value:
+                        widget.value = value
+            else:
+                value = widget.text if isinstance(widget, TextArea) else widget.value
+            widget.disabled = disabled or self.external_busy
+            if field.directory_picker:
+                self.query_one(
+                    f"#{widget_id}-browse", Button
+                ).disabled = widget.disabled
+            if field.type in ("text", "number", "textarea"):
+                error = "" if disabled else validate_ingest_option_value(field, value)
+                widget.set_class(bool(error), "-ingest-option-invalid")
+                line = self.query_one(f"#{widget_id}-error", Static)
+                line.update(error)
+                line.display = bool(error)
+        if group == "generic" and state.ingest_backend != "server":
+            picker = self.query_one(f"#{INGEST_CHUNK_TEMPLATE_PICKER_ID}", Select)
+            value = values.get(
+                INGEST_CHUNK_TEMPLATE_FIELD, INGEST_CHUNK_TEMPLATE_NONE_VALUE
+            )
+            if value not in (
+                INGEST_CHUNK_TEMPLATE_NONE_VALUE,
+                INGEST_CHUNK_TEMPLATE_AUTO_VALUE,
+                *self._chunk_template_names,
+            ):
+                value = INGEST_CHUNK_TEMPLATE_NONE_VALUE
+            if apply_values:
+                self._reported_option_values[(group, INGEST_CHUNK_TEMPLATE_FIELD)] = (
+                    value
+                )
+                with picker.prevent(Select.Changed):
+                    if picker.value != value:
+                        picker.value = value
+            chunk_on = bool(values.get("chunk", True))
+            picker.disabled = not chunk_on or self.external_busy
+            label = INGEST_CHUNK_TEMPLATE_LABEL
+            if not chunk_on:
+                label += " — needs Chunk content on"
+            self.query_one(f"#{INGEST_CHUNK_TEMPLATE_PICKER_ID}-label", Static).update(
+                label
+            )
+        elif group == "web":
+            self.query_one("#web-local-scope-note").display = bool(
+                build_web_scope_note(state.ingest_backend, values)
+            )
+        elif group == "audio_video":
+            provider = values.get("transcription_provider", "default")
+            install = self.query_one("#opt-audio_video-install-parakeet-v2", Button)
+            install.label = _parakeet_install_label(provider)
+            install.disabled = provider != "parakeet-onnx" or self.external_busy
+            configured = state.transcribe_cpp_configured
+            status = self.query_one("#opt-audio_video-transcribe-cpp-status", Static)
+            status.update(
+                "Local GGUF configured." if configured else "No local GGUF configured."
+            )
+            chooser = self.query_one(
+                "#opt-audio_video-choose-transcribe-cpp-gguf", Button
+            )
+            chooser.label = "Choose another GGUF…" if configured else "Choose GGUF…"
+            chooser.disabled = self.external_busy
+            status.display = chooser.display = provider == "transcribe-cpp"
+        self.query_one(
+            f"#type-group-{group}", Collapsible
+        ).title = build_type_group_title(cap, values)
+        self.call_after_refresh(self._reveal_focused_option)
+
+    def _reveal_focused_option(self) -> None:
+        """Reveal current focus after option labels and dependencies settle."""
+        if not self.is_attached:
+            return
+        focused = self.screen.focused
+        if focused is not None and self in focused.ancestors:
+            focused.scroll_visible(animate=False, immediate=True)
+
     def _compose_type_group(
         self,
         group: str,
@@ -1325,21 +1487,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
 
             if field.type == "checkbox":
                 self._reported_option_values[(group, field.name)] = bool(value)
-                # (task-3303) A gated checkbox must carry its reason at the
-                # control: the label absorbs the schema hint ("Enable OCR
-                # (docling or docext engines only)"), so the inert state is
-                # explained where the user is looking, not somewhere else.
-                checkbox_label = (
-                    f"{field.label} ({field.hint})"
-                    if getattr(field, "hint", "")
-                    else field.label
-                )
-                # (task-3304, MI-07) Disabled-state annotation: the WHY at
-                # the control while the gate is closed. Empty for fields
-                # whose static hint above already names the gate, so
-                # labels never double-annotate.
-                if disabled and disabled_note:
-                    checkbox_label = f"{checkbox_label} — {disabled_note}"
+                checkbox_label = _option_label(field, disabled_note if disabled else "")
                 children.append(
                     StateGlyphCheckbox(
                         checkbox_label,
@@ -1360,18 +1508,11 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 if select_value not in field.options and field.options:
                     select_value = field.options[0]
                 self._reported_option_values[(group, field.name)] = select_value
-                # (task-2043) Selects missed task-2012's labeling pass: a
-                # bare "pymupdf4llm" carries no meaning on its own.
-                # (task-3304, MI-07) While schema-disabled, the label
-                # carries the reason -- selects re-compose on every gate
-                # flip (checkbox/select changes recompose the canvas), so
-                # compose-time is the single point of truth.
-                select_label = field.label
-                if disabled and disabled_note:
-                    select_label = f"{select_label} — {disabled_note}"
+                select_label = _option_label(field, disabled_note if disabled else "")
                 children.append(
                     Static(
                         select_label,
+                        id=f"{widget_id}-label",
                         classes="type-group-field-label",
                         markup=False,
                     )
@@ -1404,28 +1545,12 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     children.append(scope_note)
             else:
                 self._reported_option_values[(group, field.name)] = str(value)
-                # A populated Input never shows its placeholder, so
-                # placeholder-as-label left values like "1000" with no
-                # visible meaning (task-2012). The label gets its own line,
-                # carrying the unit/range hint up front (task-2223).
-                label_text = (
-                    f"{field.label} ({field.hint})"
-                    if getattr(field, "hint", "")
-                    else field.label
-                )
-                # (task-3304, MI-07) Disabled-state reason at the control.
-                # (live-verify round) APPENDED to ``label_text``, not
-                # rebuilt from ``field.label``: rebuilding dropped the hint
-                # -- so on a stock install the cookies field's "video URLs
-                # only" and the trim fields' "HH:MM:SS or seconds" were
-                # invisible exactly while the control was inert and the
-                # user had the most to work out. The checkbox branch above
-                # already appends; these two now agree.
-                if disabled and disabled_note:
-                    label_text = f"{label_text} — {disabled_note}"
+                # Keep identity and units visible after the placeholder disappears.
+                label_text = _option_label(field, disabled_note if disabled else "")
                 children.append(
                     Static(
                         label_text,
+                        id=f"{widget_id}-label",
                         classes="type-group-field-label",
                         markup=False,
                     )
@@ -1547,6 +1672,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             children.append(
                 Static(
                     picker_label,
+                    id=f"{INGEST_CHUNK_TEMPLATE_PICKER_ID}-label",
                     classes="type-group-field-label",
                     markup=False,
                 )
@@ -1580,11 +1706,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 "transcription_provider", provider.default
             )
             install_gated = provider_value != "parakeet-onnx"
-            install_label = "Install verified Parakeet v2 INT8 (630.6 MiB)…"
-            if install_gated:
-                # (task-3304, MI-07) Inert-actions rule: a disabled button
-                # carries the WHY in its label, never dimming alone.
-                install_label += " — needs the parakeet-onnx provider"
+            install_label = _parakeet_install_label(provider_value)
             children.append(
                 Button(
                     install_label,
@@ -1594,27 +1716,22 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     disabled=install_gated or self.external_busy,
                 )
             )
-            if provider_value == "transcribe-cpp":
-                configured = self.state.transcribe_cpp_configured
-                children.append(
-                    Static(
-                        "Local GGUF configured."
-                        if configured
-                        else "No local GGUF configured.",
-                        id="opt-audio_video-transcribe-cpp-status",
-                        classes="type-group-scope",
-                        markup=False,
-                    )
-                )
-                children.append(
-                    Button(
-                        "Choose another GGUF…" if configured else "Choose GGUF…",
-                        id="opt-audio_video-choose-transcribe-cpp-gguf",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=self.external_busy,
-                    )
-                )
+            configured = self.state.transcribe_cpp_configured
+            status = Static(
+                "Local GGUF configured." if configured else "No local GGUF configured.",
+                id="opt-audio_video-transcribe-cpp-status",
+                classes="type-group-scope",
+                markup=False,
+            )
+            chooser = Button(
+                "Choose another GGUF…" if configured else "Choose GGUF…",
+                id="opt-audio_video-choose-transcribe-cpp-gguf",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=self.external_busy,
+            )
+            status.display = chooser.display = provider_value == "transcribe-cpp"
+            children.extend((status, chooser))
 
         children.append(
             Button(
@@ -2111,12 +2228,22 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         name = "-".join(parts[2:])
         if name == "reset":
             return
+        # A reset may supersede an already queued Changed; a recompose may
+        # replace its sender entirely. Neither old event owns the current form.
+        if not widget.is_attached or self not in widget.ancestors:
+            return
+        if self.query_one(f"#{widget_id}") is not widget:
+            return
         key = (group, name)
         value = widget.text if isinstance(widget, TextArea) else event.value
+        if not isinstance(widget, TextArea) and value != widget.value:
+            return
         if key in self._reported_option_values and self._reported_option_values[key] == value:
             return
         self._reported_option_values[key] = value
-        self.post_message(self.OptionValueChanged(group, name, value))
+        self.post_message(
+            self.OptionValueChanged(group, name, value, source_widget=widget)
+        )
 
     @on(Collapsible.Expanded)
     @on(Collapsible.Collapsed)

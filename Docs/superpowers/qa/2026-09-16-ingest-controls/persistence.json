@@ -1,0 +1,135 @@
+{
+  "native_result": {
+    "pid": 19351,
+    "steps": [
+      {
+        "size": [
+          170,
+          48
+        ],
+        "theme": "textual-dark",
+        "checkbox_select_reset_preserve_editors": true,
+        "dependency_and_error_state_current": true,
+        "optional_action_visibility_current": true,
+        "wrapped_availability_reason_visible": true,
+        "keyboard_reentry_uses_normal_select_all": true,
+        "jobs_queued": 0
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "theme": "textual-light",
+        "checkbox_select_reset_preserve_editors": true,
+        "dependency_and_error_state_current": true,
+        "optional_action_visibility_current": true,
+        "wrapped_availability_reason_visible": true,
+        "keyboard_reentry_uses_normal_select_all": true,
+        "jobs_queued": 0
+      }
+    ],
+    "exclusive_profile": true,
+    "driver": "LinuxDriver",
+    "real_availability": {
+      "pdf_processing": false,
+      "audio_processing": false,
+      "parakeet_onnx": false
+    },
+    "ui_availability_simulated": true,
+    "passed": true,
+    "app_run_returned": true
+  },
+  "exit_code": 0,
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": "ok",
+      "counts": {
+        "messages": 0
+      }
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": "ok",
+      "counts": {
+        "Media": 0
+      }
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": "ok",
+      "counts": {
+        "ingest_jobs": 0
+      }
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": "ok",
+      "counts": {}
+    }
+  ],
+  "source_files": [
+    {
+      "name": "notes.txt",
+      "unchanged": true,
+      "sha256": "e26c9d172d60c2581d3f52af768e58a2ff187613f61093c7b26a1aedea87db4b"
+    },
+    {
+      "name": "document.pdf",
+      "unchanged": true,
+      "sha256": "19235e389bd8a114042d004a993760b765c27a2bc5c3847a4591dea0fcc81936"
+    },
+    {
+      "name": "document.docx",
+      "unchanged": true,
+      "sha256": "cfcef57d95fb8b49e6b97b9a31ba48d3a2bf776e89102b0a0cbb621551950378"
+    },
+    {
+      "name": "book.epub",
+      "unchanged": true,
+      "sha256": "49c64c8781cef6fd96add0094310beb805df1140f7d89c1df00e16b7a57f5f5c"
+    },
+    {
+      "name": "image.png",
+      "unchanged": true,
+      "sha256": "9cbb09458c6c80b5695b8146df644339e8d0464a4b61aa3a23f8f56e01605ac6"
+    },
+    {
+      "name": "audio.wav",
+      "unchanged": true,
+      "sha256": "ad3f487db17d464524e37525859fbfff3fb44a6e5881fe79fc90748fa52053f8"
+    }
+  ],
+  "log_errors": []
+}

@@ -10,6 +10,13 @@ Remove prior completion files before launch or use a unique run directory, and
 tie the exit receipt to the current process/run. UI assertions and shutdown are
 separate evidence. The owned session was closed and process absence checked.
 
+**TASK-32666, 2026-09-16.** The same audit mistake recurred with a different
+signal: tmux reported `zsh` while the native runner's `app_run_returned` and exit
+receipt were still absent. Closing that session invalidated its shutdown
+qualification. After confirming its process was gone, fresh runs recorded both
+receipts and healthy private persistence before cleanup. A terminal command name
+alone does not establish application exit.
+
 ## Screen worker waits can include unrelated app jobs
 
 **TASK-32462, 2026-09-14.** A native Library probe copied

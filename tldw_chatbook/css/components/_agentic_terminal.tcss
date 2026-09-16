@@ -1608,7 +1608,18 @@ LibraryIngestCanvas .type-group-contents {
 }
 LibraryIngestCanvas .type-group-contents Checkbox {
     width: auto;
+    max-width: $ds-width-full;
     height: auto;
+    text-wrap: wrap;
+}
+/* TASK-32666: escape the compact shell's one-row action cap so the
+   disabled install explanation remains complete inside the option panel. */
+LibraryIngestCanvas #opt-audio_video-install-parakeet-v2,
+#library-shell-grid LibraryIngestCanvas #opt-audio_video-install-parakeet-v2 {
+    max-width: $ds-width-full;
+    height: auto;
+    max-height: $ds-height-full;
+    text-wrap: wrap;
 }
 LibraryIngestCanvas .type-group-field-label {
     color: $text-muted;

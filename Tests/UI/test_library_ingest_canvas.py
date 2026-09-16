@@ -2629,7 +2629,7 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
     screen._library_external_submit_worker = None
     worker = MagicMock(is_finished=False)
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
-    screen._refresh_library_ingest_canvas_preserving_context = MagicMock()
+    screen._update_library_ingest_option_group = MagicMock()
     # task-15470: the actual persistence call moved into a
     # `@work(thread=True)` instance method (`_save_library_ingest_options`),
     # which needs a running app to dispatch through `run_worker` -- this

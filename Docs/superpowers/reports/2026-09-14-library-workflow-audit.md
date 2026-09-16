@@ -607,3 +607,32 @@ only to enable the UI controls; nothing installs, imports or executes a model.
 Next review: remaining per-type ingest options, then queue activity/recovery.
 Actual import execution, remote authorities and restart remain outside this
 evidence. No full suite, push or integration into dev was performed.
+
+## Import option editing and compact explanations — TASK-32666
+
+The [per-type option review](../qa/2026-09-16-ingest-controls/README.md) repairs
+form replacement after checkbox/select changes. Draft text, cursor/selection and
+keyboard focus now survive option edits and group Reset. Dependencies, inline
+validation, receipts and Start/Retry confirmation copy update together. Native
+and forwarded stale edits are rejected, pending backend layouts settle safely,
+and an earlier dependency refresh cannot overwrite newer sibling typing.
+
+Long checkbox and install explanations wrap. Native inspection caught the real
+compact Library shell overriding the install button with a one-row cap; a
+scoped token-backed exception and two real-shell regressions repair it.
+**355 targeted checks pass**, with zero new Ruff diagnostics. Existing screen
+and ingest-controller size ceilings still fail at base and current; the screen
+shrinks four lines and the controller is unchanged. No budget was raised.
+Independent review found no remaining actionable issue.
+
+Final private native journeys pass at 170×48 dark and 80×24 light, with ten
+rendered-state captures, exact retained editor checks, ten healthy databases,
+zero media/messages/ingest jobs, unchanged synthetic source bytes and normal
+exit 0. Enabled optional controls use an explicit UI-only availability seam;
+real unavailable-package explanations are checked first. No installation,
+extraction, import submission or remote/provider operation was performed.
+
+Next review: queue activity and recovery. An attempted fully expanded-form Retry
+focus check painted the docked fold hint over its row; that keyboard overlap
+remains unqualified here. Actual import execution, remote authorities and
+restart remain outside this evidence. No full suite, push or dev integration.

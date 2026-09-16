@@ -1,0 +1,32 @@
+[
+  {
+    "path": "Tests/UI/test_library_canvas_scoped_sync.py",
+    "formatted_changed_ranges": 4,
+    "lines": 490
+  },
+  {
+    "path": "Tests/UI/test_library_ingest_canvas.py",
+    "formatted_changed_ranges": 1,
+    "lines": 4914
+  },
+  {
+    "path": "Tests/UI/test_library_ingest_inline_consent.py",
+    "formatted_changed_ranges": 2,
+    "lines": 1570
+  },
+  {
+    "path": "Tests/UI/test_library_ingest_retry_last.py",
+    "formatted_changed_ranges": 1,
+    "lines": 722
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "formatted_changed_ranges": 7,
+    "lines": 35212
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+    "formatted_changed_ranges": 18,
+    "lines": 2294
+  }
+]

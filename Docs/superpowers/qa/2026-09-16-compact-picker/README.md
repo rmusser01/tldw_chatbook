@@ -88,6 +88,8 @@ was performed, and no production profile was used.
 
 ## Remaining review
 
-Continue remaining per-type ingest options, then queue activity and recovery.
+The [per-type option review](../2026-09-16-ingest-controls/README.md) continues
+this work with retained editors, dependency state, reset and compact explanations.
+Queue activity and recovery follow that review.
 Actual import execution, installation, remote/provider actions and restart remain
 outside this evidence. No push or integration into `dev`.

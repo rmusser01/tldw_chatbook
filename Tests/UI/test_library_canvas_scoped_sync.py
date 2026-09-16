@@ -329,8 +329,8 @@ async def test_real_prompt_and_skill_rows_keep_their_canvas_identity(tmp_path) -
         assert screen.query_one("#library-skills-canvas") is canvas
 
 
-def test_ingest_checkbox_routes_to_ingest_canvas_sync() -> None:
-    """A structural ingest checkbox edit rebuilds only the ingest canvas."""
+def test_ingest_checkbox_updates_group_without_canvas_rebuild() -> None:
+    """An option edit updates its group without scheduling a form replacement."""
     kinds: list[str] = []
     form = LibraryIngestFormState()
     screen = SimpleNamespace(
@@ -338,10 +338,9 @@ def test_ingest_checkbox_routes_to_ingest_canvas_sync() -> None:
         _invalidate_library_external_submission=Mock(),
         _disarm_library_ingest_start_confirm=Mock(),
         _disarm_library_ingest_retry_confirm=Mock(),
+        _update_library_ingest_option_group=Mock(),
     )
-    event = SimpleNamespace(
-        stop=Mock(), group="generic", name="analyze", value=True
-    )
+    event = LibraryIngestCanvas.OptionValueChanged("generic", "analyze", True)
     with patch.object(
         library_screen_module,
         "_sync_library_canvas",
@@ -349,7 +348,8 @@ def test_ingest_checkbox_routes_to_ingest_canvas_sync() -> None:
     ):
         LibraryScreen.handle_library_ingest_option_value_changed(screen, event)
 
-    assert kinds == ["ingest"]
+    assert kinds == []
+    screen._update_library_ingest_option_group.assert_called_once_with("generic")
     assert form.analyze is True
     assert form.type_options["generic"]["analyze"] is True
 

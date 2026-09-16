@@ -1,5 +1,33 @@
 # Lessons: what counts as evidence a change works
 
+## Retained option controls need event-order tests across reset
+
+**TASK-32666, 2026-09-16.** Replacing import-form recomposition with retained
+widgets preserved metadata selection but exposed two queued-event defects.
+Programmatic True/False snapshots emitted alternating `Changed` events; and
+suppressing new events alone still admitted an older Input, Checkbox or Select
+message after Reset restored its current value. Mounted regressions reproduced
+both. Suppress programmatic echoes and check the current sender/value when
+admitting a user event, including the second queue hop into the screen. A
+second test delivered two real edits in order: refreshing Analyze overwrote a
+newer chunk-size edit before its delivery. Ordinary dependency refreshes must
+retain live values; only explicit reset/snapshot application writes them.
+Backend state also changes before its replacement controls mount: both transition directions raised `NoMatches` when a group
+update queried the outgoing layout. Test that intermediate boundary explicitly.
+
+The compact Browse journey caught a separate deferred-scroll race: reading
+current focus in a refresh callback still queued another scroll, which could
+run after Tab moved focus. Scrolling immediately inside that already-deferred
+callback preserved the visible keyboard target. Keep compositor-paint assertions
+alongside identity and domain-state checks.
+
+Native inspection then found a clipped install explanation despite the standalone
+canvas loading every app stylesheet. The real compact Library ancestor applied
+an ID-scoped one-row action cap that the standalone DOM never matched. Two tests
+using the actual Library shell reproduced it. Stylesheet parity also requires
+relevant ancestor IDs/classes when qualifying responsive component geometry.
+
+
 
 ## A no-variable fast path still has grammar work to do (TASK-32638)
 

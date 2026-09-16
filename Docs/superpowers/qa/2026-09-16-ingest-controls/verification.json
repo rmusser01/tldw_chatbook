@@ -1,0 +1,107 @@
+{
+  "base": "b1303615d6",
+  "full_suite_run": false,
+  "runs": [
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/context-red.txt",
+      "command": "Initial metadata-selection reproduction",
+      "note": "1 failed: checkbox replaced editor and moved selection",
+      "sha256": "da9f3436b3e3aebfe1bdffa130a7a9dcb34bea827f00319f9cf956053ae38684"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/labels-red.txt",
+      "command": "Compact all-group label audit",
+      "note": "Clipped checkbox/install explanations",
+      "sha256": "a9a18a2ec7058a581182a81789840d54fef8ce76e89ef85ad7ce6f64432046e2"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/update-red-final.txt",
+      "command": "Programmatic updates and removed-group tests",
+      "note": "Echoed user edits and absent-group lookup",
+      "sha256": "89e48d1d91e9da915a246b607563bc1f99f10854e6720277c0e7f4a94317dcce"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/retry-label-red.txt",
+      "command": "Retry consent label journey",
+      "note": "Consent revoked while old confirmation copy remained",
+      "sha256": "01973809de2fad1d6e2dba32815a2c9e6e17eceb17ad25314c24c3c98e851b66"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/event-order-red.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_option_event_order.py",
+      "note": "6 failed: stale native edits, detached sender and pending backend layouts",
+      "sha256": "a91c705123a437b8a9fdefa0b04cb66dfb2405d915e1fced159b6a540fc0e933"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/event-forwarding-red.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_option_event_order.py -k \"forwarded or detached_canvas\"",
+      "note": "Forwarded old edit restored Analyze after Reset; separate selection fixture assigned selection before focus and was corrected",
+      "sha256": "fa1155035221fa4358c8f95c07b4b0a8ee308149aed4f00b0d3b54aa12b79182"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/sibling-edit-red.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_option_event_order.py -k sibling",
+      "note": "1 failed: emitted-order newer text overwritten",
+      "sha256": "567e098fa9adc79a74de49cb1368436babb22f181c86db379f5cbfba69f9bac0"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/targeted.txt",
+      "command": "First broader targeted run",
+      "note": "335 passed, 8 failed: compact deferred-scroll regression, three obsolete setup assumptions, one shared mutable parameter",
+      "sha256": "3c6709482ec02693262516b996f177179151776695d84589f2670834b27a1c3e"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/retry-footer-baseline.txt",
+      "command": "Baseline method comparison through /tmp/ingest_baseline_probe.py",
+      "note": "Same initial footer-registration assertion fails with base methods; test now settles first projection before measuring identical repeated ticks",
+      "sha256": "4b25a36c4c00b09152ed283560a90515729ff90dc03e411cc128689ae52f8bb7"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/ordering-focus-green.txt",
+      "command": "Event-order, footer and directory journeys",
+      "note": "25 passed before final uniform dependency refresh",
+      "sha256": "e03636b802cecafcf107bde808a5cb512050e68b2042afb04067c9eb11e971e7"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/context-final.txt",
+      "command": "Option/event-order journeys and scoped checkbox route",
+      "note": "46 passed",
+      "sha256": "01992d4b659b3a30278db704e329bd1f093f3e135c04ed962897c3ac7ea9d6e7"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/install-shell-red.txt",
+      "command": "Compact Library shell install-reason paint",
+      "note": "2 failed: shell ancestor caps the button at one row",
+      "sha256": "73f198564dcca7d902227281e0182fea8b530b56bd21a495b468af5dc5ec1db1"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/install-shell-green.txt",
+      "command": "Compact Library shell install-reason paint",
+      "note": "2 passed after scoped max-height override",
+      "sha256": "cc7e1039dbeb648a0e542ccbeee7b99406a663d38ec59d4b7dc954a0d6667329"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/targeted-final.txt",
+      "command": "Final targeted UI, consent, neighbors, governance and CSS budget command recorded below",
+      "note": "Final qualification",
+      "sha256": "0c435672c6fad9af98e40a4d6fb3bf4f105080ebeb97c298bccf570126d1efc5"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-controls/size-ratchets.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/Architecture/test_screen_size_ratchet.py Tests/Architecture/test_library_modules_size_ratchet.py -k \"library_screen or library_ingest_controller\"",
+      "note": "2 inherited ceiling failures; 2 passed",
+      "sha256": "5a6ecc0f97704d1ce159cbee2d8c94920e497c7c043851918ac37e141980bea5"
+    }
+  ],
+  "final_command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_option_journeys.py Tests/UI/test_library_ingest_option_event_order.py Tests/UI/test_library_canvas_scoped_sync.py::test_ingest_checkbox_updates_group_without_canvas_rebuild Tests/UI/test_library_ingest_canvas.py Tests/UI/test_library_ingest_structural.py Tests/UI/test_library_ingest_inline_consent.py Tests/UI/test_library_ingest_directory_journeys.py Tests/UI/test_library_ingest_retry_last.py Tests/UI/test_library_ingest_template_picker.py Tests/UI/test_library_ingest_options_cache.py Tests/UI/test_library_ingest_keyboard.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py Tests/UI/test_component_pattern_governance.py Tests/Performance/test_boot_css_byte_budget.py",
+  "final_summary": "355 passed, 6 warnings in 325.69s (0:05:25)",
+  "native_run": "run-004",
+  "native_visual_inspection": "Eight run-002 captures inspected as a batch; the clipped compact install explanation prompted a scoped repair. Two run-004 install captures inspected as confirmation. All linked captures are from run-004.",
+  "native_scope": "Actual TldwCli/LinuxDriver; private profile; real local preflight; six local type groups. Control availability explicitly simulated after recording real missing packages. Web controls covered in render-only tests. No import, install, model/provider or remote operation.",
+  "native_exit": "Initial queued Quit left Hub displayed; a second normal terminal Quit completed shutdown. app.run returned, exit 0, shell observed and owned session closed after both receipts.",
+  "native_shutdown_audit": "run-002 UI passed but its session was closed before app.run return/exit receipt; it is not shutdown evidence. Its process was confirmed absent. Fresh run-003 recorded normal exit 0 and healthy private persistence; final run-004 repeats after the scoped CSS repair.",
+  "native_runner_correction": "run-001 passed wide; compact nonfocused-label scroll was overwritten by the expected pending focus reveal. Runner now awaits that refresh before its separate measurement scroll; production unchanged for rerun.",
+  "new_ruff_diagnostics": 0,
+  "distinct_passed": 355,
+  "count_basis": "355 final targeted tests; two separate passing architecture slack checks are not included. Earlier overlapping runs are not added."
+}

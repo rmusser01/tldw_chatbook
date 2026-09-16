@@ -166,7 +166,6 @@ from ...Library.library_ingest_jobs import (
     count_duplicate_done_jobs,
 )
 from ...Library.library_ingest_state import (
-    validate_ingest_option_value,
     INGEST_UNAVAILABLE_COPY,
     LibraryIngestCanvasState,
     LibraryIngestLastSubmission,
@@ -19899,6 +19898,9 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         start_button.disabled = not new_state.start_enabled
+        # Option edits revoke retry consent as well as Start consent.
+        for retry in self.query("#library-ingest-retry-last"):
+            retry.label = library_ingest_retry_label(new_state.retry_confirm_armed)
         try:
             commit_bar = self.query_one("#library-ingest-commit-bar", Vertical)
         except (NoMatches, QueryError):
@@ -27384,16 +27386,28 @@ class LibraryScreen(BaseAppScreen):
         """Persist per-type option changes in the form echo.
 
         The canvas stays render-only and posts a message for every value
-        change; the screen owns the mutable form state. Checkbox and select
-        changes trigger a recompose so panel titles and dependent-field
-        disabled states stay in sync, but text/number inputs do not (they
-        would remount the Input and lose cursor position mid-typing).
+        change; the screen owns the mutable form state. Update values,
+        dependencies and receipts in place so other editors retain their
+        cursor, selection and undo history.
         """
         event.stop()
+        # The forwarded edit has its own queue hop: Reset or a source/backend
+        # replacement may supersede it after the canvas accepted Changed.
+        source = event.source_widget
+        if source is not None:
+            if not source.is_attached or self not in source.ancestors:
+                return
+            try:
+                current = self.query_one(f"#opt-{event.group}-{event.name}")
+            except (NoMatches, QueryError):
+                return
+            value = source.text if isinstance(source, TextArea) else source.value
+            if current is not source or value != event.value:
+                return
         self._invalidate_library_external_submission()
         # (task-3314) An option edit changes what the submission will do --
-        # a pending Start consent no longer covers it. Both downstream
-        # paths (recompose / in-place gate update) re-render the line.
+        # a pending Start consent no longer covers it. The retained group
+        # refresh also re-renders the gate line.
         self._disarm_library_ingest_start_confirm()
         # Same for a pending re-stage: the option the user just changed is
         # among the things the re-stage would overwrite.
@@ -27412,40 +27426,21 @@ class LibraryScreen(BaseAppScreen):
                 form.chunk = bool(event.value)
             elif event.name == "chunk_size":
                 form.chunk_size = str(event.value)
-        cap = get_capabilities(event.group)
-        field = next((f for f in cap.fields if f.name == event.name), None)
-        if field is not None and field.type not in ("text", "number", "textarea"):
-            _sync_library_canvas(self, "ingest")
-        elif field is not None:
-            # (task-2130) Text/number/textarea edits deliberately skip the recompose
-            # (cursor survival), which used to leave the panel-header receipt
-            # asserting the OLD value and the only invalid signal a
-            # focus-only border. Update the receipt, the inline message, and
-            # the Start gate in place instead.
-            self._update_library_ingest_group_receipt(event.group)
-            message = validate_ingest_option_value(field, event.value)
-            try:
-                error_line = self.query_one(
-                    f"#opt-{event.group}-{event.name}-error", Static
-                )
-            except (NoMatches, QueryError):
-                pass
-            else:
-                error_line.update(message)
-                error_line.display = bool(message)
-            # (task-2230 Qodo round) The persistent invalid marker is set at
-            # compose time, but text/number edits deliberately skip the
-            # recompose -- without toggling it here a field stayed marked
-            # after becoming valid (and never got marked after becoming
-            # invalid), which is exactly the unreliable "highlighted" the
-            # marker was added to fix.
-            try:
-                field_input = self.query_one(f"#opt-{event.group}-{event.name}", Input)
-            except (NoMatches, QueryError):
-                pass
-            else:
-                field_input.set_class(bool(message), "-ingest-option-invalid")
-            self._update_library_ingest_gate(self._build_library_ingest_state())
+        self._update_library_ingest_option_group(event.group)
+
+    def _update_library_ingest_option_group(
+        self, group: str, *, reset_values: bool = False
+    ) -> None:
+        """Refresh an existing option group and gate without rebuilding the form."""
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+            return
+        try:
+            canvas = self.query_one(LibraryIngestCanvas)
+        except (NoMatches, QueryError):
+            return
+        state = self._build_library_ingest_state()
+        canvas.sync_option_group(group, state, apply_values=reset_values)
+        self._update_library_ingest_gate(state)
 
     @on(LibraryIngestCanvas.DirectoryBrowseRequested)
     def handle_library_ingest_directory_browse(
@@ -29014,6 +29009,7 @@ class LibraryScreen(BaseAppScreen):
         # Reset mutates the same options snapshot the pending Start
         # fingerprint covers, so revoke consent before changing the form.
         self._disarm_library_ingest_start_confirm()
+        self._disarm_library_ingest_retry_confirm()
         # opt-{group}-reset -> {group}
         group = button_id[4:-6]
         form = self._ingest_state.form
@@ -29025,7 +29021,7 @@ class LibraryScreen(BaseAppScreen):
             form.chunk = bool(defaults.get("chunk", True))
             form.chunk_size = str(defaults.get("chunk_size", 1000))
         self._save_library_ingest_options({f"library.ingest_options.{group}": {}})
-        self._refresh_library_ingest_canvas_preserving_context()
+        self._update_library_ingest_option_group(group, reset_values=True)
 
     def _update_library_ingest_group_receipt(self, group: str) -> None:
         return self._ingest_controller._update_library_ingest_group_receipt(group)

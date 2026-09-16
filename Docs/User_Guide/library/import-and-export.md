@@ -74,7 +74,12 @@ In server mode the **Export** rail row is disabled, with the tooltip
   Word/Office
   documents (.doc/.docx/.odt/.rtf) get their own fold; the Plain text &
   HTML fold's Analyze/Chunk/Encoding options still apply to them as the
-  always-present base. Each fold ends with "Reset to defaults".
+  always-present base. Each fold ends with "Reset to defaults", which resets
+  only that type's options. Changing a choice, toggling an option or resetting
+  one fold preserves the text and selection in your other editors, including
+  metadata and the custom analysis prompt. Dependent fields and their reasons
+  update in place; long checkbox explanations wrap in compact terminals.
+  Option edits also clear any pending Start or "replace form" confirmation.
 - **Metadata** — three persistently labeled fields: "Title (optional)",
   "Author (optional)", and "Keywords (optional)". Example/default guidance
   remains in the placeholders while the labels survive entered values.
