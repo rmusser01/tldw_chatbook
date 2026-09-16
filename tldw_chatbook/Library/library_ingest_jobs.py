@@ -4,31 +4,22 @@ This module is intentionally Textual-free (stdlib + loguru only) so it can be
 unit tested without booting the TUI and can be imported by both the app-level
 queue-runner and the Library canvas widget without pulling in UI code.
 
-Accepted v1 limits (binding; do not "fix" these without a follow-up task):
+Lifecycle and recovery contract:
 
-- **In-memory only.** The registry has no persistence layer. All job history
-  -- queued, parsing, writing, done, and failed jobs alike -- dies with the
-  app process. There is no restart/resume.
-- **Quitting joins the writer's in-flight DB write; parses in flight and
-  queued jobs are both lost.** (F3: the pipeline is now the two stages
-  described by ``IngestJobState``'s own docstring, and the two stages are
-  NOT waited for symmetrically on quit.) The write stage is still today's
-  exclusive thread
-  worker, and the app still waits for that thread to join before it
-  finishes shutting down -- so a job that is already ``WRITING`` when the
-  user quits completes its DB write and its ``mark_done``/``mark_failed``
-  call normally; it is not silently dropped mid-write. A job still
-  ``PARSING``, however, is NOT waited for: the parse-pool coordinator (owned
-  by ``app.py``'s ``LibraryIngestQueueMixin``) sets a shutdown flag and
-  calls the process pool's ``terminate()`` on quit, killing every in-flight
-  parse worker immediately rather than blocking app exit on a possibly-long
-  transcription or OCR job. An abandoned ``PARSING`` job is the same loss
-  class as a job still ``QUEUED`` behind it -- neither is claimed again, and
-  nothing resumes them or marks them ``FAILED`` on the next launch (matching
-  the legacy ``TAB_INGEST`` behavior this replaces). This registry module
-  has no shutdown hook of its own; it is documented here because the
-  pool/coordinator that owns the actual ``terminate()``/join sequencing
-  depends on this contract holding.
+- **Optional durable history.** The registry keeps the live queue in memory.
+  When the app attaches a store, transitions are best-effort persisted. On startup,
+  ``plan_restore`` reconciles persisted history and ``merge_restored`` preserves
+  jobs admitted before restore completed. A registry without a store remains
+  useful for isolated callers and tests.
+- **Interrupted work requires explicit Retry.** Quit joins the writer's
+  in-flight DB write, but terminates the parse pool instead of waiting for a
+  potentially long parse. On restart, persisted ``QUEUED``, ``PARSING`` and
+  ``WRITING`` jobs become retryable failures with ``"Interrupted by app
+  restart"``; they are not automatically dispatched. Held queued Research
+  operations are exempt so their admission can be reconciled first.
+  ``requeue`` creates a successor with retry lineage and supersedes the old
+  attempt; with a store attached, that pair is persisted atomically before
+  the registry exposes it.
 - **Serial write, parallel parse.** Exactly one job is ever ``WRITING`` at a
   time (SQLite has one writer); up to N jobs (a small worker-pool size) may
   be ``PARSING`` concurrently. ``next_queued()`` still hands ``QUEUED`` jobs
@@ -111,9 +102,9 @@ class IngestJobState(str, Enum):
     #: a folder: never attempted, never an error. "failed" is reserved for
     #: files the pipeline TRIED and could not ingest.
     SKIPPED = "skipped"
-    #: Stopped deliberately rather than succeeding or erroring. Only a
-    #: server-origin job reaches this today: the server reports it for a
-    #: job the user cancelled.
+    #: Stopped deliberately rather than succeeding or erroring. Supported
+    #: cancellation paths include server jobs and local transcription jobs;
+    #: ordinary local text parsing does not expose a Cancel action.
     CANCELLED = "cancelled"
 
 
@@ -1805,8 +1796,7 @@ def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> Resto
     Returns:
         A :class:`RestorePlan` with jobs still ``QUEUED``/``PARSING``/
         ``WRITING`` at the time of persistence normalized to ``FAILED``
-        (an app restart abandons those jobs -- see the module docstring's
-        accepted v1 limits on parse/write loss on quit) with the error
+        (see the module docstring's lifecycle and recovery contract) with the error
         ``"Interrupted by app restart"``, ``permanent=False`` (so they
         remain retryable), and ``finished_at_wall=now_iso``. ``retry_count``
         is preserved, not reset. When ``max_persisted >= 1`` and

@@ -1,0 +1,11 @@
+{
+  "ref_count": 267,
+  "worktree_count": 27,
+  "matches": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/tasks/task-32700 - Verify-local-Import-execution-and-restart-recovery.md"
+    }
+  ],
+  "collision": false
+}

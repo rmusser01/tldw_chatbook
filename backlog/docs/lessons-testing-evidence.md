@@ -12471,6 +12471,14 @@ clean qualification host or a coordinated restart, not arbitrary name deletion.
 Exact commands and source references are in
 `Docs/superpowers/reviews/2026-09-08-semaphore-allocation-diagnosis.md`.
 
+**Recurrence, TASK-32700, 2026-09-16.** The real Library Import pool and its
+spawn integration test again failed at semaphore construction, including outside
+the sandbox, with 75 GiB free. Restarting only the app preserved the retryable
+failure and produced another failed attempt with intact lineage. The 76 passing
+targeted checks did not qualify successful native import; that task remained
+In Progress. Its isolated failure/restart evidence is recorded under
+`Docs/superpowers/qa/2026-09-16-ingest-lifecycle/`.
+
 ## A "dead key" report can be an invisible open-then-undo toggle
 
 **task-31820 release UAT, 2026-09-05.** A live walkthrough reported Escape

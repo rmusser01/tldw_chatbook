@@ -1,0 +1,53 @@
+{
+  "inspection_batches": [
+    {
+      "run": "run-002",
+      "kind": "initial inspection",
+      "captures": 4
+    },
+    {
+      "run": "run-003",
+      "kind": "final confirmation",
+      "captures": 4
+    }
+  ],
+  "final_captures": [
+    {
+      "file": "retry-textual-dark-170.svg",
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "observed": "Retry focused and readable; failure summary, Show details and Dismiss readable; compact queue scrolls into view."
+    },
+    {
+      "file": "retry-textual-dark-80.svg",
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-dark",
+      "observed": "Retry focused and readable; failure summary, Show details and Dismiss readable; compact queue scrolls into view."
+    },
+    {
+      "file": "retry-textual-light-170.svg",
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-light",
+      "observed": "Retry focused and readable; failure summary, Show details and Dismiss readable; compact queue scrolls into view."
+    },
+    {
+      "file": "retry-textual-light-80.svg",
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "observed": "Retry focused and readable; failure summary, Show details and Dismiss readable; compact queue scrolls into view."
+    }
+  ],
+  "scope": "Pool-start failure row only. Surrounding navigation and successful import completion are not qualified."
+}

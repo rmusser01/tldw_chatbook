@@ -1,0 +1,103 @@
+{
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": "ok",
+      "counts": {
+        "messages": 0
+      }
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": "ok",
+      "counts": {
+        "Media": 0
+      }
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": "ok",
+      "counts": {
+        "ingest_jobs": 2
+      }
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": "ok",
+      "counts": {}
+    }
+  ],
+  "ingest_jobs": [
+    {
+      "job_id": "ingest-job-1",
+      "state": "failed",
+      "error": "Parse pool could not start: [Errno 28] No space left on device",
+      "superseded": 1,
+      "retry_count": 0,
+      "retry_of_job_id": null,
+      "media_id": null
+    },
+    {
+      "job_id": "ingest-job-2",
+      "state": "failed",
+      "error": "Parse pool could not start: [Errno 28] No space left on device",
+      "superseded": 0,
+      "retry_count": 1,
+      "retry_of_job_id": "ingest-job-1",
+      "media_id": null
+    }
+  ],
+  "default_profile_unchanged": true,
+  "source_files": [
+    {
+      "name": "alpha.txt",
+      "unchanged": true
+    },
+    {
+      "name": "interrupted.txt",
+      "unchanged": true
+    },
+    {
+      "name": "retry.txt",
+      "unchanged": true
+    },
+    {
+      "name": "copy-alpha.txt",
+      "unchanged": true
+    },
+    {
+      "name": "beta.md",
+      "unchanged": true
+    }
+  ]
+}
