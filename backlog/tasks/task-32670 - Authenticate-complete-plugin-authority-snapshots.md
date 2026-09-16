@@ -1,11 +1,11 @@
 ---
 id: TASK-32670
 title: Authenticate complete plugin authority snapshots
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:17'
-updated_date: '2026-09-16 07:31'
+updated_date: '2026-09-16 07:46'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A separate plugin trust namespace authenticates complete registry snapshots, exact marker tuples and domain-separated prepared intents and commit certificates without resetting standalone skill trust.
-- [ ] #2 Activation overrides, selection, requirements, execution mappings, credential-binding generations, revocations and data-root fences are authenticated; missing or mismatched evidence blocks use.
-- [ ] #3 Snapshots are encrypted in the protected store outside package content and SQLite, and secrets remain credential references.
-- [ ] #4 Locked or unavailable trust follows ADR-009 posture rules; successful trust, offline tamper, rollback, reset and standalone-skill controls use real crypto with an isolated marker store.
+- [x] #1 A separate plugin trust namespace authenticates complete registry snapshots, exact marker tuples and domain-separated prepared intents and commit certificates without resetting standalone skill trust.
+- [x] #2 Activation overrides, selection, requirements, execution mappings, credential-binding generations, revocations and data-root fences are authenticated; missing or mismatched evidence blocks use.
+- [x] #3 Snapshots are encrypted in the protected store outside package content and SQLite, and secrets remain credential references.
+- [x] #4 Locked or unavailable trust follows ADR-009 posture rules; successful trust, offline tamper, rollback, reset and standalone-skill controls use real crypto with an isolated marker store.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,3 +49,15 @@ Reason: Direct implementation of the accepted independent plugin trust namespace
 8. Independent review fix R15: retain a minimal closed protected sibling reset receipt binding this plugin-store scope, exact archive leaf and original directory identity. Persist pending reset before rename, requalify archive/file-parent durability on retries including fresh instances, and record completed only after the archive is durable. Pending reset blocks bootstrap and reports recovery; exact marker retries republish or qualify durable backend state. Add real after-rename failure/retry regressions, preserving standalone reset and existing runtime-owner gates.
 9. Reset identity R16: require an explicit stable operation_id on the new plugin reset primitive and bind it into the protected reset receipt. Same-ID retries complete/return only that reset; a new reviewed reset uses a new ID. Reject a competing ID while reset is pending, and never let an old completed retry reset a newly bootstrapped namespace. Update new F3 call sites/tests/docs; no standalone API changes.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented a separate encrypted plugin authority namespace with strict complete snapshots, exact generation/operation/digest markers, purpose-separated keys, explicit bootstrap/unlock/reduced posture, and authenticated recovery readers. Registry schema v2 adds independent revision review state and retained uninstall tombstones; definitions remain exact immutable-material references, not imported executable grants.
+
+Reset is plugin-only and requires a stable operation ID. A protected bounded receipt preserves pending/completed/empty outcomes and archive identity across crashes; marker and reset retries re-establish durability. Independent review found two retry gaps, both fixed in d0834a001c and independently re-reviewed clean. Implementation commit: 0883003e50.
+
+Validation: 361 targeted feature/standalone/private-SQLite/sensitive-path tests passed; final affected-store run after the fixes passed 124 tests (counts overlap). New/amended Python static checks and whitespace pass; shared-file pre-existing lint/format diagnostics match BASE. Actual wheel resource reads verified both migration files against Git hashes. No full suite or real keyring was used. Feature tests and successful probes used isolated profiles; the first reviewer probe read normal config and hit the sandbox-protected profile lock before store operations, then was corrected with pre-import isolation. No successful real-profile write occurred; the existing live-verification lesson covers this trap.
+
+ADR required: yes; implements ADR-162/163 and extends ADR-009. ADR-162, the spec and Plugins README document schema, trust and recovery contracts. Controller rulings R8/R9/R11/R12/R15/R16 are reflected in the implementation plan and handoff. F4 owns actual durable DB/certificate orchestration and owner gates; later admission validates retained material and current credential references. Platform evidence is local macOS/APFS, not real-keychain, hardware power-loss, Windows or network/sync qualification. No new dependency or licence change.
+<!-- SECTION:NOTES:END -->
