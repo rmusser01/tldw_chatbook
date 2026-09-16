@@ -1,11 +1,11 @@
 ---
 id: TASK-32672
 title: Admit native plugin skills through existing Console authority
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:19'
-updated_date: '2026-09-16 15:30'
+updated_date: '2026-09-16 15:45'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A reviewed native skill can install disabled, enable in a named workspace and run through the existing Console skill/tool path under ordinary permissions.
-- [ ] #2 Stable workspace and installation generations are rechecked before injection, launch, approval acceptance and invocation; one installed revision applies across scopes.
-- [ ] #3 Plugin context stays attributed and untrusted with whole-block limits; manual-only and inline/fork metadata, empty tool allowlists and dependencies preserve their meaning.
-- [ ] #4 Owned skill listings expose package provenance while service-level standalone edit/delete/overwrite paths refuse package mutations; unrelated standalone skills remain usable.
+- [x] #1 A reviewed native skill can install disabled, enable in a named workspace and run through the existing Console skill/tool path under ordinary permissions.
+- [x] #2 Stable workspace and installation generations are rechecked before injection, launch, approval acceptance and invocation; one installed revision applies across scopes.
+- [x] #3 Plugin context stays attributed and untrusted with whole-block limits; manual-only and inline/fork metadata, empty tool allowlists and dependencies preserve their meaning.
+- [x] #4 Owned skill listings expose package provenance while service-level standalone edit/delete/overwrite paths refuse package mutations; unrelated standalone skills remain usable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,3 +60,15 @@ Reason: Direct implementation of accepted native plugin admission, existing Cons
 19. R35: for opaque chat-dictionary/world-info transformations after plugin substitution, retain attribution only when the result contains one exact whole copy of the host-carried input; otherwise fail this send closed. Preserve known whole prefix/suffix joins without marker parsing, ensure refusal is not swallowed by existing optional-processor fallback, retain ordinary standalone/multimodal behavior, and document the conservative embedded-user-text limitation. Add changed/duplicated/carrier-preserved controls through the actual send path as relevant.
 20. Record the actual TASK-32672 producer-to-final-send testing trap briefly in backlog/docs/lessons-testing-evidence.md once the full Console regression is green: a bridge-only typed input test missed later Console string processors, and a resumed pending call needs fresh attribution distinct from historical completed output. Reuse the existing producer/reconstruction lesson section if appropriate; state observed RED/GREEN evidence and the concrete fixture boundary, not a new generic checklist.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Native packages now install disabled, receive explicit trust and scoped activation reviews, and enter the existing Console skill/tool path through one lazy PluginService worker. Immutable run ceilings, current authority/definition checks, stable authenticated aliases, retained exact root/child/provider-work ownership and package-owned listing/mutation guards preserve ordinary permission and standalone behavior. Live plugin instruction and skill-file output stay attributed through actual Console/AgentService assembly with whole-block 8 KiB and final-send 32 KiB limits; opaque edits or duplication refuse the send.
+
+Implemented in Plugins admission/context/provider/service and the existing Console, AgentService/runtime, tool catalog, Skills services and app ownership seams; migration 003 persists stable installation aliases. ADRs: backlog/decisions/162-managed-agent-plugins.md, 163-expanded-console-hook-runtime.md and 009-local-skill-trust-boundary.md. Minimal integration scope and conservative opaque-transform behavior are recorded in the Implementation Plan and delivery ledger.
+
+Validation: actual native install/trust/enable/Console behavior and targeted ownership, current-authority, continuation, standalone, gateway and aggregate-context controls passed. Final fix1 selections: 135 feature, 33 bridge and 16 gateway cases, plus focused warning/continuation checks (overlap documented). Final fix2 selections: 19 actual-submit/aggregate and 84 neighboring cases, 103 distinct passes. Changed-file syntax and Ruff/Black baseline parity passed with zero new debt; whitespace clean. Actual isolated wheel importlib.resources verified SQL001/002/003 against Git bytes. No full suite or remote provider run. Startup qualification retains the unchanged baseline preimport failure (515 modules/382451 LOC) and zero UI-ready headroom (973/973); no all-startup-green claim. macOS local APFS and controlled marker fixtures remain the qualified environment.
+
+Independent task review plus two fresh scoped re-reviews cleared all five blocking findings. Out-of-scope reference-expansion interaction was recorded for final whole-branch review. F6 selective revocation, F7 drain/archived-resumption/retention and M4 connection ownership consume the recorded public handoff. Updated plugin documentation and an actual Console context-evidence testing lesson. Commits: 1dfc37a908, 887afe3811, 5dcc1f6f34.
+<!-- SECTION:NOTES:END -->
