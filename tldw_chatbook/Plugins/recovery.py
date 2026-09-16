@@ -144,8 +144,7 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
         marker_operation = (
             {marker.operation_id} if current_result is not None else set()
         )
-        if set(operations) - by_id.keys() - marker_operation:
-            raise ValueError("registry operation lacks protected evidence")
+        unmatched = set(operations) - by_id.keys() - marker_operation
         if (
             marker.operation_id in operations
             and operations[marker.operation_id]["result"] != current_result
@@ -158,11 +157,15 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
         ancestor = marker
         while ancestor.generation:
             transition = by_id.get(ancestor.operation_id)
-            if transition is None or transition.new != ancestor:
-                # The marker itself is commitment proof, but an unrelated or
-                # corrupt journal may not be silently ignored.
-                if ancestor == marker and not evidence:
+            if transition is None:
+                # R29: exact reached endpoint authenticates a wholly absent prefix.
+                # Every still-present disconnected branch is rejected below.
+                if authority.metadata()["schema_version"] == 2 or (
+                    ancestor == marker and not evidence
+                ):
                     break
+                raise ValueError("marker lineage mismatch")
+            if transition.new != ancestor:
                 raise ValueError("marker lineage mismatch")
             lineage[transition.new.operation_id] = transition
             ancestor = transition.old
@@ -215,6 +218,30 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
                         ),
                     )
                 receipts.append(OperationReceipt(operation_id, "aborted", False))
+        # All present proof and unresolved branches were checked first. An ID's
+        # authenticated generation is issuance, never commitment evidence.
+        expired = []
+        if unmatched:
+            legacy = {}
+            if authority.metadata()["schema_version"] == 2:
+                legacy = {
+                    entry.operation_id: entry.result_digest
+                    for entry in authority.verify_legacy_cutover().entries
+                }
+            recovered_generation = (
+                successor.new.generation if successor else marker.generation
+            )
+            for identity in unmatched:
+                result = operations[identity]["result"]
+                if legacy.get(identity) == authority.result_digest(result):
+                    expired.append(identity)
+                    continue
+                issued = authority.verify_operation_id(identity, result)
+                if issued.generation > recovered_generation:
+                    raise ValueError(
+                        "newer registry operation lacks protected evidence"
+                    )
+                expired.append(identity)
         target = successor.snapshot if successor else current
         operation_id = (
             target["operation_result"]["operation_id"]
@@ -226,6 +253,8 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
             operation_result=target["operation_result"]
         )
         reconstructed = projection != target
+        if expired:
+            registry.forget_operation_hints(tuple(sorted(expired)))
         if reconstructed:
             # Only a secure marker (or its matching certified successor) can
             # authorize reconstruction. Genesis never erases untrusted rows.
@@ -266,6 +295,7 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
                     "missing_runtime_provenance" if reconstructed else None,
                 )
             )
+        authority.ensure_issued_metadata(tuple(lineage.values()))
         coordinator._published = target
         return tuple(receipts)
     except (ValueError, OSError, RuntimeError, sqlite3.DatabaseError):

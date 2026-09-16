@@ -139,3 +139,20 @@ false automatic-retry guarantee.
 - [ADR-029: Local Private Data Boundary](029-local-private-data-boundary.md)
 - [ADR-045: QwenCloud Dual-API Provider Boundary](045-qwencloud-dual-api-provider-boundary.md)
 - [Superseded ADR-062](062-hosted-chat-completions-provider-boundary.md)
+
+## Managed plugin continuation amendment (2026-09-16, ADR-162/R38)
+
+The closed version-2 checkpoint additionally admits a host-authenticated managed-resume
+envelope, bounded to 256 KiB within the existing 8 MiB checkpoint. It binds the complete
+provider checkpoint and exact conversation/assistant owner to the local namespace and
+captured plugin revision, definitions, scope authority and qualified data generations.
+It grants no execution permission and adds no transcript database. The host seals the
+final store-resolved checkpoint at every existing persistence barrier; provider adapters
+remain neutral V1 candidate producers. Failed sealing cannot downgrade to V1.
+
+V1/pinless Resume has an explicit zero-managed ceiling at all managed admission routes.
+Standalone continuation remains supported; an explicit new turn may use current plugins.
+Foreign namespace, remapped owner, changed required authority/data or malformed V2
+refuses exact managed resume while preserving historical text. Sync retains whole-record
+ownership/conflict rules and does not transfer permission. See ADR-162 and its specification
+for the exact envelope and fleet-retention contract.

@@ -911,7 +911,11 @@ def test_v2_deep_private_reaches_canonical_parser_before_discard(
     def forbidden_raw_private_dump(*_args, **_kwargs):
         raise AssertionError("graph validation must not serialize raw private data")
 
-    monkeypatch.setattr(importer_module.json, "dumps", forbidden_raw_private_dump)
+    from types import SimpleNamespace
+
+    importer_json = SimpleNamespace(**vars(importer_module.json))
+    importer_json.dumps = forbidden_raw_private_dump
+    monkeypatch.setattr(importer_module, "json", importer_json)
     destination_path = tmp_path / "destination-deep-private.db"
     shutil.copyfile(chachanotes_template_db, destination_path)
     status = ImportStatus()

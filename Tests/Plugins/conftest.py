@@ -171,14 +171,14 @@ async def native_console(tmp_path, native_package):
         review = await service.review_install(
             package, selection=("skill:review",), workspace_id="workspace-a"
         )
-        await service.commit(review, "install-" + review.token)
+        await service.commit(review, review.operation_id)
         trust = await service.review_trust(review.installation_id)
-        await service.commit(trust, "trust-" + trust.token)
+        await service.commit(trust, trust.operation_id)
         if enable:
             active = await service.review_activation(
                 review.installation_id, workspace_id="workspace-a", intent="enabled"
             )
-            await service.commit(active, "activate-" + active.token)
+            await service.commit(active, active.operation_id)
         return review
 
     try:

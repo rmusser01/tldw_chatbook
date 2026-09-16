@@ -1161,3 +1161,80 @@ The written design incorporates all accepted section reviews:
 This is the approved implementation contract, not a report of implemented
 features or passing runtime tests. Written-spec review is complete; the delivery
 plan records the implementation and qualification work still required.
+
+## F7 implementation contract amendment (R29/R32/R37/R38, 2026-09-16)
+
+This amendment refines §§5.1/7/8.2/8.3/10 without adding another runtime owner.
+
+- Ordinary reviews carry a host-issued `operation_id`; commit requires exact original
+  review custody and equality. Request handles are `lr1.<32 lower-hex session nonce>.
+  <32 lower-hex request nonce>` (69 ASCII bytes). Durable identities are `pi1.<16
+  lower-hex generation>.<64 lower-hex binding digest>.<64 lower-hex nonce>.<64
+  lower-hex MAC>` (215 bytes), generations 1..2**63-1. The existing prepared key uses
+  the distinct `issued_operation` purpose and binds the expected closed result without
+  its ID as well as exact marker/snapshot/review/request/drain inputs. No arbitrary-ID
+  mutation overload remains. Original custody expires at 900 seconds; retries do not
+  extend it or abandon already owned cleanup/recovery.
+- `begin_disable`/`begin_uninstall` synchronously retain immutable target custody and
+  seal/cancel before worker access. `finish_revocation` shields the retained task.
+  Receipts distinguish stable request ID, optional durable ID and current cleanup.
+  Lookup is read-only: retained request nonce lookup is unambiguous, absence means
+  unavailable/expired, and restart never creates mutation custody from an ID.
+- Metadata v2 preserves the salt and names the digest of a fixed `legacy-cutover.json`,
+  authenticated with the existing committed key and `legacy_cutover` purpose. Its
+  closed payload records version, exact anchor and sorted unique ID/result-digest
+  entries; caps are 1,001 entries, 8 KiB/entry and 16 MiB/envelope. Before v2, a pending
+  map must be authenticated, its anchor reached through exact contiguous ancestry,
+  and every retained entry requalified before union/replacement. Owner-held durable
+  order is map, metadata, pruning; v2 never rebuilds or grows the map. No legacy bytes
+  are rewritten. New bootstrap uses v2 and an empty anchored map; reset archives it.
+- After every present artifact and unresolved branch is validated, unmatched hints
+  may expire only with a matching authenticated result/ID generation <= current or
+  exact fixed legacy-map membership. Newer/invalid/foreign/mismatched hints require
+  recovery. A restored old SQLite backup reconstructs current authority. Recovery
+  accepts an exact authenticated suffix endpoint but rejects disconnected present
+  material. Keep the 1,000 transition cap and SQLite-hint -> certificate -> intent ->
+  unreferenced snapshot pruning order. Live reviews and unresolved cleanup never
+  expire solely because receipt age elapsed.
+- Applying a review activates its exact reserved drain under the shared lifecycle
+  lock, without holding that lock while waiting. Existing admitted work may finish;
+  new children/Stop continuations cannot extend it. Pre-prepare cancellation releases
+  only that ticket's admission fence. Explicit work cancellation transfers exact
+  callbacks and retains actual completion evidence. Replacement roots are disjoint
+  from initial immutable packages. Current selection intersected with previously
+  supported compatible components supplies the update maximum; new/newly supported
+  components remain unselected. Rollback performs fresh current-policy review.
+- Closed managed continuation V2 uses `archive-pin-v1` purpose-separated authentication
+  with the existing committed key. The envelope binds namespace, run, durable owner,
+  entire checkpoint body digest, exact revision, actual per-component definitions and
+  required closure, mappings/configuration/credential bindings, scoped generations,
+  and applicable root ownership/generations with qualified_none/known/unknown coverage.
+  Empty roots alone do not prove absence of data use. Seal each final store-resolved
+  event before the existing write/dispatch barrier under captured admitted custody.
+  Validate before context assembly and under fresh admission; never restore old leases,
+  approvals or tokens. Same-session live generations also constrain reuse.
+- V1/pinless exact recovery has zero managed admission for tools, rules/context and
+  children. Malformed V2 or foreign/remapped owner refuses exact managed recovery.
+  Ordinary history/new turns and standalone V1 remain available. Immutable fleet pins
+  follow existing transcript eviction, count toward its 200,000-character budget and
+  remain memory-only. Envelopes cap at 256 KiB inside 8 MiB checkpoints, with 64
+  installations, 512 components/installation, 1,024 total and 256 roots; never truncate.
+
+#### F7 bounded retention operation (R40/R42)
+
+Internal `retain` reviews freeze the exact inactive revision list into the issued
+mutation identity, use a distinct nonce and the same prepare/commit/certificate/
+marker pipeline. Current references and all unresolved owners are protected.
+The full current snapshot first removes eligible references; only then may exact
+owned package roots be removed. Failed removal remains cleanup pending. Existing
+receipt metadata supplies advisory first-observed dates without authorizing deletion.
+Quota includes protected/unowned cache and staging bytes. The staging cleanup seam
+requires reconciled owner custody, a terminal producer, original directory identity,
+no recovery reference and age at least 24 hours. I3/I4 qualify their future producers.
+
+R44 cleanup custody lives in the existing authenticated `retain` operation result:
+`retired_revisions` is required only for this kind, has 1–1,000 exact records and a
+1 MiB canonical UTF-8 cap. Each record freezes revision digest, immutable path,
+directory device/inode and enclosing owner-root/anchor device/inode before issuance.
+No fields are added to historical results. Pending files protect this evidence;
+restart retries recheck current references, owners and exact physical containment.

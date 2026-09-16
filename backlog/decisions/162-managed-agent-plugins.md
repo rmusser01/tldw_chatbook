@@ -142,3 +142,65 @@ authenticating registry presence does not imply that a revision was reviewed.
 Tombstones survive removal of installation rows. Closed authority mappings and
 operation results contain references and stable authority generations, not token
 material or live process state.
+
+### F7 retry, retention and archived-resume amendment (2026-09-16)
+
+Reviewed updates reserve a review-bound drain ticket, activated only when applying.
+The shared lifecycle owner closes fresh admission and child/Stop continuations while
+already admitted work retains normal current-authority checks. Waiting, cancelling
+the proposal before prepare, and explicitly cancelling its captured work are distinct.
+Replacement packages occupy a disjoint owned revision root; historical initial roots
+and authenticated snapshot bytes remain immutable. Rollback uses current policy,
+selection intersection and fresh review, and reports mutable-data compatibility Unknown.
+
+R29 permits recovery from a contiguous authenticated suffix ending at its exact old
+marker tuple. Every present disconnected artifact still refuses. Retire hints before
+certificate, intent and orphan snapshot, oldest first; current, unresolved, live review,
+leased and current reconstruction material stay protected. Compact package references
+only through the same authenticated commit before removing bytes. Reset receipts and
+archives remain separately protected.
+
+R32/R37 require host-issued generation/request/result-bound mutation identities.
+An immutable 900-second session request handle seals and cancels before worker access;
+the existing worker attaches one authenticated durable review ID. Issuance is neither
+permission nor commitment. Exact retained lookup never starts a mutation; expired or
+changed requests refuse replay. Authenticate all protected evidence before classifying
+unmatched SQLite hints: verified old IDs may expire, newer uncertified IDs still require
+recovery even when their intent is additionally lost. A fixed authenticated legacy map
+(at most 1,001 entries, 8 KiB per entry, 16 MiB total) precedes metadata-v2 cutover and
+any pruning. A pending v1 map may change only after exact ancestor/entry requalification;
+the durable v2 map is immutable. Salt, historical snapshots and key derivation stay intact.
+
+R38 extends ADR-063's existing continuation field with a closed V2 managed-resume
+pin authenticated for the exact namespace, durable owner and entire checkpoint.
+The existing producer seals each store-resolved checkpoint before write/dispatch.
+Resume verifies revision, actual component definitions/closure, scope generations,
+mappings and qualified data coverage before context and again at fresh admission.
+V1/pinless recovery has a zero-managed ceiling; foreign/remapped pins refuse exact
+managed resume. Historical context and explicit new runs remain ordinary work.
+Retained fleet transcripts hold an immutable host pin within their existing memory
+budget, with no restart resurrection or separate transcript authority. Caps are
+256 KiB per envelope inside 8 MiB checkpoints, 64 installations, 512 components per
+installation/1,024 total, and 256 root references. Unknown data ownership refuses exact
+resume; F8 and M4 must qualify their actual data and connection owners through this seam.
+
+### F7 retention compaction (R40/R42)
+
+Owned retention uses a closed `retain` operation and the existing commit pipeline.
+Its original review and authenticated issuance bind the exact inactive revision set;
+its nonce is distinct from a triggering update/request. It changes no current
+selection, trust, alias, mapping or grant. Advisory first-observed revision dates
+use existing receipt metadata and do not establish ownership. Current, live,
+unknown-owner and unresolved recovery references remain protected. Reference
+compaction commits before descriptor-qualified removal; file failures are reported
+as cleanup pending and can be retried from retained authenticated compaction evidence.
+The 2 GiB package/cache/staging quota counts unqualified material. Staging cleanup
+requires explicit reconciled producer ownership, terminal status and the original
+physical directory identity after 24 hours; mtime or absent leases alone never qualify.
+
+R44: only `retain` results carry `retired_revisions`: 1–1,000 closed entries,
+at most 1 MiB canonical UTF-8 aggregate, containing exact digest, owned path and
+original physical root/anchor/directory identities frozen before issuance. The
+existing authenticated result is restart cleanup custody. Other operation kinds
+reject that field; historical absent fields preserve exact bytes. Pending cleanup
+keeps its transition evidence protected until exact owned removal/absence is proven.

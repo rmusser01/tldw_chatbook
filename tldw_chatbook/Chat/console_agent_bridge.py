@@ -5442,11 +5442,41 @@ class ConsoleAgentBridge:
         plugin_service = getattr(
             getattr(self._skills_service, "local_service", None), "plugin_service", None
         )
-        if plugin_service is not None and any(
-            item.get("plugin_owned") for item in context.get("available_skills", ())
+        if restore_provider_continuation is not None:
+            if plugin_service is not None:
+                context = asyncio.run(
+                    plugin_service.resume_maximum(
+                        context,
+                        restore_provider_continuation,
+                        self._store._session_or_raise(
+                            session_id
+                        ).persisted_conversation_id
+                        or "",
+                        assistant_message_id,
+                    )
+                )
+            elif restore_provider_continuation.schema_version == 2:
+                raise PermissionError("Managed continuation service unavailable.")
+            else:
+                context = dict(context, plugin_resume_constraint="zero")
+                context["available_skills"] = [
+                    row
+                    for row in context.get("available_skills", ())
+                    if not row.get("plugin_owned")
+                ]
+                context["context_text"] = "\n".join(
+                    str(row.get("name", "")) for row in context["available_skills"]
+                )
+        if plugin_service is not None and (
+            context.get("plugin_resume_constraint") is not None
+            or any(
+                item.get("plugin_owned") for item in context.get("available_skills", ())
+            )
         ):
             context = asyncio.run(
-                plugin_service.admit(context, context["plugin_run_id"])
+                plugin_service.admit(
+                    context, context.get("plugin_run_id") or "pending:" + uuid4().hex
+                )
             )
         plugin_entries = tuple(
             row
@@ -6659,9 +6689,10 @@ class ConsoleAgentBridge:
             )
             message_inbox = self.message_store.get_inbox(progress_owner_id)
         plugin_root_id = ""
+        plugin_producer_pin = None
 
         def bind_plugin_root(actual_run_id: str) -> None:
-            nonlocal plugin_root_id
+            nonlocal plugin_root_id, plugin_producer_pin
             plugin_root_id = actual_run_id
             if plugin_entries:
                 if plugin_cancel_root is None:
@@ -6675,8 +6706,23 @@ class ConsoleAgentBridge:
                         revoke_approvals(actual_run_id)
 
                 plugin_service.bind_run(plugin_entries, actual_run_id, cancel_root)
+                if plugin_producer_pin is None:
+                    # Capture capabilities at real binding. The store finalizer
+                    # binds its durable conversation ID only after persisting it.
+                    conversation_id = (
+                        self._store._session_or_raise(
+                            session_id
+                        ).persisted_conversation_id
+                        or session_id
+                    )
+                    plugin_producer_pin = plugin_service.capture_resume_pin(
+                        plugin_entries,
+                        actual_run_id,
+                        conversation_id,
+                        assistant_message_id,
+                    )
 
-        def bind_plugin_actor() -> None:
+        def bind_plugin_actor():
             from tldw_chatbook.Agents.run_context import current_run_actor
 
             actor = current_run_actor()
@@ -6685,7 +6731,7 @@ class ConsoleAgentBridge:
             actual_run_id = actor.run_id
             if actor.kind == "primary":
                 bind_plugin_root(actual_run_id)
-                return
+                return plugin_entries
             handle = next(
                 (
                     item
@@ -6709,14 +6755,41 @@ class ConsoleAgentBridge:
                     cancel_inline_child,
                     parent_run_id=actor.parent_run_id,
                 )
-                return
+                return plugin_entries
+            ceiling = handle.managed_resume_ceiling
+            if handle.managed_resume_handle_id is not None:
+                ceiling = plugin_service.fleet_resume_ceiling(
+                    handle.managed_resume_pin,
+                    handle.managed_resume_run_id,
+                    handle.managed_resume_handle_id,
+                    plugin_entries,
+                )
+            child_entries = plugin_service.constrain_entries(plugin_entries, ceiling)
             plugin_service.bind_run(
-                plugin_entries,
+                child_entries,
                 actual_run_id,
                 lambda: service.cancel_subagent(handle.handle_id),
                 handle.handle_id,
                 parent_run_id=actor.parent_run_id,
+                component_ceiling=ceiling,
             )
+            if handle.managed_pin is None:
+                pin = plugin_service.capture_resume_pin(
+                    child_entries,
+                    actual_run_id,
+                    session_id,
+                    handle.handle_id,
+                )
+                service._fleet.set_managed_custody(
+                    handle.handle_id,
+                    required=bool(plugin_entries),
+                    pin=pin,
+                    resume_ceiling=ceiling,
+                    resume_pin=handle.managed_resume_pin,
+                    resume_run_id=handle.managed_resume_run_id,
+                    resume_handle_id=handle.managed_resume_handle_id,
+                )
+            return child_entries
 
         def plugin_run_terminal(actual_run_id: str) -> None:
             if plugin_entries:
@@ -6725,9 +6798,10 @@ class ConsoleAgentBridge:
                 on_run_terminal(actual_run_id)
 
         def plugin_checked_chat_call(**kwargs):
+            active_plugin_entries = ()
             if plugin_entries:
-                bind_plugin_actor()
-                plugin_service.check_entries_from_agent(plugin_entries)
+                active_plugin_entries = bind_plugin_actor()
+                plugin_service.check_entries_from_agent(active_plugin_entries)
                 from tldw_chatbook.Plugins.context import check_send_context
 
                 kwargs["messages_payload"] = check_send_context(
@@ -6735,8 +6809,44 @@ class ConsoleAgentBridge:
                 )
             result = adapter.chat_call(**kwargs)
             if plugin_entries:
-                plugin_service.check_entries_from_agent(plugin_entries)
+                plugin_service.check_entries_from_agent(active_plugin_entries)
             return result
+
+        def finalize_managed_checkpoint(
+            checkpoint, conversation_id, message_id, run_id
+        ):
+            if plugin_producer_pin is None or run_id != plugin_root_id:
+                raise PermissionError("Managed continuation producer is unavailable.")
+            pin = json.loads(plugin_producer_pin)
+            session = self._store._session_or_raise(session_id)
+            if (
+                session.persisted_conversation_id != conversation_id
+                or message_id != assistant_message_id
+            ):
+                raise PermissionError("Managed continuation durable owner changed.")
+            if pin["conversation_id"] not in {session_id, conversation_id}:
+                raise PermissionError("Managed continuation original owner changed.")
+            pin["conversation_id"] = conversation_id
+            return plugin_service.seal_resume_checkpoint(
+                json.dumps(pin),
+                checkpoint,
+                conversation_id,
+                message_id,
+            )
+
+        def persist_continuation(event):
+            if (
+                plugin_entries
+                and event.context.durability == "persistent"
+                and event.context.agent_kind == "primary"
+            ):
+                bind_plugin_root(event.context.run_id)
+            return self._store.persist_provider_continuation_event(
+                event,
+                checkpoint_finalizer=(
+                    finalize_managed_checkpoint if plugin_entries else None
+                ),
+            )
 
         service = AgentService(
             self._db,
@@ -6774,9 +6884,20 @@ class ConsoleAgentBridge:
             on_tool_terminal=on_tool_terminal,
             on_tool_result_terminal=on_tool_result_terminal,
             on_run_terminal=plugin_run_terminal if plugin_entries else on_run_terminal,
-            persist_provider_continuation=(
-                self._store.persist_provider_continuation_event
+            managed_child_required=bool(plugin_entries),
+            managed_child_resume=(
+                (
+                    lambda retained: plugin_service.fleet_resume_ceiling(
+                        retained.managed_pin,
+                        retained.run_id,
+                        retained.handle_id,
+                        plugin_entries,
+                    )
+                )
+                if plugin_service is not None
+                else None
             ),
+            persist_provider_continuation=persist_continuation,
             expand_provider_continuation=expand_provider_continuation,
             prepare_provider_continuation_request=bool(
                 continuation_target is not None

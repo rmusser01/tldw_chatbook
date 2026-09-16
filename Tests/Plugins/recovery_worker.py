@@ -32,6 +32,18 @@ def main():
             raise RuntimeError("child XDG isolation missing before import")
     if not config.is_file():
         raise RuntimeError("explicit child profile config required")
+    if (
+        Path(os.environ["HOME"]) != root / "home"
+        or os.environ["PYTHON_KEYRING_BACKEND"] != "keyring.backends.null.Keyring"
+    ):
+        raise RuntimeError("child home/keyring isolation missing")
+    import socket
+
+    def refuse_network(*args, **kwargs):
+        raise RuntimeError("network disabled in controlled plugin child")
+
+    socket.socket.connect = refuse_network
+    socket.create_connection = refuse_network
     worktree = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(worktree))
     result = Future()
@@ -85,7 +97,7 @@ def main():
                                     {
                                         "barrier": phase,
                                         "pid": os.getpid(),
-                                        "operation_id": args.operation,
+                                        "operation_id": review.operation_id,
                                     }
                                 ),
                                 flush=True,
@@ -93,7 +105,7 @@ def main():
                             threading.Event().wait()
 
                     coordinator.progress = progress
-                    receipts = (await coordinator.commit(review, args.operation),)
+                    receipts = (await coordinator.commit(review, review.operation_id),)
                 else:
                     receipts = await coordinator.recover()
                 snapshot = authority.verify_current()

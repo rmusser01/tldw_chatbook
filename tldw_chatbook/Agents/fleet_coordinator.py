@@ -117,6 +117,12 @@ class FleetHandle:
     # make a previously recoverable transcript unavailable.
     undelivered_steering: int = 0
     can_resume: bool = False
+    managed_required: bool = False
+    managed_pin: str | None = dataclasses.field(default=None, repr=False)
+    managed_resume_ceiling: object = dataclasses.field(default=None, repr=False)
+    managed_resume_pin: str | None = dataclasses.field(default=None, repr=False)
+    managed_resume_run_id: str | None = None
+    managed_resume_handle_id: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -174,6 +180,8 @@ class RetainedTranscript:
     retained_at: float
     steering_with_causes: tuple[tuple[str, str, str | None], ...] = ()
     isolation: str | None = None
+    managed_required: bool = False
+    managed_pin: str | None = dataclasses.field(default=None, repr=False)
 
 
 class FleetCoordinator:
@@ -328,6 +336,33 @@ class FleetCoordinator:
 
         with self._lock:
             self._fenced = False
+
+    def set_managed_custody(
+        self,
+        handle_id: str,
+        *,
+        required: bool,
+        pin: str | None = None,
+        resume_ceiling=None,
+        resume_pin=None,
+        resume_run_id=None,
+        resume_handle_id=None,
+    ) -> None:
+        """Attach host-only restrictions to this existing live execution owner."""
+        with self._lock:
+            handle = self._handles.get(handle_id)
+            if handle is None or handle_id not in self._live_ids:
+                raise ValueError("managed fleet owner unavailable")
+            if handle.managed_pin is not None and pin != handle.managed_pin:
+                raise ValueError("managed fleet pin already captured")
+            handle.managed_required = required
+            handle.managed_pin = pin
+            handle.managed_resume_ceiling = (
+                None if resume_ceiling is None else dict(resume_ceiling)
+            )
+            handle.managed_resume_pin = resume_pin
+            handle.managed_resume_run_id = resume_run_id
+            handle.managed_resume_handle_id = resume_handle_id
 
     def attach_run(self, handle_id: str, run_id: str) -> None:
         """Attach a run ID to an existing handle.
@@ -627,6 +662,11 @@ class FleetCoordinator:
             handle,
             queued_steering=len(self._steering.get(handle.handle_id, ())),
             can_resume=handle.handle_id in self._retained,
+            managed_resume_ceiling=(
+                None
+                if handle.managed_resume_ceiling is None
+                else dict(handle.managed_resume_ceiling)
+            ),
         )
 
     @property
@@ -753,7 +793,7 @@ class FleetCoordinator:
             return False
         if handle.status not in RETAINED_TRANSCRIPT_STATUSES:
             return False
-        if messages is None:
+        if messages is None or handle.managed_required and handle.managed_pin is None:
             return False
         if self._retained_transcripts_cap <= 0:
             return False
@@ -777,6 +817,11 @@ class FleetCoordinator:
                     {
                         "messages": messages,
                         "steering": self._steering.get(handle_id, ()),
+                        **(
+                            {"managed_pin": handle.managed_pin}
+                            if handle.managed_pin is not None
+                            else {}
+                        ),
                     },
                     default=retained_json_value,
                 )
@@ -802,6 +847,8 @@ class FleetCoordinator:
             retained_at=self._clock(),
             steering_with_causes=steering_with_causes,
             isolation=handle.isolation,
+            managed_required=handle.managed_required,
+            managed_pin=handle.managed_pin,
         )
         self._evict_over_cap_locked()
         return True
