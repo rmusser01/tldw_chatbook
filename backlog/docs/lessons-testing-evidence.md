@@ -1,5 +1,14 @@
 # Lessons: what counts as evidence a change works
 
+## Range comparisons do not prove finite input
+
+**TASK-32748, 2026-09-17.** Existing out-of-range generation-profile tests passed,
+but entering `nan` as Temperature reached the real Settings mutation boundary.
+`validate_number_range` accepted it because both lower/upper comparisons were
+false. A mounted regression proved the write before a local finite guard closed
+the Settings path. This does not qualify every caller of the shared validator.
+Test non-finite input through the boundary being reviewed and assert no write;
+ordinary min/max cases alone do not establish that contract.
 
 ## A focused transcript row can remain below its outer viewport
 

@@ -115,9 +115,12 @@
 
 /* TASK-32593: a 24-column label leaves only seven editable cells in the
    default 80-column workbench. Keep the sidebar and complete labels, and
-   spend vertical space on the direct Connect/Network field rows instead.
+   spend vertical space on the Connect/Network field rows instead.
+   TASK-32748 includes the nested Generation defaults rows, where the same
+   fixed label otherwise leaves only the final digit of Temperature visible.
    Existing controls retain their compact border and focus contracts. */
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row,
 .settings-workbench-compact #settings-network-card > .settings-input-row {
     layout: vertical;
     height: auto;
@@ -126,6 +129,7 @@
 }
 
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label {
     width: $ds-width-full;
     height: $ds-control-height-compact;
@@ -134,6 +138,8 @@
 
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > Input,
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > Input,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > Select,
 .settings-workbench-compact #settings-network-card > .settings-input-row > Input,
 .settings-workbench-compact #settings-network-card > .settings-input-row > Select {
     width: $ds-width-full;

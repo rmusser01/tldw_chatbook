@@ -1,0 +1,83 @@
+....FFFFFFFF                                                             [100%]
+=================================== FAILURES ===================================
+_ test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-openai] _
+Tests/UI/test_settings_generation_default_journeys.py:95: in test_generation_controls_paint_labels_values_and_visible_keyboard_focus
+    assert widget.value in _painted_text(host.screen, widget)
+E   AssertionError: assert '0.2' in '█ 2  '
+E    +  where '0.2' = Input(id='settings-model-profile-temperature', classes='settings-compact-input -valid').value
+E    +  and   '█ 2  ' = _painted_text(SettingsScreen(classes='shell-header-compact'), Input(id='settings-model-profile-temperature', classes='settings-compact-input -valid'))
+E    +    where SettingsScreen(classes='shell-header-compact') = ProviderSettingsHarness(title='ProviderSettingsHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'}).screen
+_ test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-anthropic] _
+Tests/UI/test_settings_generation_default_journeys.py:95: in test_generation_controls_paint_labels_values_and_visible_keyboard_focus
+    assert widget.value in _painted_text(host.screen, widget)
+E   AssertionError: assert '0.2' in '█ 2  '
+E    +  where '0.2' = Input(id='settings-model-profile-temperature', classes='settings-compact-input -valid').value
+E    +  and   '█ 2  ' = _painted_text(SettingsScreen(classes='shell-header-compact'), Input(id='settings-model-profile-temperature', classes='settings-compact-input -valid'))
+E    +    where SettingsScreen(classes='shell-header-compact') = ProviderSettingsHarness(title='ProviderSettingsHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'}).screen
+_ test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-openai] _
+Tests/UI/test_settings_generation_default_journeys.py:95: in test_generation_controls_paint_labels_values_and_visible_keyboard_focus
+    assert widget.value in _painted_text(host.screen, widget)
+E   AssertionError: assert '0.2' in '█ 2  '
+E    +  where '0.2' = Input(id='settings-model-profile-temperature', classes='settings-compact-input -valid').value
+E    +  and   '█ 2  ' = _painted_text(SettingsScreen(classes='shell-header-compact'), Input(id='settings-model-profile-temperature', classes='settings-compact-input -valid'))
+E    +    where SettingsScreen(classes='shell-header-compact') = ProviderSettingsHarness(title='ProviderSettingsHarness', classes={'-light-mode', '-theme-textual-light'}, pseudo_classes={'light', 'nocolor', 'focus'}).screen
+_ test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-anthropic] _
+Tests/UI/test_settings_generation_default_journeys.py:95: in test_generation_controls_paint_labels_values_and_visible_keyboard_focus
+    assert widget.value in _painted_text(host.screen, widget)
+E   AssertionError: assert '0.2' in '█ 2  '
+E    +  where '0.2' = Input(id='settings-model-profile-temperature', classes='settings-compact-input -valid').value
+E    +  and   '█ 2  ' = _painted_text(SettingsScreen(classes='shell-header-compact'), Input(id='settings-model-profile-temperature', classes='settings-compact-input -valid'))
+E    +    where SettingsScreen(classes='shell-header-compact') = ProviderSettingsHarness(title='ProviderSettingsHarness', classes={'-light-mode', '-theme-textual-light'}, pseudo_classes={'light', 'nocolor', 'focus'}).screen
+_ test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-dark] _
+Tests/UI/test_settings_generation_default_journeys.py:140: in test_generation_keyboard_validation_revert_save_clear_and_return
+    assert not screen.query_one(DISCLOSURE, Collapsible).collapsed
+E   AssertionError: assert not True
+E    +  where True = Collapsible(id='settings-generation-defaults', classes='-collapsed').collapsed
+E    +    where Collapsible(id='settings-generation-defaults', classes='-collapsed') = query_one('#settings-generation-defaults', Collapsible)
+E    +      where query_one = SettingsScreen(classes='shell-header-normal').query_one
+_ test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light] _
+Tests/UI/test_settings_generation_default_journeys.py:140: in test_generation_keyboard_validation_revert_save_clear_and_return
+    assert not screen.query_one(DISCLOSURE, Collapsible).collapsed
+E   AssertionError: assert not True
+E    +  where True = Collapsible(id='settings-generation-defaults', classes='-collapsed').collapsed
+E    +    where Collapsible(id='settings-generation-defaults', classes='-collapsed') = query_one('#settings-generation-defaults', Collapsible)
+E    +      where query_one = SettingsScreen(classes='shell-header-normal').query_one
+_ test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-dark] _
+Tests/UI/test_settings_generation_default_journeys.py:140: in test_generation_keyboard_validation_revert_save_clear_and_return
+    assert not screen.query_one(DISCLOSURE, Collapsible).collapsed
+E   AssertionError: assert not True
+E    +  where True = Collapsible(id='settings-generation-defaults', classes='-collapsed').collapsed
+E    +    where Collapsible(id='settings-generation-defaults', classes='-collapsed') = query_one('#settings-generation-defaults', Collapsible)
+E    +      where query_one = SettingsScreen(classes='shell-header-compact').query_one
+_ test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-light] _
+Tests/UI/test_settings_generation_default_journeys.py:140: in test_generation_keyboard_validation_revert_save_clear_and_return
+    assert not screen.query_one(DISCLOSURE, Collapsible).collapsed
+E   AssertionError: assert not True
+E    +  where True = Collapsible(id='settings-generation-defaults', classes='-collapsed').collapsed
+E    +    where Collapsible(id='settings-generation-defaults', classes='-collapsed') = query_one('#settings-generation-defaults', Collapsible)
+E    +      where query_one = SettingsScreen(classes='shell-header-compact').query_one
+============================= slowest 25 durations =============================
+38.25s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-dark]
+38.00s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-light]
+36.67s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light]
+36.05s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-dark]
+16.15s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-light-openai]
+15.42s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-dark-openai]
+14.73s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-light-anthropic]
+14.06s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-dark-anthropic]
+12.05s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-openai]
+12.00s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-anthropic]
+11.88s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-anthropic]
+11.81s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-openai]
+
+(13 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-openai]
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-anthropic]
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-openai]
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-anthropic]
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-dark]
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light]
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-dark]
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-light]
+8 failed, 4 passed in 261.82s (0:04:21)

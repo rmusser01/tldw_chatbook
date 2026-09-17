@@ -4920,7 +4920,7 @@ async def test_settings_active_category_uses_explicit_nav_marker():
 def test_settings_active_category_focus_style_keeps_label_readable():
     css_path = (
         Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+        / "tldw_chatbook/css/features/_settings.tcss"
     )
     css = css_path.read_text()
     match = re.search(
@@ -4938,7 +4938,7 @@ def test_settings_active_category_focus_style_keeps_label_readable():
 def test_settings_action_button_focus_style_keeps_label_readable():
     css_path = (
         Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+        / "tldw_chatbook/css/features/_settings.tcss"
     )
     css = css_path.read_text()
     match = re.search(
@@ -4957,7 +4957,7 @@ def test_settings_action_button_focus_style_keeps_label_readable():
 def test_settings_shell_button_focus_does_not_use_heavy_outline():
     css_path = (
         Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+        / "tldw_chatbook/css/features/_settings.tcss"
     )
     css = css_path.read_text()
     match = re.search(
@@ -4975,13 +4975,16 @@ def test_settings_shell_button_focus_does_not_use_heavy_outline():
 def test_settings_invalid_compact_fields_keep_focused_text_readable():
     # ADR-161 task 9: the compact-input half of the two invalid-state rules
     # moved (tokenized) to the forms owning sheet; the compact-select half
-    # stays in the agentic monolith. The contract is identical on both
+    # lives in the Settings feature sheet. The contract is identical on both
     # sides, so each owning sheet is checked for its own half.
-    css_root = Path(__file__).resolve().parents[2] / "tldw_chatbook/css/components"
+    css_root = Path(__file__).resolve().parents[2] / "tldw_chatbook/css"
     for sheet_name, selector in (
-        ("_forms.tcss", r"\.settings-compact-input\.settings-invalid-input:focus"),
         (
-            "_agentic_terminal.tcss",
+            "components/_forms.tcss",
+            r"\.settings-compact-input\.settings-invalid-input:focus",
+        ),
+        (
+            "features/_settings.tcss",
             r"\.settings-compact-select\.settings-invalid-input:focus",
         ),
     ):
@@ -11934,12 +11937,12 @@ def test_compact_inputs_carry_rest_edge_and_focus_edge():
     the carrier) and a thick accent edge plus the distinct focus
     background when focused. Left borders cost a column, never a row, so
     the dense one-row forms keep their height."""
-    src = (_CONVENTION_CSS_ROOT / "components" / "_agentic_terminal.tcss").read_text()
+    src = (_CONVENTION_CSS_ROOT / "components" / "_forms.tcss").read_text()
     rest = re.search(r"\.settings-compact-input \{[^}]*\}", src)
     focus = re.search(r"\.settings-compact-input:focus \{[^}]*\}", src)
     assert rest and focus
     assert "border-left: solid $ds-control-edge;" in rest.group(0)
-    assert "height: 1;" in rest.group(0)
+    assert "height: $ds-control-height-compact;" in rest.group(0)
     assert "border-left: thick $ds-action-focus;" in focus.group(0)
 
 

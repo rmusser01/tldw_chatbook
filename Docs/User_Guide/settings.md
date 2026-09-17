@@ -205,6 +205,14 @@ keeping the saved list. A failed save or clear keeps the checked rows for retry.
 Changing provider, endpoint or credentials clears the old results; a delayed
 operation cannot replace the new form’s results or Model value.
 
+Open **Generation defaults** to edit overrides for the selected provider and
+model. Supported controls remain reachable with **Tab**; unsupported controls
+are hidden. Leave an override blank and save to remove it and inherit the
+fallback. Invalid or non-finite numbers keep the draft for correction. **Revert**
+lets you keep editing or discard the draft. The section remembers whether
+you opened or closed it while moving between Settings categories; resizing or
+editing keeps the active generation field in view.
+
 Automatic refresh shows whether changes are saving, saved, or could not be saved.
 If a write fails, your choices remain visible when you leave this category and
 return; choose **Retry** after making the config file writable. The interval

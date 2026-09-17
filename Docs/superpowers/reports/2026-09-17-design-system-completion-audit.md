@@ -33,9 +33,9 @@ implementation, deviations, baseline failures and native gallery limitations.
 | Dark/light gallery makes component rendering reviewable | `Tests/UI/snapshots/pattern_gallery/{dark,light}.svg`; layout/snapshot tests; historical native gallery evidence | Implemented; not a claim of visual parity for every feature |
 | Generated CSS and boot budget remain valid | Bundle sync, selector/comment integrity and boot byte tests; 634,050-byte ceiling, 600,000-byte anti-vacuity floor | Must stay green after every style change and integration |
 
-Fresh verification for this checkpoint: 193 adjacent/governance cases pass in the
-[TASK-32746 regression receipt](../qa/2026-09-17-settings-model-catalog/regressions.txt).
-Boot CSS is 616,683 bytes, below the unchanged 634,050-byte limit.
+Fresh verification for this checkpoint: 109 adjacent/governance cases pass in the
+[TASK-32748 regression receipt](../qa/2026-09-17-settings-generation-defaults/regressions.txt).
+Boot CSS is 616,786 bytes, below the unchanged 634,050-byte limit.
 
 The approved Python property set is `background`, `color`, `border*`, `width`,
 `height`, `padding*`, `margin*`, and `opacity*`. Min/max dimensions and display/
@@ -57,9 +57,10 @@ or permission configuration.
 | Settings: provider editing and saved defaults | TASK-32724 and TASK-214: keyboard Save/Revert, ownership, return and real private config persistence | Generation/provider availability are not qualified by these checks |
 | Settings: model discovery | TASK-32739: checked-row retention, save/clear feedback, stale completion ownership | External provider availability is outside this UI slice |
 | Settings: automatic refresh | TASK-32746: ordered instant saves, validation, retained choices, truthful Retry, compact labels | Qualified by 223 targeted checks and four native journeys; [QA receipt](../qa/2026-09-17-settings-model-catalog/README.md) states fault-injection and backend limits |
+| Settings: generation defaults | TASK-32748: finite validation, retained disclosure/draft, visible compact controls and same-field focus after reflow | Qualified by 173 distinct targeted checks and four final native journeys; [QA receipt](../qa/2026-09-17-settings-generation-defaults/README.md) states provider and failure-injection limits |
 | Remaining Settings categories and modal patterns | Prior compact Providers/Network geometry is qualified, not all category behavior | Inventory and review Overview, Web Search, Speech/TTS, Appearance/Theme/Splash, Storage, Workspaces, Tool Profiles, Privacy, Network, Personal Context, Console Behavior, Library/RAG, Artifacts, Personas, Skills, Schedules, Watchlists, Workflows, MCP/ACP defaults, Diagnostics/About, Advanced Config, Internal Prompts, Image/Video Generation and Agents |
 | Roleplay, Watchlists, Artifacts, Schedules, Workflows, MCP, ACP, Lab, Logs, Research, Meetings | No whole-destination completion claim in this workstream | Bounded keyboard/state/resize/theme review, fix confirmed defects, and record representative native evidence |
-| Current dev integration | PR saved; earlier dev reconciliation is documented | Resolve current conflicts, preserve upstream ownership, rebuild, run affected checks, inspect integrated native app |
+| Current dev integration | PR saved; earlier dev reconciliation is documented. Fresh dev is `1c0327b3bb3d95b61e3e1b9a83b30e7030453ad6` | Next step: reconcile 71 incoming commits. Read-only preflight at `94eea53465` found 12 conflict paths; recheck after TASK-32748 is committed, preserve upstream ownership, rebuild, run affected checks and inspect the integrated native app |
 
 ## How to close the workstream
 
@@ -73,6 +74,7 @@ A full repository sweep requires explicit user opt-in.
 Before declaring completion, reconcile every remaining row with linked evidence,
 check that PR integration is reviewable, and report any documented backend limits.
 Do not substitute a Done parent task, passing governance, or a single successful
-native journey for the broader review the user approved. The next bounded review
-after automatic refresh is provider generation defaults; other categories and
-destinations remain visible in this ledger until assessed.
+native journey for the broader review the user approved. Current-dev integration
+now comes before additional feature reviews: the fresh preflight shows conflicts
+in Console, Library, styles, tests and evidence documentation. Other Settings
+categories and destinations remain visible in this ledger until assessed.

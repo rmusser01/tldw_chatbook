@@ -1231,3 +1231,29 @@ Existing ADR-020/031/150/161 apply. The guide and
 the verified scope and remaining work. Next bounded review: provider generation
 defaults, followed by remaining Settings categories and destination workflows.
 Current-dev integration remains open; no full suite or merge into dev ran.
+
+## Generation-default keyboard and persistence review — TASK-32748
+
+The [bounded review](../qa/2026-09-17-settings-generation-defaults/README.md)
+reproduced clipped compact values, lost disclosure state, focused fields pushed
+outside the viewport by resize/dirty-copy growth, and `nan` passing range checks.
+The existing Settings owner now retains disclosure state, rejects non-finite
+values before mutation and reveals the same attached focused field after
+reflow. Scoped token-backed rows keep compact labels and values complete.
+
+All **173 distinct targeted cases** pass, including 15 new production-CSS
+journeys. Five stale static checks were reproduced against HEAD inputs and
+updated to the canonical stylesheet owners. No lint diagnostics were added.
+Independent review's callback attachment guard was addressed; final review found
+no actionable defect. Boot CSS remains within the unchanged budget.
+
+Four final private native journeys passed in dark/light at 170×48 and 80×24,
+including real saves and blank removal after injected failed-writer results.
+Eight captures were inspected; 11 databases, default-file isolation, normal
+shutdown and process absence passed lifecycle checks. The receipt limits the
+fault injection and provider claims; no external generation was requested.
+
+Existing ADR-006/031/150/161 apply. The guide, finite-input lesson and full
+completion ledger were updated. Current dev has 71 incoming commits and the
+read-only merge preview found 12 conflict paths, so integration comes next before
+additional Settings/destination reviews. No full suite or merge into dev ran.

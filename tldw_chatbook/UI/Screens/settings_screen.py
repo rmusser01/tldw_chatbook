@@ -2906,6 +2906,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
+        self._generation_defaults_collapsed = True
         self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
@@ -8031,6 +8032,12 @@ class SettingsScreen(BaseAppScreen):
             self._update_guided_action_widgets()
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             self._update_provider_return_widgets()
+            if self.focused is not None and str(self.focused.id or "").startswith(
+                "settings-model-profile-"
+            ):
+                # Dirty/readiness copy above the disclosure can grow while
+                # typing and push the active field past the compact fold.
+                self._reveal_settings_focus_after_refresh()
         if category is SettingsCategoryId.IMAGE_GENERATION:
             # Image Gen's Save/Revert live INSIDE the panel (not the generic
             # top guided-action bar, excluded above like THEME/INTERNAL_
@@ -11520,7 +11527,9 @@ class SettingsScreen(BaseAppScreen):
         text = "" if value is None else str(value).strip()
         if not text:
             return ""
-        if not validate_number_range(text, min_val=min_value, max_val=max_value):
+        if not validate_number_range(
+            text, min_val=min_value, max_val=max_value
+        ) or not math.isfinite(float(text)):
             raise ValueError(
                 f"{label} must be between {min_value:.1f} and {max_value:.1f}."
             )
@@ -16252,7 +16261,7 @@ class SettingsScreen(BaseAppScreen):
             # Connect block in a collapsed-by-default disclosure.
             with Collapsible(
                 title="Generation defaults",
-                collapsed=True,
+                collapsed=self._generation_defaults_collapsed,
                 id="settings-generation-defaults",
             ):
                 yield Static(
@@ -23114,6 +23123,10 @@ class SettingsScreen(BaseAppScreen):
             self._active_rag_scope_group = group
         self._refresh_rag_field_guidance()
 
+    @on(Collapsible.Toggled, "#settings-generation-defaults")
+    def handle_generation_defaults_toggled(self, event: Collapsible.Toggled) -> None:
+        self._generation_defaults_collapsed = event.collapsible.collapsed
+
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
         self.post_message(
@@ -23176,6 +23189,19 @@ class SettingsScreen(BaseAppScreen):
         """
         self._sync_responsive_workbench()
         self.call_after_refresh(self._update_inspector_overflow_hint)
+        self._reveal_settings_focus_after_refresh()
+
+    def _reveal_settings_focus_after_refresh(self) -> None:
+        """Keep the same attached control visible after a layout change."""
+        focused = self.focused
+        if focused is None:
+            return
+
+        def reveal_retained_focus() -> None:
+            if self.is_current and focused is self.focused and focused.is_attached:
+                focused.scroll_visible(animate=False)
+
+        self.call_after_refresh(reveal_retained_focus)
 
     def _refresh_theme_modified_widgets(self) -> None:
         """In-place refresh of the Theme dirty displays (rail marker, inspector row).

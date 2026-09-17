@@ -1,0 +1,13 @@
+{
+  "reviewer": "/root/rag_heading_review",
+  "scope": "Settings production changes, new mounted journeys, canonical CSS and repaired static checks",
+  "finding": "Guard deferred focused-widget reveal with is_attached",
+  "resolution": "Guard added alongside current-screen and same-focus checks",
+  "final_actionable_findings": [],
+  "visual_review": {
+    "captures_inspected": 8,
+    "matrix": "textual-dark/textual-light x 170x48/80x24 x pending/saved",
+    "observations": "Complete Temperature label and value, retained focused control and readable compact stacked rows; saved captures show the blank override placeholder. Pending captures do not show the dismissed failure toast.",
+    "new_actionable_findings": []
+  }
+}
