@@ -57,3 +57,18 @@ prose, so review what you copied before posting a bug report.
 The rotating application log file uses the same credential/PII redaction policy
 under [ADR-029](../../backlog/decisions/029-local-private-data-boundary.md).
 Existing retention limits and private-file permission checks still apply.
+
+## Local transcription failures
+
+When a Parakeet ONNX or transcribe.cpp import fails in the local STT executor,
+look for `Library local STT failed` in Logs or the rotating application log
+(`tldw_cli_app.log` by default). The error records the job and attempt IDs,
+executor generation, last reported stage, and stable failure code. For example,
+`phase=loading` distinguishes model loading from `phase=transcribing`; `unknown`
+means no recognized stage was available. Include that line and the failed row's
+**Show details** text in a bug report.
+
+Native exception contents and model paths are not included in this record.
+The stage and code identify where to investigate; a generic `inference_failed`
+code alone does not establish the underlying cause. Cancellation is not logged
+as an error, and repeated or stale worker callbacks do not create extra failures.
