@@ -1,11 +1,11 @@
 ---
 id: TASK-32683
 title: Bind MCP credentials to stable reviewed authority
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:27'
-updated_date: '2026-09-17 22:09'
+updated_date: '2026-09-17 22:21'
 labels:
   - plugins
   - implementation
@@ -28,10 +28,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owning credential service exposes stable reference, principal, issuer, audience/endpoint and scope bindings with separate authority and storage revisions.
-- [ ] #2 Verified renewal within unchanged authority resolves current credentials at dispatch without invalidating plugin trust; changed or unknown authority requires reconciliation.
-- [ ] #3 Explicit header/token mappings and supported OAuth flows use existing host credential services; unsupported auth is a specific unready state and no vendor connector grant is imported.
-- [ ] #4 Secret sentinels stay out of trust snapshots, catalogs, receipts, debug defaults and errors; origin changes, failed refresh, opaque replacement and store migration have successful and refusal controls.
+- [x] #1 The owning credential service exposes stable reference, principal, issuer, audience/endpoint and scope bindings with separate authority and storage revisions.
+- [x] #2 Verified renewal within unchanged authority resolves current credentials at dispatch without invalidating plugin trust; changed or unknown authority requires reconciliation.
+- [x] #3 Explicit header/token mappings and supported OAuth flows use existing host credential services; unsupported auth is a specific unready state and no vendor connector grant is imported.
+- [x] #4 Secret sentinels stay out of trust snapshots, catalogs, receipts, debug defaults and errors; origin changes, failed refresh, opaque replacement and store migration have successful and refusal controls.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,4 +63,20 @@ Verification handoff from H2 review F3: any child bootstrap/network/profile fixt
 12. Freeze and run the exact ten-file final covering set: Tests/MCP/test_credential_bindings.py, Tests/MCP/test_transport_auth.py, Tests/Plugins/test_credential_authority.py, Tests/MCP/test_local_store.py, Tests/MCP/test_streamable_http.py, Tests/MCP/test_protocol_profiles.py, Tests/MCP/test_control_plane_lifecycle.py, Tests/Plugins/test_recovery.py, Tests/Plugins/test_coordinator.py, Tests/Plugins/test_authority.py. All existing files have exact BASE snapshots. The config addition is a lazy owner factory only, without TOML secret-classification/encryption changes; test namespace composition and insecure-backend refusal in the task-owned credential tests rather than running unaffected encryption suites. Distinguish memory-backend semantics, real portalocker with fake keyring API across service/backend instances, and unqualified real OS keychain interoperability. Keep all source/test/doc/runner bytes fixed through covering and syntax/Ruff/Black baseline-parity/whitespace checks; preserve every earlier failing or pre-correction run as historical.
 
 13. Fix independent review I1 before closeout. Repair the newly introduced schema2-to3 migration in MCP/local_store.py so malformed source entries or filtered authoritative records cannot be rewritten as sanitized/default state. Validate raw source shapes and preservation across serialized profile/governance/approval/activity and relevant dictionary collections before migration writes; preserve the explicit existing reserved-ID quarantine and legitimate legacy migrations. Add behavioral refusal plus exact-original-byte preservation controls alongside valid migration/reopen controls in Tests/MCP/test_credential_bindings.py and, if needed, Tests/MCP/test_local_store.py. No other runtime/test edits without a concrete scope request. Preserve the reviewer probe as RED evidence, establish committed regression RED, then freeze and run exactly Tests/MCP/test_credential_bindings.py, Tests/MCP/test_local_store.py, Tests/MCP/test_local_store_runtime_state.py, Tests/MCP/test_protocol_profiles.py, Tests/MCP/test_control_plane_lifecycle.py and Tests/Plugins/test_credential_authority.py. Compare static output to exact Fix1 BASE a9ea6f0ba0192ad37e3579bd4040fa537694ef2a; retain initial evidence, append the report and require a fresh scoped review. This is the existing malformed-storage preservation requirement, no new ADR or ruling.
+
+14. After fresh scoped review accepts I1, record the actual reference-loss incident and its host-minted identity/missing-record regression controls in backlog/docs/lessons-testing-evidence.md. This documentation-only closeout is authorized before the lesson edit and does not change runtime scope. Record final targeted evidence, static baseline parity, review disposition, ADR162/163 and remaining OS-keychain/unsupported-auth/recovery-publication limits in Implementation Notes; check all four ACs and set Done through Backlog CLI only after those gates pass.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented stable MCP credential references through the existing host keyring/locking boundary. Reviewed authority is separate from token bytes, expiry and storage revisions; verified same-binding renewal preserves the generation, while changed or unknown identity, scope, origin, replacement or revocation requires reconciliation. Explicit bearer/header mappings resolve at the selected-origin transport boundary, with fixed diagnostics and no secret-bearing snapshots or receipts. Generic MCP OAuth remains explicitly unsupported.
+
+R62 supplies complete saved-profile/component/configuration/credential capture and recovery validation through the actual MCP owner. Guarded fixture-seeded snapshot tests qualify recovery; M4 still owns public reviewed mapping registration and launch. R63 makes fresh reference identities host-issued UUIDs and refuses mutation of missing records. R64 keeps blocking protected-store work off the shared MCP loop with one retained worker, caller-deadline waits and fresh resolution; cancellation cannot later send HTTP. A stalled backend may retain its worker until it returns or the process exits.
+
+Local profile schema3 explicitly migrates old unbound profiles. Runtime headers preserve Latin-1 octets, reject unsupported wider Unicode wire encoding without changing portable inventory, and protect host protocol/routing headers. Redirects cannot forward credentials, and authentication cannot replay uncertain tool calls. Config changes only add the lazy owner factory, preserving existing TOML encryption policy.
+
+Verification: initial ten-file297 passed44.46s plus ordinary exact three-file58 passed3.59s (overlap). Independent review caught destructive schema2 migration; Fix1 now validates all six serialized collections before a migration write and preserves malformed original bytes. Permanent regression RED38failed/27passed became65passed. Final affected six-file set passed215 in8.83s;36 frozen paths and34 exact Git baseline snapshots verified; both changed Python files compile/Black-clean with no added Ruff diagnostics and clean whitespace. The215 and prior runs overlap and are not summed. Fresh scoped review accepted I1 with zero new Critical/Important/Minor findings after fix e9c690f338; initial implementation a9ea6f0ba0. Fake backend semantics and real portalocker plus fake keyring API are covered; real OS/multiprocess keychain, generic OAuth and prior external/platform/optional-server boundaries remain unqualified.
+
+ADR check: implements existing ADR162/163 with recorded R62/R63/R64; no new ADR. Relevant credential/operation boundaries are documented in the MCP subplan and managed-plugin spec. The testing-evidence lesson records the reproduced deleted-record identity collision and the required fresh-reference rebind after loss.
+<!-- SECTION:NOTES:END -->
