@@ -1,5 +1,16 @@
 # Lessons: verifying against the real thing
 
+## Keep Textual's rendering stream attached to the native terminal
+
+**TASK-2530, 2026-09-16.** Two private audit launches redirected stderr to a
+file. They still constructed LinuxDriver and could save compositor SVGs, while
+tmux showed no app: Textual's console was rendering into the redirected stream.
+Those attempts also stopped on an early navigation check and were not counted
+as native qualification. The final runner asserts `app.console.file.isatty()`,
+keeps both output streams attached, and uses the private app log for diagnostics.
+Driver identity plus an SVG alone does not prove terminal-backed rendering.
+
+
 ## Complete terminal capability probes before driving text input
 
 **TASK-32667, 2026-09-16.** Native queue run-002 timed out in preflight even

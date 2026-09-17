@@ -369,10 +369,7 @@ def test_provider_ready_parameter_no_longer_exists() -> None:
 
 
 def test_library_rag_paid_mode_notice_names_the_provider() -> None:
-    assert library_rag_paid_mode_notice("openai") == (
-        "RAG Answer sends your question and the evidence to openai. "
-        "Search stays local."
-    )
+    assert library_rag_paid_mode_notice("openai") == "To openai: question + evidence"
 
 
 def test_panel_state_threads_provider_name_into_query_state() -> None:

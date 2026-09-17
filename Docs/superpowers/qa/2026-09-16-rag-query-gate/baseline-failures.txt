@@ -1,0 +1,20 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_______________ test_query_quiet_line_stays_empty_in_search_mode _______________
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:502: in test_query_quiet_line_stays_empty_in_search_mode
+    assert quiet_line.styles.height is not None
+E   AssertionError: assert None is not None
+E    +  where None = RenderStyles(Static(id='library-rag-query-quiet-line', classes='h-1 library-rag-quiet-line')).height
+E    +    where RenderStyles(Static(id='library-rag-query-quiet-line', classes='h-1 library-rag-quiet-line')) = Static(id='library-rag-query-quiet-line', classes='h-1 library-rag-quiet-line').styles
+_________ test_library_search_rag_o_on_focused_card_opens_like_button __________
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:2633: in test_library_search_rag_o_on_focused_card_opens_like_button
+    raise AssertionError(
+E   AssertionError: `o` on the focused card never opened the media evidence item.
+============================= slowest 25 durations =============================
+4.56s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_o_on_focused_card_opens_like_button
+
+(5 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_query_quiet_line_stays_empty_in_search_mode
+FAILED Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_o_on_focused_card_opens_like_button
+2 failed in 6.28s

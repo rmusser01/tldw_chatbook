@@ -1,0 +1,47 @@
+.F.F.F.F                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_ready_disclosure_is_fully_painted_without_moving_run[openai-textual-dark-size1] _
+Tests/UI/test_library_rag_query_gate_race.py:140: in test_ready_disclosure_is_fully_painted_without_moving_run
+    assert painted.strip() == library_rag_query_quiet_text(current[0])
+E   AssertionError: assert 'RAG Answer s... the evidence' == 'RAG Answer s... stays local.'
+E
+E     Skipping 36 identical leading characters in diff, use -v to show
+E     - he evidence to openai. Search stays local.
+E     + he evidence
+_ test_ready_disclosure_is_fully_painted_without_moving_run[openai-textual-light-size1] _
+Tests/UI/test_library_rag_query_gate_race.py:140: in test_ready_disclosure_is_fully_painted_without_moving_run
+    assert painted.strip() == library_rag_query_quiet_text(current[0])
+E   AssertionError: assert 'RAG Answer s... the evidence' == 'RAG Answer s... stays local.'
+E
+E     Skipping 36 identical leading characters in diff, use -v to show
+E     - he evidence to openai. Search stays local.
+E     + he evidence
+_ test_ready_disclosure_is_fully_painted_without_moving_run[local_transformers-textual-dark-size1] _
+Tests/UI/test_library_rag_query_gate_race.py:140: in test_ready_disclosure_is_fully_painted_without_moving_run
+    assert painted.strip() == library_rag_query_quiet_text(current[0])
+E   AssertionError: assert 'RAG Answer s... the evidence' == 'RAG Answer s... stays local.'
+E
+E     Skipping 36 identical leading characters in diff, use -v to show
+E     - he evidence to local_transformers. Search stays local.
+E     + he evidence
+_ test_ready_disclosure_is_fully_painted_without_moving_run[local_transformers-textual-light-size1] _
+Tests/UI/test_library_rag_query_gate_race.py:140: in test_ready_disclosure_is_fully_painted_without_moving_run
+    assert painted.strip() == library_rag_query_quiet_text(current[0])
+E   AssertionError: assert 'RAG Answer s... the evidence' == 'RAG Answer s... stays local.'
+E
+E     Skipping 36 identical leading characters in diff, use -v to show
+E     - he evidence to local_transformers. Search stays local.
+E     + he evidence
+============================= slowest 25 durations =============================
+1.58s call     Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[openai-textual-dark-size0]
+1.50s call     Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[openai-textual-light-size0]
+1.09s call     Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[local_transformers-textual-dark-size0]
+1.04s call     Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[openai-textual-dark-size1]
+
+(20 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[openai-textual-dark-size1]
+FAILED Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[openai-textual-light-size1]
+FAILED Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[local_transformers-textual-dark-size1]
+FAILED Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[local_transformers-textual-light-size1]
+4 failed, 4 passed, 4 deselected in 12.53s

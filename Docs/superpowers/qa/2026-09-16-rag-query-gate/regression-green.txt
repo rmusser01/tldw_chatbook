@@ -1,0 +1,6 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+1.10s call     Tests/UI/test_library_rag_query_gate_race.py::test_snapshot_gate_survives_a_suspended_status_refresh[sources-arrive]
+
+(11 durations < 1s hidden.)
+4 passed in 5.26s

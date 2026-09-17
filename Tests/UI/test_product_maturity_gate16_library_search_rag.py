@@ -466,10 +466,7 @@ def test_query_quiet_line_names_the_paid_provider_when_rag_mode_is_ready() -> No
         for child in library_rag_query_status_children(state)
         if child.id == "library-rag-query-quiet-line"
     )
-    assert str(quiet_line.renderable) == (
-        "RAG Answer sends your question and the evidence to openai. "
-        "Search stays local."
-    )
+    assert str(quiet_line.renderable) == "To openai: question + evidence"
 
 
 def test_query_quiet_line_stays_empty_in_search_mode() -> None:
@@ -494,13 +491,8 @@ def test_query_quiet_line_stays_empty_in_search_mode() -> None:
         if child.id == "library-rag-query-quiet-line"
     )
     assert str(quiet_line.renderable) == ""
-    # Cheap Minor (review round): pin the no-layout-shift property
-    # directly -- the reserved row's fixed height is load-bearing (2026-07
-    # UAT finding, the Run button used to jump ~2 rows) and was previously
-    # preserved only by inspection. Mirrors the ingest-canvas quiet line's
-    # own height pin (`Tests/UI/test_library_shell.py`).
-    assert quiet_line.styles.height is not None
-    assert quiet_line.styles.height.value == 1
+    # Reserved height and Run stability require mounted production CSS;
+    # test_library_rag_query_gate_race covers both modes and themes/sizes.
 
 
 def test_query_quiet_line_omits_the_paid_notice_when_run_is_blocked() -> None:

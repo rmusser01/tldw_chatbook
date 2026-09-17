@@ -320,13 +320,11 @@ def library_rag_paid_mode_notice(provider: str) -> str:
             (`LibraryRagQueryState.ready_answer_provider`).
 
     Returns:
-        One sentence naming `provider`, e.g. `RAG Answer sends your
-        question and the evidence to openai. Search stays local.`
+        Compact recipient and outgoing-data disclosure. Keep the recipient
+        first so the reserved row remains readable at 80 columns; the mode
+        toggle already explains that Search stays local (task-2530).
     """
-    return (
-        f"RAG Answer sends your question and the evidence to {provider}. "
-        "Search stays local."
-    )
+    return f"To {provider}: question + evidence"
 
 
 def _clean_text(value: Any, fallback: str = "") -> str:

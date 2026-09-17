@@ -1,0 +1,21 @@
+{
+  "captures": [
+    "textual-dark-170-blocked.svg",
+    "textual-dark-170-ready.svg",
+    "textual-dark-80-blocked.svg",
+    "textual-dark-80-ready.svg",
+    "textual-light-170-blocked.svg",
+    "textual-light-170-ready.svg",
+    "textual-light-80-blocked.svg",
+    "textual-light-80-ready.svg"
+  ],
+  "render_tool": "qlmanage -t -s 1400",
+  "visually_inspected_with": "view_image; each of eight final captures",
+  "findings": [
+    "Full recipient and question/evidence notice visible in both themes at 170x48 and 80x24.",
+    "Disabled state preserves Run position and entered query.",
+    "Synthetic query panel source counts differ from empty real Library rail by design; not source-retrieval evidence."
+  ],
+  "baseline_clipping": "compact-before.svg and native-attempts.json run003",
+  "remaining_scope": "Retrieval, provider calls, complete keyboard traversal, mouse use, and broader Library styling are outside this slice."
+}

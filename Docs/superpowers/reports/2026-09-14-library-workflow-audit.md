@@ -5,6 +5,8 @@ reviews have progressed through Prompts, Skills, Collections, Import and
 Conversations reading, Archive, Restore, Export, exact Resume and source staging.
 TASK-2376 now closes the source-staging excerpt gap: media and conversation
 text reaches the evidence capture, with draft and saved records preserved.
+TASK-2530 now keeps Search/RAG Run and its provider disclosure coherent across
+snapshot races, with the recipient visible at compact width.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -759,3 +761,24 @@ No CSS changed and no new lint diagnostics were introduced.
 
 Next bounded review: Library Search/RAG journeys, then the remaining feature and
 component surfaces. Integration into current dev remains separate.
+
+
+## Search/RAG Run and disclosure — 2026-09-16 (TASK-2530)
+
+[Evidence and reproduction](../qa/2026-09-16-rag-query-gate/README.md) close the
+snapshot/full-refresh race: the disclosure stays mounted and updates with Run
+without yielding. Missing disclosure disables Run. The native review also caught
+80-column clipping before the provider name; concise recipient/data copy now fits
+without moving Run or changing tokens.
+
+Final verification: 275 targeted tests, two unrelated known tests deselected,
+and four native dark/light, 170×48/80×24 cells. The new race and compact-paint
+assertions both failed before repair. Two independent reviews found no actionable
+issue. Native states were deliberately injected to control the scheduling window;
+this qualifies widgets and paint, not retrieval or provider requests. Private
+shutdown and ten databases are healthy; default config/UI/runtime hashes match.
+
+The initial targeted run also reproduced focused-card Open failing for a
+`media-1` source ID on the unchanged controller. Next bounded review: TASK-4111
+result opening, with the separate evidence-heading test drift still in TASK-15390.
+No full suite, push, merge, or complete Search/RAG qualification is implied.

@@ -1,0 +1,34 @@
+{
+  "textual-dark-80-ready.svg": {
+    "raw_sha256": "f9cd08dbfe91ee0fa4a37169f9ba2331c4d411b68b607845e6212cfcb8f2e737",
+    "stored_sha256": "61120d077abb98b5e4bd090c4afdf1e6c6b0554aa0ab7a27e61e25e77fbe8be1"
+  },
+  "textual-light-170-blocked.svg": {
+    "raw_sha256": "72b442ba9cf8f62cf5c4bc709a5e4cd86aa727260e0a201e273fc0354b4540da",
+    "stored_sha256": "917f7e407cfaf5bd4bf292f83d2ed6ce9d54df9e6e3406986a2b0a936d6e693c"
+  },
+  "textual-dark-170-blocked.svg": {
+    "raw_sha256": "b5d3b08dd80b168edb4ee7343a8eaa874c310a75f0b6072058ec2cdf6e8e1a03",
+    "stored_sha256": "43d013313d3aa4621fe131b6ec7df34a8d2b12b6a689c1e99eeee9d5855419a7"
+  },
+  "textual-dark-170-ready.svg": {
+    "raw_sha256": "dec195fc5fd2553da754d07238feed389ad7150b634b3b63e18709f48de1fd98",
+    "stored_sha256": "0f32f2ad5e1ef2baf68cae31cecd50f8f5067dd04aa41d8851aeeaa0f57c11a9"
+  },
+  "textual-light-80-blocked.svg": {
+    "raw_sha256": "a420630bc5ac0f96daff26b0be36070d7ec1f1494868e485c69f5aac231a2d37",
+    "stored_sha256": "c955752c48a8c6bd6e6dee38e47376e1468f7d20755d01d4d937f1bda54cb769"
+  },
+  "textual-light-80-ready.svg": {
+    "raw_sha256": "9490b5fb6eea55df8ba97ae331282d394581e27aa77019f67a9863eaf31c5a4c",
+    "stored_sha256": "3626f0e8fc1a8ece892403d938b3da571767cec3b7ed409d60fe994671b2aa23"
+  },
+  "textual-dark-80-blocked.svg": {
+    "raw_sha256": "a75051dbb546b916b3658dd6d3e7a8b1ed1ef7aba72aeef470dca3f4bbda24e1",
+    "stored_sha256": "75cf2e99325af8ad252b10a7a34aaa204349f97ba3e5878567223d487002470f"
+  },
+  "textual-light-170-ready.svg": {
+    "raw_sha256": "36304bd2858859286b882c774ae8ad11032ae05cdc90502ebd7e9ecfed2c0981",
+    "stored_sha256": "045ca096265d0c5d7eb6d088cc400081af1a0cd369d4568edce28a03832415bd"
+  }
+}

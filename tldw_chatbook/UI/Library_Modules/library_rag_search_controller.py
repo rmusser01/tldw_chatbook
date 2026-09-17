@@ -1488,47 +1488,19 @@ class LibraryRagSearchController:
         """Refresh the scope-toggle counts and the Run gate in place, with
         NO `await` (RAG-27 fix-review).
 
-        Called synchronously from `_reconcile_library_entry_state`'s
-        (screen-resident, `library_screen.py`, never a cluster candidate)
-        `LIBRARY_ROW_BROWSE_SEARCH` branch -- itself scheduled via
-        `call_later` off every snapshot-generation bump
-        (`_apply_local_source_snapshot` and its siblings), so this still
-        runs off the UI thread on every ingest done-count growth, just not
-        literally inline inside `_apply_local_source_snapshot`'s own call
-        stack -- a moment with no coordination against the panel's four
-        other refresh callers (`update_library_rag_query`,
-        `_start_library_rag_query`, `select_library_rag_result`,
-        `_apply_library_rag_search_outcome`), all of which `await
-        self._refresh_search_rag_panel_state_widgets(...)` directly with
-        no shared lock or exclusive worker group. That coroutine's real
-        yield points (`await widget.remove()` / `await ...mount(...)` for
-        the query-status callout and, when `include_results_and_history`
-        is left True, results/history) make two concurrent invocations
-        unsafe: an ingest snapshot landing mid-keystroke could interleave
-        two remove/mount sequences on the same containers (double-remove
-        or duplicate-id). Restricting the snapshot path to plain
-        attribute writes -- `Button.label`/`.disabled`/`.tooltip`,
-        `Static.update()` -- has no yield points at all, so it can never
-        interleave with anything and needs no coordination.
+        Called by the snapshot-driven `_reconcile_library_entry_state`
+        Search branch. Full panel refreshes serialize with each other using
+        `panel_refresh_lock`, but this synchronous path deliberately does
+        not wait for that lock. It can run during their awaited conditional
+        widget removal/mounting.
 
-        The query region's reserved quiet line IS synced here (F1), by the
-        same yield-free `Static.update()` class of write as the scope
-        summary below -- no remove/mount, so RAG-27's constraint holds.
-        The original trade-off deferred that row along with the callout,
-        on the reasoning that it carried only the run gate's *reason*
-        text. That reasoning expired with PR-T2 Task 4: the same row now
-        also carries the money disclosure (`library_rag_paid_mode_notice`,
-        naming the provider Run would bill), and deferring it produced a
-        silent paid state. A Library revisit past
-        `LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS` composes with all-zero counts
-        -> no scope -> a blocked-but-QUIET gate (no callout, empty row);
-        the snapshot then lands real counts and this method flips Run to
-        enabled, leaving a runnable paid button above an empty row that
-        never said a provider would be billed. Deriving the row's copy
-        from `library_rag_query_quiet_text(panel_state)` -- the same
-        builder `compose()` and the full refresh use, off the same state
-        the run gate above is read from -- keeps the disclosure and the
-        button they sit next to from ever disagreeing.
+        The Run button and reserved quiet line (which carries the named
+        provider disclosure) stay mounted and are updated together through
+        `_sync_library_rag_query_gate_widgets`. Full refreshes use the same
+        helper before their first yield and never rebuild the quiet line.
+        Thus a newer snapshot's gate/disclosure pair survives an older full
+        refresh resuming, including the first real counts after a cold
+        zero-count compose (task-2530).
 
         Trade-off (narrowed): the blocked-callout/recovery block below the
         quiet line is still NOT refreshed here -- it is the part that
@@ -1540,8 +1512,8 @@ class LibraryRagSearchController:
         money -- every blocker it covers leaves Run disabled, and the
         quiet line, derived from the same state, shows no paid notice
         while one is in force. Accepted narrowly for this snapshot-driven
-        path only; every other caller above still runs the full
-        `_refresh_search_rag_panel_state_widgets` and is unaffected.
+        path only; other panel refresh callers still run the full
+        `_refresh_search_rag_panel_state_widgets` and are unaffected.
 
         (task-2075 D5) The *scope* region's own recovery block --
         `#library-rag-source-scope`'s `has-recovery` class plus its
@@ -1574,23 +1546,7 @@ class LibraryRagSearchController:
             run_button = self.query_one("#library-rag-run-query", Button)
         except (NoMatches, QueryError):
             return
-        run_action = panel_state.query_state.run_action
-        run_button.label = run_action.label
-        run_button.disabled = not run_action.enabled
-        run_button.tooltip = run_action.tooltip
-
-        # (F1) Written in the SAME pass as the button above, off the SAME
-        # `panel_state`, because this row carries rag mode's paid-mode
-        # notice: enabling Run without refreshing it is exactly how a
-        # revisit-past-the-snapshot-TTL produced a runnable paid button
-        # with no disclosure on screen. Plain `Static.update()` -- no
-        # yield point, so RAG-27's constraint (see the docstring) holds.
-        try:
-            self.query_one("#library-rag-query-quiet-line", Static).update(
-                library_rag_query_quiet_text(panel_state)
-            )
-        except (NoMatches, QueryError):
-            pass
+        self._sync_library_rag_query_gate_widgets(panel_state, run_button)
 
         options_by_source_type = {
             option.source_type: option for option in panel_state.scope.options
@@ -1648,17 +1604,33 @@ class LibraryRagSearchController:
         for child in library_rag_scope_recovery_children(panel_state):
             await scope_container.mount(child)
 
+    def _sync_library_rag_query_gate_widgets(
+        self, panel_state: LibraryRagPanelState, run_button: Button
+    ) -> None:
+        """Update the retained disclosure and Run from one state without yielding."""
+        run_action = panel_state.query_state.run_action
+        run_button.label = run_action.label
+        run_button.tooltip = run_action.tooltip
+        try:
+            self.query_one("#library-rag-query-quiet-line", Static).update(
+                library_rag_query_quiet_text(panel_state)
+            )
+        except (NoMatches, QueryError):
+            # A missing disclosure must never leave a runnable paid action.
+            run_button.disabled = True
+            return
+        run_button.disabled = not run_action.enabled
+
     async def _refresh_library_rag_query_status_widgets(
         self,
         panel_state: LibraryRagPanelState,
     ) -> None:
         """Sync the Run button and the query region's conditional status block.
 
-        The quiet line / callout+recovery block is torn down and rebuilt
-        from `library_rag_query_status_children` on every call -- it is at
-        most two `Static` widgets, so a full rebuild is cheap and (unlike
-        hand-written incremental mount/update/remove logic) can never drift
-        from what `compose()` renders on a fresh mount.
+        Keep the always-present quiet line mounted: snapshot sync can run
+        during the conditional callout's awaited remove/mount below. Both
+        paths write the disclosure and gate together, before yielding, so
+        this refresh cannot overwrite a newer snapshot's pair (task-2530).
         """
         query_controls = self.query_one("#library-rag-query-controls", Vertical)
         query_controls.set_class(
@@ -1666,25 +1638,23 @@ class LibraryRagSearchController:
             "has-recovery",
         )
 
-        run_action = panel_state.query_state.run_action
         run_button = self.query_one("#library-rag-run-query", Button)
-        run_button.label = run_action.label
-        run_button.disabled = not run_action.enabled
-        run_button.tooltip = run_action.tooltip
+        self._sync_library_rag_query_gate_widgets(panel_state, run_button)
 
         for widget_id in (
-            "library-rag-query-quiet-line",
             "library-rag-query-blocked-callout",
             "library-rag-query-recovery",
             # task-32236: the blocked callout's action. Every id this
-            # builder can mount must be torn down here, or the next
+            # builder can conditionally mount must be torn down here, or the next
             # refresh mounts a second one and Textual raises DuplicateIds.
             "library-rag-open-provider-settings",
         ):
             for widget in list(self.query(f"#{widget_id}")):
                 await widget.remove()
-        anchor = "#library-rag-query-input"
+        anchor = "#library-rag-query-quiet-line"
         for child in library_rag_query_status_children(panel_state):
+            if child.id == "library-rag-query-quiet-line":
+                continue
             await query_controls.mount(child, after=anchor)
             anchor = f"#{child.id}"
 
