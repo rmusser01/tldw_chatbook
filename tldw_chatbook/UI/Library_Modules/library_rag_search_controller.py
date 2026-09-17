@@ -368,6 +368,7 @@ from ...Widgets.Library import (
     library_rag_query_quiet_text,
     library_rag_query_shows_full_recovery,
     library_rag_query_status_children,
+    library_rag_retrieval_notice_text,
     library_rag_results_body_children,
     library_rag_scope_recovery_children,
     library_rag_scope_shows_recovery,
@@ -1644,6 +1645,13 @@ class LibraryRagSearchController:
             run_button.disabled = True
             return
         run_button.disabled = not run_action.enabled
+        try:
+            notice = self.query_one("#library-rag-retrieval-notice", Static)
+        except (NoMatches, QueryError):
+            return
+        notice_text = library_rag_retrieval_notice_text(panel_state)
+        notice.update(notice_text)
+        notice.display = bool(notice_text)
 
     async def _refresh_library_rag_query_status_widgets(
         self,
@@ -1677,7 +1685,10 @@ class LibraryRagSearchController:
                 await widget.remove()
         anchor = "#library-rag-query-quiet-line"
         for child in library_rag_query_status_children(panel_state):
-            if child.id == "library-rag-query-quiet-line":
+            if child.id in {
+                "library-rag-query-quiet-line",
+                "library-rag-retrieval-notice",
+            }:
                 continue
             await query_controls.mount(child, after=anchor)
             anchor = f"#{child.id}"

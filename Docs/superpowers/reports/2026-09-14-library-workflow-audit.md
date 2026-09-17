@@ -8,7 +8,8 @@ text reaches the evidence capture, with draft and saved records preserved.
 TASK-2530 now keeps Search/RAG Run and its provider disclosure coherent across
 snapshot races, with the recipient visible at compact width. TASK-2377 repairs
 recovery after panel rebuilds; TASK-32707 keeps live keyboard focus visible when
-search results arrive.
+search results arrive. TASK-32712 keeps retrieval failure/recovery beside Run and
+clears it on retry without hiding provider disclosure.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -873,3 +874,24 @@ unrelated-worker wait in the runner; two corrected runs passed.
 Next bounded review: Search/RAG failure and retry journeys, then the remaining
 feature/component surfaces. Provider generation and semantic retrieval remain
 outside this qualification. No full suite, push or merge was performed.
+
+## Search/RAG failure and retry — 2026-09-17 UTC (TASK-32712)
+
+[Evidence](../qa/2026-09-17-rag-retry-recovery/README.md) closes the compact failure
+feedback gap: a brief retrieval notice now stays beside Run while query focus is
+retained. The provider disclosure remains separate, with detailed recovery still
+in Evidence. The notice updates with the Run gate, so an old suspended refresh
+cannot restore a failure after retry begins. Existing tokens and styles suffice.
+
+The final targeted gate passes 132 tests without exclusions. Thirteen new checks
+cover failure/unavailable then success, provider-disclosure paint in both themes
+and sizes, and the delayed-refresh race. Independent review found no actionable
+issue; static checks add no diagnostics. Eight native controlled failure-to-real
+keyword retry journeys pass in dark/light at 170×48 and 80×24. All twelve captures
+were inspected; source/default files are unchanged, ten databases are healthy,
+and normal shutdown/PID absence are verified.
+
+Next bounded review: Search/RAG answer-generation and recovery states, followed by
+the remaining feature/component surfaces. Provider generation and semantic/remote
+retrieval are not qualified by this local retry evidence. No full suite, push or
+merge was performed.

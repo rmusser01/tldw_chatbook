@@ -1,0 +1,107 @@
+{
+  "pid": 33370,
+  "runner_sha256": "d12d6cd465b8edb84f3d97a09eb279c01699cc550c0e4ac62a6ceef3842577f9",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "failed",
+      "query_and_scope_retained": true,
+      "failure_and_run_painted": true,
+      "retry_cleared_error": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "unavailable",
+      "query_and_scope_retained": true,
+      "failure_and_run_painted": true,
+      "retry_cleared_error": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "failed",
+      "query_and_scope_retained": true,
+      "failure_and_run_painted": true,
+      "retry_cleared_error": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "unavailable",
+      "query_and_scope_retained": true,
+      "failure_and_run_painted": true,
+      "retry_cleared_error": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "failed",
+      "query_and_scope_retained": true,
+      "failure_and_run_painted": true,
+      "retry_cleared_error": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "unavailable",
+      "query_and_scope_retained": true,
+      "failure_and_run_painted": true,
+      "retry_cleared_error": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "failed",
+      "query_and_scope_retained": true,
+      "failure_and_run_painted": true,
+      "retry_cleared_error": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "unavailable",
+      "query_and_scope_retained": true,
+      "failure_and_run_painted": true,
+      "retry_cleared_error": true,
+      "exact_local_result": true
+    }
+  ],
+  "waiting_for": "Evidence title visible",
+  "real_keyword_searches": 8,
+  "source_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

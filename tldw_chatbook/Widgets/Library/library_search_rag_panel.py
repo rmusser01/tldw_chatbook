@@ -950,6 +950,17 @@ def library_rag_query_quiet_text(state: LibraryRagPanelState) -> str:
     return ""
 
 
+def library_rag_retrieval_notice_text(state: LibraryRagPanelState) -> str:
+    """Explain a settled retrieval failure beside the still-usable query."""
+    if not state.query_state.run_action.enabled:
+        return ""
+    if state.retrieval_status == "failed":
+        return "Retrieval failed. Run again to retry."
+    if state.retrieval_status == "blocked":
+        return f"Retrieval unavailable. {state.next_action}"
+    return ""
+
+
 def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widget]:
     """Return the query region's status widgets (A1/A2).
 
@@ -991,7 +1002,18 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
         markup=False,
     )
     quiet_line.add_class("h-1")
-    children: list[Widget] = [quiet_line]
+    # TASK-32712: the detailed Evidence error can be below the viewport
+    # while the user retains query focus. Keep a brief, wrapping notice
+    # beside Run without replacing its paid-provider disclosure above.
+    # Retain the node so synchronous gate refreshes can clear it on retry.
+    notice_text = library_rag_retrieval_notice_text(state)
+    notice = Static(
+        notice_text,
+        id="library-rag-retrieval-notice",
+        classes="library-rag-callout is-blocked",
+    )
+    notice.display = bool(notice_text)
+    children: list[Widget] = [quiet_line, notice]
     shows_full_recovery = library_rag_query_shows_full_recovery(query_state)
     _log_query_recovery_record(
         query_state.recovery_copy if shows_full_recovery else ""

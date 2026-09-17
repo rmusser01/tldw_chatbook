@@ -1,0 +1,13 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+1.77s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-dark-size0]
+1.61s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-light-size0]
+1.53s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-light-size0]
+1.47s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-dark-size0]
+1.41s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-dark-size1]
+1.38s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-dark-size1]
+1.35s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-light-size1]
+1.33s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-light-size1]
+
+(16 durations < 1s hidden.)
+8 passed in 14.29s
