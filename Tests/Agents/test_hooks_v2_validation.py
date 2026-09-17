@@ -586,3 +586,48 @@ def test_repeated_typed_template_is_bounded_before_materialization(monkeypatch):
     monkeypatch.setattr(matching, "_json_tree", bounded_before_expand)
     with pytest.raises(ValueError):
         matching.expand_input(handler, event)
+
+
+def test_lifecycle_projections_accept_only_the_closed_actual_fields():
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import lifecycle_event
+
+    child = lifecycle_event(
+        "SubagentStart",
+        "session",
+        data={
+            "child_task": "review",
+            "tool_ids": ["runtime:find_tools"],
+            "budget_caps": {"max_total_tokens": 0, "max_subagents": 0},
+            "model": "inherited",
+            "provider": "local",
+        },
+    )
+    assert child.data["model"] == "inherited"
+    pre = lifecycle_event(
+        "PreCompact",
+        "session",
+        data={"candidate": [{"role": "user", "content": "body"}], "reason": "manual"},
+    )
+    assert len(pre.data["candidate"]) == 1
+    post = lifecycle_event(
+        "PostCompact",
+        "session",
+        data={
+            "reason": "automatic",
+            "memory_id": "memory",
+            "summarized_prefix_digest": "a" * 64,
+        },
+    )
+    assert post.data["memory_id"] == "memory"
+    for name, data in (
+        ("SubagentStart", {"tool_ids": ["a", "a"]}),
+        ("SubagentStart", {"budget_caps": {"extra": 1}}),
+        ("SubagentStart", {"model": 3}),
+        ("PreCompact", {"candidate": {}, "reason": "manual"}),
+        ("PreCompact", {"candidate": [1], "reason": "manual"}),
+        ("PostCompact", {"reason": "automatic", "memory_id": ""}),
+        ("PostCompact", {"reason": "manual", "summarized_prefix_digest": ""}),
+        ("PostCompact", {"reason": "preview"}),
+    ):
+        with pytest.raises(ValueError):
+            lifecycle_event(name, "session", data=data)
