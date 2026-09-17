@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+10.84s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Splash Screen-size1-textual-light]
+10.63s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Splash Screen-size1-textual-dark]
+10.31s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Splash Screen-size0-textual-dark]
+10.24s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Splash Screen-size0-textual-light]
+
+(8 durations < 1s hidden.)
+4 passed, 14 deselected in 43.80s

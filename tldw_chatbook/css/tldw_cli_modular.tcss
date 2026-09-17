@@ -9977,6 +9977,18 @@ WorktreeRecoveryDialog {
     text-style: bold;
 }
 
+.settings-workbench-compact #settings-appearance-card > .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-splash-card > .settings-select-row > .settings-input-label {
+    width: $ds-width-full;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+
+.settings-workbench-compact #settings-theme-card .settings-input-label {
+    width: $ds-size-12;
+}
+
 
 .agents-preset-row {
     height: $ds-size-4;

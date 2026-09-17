@@ -15,7 +15,11 @@ from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from ..Constants import DEFAULT_SPLASH_DURATION_SECONDS
-from ..config import get_cli_setting, save_setting_to_cli_config
+from ..config import (
+    ConfigMutationResult,
+    apply_settings_mutation_to_cli_config,
+    get_cli_setting,
+)
 from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
 from ..Widgets.splash_screen import SplashScreen
 
@@ -30,6 +34,13 @@ DEFAULT_SPLASH_CONFIG: dict[str, Any] = {
     "fade_out_duration": 0.2,
     "animation_speed": 1.0,
 }
+
+
+_EFFECTS_KEYS = {"fade_in_duration", "fade_out_duration", "animation_speed"}
+
+
+def _config_section(key: str) -> str:
+    return "splash_screen.effects" if key in _EFFECTS_KEYS else "splash_screen"
 
 
 def switch_state_label(value: bool) -> str:
@@ -57,13 +68,15 @@ class SettingsSplashScreenViewer(Vertical):
         super().__init__(**kwargs)
         self._cards: dict[str, dict[str, Any]] = {}
         self._config: dict[str, Any] = {}
+        self._pending_values: dict[str, Any] = {}
+        self._status_revision = 0
+        self._closing = False
 
     def _load_config(self) -> dict[str, Any]:
         try:
-            _EFFECTS_KEYS = {"fade_in_duration", "fade_out_duration", "animation_speed"}
             config = {
                 key: get_cli_setting(
-                    "splash_screen.effects" if key in _EFFECTS_KEYS else "splash_screen",
+                    _config_section(key),
                     key,
                     value,
                 )
@@ -230,72 +243,101 @@ class SettingsSplashScreenViewer(Vertical):
             card_list.highlighted = 0
 
     def _update_status(self, message: str) -> None:
-        status = self.query_one("#settings-splash-status", Static)
-        status.update(message)
+        if self._closing or not self.is_attached:
+            return
+        try:
+            self.query_one("#settings-splash-status", Static).update(message)
+        except QueryError:
+            # Navigation can detach the category before a write finishes.
+            return
+
+    def _control_for_key(self, key: str):
+        suffix = "default-select" if key == "card_selection" else key.replace("_", "-")
+        return self.query_one(f"#settings-splash-{suffix}")
+
+    def _sync_control_value(self, key: str, value: Any) -> None:
+        control = self._control_for_key(key)
+        with self.prevent(Checkbox.Changed, Select.Changed, Input.Changed):
+            control.value = str(value) if isinstance(control, Input) else value
+        if isinstance(control, Checkbox):
+            self.query_one(f"#{control.id}-state", Static).update(
+                switch_state_label(bool(value))
+            )
 
     def _save_config_value(self, key: str, value: Any) -> bool:
-        """Apply one splash_screen setting and persist it off the event loop.
-
-        task-15470: six Checkbox/Select/Input handlers below all funnel
-        through this one method, and it used to call
-        ``save_setting_to_cli_config`` -- a full config.toml read+atomic-
-        rewrite+cache-reload -- synchronously on the event loop, once per
-        click/submit, returning True/False for real, synchronously-known
-        success/failure. The in-memory ``_config`` update and
-        ``SplashConfigChanged`` message (both pure, no I/O) still happen
-        immediately here, optimistically; only the disk write is deferred
-        to a worker, so this can no longer report a confirmed outcome --
-        the return value now means "dispatched", not "saved". If the
-        write actually fails, `_persist_splash_config_value` reverts
-        `_config[key]` back to `previous` (so memory never diverges from
-        what is actually on disk) and overwrites the status line with the
-        error, so an optimistic "... saved." message a caller shows right
-        after this call is always eventually corrected rather than
-        silently wrong. Callers no longer gate their "saved" message on
-        this return value (review round: it was always True, making six
-        `if` guards dead weight) -- they call it unconditionally now.
-        """
-        previous = self._config.get(key)
-        self._config[key] = value
-        self.post_message(self.SplashConfigChanged("splash_screen", key, value))
-        self._persist_splash_config_value(key, value, previous)
+        """Keep the confirmed value while one write per control is pending."""
+        if key in self._pending_values:
+            if not isinstance(self._control_for_key(key), Input):
+                self._sync_control_value(key, self._pending_values[key])
+            return False
+        self._sync_control_value(key, value)
+        if self._config.get(key) == value:
+            return False
+        self._pending_values[key] = value
+        self._status_revision += 1
+        self._update_status(f"Saving {key.replace('_', ' ')}…")
+        self._persist_splash_config_value(key, value, self._status_revision, self.app)
         return True
 
     @work(thread=True)
     def _persist_splash_config_value(
-        self, key: str, value: Any, previous: Any
+        self, key: str, value: Any, revision: int, app
     ) -> None:
-        """Write one ``[splash_screen]`` config value on a worker thread.
-
-        On failure, hands the correction back to the main thread via
-        ``self.app.call_from_thread`` -- ``call_from_thread`` is an ``App``
-        method, not available on a ``Widget``; calling it as
-        ``self.call_from_thread`` crashed the whole app on any write
-        failure here, since the resulting ``AttributeError`` was raised
-        from inside this ``except`` block, uncaught, inside a
-        ``@work(thread=True)`` worker, where an uncaught exception is
-        fatal by default (``exit_on_error=True``).
-        """
+        """Write off the event loop and preserve the owner's two-phase outcome."""
+        error = None
         try:
-            save_setting_to_cli_config("splash_screen", key, value)
-        except Exception as exc:
-            logger.error("Failed to save splash_screen.{}: {}", key, exc)
-            self.app.call_from_thread(
-                self._handle_persist_failure, key, previous, exc
+            result = apply_settings_mutation_to_cli_config(
+                {_config_section(key): {key: value}}
             )
+        except Exception as exc:
+            logger.error("Failed to save splash setting {}: {}", key, exc)
+            result = ConfigMutationResult(False, False, "before_replace")
+            error = str(exc)
+        try:
+            app.call_from_thread(
+                self._finish_persist, key, value, revision, result, error
+            )
+        except RuntimeError:
+            # The file outcome remains authoritative after app shutdown.
+            logger.debug("Splash write finished after the app stopped")
 
-    def _handle_persist_failure(self, key: str, previous: Any, exc: Exception) -> None:
-        """Revert the optimistic in-memory value and surface the error.
-
-        Runs on the main thread (via ``call_from_thread``). Reverting
-        `_config[key]` closes the memory/disk divergence the optimistic
-        update in `_save_config_value` would otherwise leave behind on a
-        failed write; the corrective `SplashConfigChanged` message mirrors
-        the optimistic one posted there, for the same reason.
-        """
-        self._config[key] = previous
-        self.post_message(self.SplashConfigChanged("splash_screen", key, previous))
-        self._update_status(f"Error saving {key}: {exc}")
+    def _finish_persist(
+        self,
+        key: str,
+        value: Any,
+        revision: int,
+        result: ConfigMutationResult,
+        error: str | None,
+    ) -> None:
+        self._pending_values.pop(key, None)
+        if result.file_replaced:
+            self._config[key] = value
+            self.post_message(
+                self.SplashConfigChanged(_config_section(key), key, value)
+            )
+        if self._closing or not self.is_attached:
+            return
+        try:
+            control = self._control_for_key(key)
+            newer_input = isinstance(control, Input) and control.value != str(value)
+            if not newer_input:
+                self._sync_control_value(key, self._config[key])
+        except QueryError:
+            return
+        if revision != self._status_revision:
+            return
+        label = key.replace("_", " ")
+        if not result.file_replaced:
+            message = (
+                f"Error saving {key}: {error or 'configuration write was not accepted'}"
+            )
+        elif not result.caches_reloaded:
+            message = f"Saved {label}, but configuration refresh failed. Reopen Settings to refresh."
+        else:
+            message = f"Saved {label}."
+        if newer_input:
+            message += " Press Enter to save your newer value."
+        self._update_status(message)
 
     def _float_or_default(self, raw: str, default: float) -> float:
         raw = raw.strip()
@@ -312,7 +354,6 @@ class SettingsSplashScreenViewer(Vertical):
             switch_state_label(bool(event.value))
         )
         self._save_config_value("enabled", event.value)
-        self._update_status("Splash screen enabled setting saved.")
 
     @on(Checkbox.Changed, "#settings-splash-show-progress")
     def handle_show_progress_changed(self, event: Checkbox.Changed) -> None:
@@ -320,18 +361,18 @@ class SettingsSplashScreenViewer(Vertical):
             switch_state_label(bool(event.value))
         )
         self._save_config_value("show_progress", event.value)
-        self._update_status("Show progress setting saved.")
 
     @on(Checkbox.Changed, "#settings-splash-skip-on-keypress")
     def handle_skip_on_keypress_changed(self, event: Checkbox.Changed) -> None:
+        self.query_one("#settings-splash-skip-on-keypress-state", Static).update(
+            switch_state_label(bool(event.value))
+        )
         self._save_config_value("skip_on_keypress", event.value)
-        self._update_status("Skip on keypress setting saved.")
 
     @on(Select.Changed, "#settings-splash-default-select")
     def handle_default_changed(self, event: Select.Changed) -> None:
         value = str(event.value) if event.value is not None else "random"
         self._save_config_value("card_selection", value)
-        self._update_status(f"Default splash card set to {value}.")
 
     @on(Input.Submitted, "#settings-splash-duration")
     def handle_duration_submitted(self, event: Input.Submitted) -> None:
@@ -339,7 +380,6 @@ class SettingsSplashScreenViewer(Vertical):
         if value < 0:
             value = 0
         self._save_config_value("duration", value)
-        self._update_status(f"Splash duration set to {value}s.")
 
     @on(Input.Submitted, "#settings-splash-animation-speed")
     def handle_animation_speed_submitted(self, event: Input.Submitted) -> None:
@@ -349,7 +389,6 @@ class SettingsSplashScreenViewer(Vertical):
         if value <= 0:
             value = DEFAULT_SPLASH_CONFIG["animation_speed"]
         self._save_config_value("animation_speed", value)
-        self._update_status(f"Animation speed set to {value}x.")
 
     @on(OptionList.OptionHighlighted, "#settings-splash-card-list")
     def handle_card_highlighted(self, event: OptionList.OptionHighlighted) -> None:
@@ -398,6 +437,7 @@ class SettingsSplashScreenViewer(Vertical):
             )
 
     def on_unmount(self) -> None:
+        self._closing = True
         try:
             container = self.query_one("#settings-splash-preview-scroll", VerticalScroll)
         except Exception:

@@ -1,0 +1,23 @@
+..................                                                       [100%]
+============================= slowest 25 durations =============================
+22.63s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_appearance_keyboard_preview_revert_and_real_save[textual-light]
+22.58s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_appearance_keyboard_preview_revert_and_real_save[textual-dark]
+17.18s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_theme_launch_default_is_seen_by_appearance_without_losing_its_draft[True]
+14.24s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Appearance-size1-textual-light]
+14.16s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_partial_theme_save_updates_appearance_and_preserves_explicit_theme_draft
+13.89s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Appearance-size1-textual-dark]
+13.28s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Theme-size1-textual-dark]
+13.23s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Theme-size1-textual-light]
+13.23s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Appearance-size0-textual-light]
+12.96s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Theme-size0-textual-dark]
+12.88s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Appearance-size0-textual-dark]
+12.62s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Theme-size0-textual-light]
+11.56s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_theme_launch_default_is_seen_by_appearance_without_losing_its_draft[False]
+11.55s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_matching_launch_save_clears_appearance_sidebar_dirty_marker
+11.53s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Splash Screen-size1-textual-light]
+10.79s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Splash Screen-size1-textual-dark]
+10.29s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Splash Screen-size0-textual-dark]
+10.24s call     Tests/UI/test_settings_interface_keyboard_journeys.py::test_interface_controls_are_keyboard_reachable_and_painted[Splash Screen-size0-textual-light]
+
+(7 durations < 1s hidden.)
+18 passed in 251.75s (0:04:11)

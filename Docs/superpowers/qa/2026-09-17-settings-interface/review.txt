@@ -1,0 +1,17 @@
+TASK-32757 independent read-only review
+
+Reviewer: interface_layout_review, against working changes from
+11155c15c1ec4ded85d8a8fd63b6f8b2204773b1.
+
+Findings addressed: distinguish file replacement from cache refresh, preserve
+Appearance's explicit draft while rebasing its launch-default baseline, retain
+control focus during pending Splash writes, ignore stale status publication and
+detached view updates, preserve newer Input text during save completion.
+
+The final Input finding reproduced in success and failure cases: pressing Enter
+on 2.0 while 1.5 was pending replaced the field with 1.5. The fix retains newer
+text, gives Enter guidance after settlement, and permits the next submission.
+
+Final reviewer assessment: no remaining important correctness issues found.
+The reviewer made no edits. Test results and native qualification are recorded
+separately in README.md and their receipts.

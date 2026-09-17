@@ -16,6 +16,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Widgets.settings_theme_editor import SettingsThemeEditor
 
 _CSS_DIR = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
@@ -49,14 +50,14 @@ class _BundleHarness(App):
 
     def compose(self) -> ComposeResult:
         editor = SettingsThemeEditor(id="settings-theme-editor")
-        editor.custom_themes_path = self._tmp_path
         host = Vertical(editor, id=self._container_id, classes=self._container_classes)
         host.styles.width = self._width
         yield host
 
 
 @pytest.mark.asyncio
-async def test_swatch_paints_hex_text_and_dark_toggle_paints_state(tmp_path):
+@private_profile_test
+async def test_swatch_paints_hex_text_and_dark_toggle_paints_state(request, tmp_path):
     """TASK-31254: the colour swatch shows its hex, the Dark toggle is not a
     clipped border, and the preset target is named in visible text."""
     app = _BundleHarness(tmp_path)
@@ -76,7 +77,8 @@ async def test_swatch_paints_hex_text_and_dark_toggle_paints_state(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_invalid_hex_does_not_paint_a_black_swatch(tmp_path):
+@private_profile_test
+async def test_invalid_hex_does_not_paint_a_black_swatch(request, tmp_path):
     """TASK-31254: an invalid value marks the input, keeps the last colour and
     says 'invalid' in the swatch instead of silently turning black."""
     app = _BundleHarness(tmp_path)
@@ -93,7 +95,8 @@ async def test_invalid_hex_does_not_paint_a_black_swatch(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_compact_mode_keeps_every_button_inside_the_card(tmp_path):
+@private_profile_test
+async def test_compact_mode_keeps_every_button_inside_the_card(request, tmp_path):
     """TASK-31279: below the compact-workbench width the detail pane is ~45
     cells; four 16-cell buttons overflowed and Delete/Export were clipped."""
     app = _BundleHarness(

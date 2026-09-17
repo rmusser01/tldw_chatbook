@@ -1,0 +1,13 @@
+{
+  "ref_count": 270,
+  "worktree_count": 29,
+  "refs_with_id": [],
+  "worktrees_with_id": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "matches": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/tasks/task-32757 - Qualify-Appearance-Theme-and-Splash-Settings-workflows.md"
+      ]
+    }
+  ]
+}

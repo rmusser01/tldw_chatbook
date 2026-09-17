@@ -598,6 +598,65 @@ Button.settings-category-group-toggle:focus {
     margin: $ds-space-0;
 }
 
+/* Interface subviews must grow with their forms so the detail pane owns
+   scrolling, including stacked Theme actions and the Splash gallery. */
+#settings-theme-editor,
+#settings-splash-screen-viewer {
+    height: auto;
+}
+
+/* These toggles live in compact, one-row fields; a bordered three-row
+   Checkbox otherwise paints only its top edge. */
+#settings-appearance-animations-enabled,
+#settings-splash-enabled,
+#settings-splash-show-progress,
+#settings-splash-skip-on-keypress {
+    width: auto;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}
+
+/* Appearance has the same 24-column label constraint as Connect. Stack
+   compact fields so the toggle buttons and editable values fit the card. */
+.settings-workbench-compact #settings-appearance-card > .settings-input-row,
+.settings-workbench-compact #settings-splash-card > .settings-select-row {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-size-2;
+    margin-bottom: $ds-space-stack;
+}
+
+.settings-workbench-compact #settings-appearance-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-appearance-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-splash-default-select {
+    width: $ds-width-full;
+}
+
+.settings-workbench-compact #settings-theme-tree {
+    height: $ds-size-8;
+}
+
+/* A stacked gallery gives compact terminals a useful card list and preview
+   width; the list fits completely inside the detail pane when focused. */
+.settings-workbench-compact #settings-splash-gallery {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-space-0;
+}
+
+.settings-workbench-compact #settings-splash-card-list {
+    width: $ds-width-full;
+    height: $ds-size-8;
+}
+
+.settings-workbench-compact #settings-splash-preview-scroll {
+    width: $ds-width-full;
+    height: $ds-size-12;
+}
+
 /* The provider search is content-sized, while its OptionList owns a bounded
    scrolling viewport. Explicit sizing keeps following fields in document
    order at both the standard and compact Settings workbench widths. */

@@ -2092,7 +2092,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Boundary",
-            "launch visual defaults stay in Appearance; theme edits never touch config.toml",
+            "Apply changes this session; Save stores a theme file; Set as launch default updates general.default_theme",
         ),
     ),
     SettingsCategoryId.SPLASH_SCREEN: (
@@ -5146,7 +5146,7 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.THEME,
-                owns_config_sections=("custom theme files",),
+                owns_config_sections=("custom theme files", "general.default_theme"),
                 reads_runtime_state_from=("app theme", "custom theme files"),
                 writes_allowed=True,
                 runtime_owner="Theme editor",
@@ -15438,7 +15438,7 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 (
                     "Boundary",
-                    "launch visual defaults stay in Appearance; theme edits never touch config.toml",
+                    "Apply changes this session; Save stores a theme file; Set as launch default updates general.default_theme",
                 ),
             )
         if category is SettingsCategoryId.IMAGE_GENERATION:
@@ -21153,7 +21153,11 @@ class SettingsScreen(BaseAppScreen):
             "Saves apply to your local config file. Nothing is sent to a "
             "server unless you run Manual sync yourself."
             if summary.category is SettingsCategoryId.OVERVIEW
-            else "Local-only: saves write your config file.",
+            else (
+                "Local-only: Save stores a theme file; Set as launch default updates your config."
+                if summary.category is SettingsCategoryId.THEME
+                else "Local-only: saves write your config file."
+            ),
             id="settings-local-scope-note",
         )
 
@@ -23298,6 +23302,24 @@ class SettingsScreen(BaseAppScreen):
         self.post_message(
             NavigateToScreen("settings", {"category": SettingsCategoryId.THEME})
         )
+
+    @on(SettingsThemeEditor.LaunchDefaultChanged)
+    def handle_theme_launch_default_changed(
+        self, event: SettingsThemeEditor.LaunchDefaultChanged
+    ) -> None:
+        """Rebase Appearance on an instant launch-theme save without losing edits."""
+        event.stop()
+        app_config = self._app_config_update_target()
+        general = dict(app_config.get("general", {}))
+        general["default_theme"] = event.theme_name
+        app_config["general"] = general
+        draft = self._appearance_draft()
+        if draft is not None and "default_theme" in draft.values:
+            was_dirty = "default_theme" in draft.dirty_keys
+            draft.originals["default_theme"] = event.theme_name
+            if not was_dirty:
+                draft.values["default_theme"] = event.theme_name
+        self._refresh_category_button_label(SettingsCategoryId.APPEARANCE)
 
     @on(SettingsThemeEditor.ThemeModifiedStatus)
     def handle_theme_modified_status(

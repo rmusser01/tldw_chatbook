@@ -1,0 +1,12 @@
+{
+  "sources": {
+    "screen_css_scoped.tcss": 15216,
+    "screen_css_self.tcss": 2769,
+    "tldw_cli_modular.tcss": 394744,
+    "widget_defaults_scoped.tcss": 96742,
+    "widget_defaults_self.tcss": 111127
+  },
+  "total": 620598,
+  "floor": 600000,
+  "ceiling": 634050
+}

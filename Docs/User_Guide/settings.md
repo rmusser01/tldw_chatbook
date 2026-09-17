@@ -440,8 +440,8 @@ Speech & TTS resolves this draft: save or discard first" (task-2708).
 "Settings owns launch visual defaults. Open the Theme category for full theme
 editing and deeper visual preview." **Global visual defaults** holds **Theme**,
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
-and scrolling** holds **Animations** and **Smooth scrolling**, each a button
-whose label is its state (Enabled / Disabled). **Shared Library rail**
+and scrolling** holds **Character expressions**, an **Animations** checkbox,
+and **Reduce motion**, **ASCII glyphs**, and **Smooth scrolling** toggles. **Shared Library rail**
 remembers whether the rail and destination Items panes are open. **Automatic
 width** follows the 3:13 Library-to-canvas proportion plus five cells, bounded to 29–39 cells
 when space allows.
@@ -477,7 +477,9 @@ to…" list without a restart (built-ins can't be overwritten, and saving over
 another saved theme asks first); **Reset** reloads it as last saved; **Generate
 from Primary** derives a palette from the primary colour; **Set as launch
 default** writes the saved theme's name to `general.default_theme` so it
-loads at startup. **Color Palette** is ten hex boxes, Primary through Error,
+loads at startup. Appearance reflects that saved default immediately while
+retaining any explicitly staged theme choice or other unsaved Appearance edits.
+**Color Palette** is ten hex boxes, Primary through Error,
 each with a swatch showing the colour and its hex; an invalid value marks the
 box and the swatch reads "invalid". **Color Presets** fill the colour chosen in
 the **Presets fill** box (Primary by default), by click or by focusing a swatch
@@ -493,8 +495,13 @@ Auto-saved. Under **Startup defaults**, **Default card**, **Enabled**, **Show
 progress**, and **Skip on keypress** save the moment you change them, while
 **Duration (s)** and **Animation speed (x)** save when you press **Enter** in
 the box. **Gallery** lists every card with a live preview — **Play selected**
-replays it, **Set as default** points the startup card at it. Everything here
-takes effect **at the next launch**; the gallery preview is the only in-session
+replays it; **Default card** above the gallery selects the startup card.
+A pending write shows **Saving** without moving keyboard focus. A failed file
+write restores the saved value; a successful write followed by a configuration
+refresh failure keeps the saved value and reports the refresh problem.
+Newer text typed while a write is pending stays in the box; press Enter again
+after it finishes to save that edit.
+These preferences take effect **at the next launch**; the gallery preview is the only in-session
 feedback.
 
 **Skip on keypress** does what it says as of TASK-21591: with it on (the

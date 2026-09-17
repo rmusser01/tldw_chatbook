@@ -1,0 +1,23 @@
+..................                                                       [100%]
+============================= slowest 25 durations =============================
+2.87s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[False]
+2.84s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[True]
+2.13s call     Tests/UI/test_settings_splash_screen_viewer.py::test_failed_splash_toggle_restores_visible_control_and_state
+2.10s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_animation_speed_persists_to_the_section_it_loads
+2.06s call     Tests/UI/test_settings_splash_screen_viewer.py::test_settings_splash_viewer_can_compose
+2.05s call     Tests/UI/test_settings_splash_screen_viewer.py::test_pending_splash_write_keeps_confirmed_state_and_gates_same_control
+2.03s call     Tests/UI/test_settings_splash_screen_viewer.py::test_failing_persist_worker_surfaces_error_without_crashing_the_app
+1.93s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_write_reports_file_and_refresh_outcomes_separately[False]
+1.92s call     Tests/UI/test_settings_splash_screen_viewer.py::test_settings_splash_viewer_default_select_persists_on_change
+1.88s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_older_write_does_not_replace_newer_status
+1.88s call     Tests/UI/test_settings_splash_screen_viewer.py::test_settings_splash_viewer_selection_triggers_preview
+1.88s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_write_reports_file_and_refresh_outcomes_separately[True]
+1.87s call     Tests/UI/test_settings_splash_screen_viewer.py::test_settings_splash_viewer_card_list_populated
+1.87s call     Tests/UI/test_settings_splash_screen_viewer.py::test_settings_splash_viewer_loads_defaults
+1.86s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_late_completion_is_safe_after_removing_viewer
+1.86s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_checkboxes_carry_text_state_labels
+1.84s call     Tests/UI/test_settings_splash_screen_viewer.py::test_settings_splash_viewer_default_select_contains_random
+1.84s call     Tests/UI/test_settings_splash_screen_viewer.py::test_settings_splash_viewer_has_single_default_card_control
+
+(7 durations < 1s hidden.)
+18 passed in 38.10s
