@@ -15,8 +15,8 @@ self = <Coroutine test_console_rail_label_setting_saves_exact_payload_and_runtim
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -25,7 +25,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_label_setting_saves_exact_payload_and_runtime_value>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10c5ac7a0>}
@@ -90,10 +90,10 @@ E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyt
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           ____ test_console_rail_label_setting_saves_exact_payload_and_runtime_value _____
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_console_rail_label_setting_saves_exact_payload_and_runtime_value>>
 E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1158f3530>
-E           
+E
 E               @pytest.mark.asyncio
 E               @private_profile_test
 E               async def test_console_rail_label_setting_saves_exact_payload_and_runtime_value(
@@ -104,34 +104,34 @@ E                   """Successful category Save persists once, then activates th
 E                   app = _build_test_app()
 E                   app.app_config["console"] = {"stack_collapsed_rail_labels": False}
 E                   saved: list[dict[str, dict[str, bool]]] = []
-E               
+E
 E                   class FakeAdapter:
 E                       def save_sections(self, section_values):
 E                           saved.append(section_values)
 E                           return True
-E               
+E
 E                   monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
 E                   host = DestinationHarness(app, "settings")
-E               
+E
 E                   async with host.run_test(size=(190, 55)) as pilot:
 E                       await _open_settings_category(pilot, "#settings-category-console-behavior")
 E                       screen = _active_destination_screen(host)
 E           >           await pilot.click(RAIL_LABEL_TOGGLE)
-E           
-E           Tests/UI/test_settings_console_rail_labels.py:282: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+E
+E           Tests/UI/test_settings_console_rail_labels.py:282:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 E           .venv/lib/python3.12/site-packages/textual/pilot.py:249: in click
 E               raise error from None
 E           .venv/lib/python3.12/site-packages/textual/pilot.py:238: in click
 E               return await self._post_mouse_events(
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           self = <Pilot app=DestinationHarness(title='DestinationHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})>
 E           events = [<class 'textual.events.MouseDown'>, <class 'textual.events.MouseUp'>, <class 'textual.events.Click'>]
 E           widget = '#settings-console-stack-collapsed-rail-labels'
 E           offset = Offset(x=41, y=79), button = 1, shift = False, meta = False
 E           control = False, times = 1
-E           
+E
 E               async def _post_mouse_events(
 E                   self,
 E                   events: list[type[MouseEvent]],
@@ -144,13 +144,13 @@ E                   control: bool = False,
 E                   times: int = 1,
 E               ) -> bool:
 E                   """Simulate a series of mouse events to be fired at a given position.
-E               
+E
 E                   The final position for the events is computed based on the selector provided and
 E                   the offset specified and it must be within the visible area of the screen.
-E               
+E
 E                   This function abstracts away the commonalities of the other mouse event-related
 E                   functions that the pilot exposes.
-E               
+E
 E                   Args:
 E                       widget: A widget or selector used as the origin
 E                           for the event's offset. If this is not specified, the offset is interpreted
@@ -165,7 +165,7 @@ E                       control: Simulate the events with the control key held d
 E                       times: The number of times to click. 2 will double-click, 3 will triple-click, etc.
 E                   Raises:
 E                       OutOfBounds: If the position for the events is outside of the (visible) screen.
-E               
+E
 E                   Returns:
 E                       True if no selector was specified or if the *final* event landed on the
 E                           selected widget, False otherwise.
@@ -179,7 +179,7 @@ E                   elif isinstance(widget, Widget):
 E                       target_widget = widget
 E                   else:
 E                       target_widget = screen.query_one(widget)
-E               
+E
 E                   message_arguments = _get_mouse_message_arguments(
 E                       target_widget,
 E                       offset,
@@ -188,14 +188,14 @@ E                       shift=shift,
 E                       meta=meta,
 E                       control=control,
 E                   )
-E               
+E
 E                   offset = Offset(message_arguments["x"], message_arguments["y"])
 E                   if offset not in screen.size.region:
 E           >           raise OutOfBounds(
 E                           "Target offset is outside of currently-visible screen region."
 E                       )
 E           E           textual.pilot.OutOfBounds: Target offset is outside of currently-visible screen region.
-E           
+E
 E           .venv/lib/python3.12/site-packages/textual/pilot.py:442: OutOfBounds
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-17 15:23:42.528 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
@@ -248,7 +248,7 @@ E           WARNING  root:app.py:8233 Prompts service not initialized, self.prom
 E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
 E           ============================= slowest 25 durations =============================
 E           2.23s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_setting_saves_exact_payload_and_runtime_value
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_setting_saves_exact_payload_and_runtime_value
@@ -270,8 +270,8 @@ self = <Coroutine test_console_rail_label_failed_save_keeps_draft_and_active_sty
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -280,7 +280,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_label_failed_save_keeps_draft_and_active_style>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10c5ac3e0>}
@@ -345,10 +345,10 @@ E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyt
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           _______ test_console_rail_label_failed_save_keeps_draft_and_active_style _______
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_console_rail_label_failed_save_keeps_draft_and_active_style>>
 E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1135533e0>
-E           
+E
 E               @pytest.mark.asyncio
 E               @private_profile_test
 E               async def test_console_rail_label_failed_save_keeps_draft_and_active_style(
@@ -358,37 +358,37 @@ E               ):
 E                   """Persistence failure keeps the selected value without activating it."""
 E                   app = _build_test_app()
 E                   app.app_config["console"] = {"stack_collapsed_rail_labels": False}
-E               
+E
 E                   class FailingAdapter:
 E                       def save_sections(self, section_values):
 E                           return False
-E               
+E
 E                   monkeypatch.setattr(
 E                       settings_screen_module,
 E                       "SettingsConfigAdapter",
 E                       FailingAdapter,
 E                   )
 E                   host = DestinationHarness(app, "settings")
-E               
+E
 E                   async with host.run_test(size=(190, 55)) as pilot:
 E                       await _open_settings_category(pilot, "#settings-category-console-behavior")
 E                       screen = _active_destination_screen(host)
 E           >           await pilot.click(RAIL_LABEL_TOGGLE)
-E           
-E           Tests/UI/test_settings_console_rail_labels.py:339: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+E
+E           Tests/UI/test_settings_console_rail_labels.py:339:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 E           .venv/lib/python3.12/site-packages/textual/pilot.py:249: in click
 E               raise error from None
 E           .venv/lib/python3.12/site-packages/textual/pilot.py:238: in click
 E               return await self._post_mouse_events(
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           self = <Pilot app=DestinationHarness(title='DestinationHarness', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'})>
 E           events = [<class 'textual.events.MouseDown'>, <class 'textual.events.MouseUp'>, <class 'textual.events.Click'>]
 E           widget = '#settings-console-stack-collapsed-rail-labels'
 E           offset = Offset(x=41, y=79), button = 1, shift = False, meta = False
 E           control = False, times = 1
-E           
+E
 E               async def _post_mouse_events(
 E                   self,
 E                   events: list[type[MouseEvent]],
@@ -401,13 +401,13 @@ E                   control: bool = False,
 E                   times: int = 1,
 E               ) -> bool:
 E                   """Simulate a series of mouse events to be fired at a given position.
-E               
+E
 E                   The final position for the events is computed based on the selector provided and
 E                   the offset specified and it must be within the visible area of the screen.
-E               
+E
 E                   This function abstracts away the commonalities of the other mouse event-related
 E                   functions that the pilot exposes.
-E               
+E
 E                   Args:
 E                       widget: A widget or selector used as the origin
 E                           for the event's offset. If this is not specified, the offset is interpreted
@@ -422,7 +422,7 @@ E                       control: Simulate the events with the control key held d
 E                       times: The number of times to click. 2 will double-click, 3 will triple-click, etc.
 E                   Raises:
 E                       OutOfBounds: If the position for the events is outside of the (visible) screen.
-E               
+E
 E                   Returns:
 E                       True if no selector was specified or if the *final* event landed on the
 E                           selected widget, False otherwise.
@@ -436,7 +436,7 @@ E                   elif isinstance(widget, Widget):
 E                       target_widget = widget
 E                   else:
 E                       target_widget = screen.query_one(widget)
-E               
+E
 E                   message_arguments = _get_mouse_message_arguments(
 E                       target_widget,
 E                       offset,
@@ -445,14 +445,14 @@ E                       shift=shift,
 E                       meta=meta,
 E                       control=control,
 E                   )
-E               
+E
 E                   offset = Offset(message_arguments["x"], message_arguments["y"])
 E                   if offset not in screen.size.region:
 E           >           raise OutOfBounds(
 E                           "Target offset is outside of currently-visible screen region."
 E                       )
 E           E           textual.pilot.OutOfBounds: Target offset is outside of currently-visible screen region.
-E           
+E
 E           .venv/lib/python3.12/site-packages/textual/pilot.py:442: OutOfBounds
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-17 15:23:47.795 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
@@ -505,7 +505,7 @@ E           WARNING  root:app.py:8233 Prompts service not initialized, self.prom
 E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
 E           ============================= slowest 25 durations =============================
 E           2.07s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_failed_save_keeps_draft_and_active_style
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_failed_save_keeps_draft_and_active_style
@@ -527,8 +527,8 @@ self = <Coroutine test_console_rail_label_revert_discards_every_console_behavior
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -537,7 +537,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_label_revert_discards_every_console_behavior_draft>>}
@@ -602,9 +602,9 @@ E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyt
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           _____ test_console_rail_label_revert_discards_every_console_behavior_draft _____
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_console_rail_label_revert_discards_every_console_behavior_draft>>
-E           
+E
 E               @pytest.mark.asyncio
 E               @private_profile_test
 E               async def test_console_rail_label_revert_discards_every_console_behavior_draft(request):
@@ -616,27 +616,27 @@ E                       "rail_layout_scope": "global",
 E                       "collapse_large_pastes": True,
 E                   }
 E                   host = DestinationHarness(app, "settings")
-E               
+E
 E                   async with host.run_test(size=(190, 55)) as pilot:
 E                       await _open_settings_category(pilot, "#settings-category-console-behavior")
 E                       screen = _active_destination_screen(host)
 E                       screen.query_one(RAIL_LAYOUT_SCOPE, Select).value = "workspace"
 E           >           await pilot.click(RAIL_LABEL_TOGGLE)
-E           
-E           Tests/UI/test_settings_console_rail_labels.py:379: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+E
+E           Tests/UI/test_settings_console_rail_labels.py:379:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 E           .venv/lib/python3.12/site-packages/textual/pilot.py:249: in click
 E               raise error from None
 E           .venv/lib/python3.12/site-packages/textual/pilot.py:238: in click
 E               return await self._post_mouse_events(
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           self = <Pilot app=DestinationHarness(title='DestinationHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'})>
 E           events = [<class 'textual.events.MouseDown'>, <class 'textual.events.MouseUp'>, <class 'textual.events.Click'>]
 E           widget = '#settings-console-stack-collapsed-rail-labels'
 E           offset = Offset(x=41, y=79), button = 1, shift = False, meta = False
 E           control = False, times = 1
-E           
+E
 E               async def _post_mouse_events(
 E                   self,
 E                   events: list[type[MouseEvent]],
@@ -649,13 +649,13 @@ E                   control: bool = False,
 E                   times: int = 1,
 E               ) -> bool:
 E                   """Simulate a series of mouse events to be fired at a given position.
-E               
+E
 E                   The final position for the events is computed based on the selector provided and
 E                   the offset specified and it must be within the visible area of the screen.
-E               
+E
 E                   This function abstracts away the commonalities of the other mouse event-related
 E                   functions that the pilot exposes.
-E               
+E
 E                   Args:
 E                       widget: A widget or selector used as the origin
 E                           for the event's offset. If this is not specified, the offset is interpreted
@@ -670,7 +670,7 @@ E                       control: Simulate the events with the control key held d
 E                       times: The number of times to click. 2 will double-click, 3 will triple-click, etc.
 E                   Raises:
 E                       OutOfBounds: If the position for the events is outside of the (visible) screen.
-E               
+E
 E                   Returns:
 E                       True if no selector was specified or if the *final* event landed on the
 E                           selected widget, False otherwise.
@@ -684,7 +684,7 @@ E                   elif isinstance(widget, Widget):
 E                       target_widget = widget
 E                   else:
 E                       target_widget = screen.query_one(widget)
-E               
+E
 E                   message_arguments = _get_mouse_message_arguments(
 E                       target_widget,
 E                       offset,
@@ -693,14 +693,14 @@ E                       shift=shift,
 E                       meta=meta,
 E                       control=control,
 E                   )
-E               
+E
 E                   offset = Offset(message_arguments["x"], message_arguments["y"])
 E                   if offset not in screen.size.region:
 E           >           raise OutOfBounds(
 E                           "Target offset is outside of currently-visible screen region."
 E                       )
 E           E           textual.pilot.OutOfBounds: Target offset is outside of currently-visible screen region.
-E           
+E
 E           .venv/lib/python3.12/site-packages/textual/pilot.py:442: OutOfBounds
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-17 15:23:52.589 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
@@ -753,7 +753,7 @@ E           WARNING  root:app.py:8233 Prompts service not initialized, self.prom
 E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
 E           ============================= slowest 25 durations =============================
 E           1.96s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_revert_discards_every_console_behavior_draft
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_revert_discards_every_console_behavior_draft

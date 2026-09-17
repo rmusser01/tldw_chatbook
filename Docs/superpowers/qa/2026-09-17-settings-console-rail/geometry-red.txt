@@ -15,8 +15,8 @@ self = <Coroutine test_console_rail_label_setting_saves_exact_payload_and_runtim
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -25,7 +25,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_label_setting_saves_exact_payload_and_runtime_value>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x1122005c0>}
@@ -90,10 +90,10 @@ E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyt
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           ____ test_console_rail_label_setting_saves_exact_payload_and_runtime_value _____
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_console_rail_label_setting_saves_exact_payload_and_runtime_value>>
 E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x113644e00>
-E           
+E
 E               @pytest.mark.asyncio
 E               @private_profile_test
 E               async def test_console_rail_label_setting_saves_exact_payload_and_runtime_value(
@@ -104,26 +104,26 @@ E                   """Successful category Save persists once, then activates th
 E                   app = _build_test_app()
 E                   app.app_config["console"] = {"stack_collapsed_rail_labels": False}
 E                   saved: list[dict[str, dict[str, bool]]] = []
-E               
+E
 E                   class FakeAdapter:
 E                       def save_sections(self, section_values):
 E                           saved.append(section_values)
 E                           return True
-E               
+E
 E                   monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
 E                   host = DestinationHarness(app, "settings")
-E               
+E
 E                   async with host.run_test(size=(190, 55)) as pilot:
 E                       await _open_settings_category(pilot, "#settings-category-console-behavior")
 E                       screen = _active_destination_screen(host)
 E           >           await _toggle_rail_label(pilot, screen)
-E           
-E           Tests/UI/test_settings_console_rail_labels.py:295: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E
+E           Tests/UI/test_settings_console_rail_labels.py:295:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           pilot = <Pilot app=DestinationHarness(title='DestinationHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})>
 E           screen = SettingsScreen(classes='shell-header-normal')
-E           
+E
 E               async def _toggle_rail_label(pilot, screen):
 E                   toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
 E                   viewport = screen.query_one("#settings-detail-pane-body")
@@ -138,7 +138,7 @@ E           E        +  where False = contains_region(Region(x=41, y=79, width=3
 E           E        +    where contains_region = Region(x=37, y=29, width=111, height=24).contains_region
 E           E        +      where Region(x=37, y=29, width=111, height=24) = VerticalScroll(id='settings-detail-pane-body', classes='h-fill').content_region
 E           E        +    and   Region(x=41, y=79, width=36, height=3) = Checkbox(id='settings-console-stack-collapsed-rail-labels').region
-E           
+E
 E           Tests/UI/test_settings_console_rail_labels.py:38: AssertionError
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-17 15:24:14.622 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
@@ -191,7 +191,7 @@ E           WARNING  root:app.py:8233 Prompts service not initialized, self.prom
 E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
 E           ============================= slowest 25 durations =============================
 E           1.99s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_setting_saves_exact_payload_and_runtime_value
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_setting_saves_exact_payload_and_runtime_value
@@ -218,8 +218,8 @@ self = <Coroutine test_console_rail_label_failed_save_keeps_draft_and_active_sty
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -228,7 +228,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_label_failed_save_keeps_draft_and_active_style>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x1085d0470>}
@@ -293,10 +293,10 @@ E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyt
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           _______ test_console_rail_label_failed_save_keeps_draft_and_active_style _______
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_console_rail_label_failed_save_keeps_draft_and_active_style>>
 E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111e25eb0>
-E           
+E
 E               @pytest.mark.asyncio
 E               @private_profile_test
 E               async def test_console_rail_label_failed_save_keeps_draft_and_active_style(
@@ -306,29 +306,29 @@ E               ):
 E                   """Persistence failure keeps the selected value without activating it."""
 E                   app = _build_test_app()
 E                   app.app_config["console"] = {"stack_collapsed_rail_labels": False}
-E               
+E
 E                   class FailingAdapter:
 E                       def save_sections(self, section_values):
 E                           return False
-E               
+E
 E                   monkeypatch.setattr(
 E                       settings_screen_module,
 E                       "SettingsConfigAdapter",
 E                       FailingAdapter,
 E                   )
 E                   host = DestinationHarness(app, "settings")
-E               
+E
 E                   async with host.run_test(size=(190, 55)) as pilot:
 E                       await _open_settings_category(pilot, "#settings-category-console-behavior")
 E                       screen = _active_destination_screen(host)
 E           >           await _toggle_rail_label(pilot, screen)
-E           
-E           Tests/UI/test_settings_console_rail_labels.py:352: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E
+E           Tests/UI/test_settings_console_rail_labels.py:352:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           pilot = <Pilot app=DestinationHarness(title='DestinationHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})>
 E           screen = SettingsScreen(classes='shell-header-normal')
-E           
+E
 E               async def _toggle_rail_label(pilot, screen):
 E                   toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
 E                   viewport = screen.query_one("#settings-detail-pane-body")
@@ -343,7 +343,7 @@ E           E        +  where False = contains_region(Region(x=41, y=79, width=3
 E           E        +    where contains_region = Region(x=37, y=29, width=111, height=24).contains_region
 E           E        +      where Region(x=37, y=29, width=111, height=24) = VerticalScroll(id='settings-detail-pane-body', classes='h-fill').content_region
 E           E        +    and   Region(x=41, y=79, width=36, height=3) = Checkbox(id='settings-console-stack-collapsed-rail-labels').region
-E           
+E
 E           Tests/UI/test_settings_console_rail_labels.py:38: AssertionError
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-17 15:24:19.343 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
@@ -396,7 +396,7 @@ E           WARNING  root:app.py:8233 Prompts service not initialized, self.prom
 E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
 E           ============================= slowest 25 durations =============================
 E           2.02s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_failed_save_keeps_draft_and_active_style
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_failed_save_keeps_draft_and_active_style
@@ -418,8 +418,8 @@ self = <Coroutine test_console_rail_label_revert_discards_every_console_behavior
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -428,7 +428,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_label_revert_discards_every_console_behavior_draft>>}
@@ -493,9 +493,9 @@ E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyt
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           _____ test_console_rail_label_revert_discards_every_console_behavior_draft _____
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_console_rail_label_revert_discards_every_console_behavior_draft>>
-E           
+E
 E               @pytest.mark.asyncio
 E               @private_profile_test
 E               async def test_console_rail_label_revert_discards_every_console_behavior_draft(request):
@@ -507,19 +507,19 @@ E                       "rail_layout_scope": "global",
 E                       "collapse_large_pastes": True,
 E                   }
 E                   host = DestinationHarness(app, "settings")
-E               
+E
 E                   async with host.run_test(size=(190, 55)) as pilot:
 E                       await _open_settings_category(pilot, "#settings-category-console-behavior")
 E                       screen = _active_destination_screen(host)
 E                       screen.query_one(RAIL_LAYOUT_SCOPE, Select).value = "workspace"
 E           >           await _toggle_rail_label(pilot, screen)
-E           
-E           Tests/UI/test_settings_console_rail_labels.py:392: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E
+E           Tests/UI/test_settings_console_rail_labels.py:392:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           pilot = <Pilot app=DestinationHarness(title='DestinationHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'})>
 E           screen = SettingsScreen(classes='shell-header-normal')
-E           
+E
 E               async def _toggle_rail_label(pilot, screen):
 E                   toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
 E                   viewport = screen.query_one("#settings-detail-pane-body")
@@ -534,7 +534,7 @@ E           E        +  where False = contains_region(Region(x=41, y=79, width=3
 E           E        +    where contains_region = Region(x=37, y=29, width=111, height=24).contains_region
 E           E        +      where Region(x=37, y=29, width=111, height=24) = VerticalScroll(id='settings-detail-pane-body', classes='h-fill').content_region
 E           E        +    and   Region(x=41, y=79, width=36, height=3) = Checkbox(id='settings-console-stack-collapsed-rail-labels').region
-E           
+E
 E           Tests/UI/test_settings_console_rail_labels.py:38: AssertionError
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-17 15:24:24.052 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
@@ -587,7 +587,7 @@ E           WARNING  root:app.py:8233 Prompts service not initialized, self.prom
 E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
 E           ============================= slowest 25 durations =============================
 E           2.00s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_revert_discards_every_console_behavior_draft
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_revert_discards_every_console_behavior_draft

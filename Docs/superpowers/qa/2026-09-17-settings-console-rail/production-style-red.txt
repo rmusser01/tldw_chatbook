@@ -15,8 +15,8 @@ self = <Coroutine test_console_rail_toggle_is_painted_with_production_styles[siz
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -25,7 +25,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]>>, 'theme': 'textual-dark', 'size': (80, 24)}
@@ -90,10 +90,10 @@ E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyt
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           _ test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark] _
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]>>
 E           theme = 'textual-dark', size = (80, 24)
-E           
+E
 E               @pytest.mark.asyncio
 E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 E               @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
@@ -110,13 +110,13 @@ E                   async with host.run_test(size=size) as pilot:
 E                       await _category(host, pilot, "Console Behavior")
 E                       screen = host.screen
 E           >           await _toggle_rail_label(pilot, screen)
-E           
-E           Tests/UI/test_settings_console_rail_labels.py:448: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E
+E           Tests/UI/test_settings_console_rail_labels.py:448:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           pilot = <Pilot app=_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'})>
 E           screen = SettingsScreen(classes='shell-header-compact')
-E           
+E
 E               async def _toggle_rail_label(pilot, screen):
 E                   toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
 E                   toggle.focus()
@@ -135,7 +135,7 @@ E           E        +  where False = contains_region(Region(x=43, y=12, width=3
 E           E        +    where contains_region = Region(x=39, y=9, width=39, height=12).contains_region
 E           E        +      where Region(x=39, y=9, width=39, height=12) = VerticalScroll(id='settings-detail-pane-body', classes='h-fill').content_region
 E           E        +    and   Region(x=43, y=12, width=36, height=3) = Checkbox(id='settings-console-stack-collapsed-rail-labels').region
-E           
+E
 E           Tests/UI/test_settings_console_rail_labels.py:44: AssertionError
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-17 15:26:18.038 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
@@ -188,7 +188,7 @@ E           WARNING  root:app.py:8233 Prompts service not initialized, self.prom
 E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
 E           ============================= slowest 25 durations =============================
 E           3.94s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]
@@ -210,8 +210,8 @@ self = <Coroutine test_console_rail_toggle_is_painted_with_production_styles[siz
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -220,7 +220,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]>>, 'theme': 'textual-light', 'size': (80, 24)}
@@ -285,10 +285,10 @@ E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyt
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           _ test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light] _
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]>>
 E           theme = 'textual-light', size = (80, 24)
-E           
+E
 E               @pytest.mark.asyncio
 E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 E               @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
@@ -305,13 +305,13 @@ E                   async with host.run_test(size=size) as pilot:
 E                       await _category(host, pilot, "Console Behavior")
 E                       screen = host.screen
 E           >           await _toggle_rail_label(pilot, screen)
-E           
-E           Tests/UI/test_settings_console_rail_labels.py:448: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E
+E           Tests/UI/test_settings_console_rail_labels.py:448:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           pilot = <Pilot app=_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-theme-textual-light', '-light-mode'}, pseudo_classes={'light', 'focus', 'nocolor'})>
 E           screen = SettingsScreen(classes='shell-header-compact')
-E           
+E
 E               async def _toggle_rail_label(pilot, screen):
 E                   toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
 E                   toggle.focus()
@@ -330,7 +330,7 @@ E           E        +  where False = contains_region(Region(x=43, y=12, width=3
 E           E        +    where contains_region = Region(x=39, y=9, width=39, height=12).contains_region
 E           E        +      where Region(x=39, y=9, width=39, height=12) = VerticalScroll(id='settings-detail-pane-body', classes='h-fill').content_region
 E           E        +    and   Region(x=43, y=12, width=36, height=3) = Checkbox(id='settings-console-stack-collapsed-rail-labels').region
-E           
+E
 E           Tests/UI/test_settings_console_rail_labels.py:44: AssertionError
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-17 15:26:24.847 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
@@ -383,7 +383,7 @@ E           WARNING  root:app.py:8233 Prompts service not initialized, self.prom
 E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
 E           ============================= slowest 25 durations =============================
 E           3.92s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]

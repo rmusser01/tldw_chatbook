@@ -1,0 +1,37 @@
+[
+  {
+    "file": "boot-budget.txt",
+    "original_sha256": "59af205aea026d1cdc97ab651973824c1cc9796322d1316f0a5031a3dad6e4a5",
+    "stored_sha256": "59af205aea026d1cdc97ab651973824c1cc9796322d1316f0a5031a3dad6e4a5"
+  },
+  {
+    "file": "first-style-attempt.txt",
+    "original_sha256": "2109b97b637d1fa6bb37513edd83fa0542d9da2b0eb8e741379b7da7c0a0f984",
+    "stored_sha256": "c5b58f8cd0d9084ae637ccb3cc558e61d38bf39b405528b6104b6470ced04a61"
+  },
+  {
+    "file": "geometry-final.txt",
+    "original_sha256": "bb25c7716adac39b4b8e1c488f9b9882e7fe6fdd5fc6616ad75bb6bb6210fc82",
+    "stored_sha256": "bb25c7716adac39b4b8e1c488f9b9882e7fe6fdd5fc6616ad75bb6bb6210fc82"
+  },
+  {
+    "file": "geometry-red.txt",
+    "original_sha256": "9f891450034507ee617bf1e8b91f8dc40f55f2801d07737640b17815e5af17f7",
+    "stored_sha256": "1911d928cbd7b63cde4101509e662147ba0f641e56cf7385931a4ddc268cb132"
+  },
+  {
+    "file": "governance-final.txt",
+    "original_sha256": "58b08f3bee68a30a7599810efec2dedd4b47659682590d6dd68e06e823ee49c2",
+    "stored_sha256": "58b08f3bee68a30a7599810efec2dedd4b47659682590d6dd68e06e823ee49c2"
+  },
+  {
+    "file": "isolated-baseline.txt",
+    "original_sha256": "8b22d375ab11e51f566ff1e5825d7955743df177079b4a77c8aca37b4b25405f",
+    "stored_sha256": "7446e290d9031028c974865e956f0c49042bf2f8b48aea9958a69acb206b3c68"
+  },
+  {
+    "file": "production-style-red.txt",
+    "original_sha256": "c0485b34996b1ba0c6cf1632f2aea34d4ad5c3dad22c15e61fb945691c65bb81",
+    "stored_sha256": "875761657f9c32ea408fd980aed84e1aeea5ba7a2e888b98cf33e78bd25fc034"
+  }
+]

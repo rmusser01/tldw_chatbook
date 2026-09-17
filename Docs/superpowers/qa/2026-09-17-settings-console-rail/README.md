@@ -47,7 +47,8 @@ no token values or boot bundle changed.
 - One boot CSS budget check in `boot-budget.txt`. The unchanged boot bundle is
   620,598 bytes; the ceiling remains 634,050 and the floor 600,000.
 
-Counts do not add overlapping attempts. Ruff check and format pass for the
+Counts do not add overlapping attempts. Test logs have only trailing whitespace
+normalized; `test-log-manifest.json` pins original and stored bytes. Ruff check and format pass for the
 modified test file and native runner; `git diff --check` and the backlog ID guard
 pass. No full repository suite was run.
 
