@@ -85,6 +85,7 @@ if TYPE_CHECKING:
     # Imported lazily at call sites: custom_endpoint_registry imports this
     # module for URL normalization, so a module-level import would cycle.
     from tldw_chatbook.Chat.custom_endpoint_registry import CustomEndpointEntry
+    from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
@@ -276,33 +277,6 @@ _GENERATION_FAILURE_CATEGORY_VALUES = frozenset(
         "provider_error",
     }
 )
-CONSOLE_MODEL_TOKEN_LIMITS = {
-    "gpt-4": 8192,
-    "gpt-4-32k": 32768,
-    "gpt-4-turbo": 128000,
-    "gpt-4-turbo-preview": 128000,
-    "gpt-3.5-turbo": 4096,
-    "gpt-3.5-turbo-16k": 16384,
-    "claude-3-opus-20240229": 200000,
-    "claude-3-sonnet-20240229": 200000,
-    "claude-3-haiku-20240307": 200000,
-    "claude-2.1": 200000,
-    "claude-2": 100000,
-    "claude-instant-1.2": 100000,
-    "gemini-pro": 30720,
-    "gemini-pro-vision": 12288,
-    "mistral-large": 32000,
-    "mistral-medium": 32000,
-    "mistral-small": 32000,
-    "mixtral-8x7b": 32000,
-    "default": 8001,
-}
-CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS = {
-    "anthropic": 100000,
-    "google": 30720,
-    "openai": 8001,
-    "mistral": 32000,
-}
 _LEGACY_CHAT_PROVIDER_ALIASES = {
     "openai_compatible": "openai",
 }
@@ -519,6 +493,7 @@ class ConsoleSettingsReadiness:
     model: ModelFacet = "missing"
     generation: GenerationFacet = "not_tested"
     generation_category: GenerationFailureCategory | None = None
+    subscription_status: Literal["pending", "ready", "expired", "missing"] | None = None
 
     def __post_init__(self) -> None:
         """Normalize legacy construction and reject contradictory typed states."""
@@ -564,6 +539,13 @@ class ConsoleSettingsReadiness:
 
     def _validate_structured_state(self) -> None:
         _validate_console_readiness_literals(self)
+        if self.subscription_status is not None and (
+            (self.subscription_status == "ready")
+            != (self.credential in {"present_unverified", "authenticated"})
+        ):
+            raise ValueError(
+                "Console subscription state conflicts with its credential."
+            )
         expected_operability = (
             "ready_to_send" if self.native_send_supported else "not_ready"
         )
@@ -627,6 +609,11 @@ def _validate_console_readiness_literals(readiness: ConsoleSettingsReadiness) ->
             "configuration issue",
         ),
         (readiness.credential, _CREDENTIAL_VALUES, "credential"),
+        (
+            readiness.subscription_status,
+            {"pending", "ready", "expired", "missing"},
+            "subscription status",
+        ),
         (
             readiness.credential_source,
             _CREDENTIAL_SOURCE_VALUES,
@@ -1499,6 +1486,7 @@ def build_console_settings_readiness(
     evidence: ProviderTestEvidence | None = None,
     current_identity: ProviderDraftIdentity | None = None,
     active_run: bool = False,
+    background_credentials: bool = True,
 ) -> ConsoleSettingsReadiness:
     """Project one deterministic Console blocker and independent evidence."""
     if type(active_run) is not bool:
@@ -1536,7 +1524,12 @@ def build_console_settings_readiness(
             settings.provider if entry is not None else provider_key,
         )
     )
-    readiness = get_provider_readiness(provider_key, app_config, environ=environ)
+    readiness = get_provider_readiness(
+        provider_key,
+        app_config,
+        environ=environ,
+        background_credentials=background_credentials,
+    )
     if entry is not None and readiness.ready:
         readiness = (
             _custom_endpoint_missing_key_readiness(entry, provider_key, environ)
@@ -1715,6 +1708,7 @@ def build_console_settings_readiness(
         model=snapshot.model,
         generation=generation,
         generation_category=generation_category,
+        subscription_status=readiness.subscription_status,
     )
 
 
@@ -1873,6 +1867,7 @@ def build_console_context_estimate(
     staged_text: str = "",
     token_counter: TokenCounter | None = None,
     token_limit_resolver: TokenLimitResolver | None = None,
+    context_window: ContextWindowResolution | None = None,
 ) -> ConsoleSettingsContextEstimate:
     """Estimate current context tokens for display in Console settings.
 
@@ -1907,7 +1902,11 @@ def build_console_context_estimate(
         counter = token_counter or _estimate_tokens_locally
         limit_resolver = token_limit_resolver or _resolve_token_limit_locally
         used_tokens = counter(list(estimate_messages), model_name, provider_key)
-        if token_limit_resolver is None:
+        if context_window is not None:
+            token_limit = context_window.tokens
+            token_limit_verified = context_window.verified
+            token_limit_source = context_window.source
+        elif token_limit_resolver is None:
             token_limit, token_limit_verified, token_limit_source = (
                 _resolve_token_limit_locally_with_provenance(
                     model_name,
@@ -2468,28 +2467,11 @@ def _resolve_token_limit_locally_with_provenance(
     model: str,
     provider: str,
 ) -> tuple[int, bool, str]:
-    """Resolve the model window and report whether it is model-specific."""
-    if model in CONSOLE_MODEL_TOKEN_LIMITS:
-        return CONSOLE_MODEL_TOKEN_LIMITS[model], True, "model catalog"
+    """Resolve the shared model/API/system default without network I/O."""
+    from tldw_chatbook.Utils.token_counter import resolve_context_window
 
-    model_limits = (
-        (prefix, limit)
-        for prefix, limit in CONSOLE_MODEL_TOKEN_LIMITS.items()
-        if prefix != "default"
-    )
-    for model_prefix, limit in sorted(
-        model_limits, key=lambda item: len(item[0]), reverse=True
-    ):
-        if model.startswith(model_prefix):
-            return limit, True, "model family"
-
-    if provider in CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS:
-        return (
-            CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS[provider],
-            False,
-            "provider fallback",
-        )
-    return CONSOLE_MODEL_TOKEN_LIMITS["default"], False, "application fallback"
+    result = resolve_context_window(provider, model)
+    return result.tokens, result.verified, result.source
 
 
 def _bool_setting(
@@ -2555,6 +2537,14 @@ def _format_endpoint_summary_row(
 
 
 def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
+    if readiness.subscription_status is not None:
+        state = {
+            "pending": "checking",
+            "ready": "not verified",
+            "expired": "expired",
+            "missing": "missing",
+        }[readiness.subscription_status]
+        return f"Credential: Claude subscription ({state})"
     if readiness.credential == "missing":
         return "Credential: missing"
     if readiness.credential == "not_required":

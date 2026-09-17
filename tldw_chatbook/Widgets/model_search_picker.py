@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from functools import partial
 
 from rich.markup import escape as escape_markup
 from rich.text import Text
@@ -325,7 +326,8 @@ class ModelSearchPicker(Widget):
     ) -> None:
         """Schedule a provider switch without blocking the parent event handler."""
         self.run_worker(
-            self.load_provider(
+            partial(
+                self.load_provider,
                 provider,
                 current_model=current_model,
                 force=force,

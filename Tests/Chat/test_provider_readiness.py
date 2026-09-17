@@ -564,6 +564,7 @@ def test_evidence_records_are_frozen_slotted_and_secret_free():
         "credential_source",
         "credential_revision",
         "draft_generation",
+        "custom_endpoint_id",
     ]
     assert [item.name for item in fields(ProviderTestEvidence)] == [
         "identity",

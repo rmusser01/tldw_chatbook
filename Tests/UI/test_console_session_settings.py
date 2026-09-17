@@ -12707,17 +12707,23 @@ async def test_model_change_cancels_probe_restores_action_and_rejects_late_resul
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        if change_path == "input":
+            modal.query_one("#console-settings-model-custom", Button).press()
+            await pilot.pause()
+            assert modal.query_one(
+                "#console-settings-model-picker", ModelSearchPicker
+            ).custom_mode
         action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
         action.press()
-        await tester.started.wait()
+        await asyncio.wait_for(tester.started.wait(), timeout=3)
         assert action.disabled is True
 
         if change_path == "select":
             model_select = modal.query_one("#console-settings-model-select", Select)
-            modal._model_select_changed(Select.Changed(model_select, "model-b"))
+            model_select.value = "model-b"
         elif change_path == "input":
             model_input = modal.query_one("#console-settings-model-input", Input)
-            modal._model_input_changed(Input.Changed(model_input, "model-b"))
+            model_input.value = "model-b"
         elif change_path == "picker_selected":
             modal._model_picker_selected(ModelSearchPicker.ModelSelected("model-b"))
         else:
@@ -12737,15 +12743,48 @@ async def test_model_change_cancels_probe_restores_action_and_rejects_late_resul
         assert "model listed" not in str(
             modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
         )
-        assert modal._connection_evidence_store.evidence_for(
-            modal._current_connection_probe_identity()
-        ) is None
+        assert (
+            modal._connection_evidence_store.evidence_for(
+                modal._current_connection_probe_identity()
+            )
+            is None
+        )
         cancelled_readiness = str(
             modal.query_one("#console-settings-readiness", Static).renderable
         )
         assert "Endpoint · Not tested" in cancelled_readiness
         assert "Endpoint · Testing…" not in cancelled_readiness
         assert "Endpoint · Reachable" not in cancelled_readiness
+
+
+@pytest.mark.asyncio
+async def test_dismissed_modal_discards_cancellation_resistant_connection_result() -> (
+    None
+):
+    """A provider returning during teardown must not query removed controls."""
+    app = ModalHarness()
+    tester = _CancellationResistantConnectionTester(
+        ProviderProbeResult("reachable", ("stale-model",))
+    )
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", base_url="http://127.0.0.1:9099"
+        ),
+        app,
+        providers_models={"llama_cpp": ["model-a"]},
+        connection_tester=tester,
+    )
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await asyncio.wait_for(tester.started.wait(), timeout=3)
+        await app.pop_screen()
+        await pilot.pause()
+        assert not modal.is_attached
+        assert tester.cancelled
+        assert modal._active_connection_probe_token is None
+        assert "stale-model" not in modal._current_discovered_model_ids
 
 
 @pytest.mark.parametrize(

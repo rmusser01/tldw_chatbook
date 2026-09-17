@@ -474,3 +474,42 @@ def test_cancelled_generation_retest_restores_prior_exact_result() -> None:
     assert store.cancel_generation_probe(retry)
 
     assert store.evidence_for(identity).generation == "succeeded"
+
+
+def test_named_entries_sharing_endpoint_cannot_reuse_evidence_or_save_lease():
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    first = replace(_identity(), custom_endpoint_id="custom-ep:first")
+    second = replace(first, custom_endpoint_id="custom-ep:second")
+    store = ProviderTestEvidenceStore()
+    token = store.begin(first)
+    assert store.settle(token, ProviderProbeResult("reachable", ("first-model",)))
+    assert store.evidence_for(second) is None
+    lease = store.begin_save(first)
+    assert lease is not None
+    assert not store.rebase_after_save(
+        lease=lease,
+        tested_identity=first,
+        saved_identity=second,
+        mutation_result=SimpleNamespace(
+            fully_applied=True, file_replaced=True, conflict=False
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "entry_id",
+    [
+        "custom-ep:",
+        "custom-ep:wrong_slug",
+        "custom-ep:Bad",
+        "custom-ep:" + "a" * 65,
+        "custom-ep:one\nsecret",
+    ],
+)
+def test_evidence_identity_rejects_noncanonical_entry_ids(entry_id):
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="Custom endpoint identity"):
+        replace(_identity(), custom_endpoint_id=entry_id)

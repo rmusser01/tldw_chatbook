@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass, replace
 from math import isfinite
-from typing import Any, Literal, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from textual import events, on
@@ -17,6 +17,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
     ContextCompactionMode,
     ContextCompactionRepresentation,
 )
@@ -53,6 +54,9 @@ from tldw_chatbook.Widgets.model_search_picker import (
     ModelPickerInput,
     ModelSearchPicker,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 CONSOLE_POPOVER_OPEN_FULL_SETTINGS = "open-full-settings"
 
@@ -275,6 +279,10 @@ class ConsoleModelPopover(
         initial_draft: ConsoleSettingsDraftState,
         providers_models: Mapping[str, Sequence[str]],
         context_state: ConsoleContextControlState | None = None,
+        context_window_resolver: Callable[
+            [ConsoleSessionSettings], Awaitable[ContextWindowResolution]
+        ]
+        | None = None,
         scope_copy: str,
         durability_copy: str,
         draft_rebaser: DraftRebaser,
@@ -291,6 +299,7 @@ class ConsoleModelPopover(
             providers_models: Mapping of provider key to its available model
                 names, used to build the provider and model selects.
             context_state: Current context usage/policy presentation state.
+            context_window_resolver: Bounded asynchronous serving-capacity lookup.
             scope_copy: Exact conversation scope label.
             durability_copy: Exact unsaved or temporary durability label.
             draft_rebaser: Controller-owned provider/model rebase callback.
@@ -308,6 +317,9 @@ class ConsoleModelPopover(
         self._app_config = app_config
         self._draft = initial_draft
         self._providers_models = providers_models
+        self._context_window_resolver = context_window_resolver
+        self._context_window_target: tuple[str, str | None, str | None] | None = None
+        self._context_window_generation = 0
         self._context_state = context_state or build_console_context_control_state(
             settings=initial_draft.settings,
             estimate=ConsoleSettingsContextEstimate(
@@ -510,6 +522,12 @@ class ConsoleModelPopover(
                     markup=False,
                 )
                 yield Static(
+                    self._model_window_copy(),
+                    id="console-popover-model-window",
+                    classes="console-popover-context-row",
+                    markup=False,
+                )
+                yield Static(
                     "Response max  "
                     f"{format_context_tokens(settings.max_tokens)} tokens for the next reply",
                     id="console-popover-response-max",
@@ -666,6 +684,99 @@ class ConsoleModelPopover(
         self._sync_default_content()
         self.call_after_refresh(self._sync_fold_hint)
         self.call_after_refresh(self._sync_responsive_width)
+        self.call_after_refresh(self._refresh_context_window)
+
+    def _refresh_context_window(self) -> None:
+        """Resolve the exact target in a worker without retaining stale results."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        if (
+            not self.is_mounted
+            or self not in self.app.screen_stack
+            or self._context_window_resolver is None
+        ):
+            return
+        settings = self._draft.settings
+        target = (settings.provider, settings.model, settings.base_url)
+        if target == self._context_window_target:
+            return
+        self._context_window_target = target
+        self._context_window_generation += 1
+        generation = self._context_window_generation
+        self._publish_context_window(
+            resolve_context_window(settings.provider, settings.model or "")
+        )
+
+        async def refresh() -> None:
+            try:
+                result = await self._context_window_resolver(settings)
+            except (OSError, ValueError):
+                return
+            if (
+                self.is_mounted
+                and self in self.app.screen_stack
+                and generation == self._context_window_generation
+                and target == self._context_window_target
+            ):
+                self._publish_context_window(result)
+
+        self.run_worker(
+            refresh,
+            group="console-popover-context-window",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _model_window_copy(self) -> str:
+        state = self._context_state
+        suffix = " (estimated)" if not state.model_window_verified else ""
+        return (
+            "Model window  "
+            f"{format_context_tokens(state.model_window_tokens)} tokens{suffix}"
+        )
+
+    def _publish_context_window(self, result: ContextWindowResolution) -> None:
+        """Recalculate input and policy budgets from the selected serving window."""
+        previous = self._context_state
+        rebuilt = build_console_context_control_state(
+            settings=self._draft.settings,
+            estimate=ConsoleSettingsContextEstimate(
+                used_tokens=previous.request_tokens,
+                token_limit=result.tokens,
+                label="",
+                token_limit_verified=result.verified,
+                token_limit_source=result.source,
+            ),
+            overrides=self._draft.context_policy_overrides,
+            global_overrides=ConsoleContextPolicyOverrides(
+                **asdict(previous.inherited_policy)
+            ),
+            effective_memory=previous.effective_memory,
+            conversation_tokens=previous.conversation_tokens,
+            request_overhead_tokens=previous.request_overhead_tokens,
+            busy=previous.busy,
+            status_message=previous.status_message,
+        )
+        self._context_state = replace(
+            rebuilt,
+            thinking_history=previous.thinking_history,
+            breakdown_rows=previous.breakdown_rows,
+        )
+        state = self._context_state
+        updates = {
+            "console-popover-model-window": self._model_window_copy(),
+            "console-popover-request-usage": f"Request       {state.request_row}",
+            "console-popover-conversation-usage": (
+                f"Conversation  {state.conversation_row}"
+            ),
+            "console-popover-compaction-threshold": (
+                "Compaction    at "
+                f"{format_context_tokens(state.compaction_trigger_tokens)} tokens"
+            ),
+        }
+        for control_id, text in updates.items():
+            self.query_one(f"#{control_id}", Static).update(text)
+        self.query_one("#console-popover-model-window", Static).tooltip = result.source
 
     def on_resize(self, _event: events.Resize) -> None:
         """Re-sync the fold hint and the responsive width tier on resize.
@@ -921,6 +1032,7 @@ class ConsoleModelPopover(
         self._model_options_provider = settings.provider
         self._sync_provenance_labels()
         self._sync_default_content()
+        self._refresh_context_window()
 
     def _sync_provenance_labels(self) -> None:
         if not self.is_mounted:

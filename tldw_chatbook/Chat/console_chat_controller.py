@@ -12656,10 +12656,10 @@ class ConsoleChatController:
     ) -> ConsoleSettingsDraftState:
         """Rebase one settings draft onto an exact provider/model target.
 
-        Untouched values always come from the target's established default chain.
-        Only dirty fields exposed by the calling surface and supported by the
-        target survive a switch. A remembered exact target draft takes precedence
-        over carried values from the provider/model being left.
+        The current or remembered exact target retains its conversation snapshot,
+        including fields hidden by the calling surface. An unseen target starts
+        from its established default chain and carries only supported dirty
+        fields. Explicit Inherit edits resolve current lower-precedence defaults.
 
         Args:
             state: The draft being switched away from; never mutated.
@@ -12672,7 +12672,7 @@ class ConsoleChatController:
             app_config: The live application configuration snapshot the
                 target's default chain resolves against.
             exposed_fields: Exact field names the calling surface can carry;
-                dirty drafts outside this set are dropped.
+                only exposed dirty fields carry to an unseen target.
 
         Returns:
             A new ``ConsoleSettingsDraftState`` rebased onto the target:
@@ -12711,6 +12711,12 @@ class ConsoleChatController:
         restoring_remembered_target = (
             current_key != target_key and remembered_target is not None
         )
+        preserve_snapshot = current_key == target_key or restoring_remembered_target
+        source_settings = (
+            remembered_target.settings
+            if restoring_remembered_target
+            else state.settings
+        )
         source_fields = (
             remembered_target.field_drafts
             if restoring_remembered_target
@@ -12744,6 +12750,7 @@ class ConsoleChatController:
                 target_model,
                 excluded_model_profile_fields=inherited_dirty_fields,
             )
+        settings_base = source_settings if preserve_snapshot else target_defaults
 
         supported_fields = _supported_console_settings_fields(
             target_provider,
@@ -12759,7 +12766,7 @@ class ConsoleChatController:
         for name in _CONSOLE_SETTINGS_FIELD_ORDER:
             if name not in exposed_supported_fields:
                 continue
-            effective_value = getattr(target_defaults, name)
+            effective_value = getattr(settings_base, name)
             has_profile_override = name in profile
             rebased_fields[name] = ConsoleSettingsFieldDraft(
                 name=name,
@@ -12779,25 +12786,35 @@ class ConsoleChatController:
                 dirty=False,
             )
 
-        dirty_values: dict[str, object | None] = {}
+        field_values: dict[str, object | None] = {}
         carrying_to_unseen_target = (
             current_key != target_key and remembered_target is None
         )
         for source_field in source_fields:
-            if not source_field.dirty or source_field.name not in exposed_supported_fields:
+            if source_field.name not in exposed_supported_fields or (
+                not preserve_snapshot and not source_field.dirty
+            ):
                 continue
             if quick_surface and source_field.effective_value is None:
+                effective_value = getattr(target_defaults, source_field.name)
+                field_values[source_field.name] = effective_value
+                rebased_fields[source_field.name] = replace(
+                    rebased_fields[source_field.name],
+                    effective_value=effective_value,
+                    profile_override=effective_value,
+                )
                 continue
             inherits_target_default = (
-                not quick_surface and source_field.profile_override is None
+                source_field.dirty
+                and not quick_surface
+                and source_field.profile_override is None
             )
             effective_value = (
                 getattr(target_defaults, source_field.name)
                 if inherits_target_default
                 else source_field.effective_value
             )
-            if not inherits_target_default:
-                dirty_values[source_field.name] = effective_value
+            field_values[source_field.name] = effective_value
             rebased_fields[source_field.name] = replace(
                 source_field,
                 effective_value=effective_value,
@@ -12809,7 +12826,7 @@ class ConsoleChatController:
                     if carrying_to_unseen_target
                     else source_field.provenance
                 ),
-                dirty=True,
+                dirty=source_field.dirty,
             )
 
         unsupported_provider_fields = FULL_MODEL_DEFAULT_FIELDS - supported_fields
@@ -12821,23 +12838,35 @@ class ConsoleChatController:
             "source": state.settings.source,
             "pinned_prefill": state.settings.pinned_prefill,
             **{name: None for name in unsupported_provider_fields},
-            **dirty_values,
+            **field_values,
         }
 
         endpoint_draft: ConsoleEndpointDraft | None = None
         target_base_url = target_defaults.base_url
+        if preserve_snapshot and (
+            source_endpoint is None
+            or (
+                not source_endpoint.dirty
+                and source_endpoint.bound_provider_config_key
+                == provider_config_key(target_provider)
+            )
+        ):
+            target_base_url = source_settings.base_url
         if (
             exposed_fields == FULL_MODEL_DEFAULT_FIELDS
             and source_endpoint is not None
             and source_endpoint.dirty
-            and source_endpoint.bound_provider_config_key == target_provider
+            and source_endpoint.bound_provider_config_key
+            == provider_config_key(target_provider)
         ):
             endpoint_draft = source_endpoint
             target_base_url = source_endpoint.value or None
-        elif target_base_url is not None:
+        elif target_base_url is not None and not (
+            preserve_snapshot and source_endpoint is None
+        ):
             endpoint_draft = ConsoleEndpointDraft(
                 value=target_base_url,
-                bound_provider_config_key=target_provider,
+                bound_provider_config_key=provider_config_key(target_provider),
                 dirty=False,
                 checked=False,
             )
@@ -12845,7 +12874,7 @@ class ConsoleChatController:
 
         return replace(
             state,
-            settings=replace(target_defaults, **settings_changes),
+            settings=replace(settings_base, **settings_changes),
             field_drafts=tuple(
                 rebased_fields[name]
                 for name in _CONSOLE_SETTINGS_FIELD_ORDER
@@ -23987,6 +24016,7 @@ class ConsoleChatController:
         resolved = resolve_context_policy(
             capacity=ConsoleContextCapacity(
                 model_context_window_tokens=capacity.context_window_tokens,
+                model_window_verified=capacity.safety_verified,
                 provider_input_cap_tokens=capacity.provider_input_cap_tokens,
                 response_reservation_tokens=capacity.effective_response_tokens,
                 safety_margin_tokens=capacity.safety_margin_tokens,

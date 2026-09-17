@@ -374,6 +374,7 @@ class ProviderDraftIdentity:
     credential_source: CredentialSource
     credential_revision: int
     draft_generation: int
+    custom_endpoint_id: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -383,6 +384,13 @@ class ProviderDraftIdentity:
             or _PROVIDER_KEY.fullmatch(self.provider_key) is None
         ):
             raise ValueError("Provider key is invalid.")
+        if self.custom_endpoint_id is not None and (
+            type(self.custom_endpoint_id) is not str
+            or re.fullmatch(r"custom-ep:[a-z0-9-]{1,64}", self.custom_endpoint_id)
+            is None
+            or self.provider_key not in {"custom", "llama_cpp", "ollama"}
+        ):
+            raise ValueError("Custom endpoint identity is invalid.")
         if (
             type(self.connection_identity) is not tuple
             or len(self.connection_identity) != 2
@@ -1246,6 +1254,7 @@ def _same_saved_semantics(
     )
     return (
         first.provider_key == second.provider_key
+        and first.custom_endpoint_id == second.custom_endpoint_id
         and first.connection_identity == second.connection_identity
         and credential_source_matches
         and first.credential_revision == second.credential_revision

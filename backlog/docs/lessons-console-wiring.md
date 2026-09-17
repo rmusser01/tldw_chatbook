@@ -41,3 +41,32 @@ before trusting any new hook wiring, however green its feature tests are:
 they exercise the callable directly and never go through the bind.
 
 ---
+
+## Test endpoint creation with the real settings rebaser and queued adapters
+
+**TASK-32566, 2026-09-16.** An isolated parent/child modal test found the named
+endpoint probe's family/identity mismatch, but the production controller then
+exposed two more failures: rebasing normalized the entry's hyphenated slug, and
+a delayed nonblank `Select.Changed` event restored the old model after a successful
+single-model listing. Mirrored input events also cancelled the automatic probe.
+The mounted controller test plus explicit queued adapter events caught these;
+filtering against the control's current value before cancelling work preserved
+the actual current selection and evidence. Keep the real rebaser in flow tests,
+and treat queued widget echoes as potentially stale even when their value is
+nonblank. Coverage: `Tests/UI/test_console_endpoint_discovery.py`.
+
+## Credential polling must compare with the last rendered state
+
+**TASK-32711, 2026-09-17.** The first persona readiness poll initialized its
+remembered block reason to `None`. The inspector painted a pending credential
+read, but if the worker completed before the first timer tick, the ready reason
+was also `None` and the poll skipped repainting. The UI stayed pending despite
+completed work. Recording the state when rendering fixed the race; the mounted
+regression holds back the first poll until the credential worker has finished.
+Settings separately forces an initial projection. A second deterministic case
+completed the read between rendering the header and inspector: remembering only
+the inspector left the header blocked. Track both rendered projections so the
+next poll reconciles them. Compare credential status as well as completion: an
+expiry can happen inside the cache TTL without a new completion revision.
+Coverage: `Tests/UI/test_personas_subscription_readiness.py` and
+`Tests/UI/test_settings_subscription_readiness.py`.

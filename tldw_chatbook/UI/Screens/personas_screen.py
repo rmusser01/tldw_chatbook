@@ -1430,6 +1430,9 @@ class PersonasScreen(BaseAppScreen):
         self._selected_lore_book_version: int | None = None
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
+        self._console_readiness_poll_timer: Timer | None = None
+        self._console_readiness_block_reason: str | None = None
+        self._console_header_block_reason: str | None = None
         self._character_tts_request_generation = 0
         self._character_tts_snapshot: _CharacterTTSControlSnapshot | None = None
         self._character_tts_presentation = CharacterTTSPresentationState.disabled()
@@ -1932,6 +1935,9 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._sync_local_character_actions()
         self._show_center(None)
+        self._console_readiness_poll_timer = self.set_interval(
+            0.25, self._poll_console_handoff_readiness
+        )
         self.run_worker(
             self._load_after_mount(),
             group="personas_initial_load",
@@ -2266,6 +2272,9 @@ class PersonasScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Invalidate deferred Personas work before releasing screen resources."""
+        if self._console_readiness_poll_timer is not None:
+            self._console_readiness_poll_timer.stop()
+            self._console_readiness_poll_timer = None
         self._center_view_lifecycle_generation += 1
         self._ready_center_views.clear()
         self._advance_persona_buddy_session()
@@ -4545,7 +4554,8 @@ class PersonasScreen(BaseAppScreen):
         # is the header's own established pattern (see stats_screen.py) for
         # this, so no new header UI is introduced. The fuller "what to do"
         # remedy text stays in the inspector's readiness line below it.
-        status = "blocked" if self._provider_send_block_reason() else "ready"
+        provider_block_reason = self._provider_send_block_reason()
+        status = "blocked" if provider_block_reason else "ready"
         header.sync_state(
             WorkbenchHeaderState(
                 title="Roleplay",
@@ -4553,6 +4563,7 @@ class PersonasScreen(BaseAppScreen):
                 status=status,
             )
         )
+        self._console_header_block_reason = provider_block_reason
 
     def _purpose_line_text(self) -> str:
         """Mode descriptor plus the live item count on one line (F-033).
@@ -7121,7 +7132,7 @@ class PersonasScreen(BaseAppScreen):
         """Actionable reason the staged Console handoff send would fail, if any.
 
         Reuses ``PersonasPreviewController.console_handoff_readiness`` - a
-        config/env-only mirror of the provider a fresh Start-Chat/Attach
+        nonblocking snapshot of the provider a fresh Start-Chat/Attach
         Console session actually resolves (chat_defaults; the native Console
         never reads character_defaults) - so this never duplicates
         provider-resolution logic and stays cheap enough to run on every
@@ -7147,6 +7158,24 @@ class PersonasScreen(BaseAppScreen):
         ready, reason = self.preview.console_handoff_readiness()
         return None if ready else reason
 
+    def _poll_console_handoff_readiness(self) -> None:
+        """Refresh completed or expired credentials for the current selection.
+
+        Recheck the current gate/config instead of capturing a selection for
+        an asynchronous callback. Polling status also starts a bounded cache
+        refresh after its TTL and notices expiry without a completion revision.
+        """
+        if not self.is_mounted or not self.is_active:
+            return
+        reason = self._provider_send_block_reason()
+        # A background read can complete between header and inspector paints.
+        if (
+            reason == self._console_readiness_block_reason
+            and reason == self._console_header_block_reason
+        ):
+            return
+        self._sync_title_and_console_actions()
+
     def _sync_inspector_console_actions(self) -> None:
         """Push the single screen-owned Console gate into the inspector pane."""
         try:
@@ -7154,10 +7183,13 @@ class PersonasScreen(BaseAppScreen):
         except QueryError:
             return
         allowed = self._console_action_allowed()
+        provider_block_reason = self._provider_send_block_reason()
+        # Remember what was painted even if a read finishes before the first poll.
+        self._console_readiness_block_reason = provider_block_reason
         inspector.set_console_actions_enabled(
             allowed,
             reason=None if allowed else self._console_action_block_reason(),
-            provider_block_reason=self._provider_send_block_reason(),
+            provider_block_reason=provider_block_reason,
         )
 
     def _sync_inspector_buddy_status(self) -> None:

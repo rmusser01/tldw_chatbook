@@ -1,5 +1,20 @@
 # Lessons: verifying against the real thing
 
+## A dismissed modal may still report is_mounted
+
+**TASK-32709, 2026-09-16.** A mounted model-popover Escape regression showed
+`is_mounted=True` after the screen left the stack. A delayed resolver that
+suppressed cancellation then changed that dismissed popover's context window
+from 32,000 to 12,000. Another gated test exercised model A → B → A, where
+target equality alone accepted the original A's late result.
+
+Async modal publication must check screen-stack ownership and an operation
+generation, as well as mount state and target identity. Cancellation alone is
+not evidence that a callback cannot finish. The regression tests in
+`Tests/UI/test_console_popover_context_window.py` and
+`Tests/UI/test_console_context_window_modal.py` hold the old work across the
+navigation boundary before releasing it.
+
 ## A process's No route to host can be an app privacy denial
 
 **TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized

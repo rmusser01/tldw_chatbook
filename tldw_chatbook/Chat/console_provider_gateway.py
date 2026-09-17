@@ -55,6 +55,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    URL_BASED_PROVIDER_KEYS,
     effective_provider_endpoint,
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
@@ -167,7 +168,6 @@ from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
 from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
-    resolve_provider_api_key,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
@@ -176,6 +176,11 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
 )
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_context_window import (
+        ContextWindowCache,
+        ContextWindowResolution,
+        ContextWindowTarget,
+    )
     from tldw_chatbook.Chat.console_voice_trace_gateway import (
         ProvisionalTraceAttempt,
         ProvisionalTraceEnvelope,
@@ -575,15 +580,9 @@ def _custom_entry_credential(
         ``(credential, provenance label)`` or ``(None, None)`` when nothing
         declared resolves.
     """
-    env = environ if environ is not None else os.environ
-    if entry.api_key_env:
-        env_key = resolve_provider_api_key(env.get(entry.api_key_env, ""))
-        if env_key is not None:
-            return env_key, f"env:{entry.api_key_env}"
-    stored_key = resolve_provider_api_key(entry.api_key)
-    if stored_key is not None:
-        return stored_key, f"config:custom_endpoints.{entry.slug}.api_key"
-    return None, None
+    from tldw_chatbook.Chat.custom_endpoint_registry import resolve_entry_credential
+
+    return resolve_entry_credential(entry, environ)
 
 
 @dataclass(slots=True)
@@ -1688,6 +1687,7 @@ class ConsoleProviderResolution:
     request_retries: int | None = None
     request_retry_delay: float | None = None
     resolved_destination: ConsoleResolvedDestination | None = None
+    context_window: ContextWindowResolution | None = field(default=None, kw_only=True)
     endpoint_provenance: ConsoleEndpointProvenance = (
         ConsoleEndpointProvenance.DURABLE_CONFIGURATION
     )
@@ -2686,6 +2686,8 @@ class ConsoleProviderGateway:
         # doesn't accumulate dead entries waiting on GC alone.
         self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
         self._config_provider = config_provider or (lambda: {})
+        self._context_windows: ContextWindowCache | None = None
+        self._context_windows_lock = threading.Lock()
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
@@ -3421,8 +3423,14 @@ class ConsoleProviderGateway:
                     return value
             return None
 
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        context_window = resolution.context_window or resolve_context_window(
+            resolution.provider, resolution.model or ""
+        )
         capacity = resolve_request_capacity(
-            context_window_tokens=positive_cap("context_window"),
+            context_window_tokens=context_window.tokens,
+            context_window_verified=context_window.verified,
             provider_input_cap_tokens=positive_cap(
                 "max_input_tokens", "input_token_limit", "provider_input_cap"
             ),
@@ -3678,6 +3686,75 @@ class ConsoleProviderGateway:
             **self._resolution_settings(config, model=model),
         )
 
+    def _context_window_target(self, settings: Any) -> ContextWindowTarget:
+        """Project only the selected metadata endpoint and its own credential."""
+        from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
+
+        config = self._config_provider() or {}
+        entry = entry_for(config, settings.provider)
+        family = family_execution_key(entry.family) if entry else settings.provider
+        identity = resolve_console_provider_identity(family)
+        family = identity.readiness_key or family
+        provider_settings = _provider_settings(config, identity.readiness_key)
+        endpoint = (
+            entry.base_url
+            if entry
+            else effective_provider_endpoint(
+                identity.readiness_key, settings.base_url, provider_settings
+            )
+        )
+        if entry is None and family in {"llama_cpp", "local_llamacpp"}:
+            env = self._environ if self._environ is not None else os.environ
+            console = _mapping_value(config, "console")
+            endpoint = (
+                settings.base_url
+                or env.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
+                or console.get("llama_cpp_base_url_override")
+                or endpoint
+                or DEFAULT_LLAMACPP_BASE_URL
+            )
+        api_key = None
+        if entry:
+            api_key, _ = _custom_entry_credential(entry, self._environ)
+        elif family in URL_BASED_PROVIDER_KEYS or family == "openrouter":
+            api_key = get_provider_readiness(
+                identity.readiness_key, config, environ=self._environ
+            ).api_key
+        return ContextWindowTarget(
+            settings.provider, family, endpoint or "", settings.model or "", api_key
+        )
+
+    def _get_context_windows(self) -> ContextWindowCache:
+        """Create the shared metadata cache on first use, outside startup."""
+        from tldw_chatbook.Chat.console_context_window import ContextWindowCache
+
+        with self._context_windows_lock:
+            if self._context_windows is None:
+                self._context_windows = ContextWindowCache()
+            return self._context_windows
+
+    def cached_context_window(self, settings: Any) -> ContextWindowResolution:
+        """Return metadata already discovered for this exact settings target."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        # First paint needs the pure fallback, not the network metadata module.
+        with self._context_windows_lock:
+            cache = self._context_windows
+        if cache is None:
+            entry = entry_for(self._config_provider() or {}, settings.provider)
+            family = family_execution_key(entry.family) if entry else settings.provider
+            identity = resolve_console_provider_identity(family)
+            return resolve_context_window(
+                identity.readiness_key or family, settings.model or ""
+            )
+        return cache.cached(self._context_window_target(settings))
+
+    async def resolve_context_window(self, settings: Any) -> ContextWindowResolution:
+        """Refresh optional serving metadata without running a generation."""
+        return await self._get_context_windows().resolve(
+            self._context_window_target(settings), self._active_http_client()
+        )
+
     async def _resolve_reasoning_history(
         self, resolution: ConsoleProviderResolution, app_config: Mapping[str, object]
     ) -> ConsoleProviderResolution:
@@ -3782,7 +3859,21 @@ class ConsoleProviderGateway:
         self, selection: ConsoleProviderSelection
     ) -> ConsoleProviderResolution:
         """Resolve readiness and attach the credential-free destination."""
+        from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
+
         resolution = await self._resolve_for_send_unclassified(selection)
+        if resolution.ready:
+            window = await self._get_context_windows().resolve(
+                ContextWindowTarget(
+                    selection.provider,
+                    resolution.readiness_key or resolution.provider,
+                    resolution.base_url,
+                    resolution.model or "",
+                    resolution.api_key,
+                ),
+                self._active_http_client(),
+            )
+            resolution = replace(resolution, context_window=window)
         resolution = replace(
             resolution,
             endpoint_provenance=selection.endpoint_provenance,
@@ -4116,8 +4207,11 @@ class ConsoleProviderGateway:
                 execution_key=identity.execution_key,
             )
 
-        readiness = get_provider_readiness(
-            identity.readiness_key, app_config, environ=self._environ
+        readiness = await asyncio.to_thread(
+            get_provider_readiness,
+            identity.readiness_key,
+            app_config,
+            environ=self._environ,
         )
         if not readiness.ready:
             return self._blocked_resolution(

@@ -74,7 +74,7 @@ MEMORY_SAFETY_COPY = (
 
 RequestOwner = Literal["system", "memory", "mandatory", "compactable", "active"]
 WireStyle = Literal["distinct_roles", "single_preamble"]
-LimitSource = Literal["detected", "provider_input_cap", "user_override", "unknown"]
+LimitSource = Literal["detected", "estimated", "provider_input_cap", "user_override", "unknown"]
 
 
 def freeze_json(value: Any) -> Any:
@@ -704,6 +704,8 @@ class PreparedProviderRequest:
             return "user-bounded; provider safety unverified"
         if self.capacity.limit_source == "provider_input_cap":
             return "provider input-bounded; total context unverified"
+        if self.capacity.limit_source == "estimated":
+            return "estimated context limit; provider safety unverified"
         return "limit unknown; provider safety unverified"
 
 
@@ -1086,6 +1088,7 @@ def resolve_request_capacity(
     provider_output_cap_tokens: int | None = None,
     requested_response_tokens: int | None = None,
     context_window_override_tokens: int | None = None,
+    context_window_verified: bool = True,
 ) -> ConsoleRequestCapacity:
     """Resolve input capacity without silently reserving only half a window."""
 
@@ -1117,7 +1120,7 @@ def resolve_request_capacity(
     if context_window_override_tokens is not None:
         source = "user_override"
     elif context_window_tokens is not None:
-        source = "detected"
+        source = "detected" if context_window_verified else "estimated"
     elif provider_input_cap_tokens is not None:
         source = "provider_input_cap"
     else:
