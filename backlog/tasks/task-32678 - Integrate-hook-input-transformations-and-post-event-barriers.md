@@ -1,11 +1,11 @@
 ---
 id: TASK-32678
 title: Integrate hook input transformations and post-event barriers
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-09-17 00:28'
+updated_date: '2026-09-17 00:41'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Transformers run once in order, final arguments are frozen, qualified guards and context handlers run, then ordinary permission review binds the actual call.
-- [ ] #2 Preauthorized and durable tool paths retain their existing exemptions while all controlling restrictions and fresh dispatch checks apply.
-- [ ] #3 Dispatched results establish required PostToolUse and known-error PostToolUseFailure checkpoints before subsequent model admission or normal settlement.
-- [ ] #4 Validated effect acceptance and checkpoint release are atomic; failure, cancellation, master-off or stale results cannot erase a requirement or replay settled tool work.
+- [x] #1 Transformers run once in order, final arguments are frozen, qualified guards and context handlers run, then ordinary permission review binds the actual call.
+- [x] #2 Preauthorized and durable tool paths retain their existing exemptions while all controlling restrictions and fresh dispatch checks apply.
+- [x] #3 Dispatched results establish required PostToolUse and known-error PostToolUseFailure checkpoints before subsequent model admission or normal settlement.
+- [x] #4 Validated effect acceptance and checkpoint release are atomic; failure, cancellation, master-off or stale results cannot erase a requirement or replay settled tool work.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,4 +64,20 @@ Reason: Direct implementation of the accepted common tool-preparation, permissio
 15. Apply R52 from h3-runtime-dependencies-ruling.md: add exact additional paths pyproject.toml and Tests/Packaging/test_hooks_v2_dependencies.py before changes. Declare jsonschema>=4.26,<5 and directly imported referencing>=0.37,<1 in core dependencies, remove the obsolete dev-only jsonschema declaration/comment, preserve unrelated pins/extras, and amend existing ADR163/spec dependency notes. Qualify real base distribution metadata without extra markers and the built wheel's isolated no-network import/validation using available controlled dependencies; distinguish this from a fresh full dependency resolution. Capture the pre-change metadata regression and positive control, include the packaging test in frozen targeted coverage and all added paths in hashes/static checks. No package install, new validator/retrieval owner, or optional validation bypass.
 
 16. Address initial review Important I1 in the existing runtime/service and approved H3 test paths: assign honest not_started provenance to common runtime and inline-skill refusals before their dispatch callbacks execute, retaining settled/uncertain semantics after actual host invocation. Inspect other pre-dispatch exits in the same common runtime fan-out and observer boundary; never infer child-start state from result text. Add actual loop/service refusal and successful controls in Tests/Agents/test_hooks_v2_tool_pipeline.py and/or test_hooks_v2_post_checkpoints.py. Final covering is those two files plus Tests/Agents/test_post_tool_dispatch_hook.py, Tests/Chat/test_console_run_hooks_regressions.py, Tests/Agents/test_agent_runtime.py and Tests/Agents/test_skill_tool_spawn.py; additional unchanged neighbors only if changed behavior warrants them, and any extra edited path must be recorded first. Freeze amended source/tests, preserve RED/GREEN and full covering/static output with shared baseline parity and updated hashes; append Fix1 report. Deferred Minor M1/M2 stay final-branch triage; actual later-owner integration/platform limits remain explicit. Existing ADR163/R49/AC3 apply, no new ADR.
+
+17. Closeout documentation only: append the verified R52 incident to backlog/docs/lessons-testing-evidence.md (developer-only schema packages hid missing core dependency declarations; actual metadata RED/control and bounded wheel smoke), preserving its distinction from fresh full dependency resolution. This records already-reviewed evidence and changes no runtime/test behavior; verify exact documentation diff/whitespace and unchanged final source hashes before task AC/notes/Done and metadata commit.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Integrated v2 hooks at the actual Console/agent tool boundary. Ordered transformers validate against the resolved schema, final guards/context use the frozen candidate, and existing permission review and fresh catalog/owner checks bind the dispatched arguments. Canvas exemptions and definitive execution remain with their existing owners.
+
+Required PostToolUse and known-error PostToolUseFailure checkpoints precede completion callbacks, next-model admission and terminal persistence. Context publication and checkpoint release share coordination; typed hook/package attribution survives complete-send budget checks. Dependency-only failures retain their narrower scope. Actual pre-dispatch runtime/inline-skill refusals emit no postevents; an invoked runtime callback remains settled even when child admission fails.
+
+Added immutable catalog snapshots, exact owned-call reconstruction, pinned-engine consumption, offline schema validation and declared core jsonschema/referencing requirements. The service's real terminal boundary supplied the gate, so the planned console_chat_controller edit was unnecessary. ADRs: backlog/decisions/163-expanded-console-hook-runtime.md and backlog/decisions/162-managed-agent-plugins.md; the existing hook spec/ADR163 record the integration decisions. The packaging incident is documented in backlog/docs/lessons-testing-evidence.md.
+
+Validation: initial 400 targeted tests across 17 files; after review Fix1, 180 tests across six affected files passed. Counts overlap. All 33 final frozen hashes matched, with no added Ruff diagnostics, changed-code Black/syntax checks and clean whitespace. Existing shared-file lint/formatting debt remains. Initial wheel metadata and isolated offline validation/import smoke passed using controlled existing dependencies; that wheel predates the small provenance fix and is not final full dependency-resolution evidence. Independent initial spec/quality review plus scoped Fix1 review left no Critical/Important findings.
+
+Limits: H4/H5/H6 lifecycle producers and I1 actual package graph/rendering remain their named integration tasks. Darwin command execution was exercised; Windows v2 command execution remains unsupported and Linux/fresh dependency resolution unqualified. Deferred review minors retain the actual mixed plugin/hook final-request qualification gap and noisy bootstrap/build output for final branch triage. No full-suite run or push/merge.
+<!-- SECTION:NOTES:END -->

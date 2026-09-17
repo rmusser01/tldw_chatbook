@@ -13665,3 +13665,22 @@ basetemp without an external child shim. Keep subprocess bootstrap/policy in the
 repository and qualify the documented command from a fresh parent environment;
 record exact checkout and fixture-root provenance instead of assuming one OS's
 temporary-directory spelling.
+
+## Development dependencies can hide missing runtime package declarations
+
+**TASK-32678 / H3 packaging qualification, 2026-09-16.** Offline schema
+controls passed in the development environment while `jsonschema` appeared only
+in the `dev` extra and the production pipeline directly imported `referencing`
+without a core declaration. Actual setuptools base-distribution metadata checks
+then produced **2 failed, 1 passed**: both schema requirements were absent while
+the existing Pydantic control passed. Declaring both production dependencies in
+core produced **3 passed**; built-wheel metadata confirmed they had no extra
+marker. An isolated `python -I -S` smoke imported 165 application modules from
+the extracted wheel and exercised internal-reference validation and external
+reference refusal against controlled existing dependencies.
+
+A development test pass does not establish a normal installation's dependency
+closure. Check built distribution requirements for every new production import
+and verify wheel-code provenance separately. The controlled smoke above reused
+read-only installed dependencies; it did not prove fresh full dependency
+resolution or another platform's package set.
