@@ -1,0 +1,47 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_______ test_api_mode_only_draft_keeps_its_provider_on_return[restored] ________
+Tests/UI/test_settings_saved_provider_return.py:164: in test_api_mode_only_draft_keeps_its_provider_on_return
+    _assert_projection(host.screen, "qwencloud", "qwen3.8-max",
+Tests/UI/test_settings_saved_provider_return.py:30: in _assert_projection
+    assert screen._provider_setting_values()["provider"] == provider
+E   AssertionError: assert 'llama_cpp' == 'qwencloud'
+E
+E     - qwencloud
+E     + llama_cpp
+_______ test_api_mode_only_draft_keeps_its_provider_on_return[retained] ________
+Tests/UI/test_settings_saved_provider_return.py:164: in test_api_mode_only_draft_keeps_its_provider_on_return
+    _assert_projection(host.screen, "qwencloud", "qwen3.8-max",
+Tests/UI/test_settings_saved_provider_return.py:30: in _assert_projection
+    assert screen._provider_setting_values()["provider"] == provider
+E   AssertionError: assert 'llama_cpp' == 'qwencloud'
+E
+E     - qwencloud
+E     + llama_cpp
+_______ test_second_edit_after_default_change_uses_draft_originals[save] _______
+Tests/UI/test_settings_saved_provider_return.py:194: in test_second_edit_after_default_change_uses_draft_originals
+    assert screen._provider_draft().originals["endpoint"] == "https://old.invalid/v1"
+E   AssertionError: assert 'http://127.0.0.1:9099' == 'https://old.invalid/v1'
+E
+E     - https://old.invalid/v1
+E     + http://127.0.0.1:9099
+______ test_second_edit_after_default_change_uses_draft_originals[revert] ______
+Tests/UI/test_settings_saved_provider_return.py:194: in test_second_edit_after_default_change_uses_draft_originals
+    assert screen._provider_draft().originals["endpoint"] == "https://old.invalid/v1"
+E   AssertionError: assert 'http://127.0.0.1:9099' == 'https://old.invalid/v1'
+E
+E     - https://old.invalid/v1
+E     + http://127.0.0.1:9099
+============================= slowest 25 durations =============================
+2.37s call     Tests/UI/test_settings_saved_provider_return.py::test_api_mode_only_draft_keeps_its_provider_on_return[restored]
+1.88s call     Tests/UI/test_settings_saved_provider_return.py::test_second_edit_after_default_change_uses_draft_originals[revert]
+1.84s call     Tests/UI/test_settings_saved_provider_return.py::test_second_edit_after_default_change_uses_draft_originals[save]
+1.74s call     Tests/UI/test_settings_saved_provider_return.py::test_api_mode_only_draft_keeps_its_provider_on_return[retained]
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_api_mode_only_draft_keeps_its_provider_on_return[restored]
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_api_mode_only_draft_keeps_its_provider_on_return[retained]
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_second_edit_after_default_change_uses_draft_originals[save]
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_second_edit_after_default_change_uses_draft_originals[revert]
+4 failed, 20 deselected in 9.87s

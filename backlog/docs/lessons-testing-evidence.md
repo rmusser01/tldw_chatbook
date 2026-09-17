@@ -14575,3 +14575,17 @@ and history DOM identity. Match the real route lifetime, and assert current
 containers are the saved objects before checking their children: a detached old
 container can still hold the expected children. Evidence:
 `Docs/superpowers/qa/2026-09-17-rag-recovery-navigation/`.
+
+
+## Sparse form drafts need their owning selection (TASK-214, 2026-09-17)
+
+A model-only Settings draft survived serialization, but after an external saved
+provider change it restored under the new provider. Endpoint, credential-source,
+generation-profile and API-mode-only drafts had the same missing identity. Pin
+provider/model as equal original/value entries so they preserve ownership without
+becoming dirty. Read dependent defaults and later edit originals from that
+selection. The review's second-edit test caught a remaining endpoint original
+being taken from the newly saved provider. Also test an unchanged return: a raw
+manual provider name compared with its canonical key caused needless rebuilds
+and discarded test verdicts. Evidence:
+`Docs/superpowers/qa/2026-09-17-settings-saved-provider/`.

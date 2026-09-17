@@ -3931,6 +3931,7 @@ class SettingsScreen(BaseAppScreen):
             return
         if not mount_already_refreshed:
             self._queue_sync_rows_refresh()
+            self._refresh_provider_defaults_on_resume()
         self._maybe_refresh_rag_index_status_on_show()
         self._maybe_refresh_workspaces_pane_on_show()
         if (
@@ -3938,6 +3939,35 @@ class SettingsScreen(BaseAppScreen):
             and self._active_category_id() is SettingsCategoryId.TOOL_PROFILES
         ):
             self._request_tool_profiles_listing()
+
+    def _refresh_provider_defaults_on_resume(self) -> None:
+        """Refresh a clean retained provider form when its saved selection moved."""
+        if (
+            self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS
+            or self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
+            or self._navigation_provider
+        ):
+            return
+        try:
+            displayed = (
+                provider_config_key(self._provider_widget_value()),
+                self.query_one("#settings-model-value", Input).value,
+                self.query_one("#settings-provider-endpoint-value", Input).value,
+            )
+        except QueryError:
+            return
+        saved = self._provider_loaded_setting_values()
+        saved_selection = (
+            provider_config_key(str(saved["provider"])),
+            saved["model"],
+            saved["endpoint"],
+        )
+        if displayed == saved_selection:
+            return
+        self._provider_evidence_store().invalidate()
+        self._mark_provider_test_result_stale()
+        self._reset_provider_model_discovery_state()
+        self.mutate_reactive(SettingsScreen.active_category)
 
     def _maybe_refresh_rag_index_status_on_show(self) -> None:
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
@@ -10915,6 +10945,16 @@ class SettingsScreen(BaseAppScreen):
         )
 
     @staticmethod
+    def _pin_provider_draft_selection(
+        draft: SettingsDraft, values: Mapping[str, object]
+    ) -> None:
+        """Keep dependent edits with their provider/model without dirtying identity."""
+        for key in ("provider", "model"):
+            if key not in draft.values:
+                selected = values.get(key)
+                draft.set_value(key, selected, selected)
+
+    @staticmethod
     def _provider_api_mode_draft_key(provider: object) -> str:
         """Return the provider-scoped draft key for an API mode control."""
         return f"provider_api_mode:{provider_config_key(str(provider or ''))}"
@@ -10950,6 +10990,9 @@ class SettingsScreen(BaseAppScreen):
         category = SettingsCategoryId.PROVIDERS_MODELS
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
+        )
+        self._pin_provider_draft_selection(
+            draft, self._provider_setting_values_mapping()
         )
         draft_key = self._provider_api_mode_draft_key(provider_key)
         original = draft.originals.get(
@@ -11049,8 +11092,15 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
         resolved = resolve_effective_provider_model(self._chat_defaults())
-        provider = str(resolved.provider or "").strip()
-        model = str(resolved.model or "").strip()
+        return self._provider_values_for_selection(
+            str(resolved.provider or "").strip(),
+            str(resolved.model or "").strip(),
+        )
+
+    def _provider_values_for_selection(
+        self, provider: str, model: str
+    ) -> dict[str, object]:
+        """Read dependent fields from the provider/model that owns the form."""
         profile = self._provider_model_profile(provider, model)
         return {
             "provider": provider,
@@ -11080,7 +11130,11 @@ class SettingsScreen(BaseAppScreen):
         }
 
     def _provider_setting_values(self) -> dict[str, object]:
-        loaded = self._provider_loaded_setting_values()
+        resolved = self._resolve_provider_model_for_settings()
+        loaded = self._provider_values_for_selection(
+            str(resolved.provider or "").strip(),
+            str(resolved.model or "").strip(),
+        )
         draft = self._provider_draft()
         values = {
             key: draft.values[key]
@@ -11831,16 +11885,19 @@ class SettingsScreen(BaseAppScreen):
 
     def _stage_provider_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.PROVIDERS_MODELS
+        current = self._provider_setting_values_mapping()
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
         )
+        if key != "provider":
+            self._pin_provider_draft_selection(draft, current)
         if key == "api_key":
             provider = str(
                 self._provider_setting_values_mapping().get("provider") or ""
             ).strip()
             original = self._provider_api_key_value(provider)
         else:
-            original = self._provider_loaded_setting_values().get(key)
+            original = draft.originals.get(key, current.get(key))
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)

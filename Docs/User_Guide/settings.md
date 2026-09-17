@@ -195,12 +195,11 @@ The biggest page, and where to start.
 | **Automatic refresh** | **Auto-refresh model lists on startup**, **Refresh after (hours):**, and per-provider **auto-refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
 | **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text; fields a provider doesn't support are hidden, not greyed. Global fallbacks live under Console Behavior. |
 
-**Test Provider** — "Runs a local readiness check; URL-based local providers
-also get a short live endpoint probe." It tests your *draft*, so you can check
-before saving; the result ends "status=ready" or "status=blocked", and the probe
-reports "reachable", "reachable (N models)", or a named failure ("timeout",
-"connection refused", "HTTP \<status\>"). A successful **Save** deliberately
-clears the previous verdict — run **Test Provider** again afterwards.
+**Test Provider** checks your current draft before saving. URL-based local
+providers also get a short endpoint or model-listing probe. The result separates
+configuration readiness, endpoint/model-listing evidence, and whether generation
+was tested. A successful model listing does not prove that generation works.
+If the tested values change, run **Test Provider** again.
 
 Model and Endpoint edits stay as a draft when you visit another destination and
 return to Settings. Use **Tab** to move between fields. While typing, press
@@ -208,6 +207,13 @@ return to Settings. Use **Tab** to move between fields. While typing, press
 retains the draft; **Discard changes** restores the saved values. Saving writes
 the provider settings locally and clears the unsaved marker; it does not test
 the endpoint. Reopening this page shows the saved model and endpoint.
+
+A clean form follows changes to the saved default provider, model and endpoint
+when you return. An unsaved edit stays attached to the provider and model you
+were editing, even if another action changes the defaults. This also applies
+to API mode, credential-source and generation-profile edits. **Discard changes**
+loads the latest saved defaults. Existing Console chats retain their own session
+selection; new chats inherit the saved defaults.
 
 #### QwenCloud
 

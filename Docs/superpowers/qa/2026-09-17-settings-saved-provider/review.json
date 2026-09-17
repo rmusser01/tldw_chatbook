@@ -1,0 +1,20 @@
+{
+  "base_commit": "4f9e7ffc21",
+  "reviewer": "/root/rag_heading_review",
+  "findings": [
+    {
+      "issue": "API-mode-only drafts bypassed identity pins",
+      "resolution": "Shared helper pins provider/model without dirtying them; restored and retained regressions."
+    },
+    {
+      "issue": "Later dependent edits used changed saved-default originals",
+      "resolution": "Originals fall back to the draft projection; second-edit Save/Revert regressions."
+    },
+    {
+      "issue": "No-op resume compared provider identifiers asymmetrically",
+      "resolution": "Canonicalize displayed and saved identifiers. QwenCloud catalog case and ReviewCloud manual case covered; manual case failed before correction."
+    }
+  ],
+  "final_assessment": "No further actionable findings",
+  "test_harness_review": "Existing category-title search priority and keyboard Test/Save corrections accepted; obsolete privacy runtime fake replaced by real ConsoleRuntime."
+}

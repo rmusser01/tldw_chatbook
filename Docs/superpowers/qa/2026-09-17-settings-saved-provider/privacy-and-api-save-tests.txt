@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+1.40s call     Tests/UI/test_settings_configuration_hub.py::test_conversation_settings_return_keeps_mounted_credential_out_of_transfer_surfaces
+1.28s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_immediate_qwencloud_save_snapshots_visible_mode
+
+(4 durations < 1s hidden.)
+2 passed in 4.30s

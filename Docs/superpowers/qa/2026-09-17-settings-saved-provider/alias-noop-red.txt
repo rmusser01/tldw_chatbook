@@ -1,0 +1,15 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_unchanged_saved_provider_preserves_retained_widgets_and_verdict _____
+Tests/UI/test_settings_saved_provider_return.py:233: in test_unchanged_saved_provider_preserves_retained_widgets_and_verdict
+    assert screen.query_one("#settings-model-value", Input) is model
+E   AssertionError: assert Input(id='settings-model-value', classes='settings-compact-input -valid') is Input(id='settings-model-value', classes='settings-compact-input -valid')
+E    +  where Input(id='settings-model-value', classes='settings-compact-input -valid') = query_one('#settings-model-value', Input)
+E    +    where query_one = SettingsScreen(classes='shell-header-normal').query_one
+============================= slowest 25 durations =============================
+1.96s call     Tests/UI/test_settings_saved_provider_return.py::test_unchanged_saved_provider_preserves_retained_widgets_and_verdict
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_unchanged_saved_provider_preserves_retained_widgets_and_verdict
+1 failed, 24 deselected in 3.54s

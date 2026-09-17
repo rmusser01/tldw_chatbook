@@ -1146,3 +1146,36 @@ and moved only this uncommitted workstream to 32724. Native scratch paths retain
 their original numbers. Existing ADR-012/033/031/150/161 govern this test/doc-only
 change. Next bounded review: provider switching and saved-default selection,
 including the existing TASK-214 report. No full suite, push or merge ran.
+
+
+## Saved provider defaults and draft ownership — TASK-214
+
+The original boot-selection owner had already been removed by TASK-648. The
+[bounded review](../qa/2026-09-17-settings-saved-provider/README.md) reproduced
+stale retained clean forms and sparse drafts being retargeted when defaults
+changed. Clean provider/model/endpoint projections now refresh on return;
+unsaved edits pin their owning provider/model without dirtying identity. API
+mode and later field edits follow that same ownership. No-op returns preserve
+widgets and verdicts, including aliases and custom provider names.
+
+All **320 selected regressions** and 21 additional Console fixture/privacy checks
+pass. Twenty-six new production-CSS cases cover fresh/restored/retained forms,
+draft types, second-edit Save/Revert and stale/no-op feedback. Review findings
+were reproduced before correction. Three obsolete harness assumptions were
+repaired: a Console runtime fake, category-first search priority and off-screen
+button clicks. The QA record distinguishes these baseline failures from the
+production defects and reports existing lint debt without adding diagnostics.
+
+Four final private native journeys pass across dark/light at 170×48 and 80×24,
+with real config writes and four loopback catalog GETs. Settings returns by
+screen restoration on this route; retained push/pop coverage is separate.
+Eight captures were inspected, eleven private databases passed integrity checks,
+default-file fingerprints stayed unchanged and the app/server exited normally.
+No conversations, messages or generation requests were created. Native source
+and runner hashes match the final implementation. External model availability
+and generation remain unqualified.
+
+The guide, original July residual and testing lesson now describe the verified
+behavior. Existing ADR-006/012/033/031/150/161 govern this routine repair; no new
+ADR is required. Next bounded review: model discovery, selection, Save selected
+and failure/retry feedback. No full suite, push or merge ran.
