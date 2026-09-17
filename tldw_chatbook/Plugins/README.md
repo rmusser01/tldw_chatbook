@@ -13,6 +13,27 @@ and optional root `mcp.json`. Unknown manifest fields are diagnosed and ignored.
 Invalid skills and MCP entries are isolated from valid siblings. A missing or
 unsupported portable schema rejects the portable interpretation.
 
+Remote MCP inspection follows the [Agent Plugins 1.0.0 specification](https://agent-plugins.org/specification)
+and its [versioned MCP schema](https://agent-plugins.org/schemas/1.0.0/mcp.schema.json).
+Header names are unique without regard to case. Generic field values may be
+empty or have interior SP/HTAB, but nonempty values cannot start or end with
+SP/HTAB. Other ASCII controls and DEL are invalid under
+[RFC 9110 §5.5](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.5).
+Inspection preserves valid header text exactly. It does not expand placeholders,
+trim values, or choose a wire encoding for arbitrary JSON Unicode; the owning
+configuration and transport services must qualify that policy before runtime use.
+Remote URLs must not contain userinfo or a fragment, including empty delimiters.
+Literal `@` in a path and encoded `#` in a path or query remain valid.
+
+Chatbook currently limits plain HTTP MCP URLs to `localhost`, `127.0.0.1`, or
+`::1`, narrower than the portable specification's loopback IP allowance.
+Acquisition rejects an unsafe or incomplete capture as a whole even when
+inspection retains independent valid components. Legacy HTTP+SSE transport is
+optional in the portable specification and currently recorded as unsupported;
+this does not exclude SSE responses on Streamable HTTP. Parsed inventory is not
+evidence of MCP launch, connection, handshake, header precedence, redirects,
+credentials, runtime failure isolation, or complete portable conformance.
+
 `extensions.io.github.rmusser01.chatbook` requires integer `version: 1`. Its only
 optional fields are `commands`, `rules`, `agents`, `hooks`, `requires`, and
 `variables`. Paths are contained package files; there is no implicit extension
