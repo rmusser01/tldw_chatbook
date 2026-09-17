@@ -28,3 +28,14 @@
 Publish only these changes on `codex/optional-deps-stt-fixes` in a PR targeting `dev`; retain the worktree for review.
 
 Verification: [results and baseline exceptions](../reviews/2026-09-17-optional-install-stt-verification.md).
+
+## Follow-up: Parakeet package versus model setup
+
+The reporter installed only the Python package. Clarify beside the existing
+folder field that model files are separate, and point to the current managed
+installer. Document selecting Parakeet, confirming the English v2 INT8 install,
+and leaving the external-folder override blank afterward. Verify existing
+installer/source-selection tests and inspect the rendered hint.
+
+ADR required: no. ADR-025 and ADR-050 already govern explicit model acquisition
+and managed/external source selection; this follow-up only clarifies that flow.

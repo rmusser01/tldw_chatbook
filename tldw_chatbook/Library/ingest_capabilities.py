@@ -671,6 +671,11 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="Local Parakeet model folder",
                 type="text",
                 default="",
+                hint=(
+                    "optional override; leave blank for a model installed through "
+                    "Chatbook. Python packages exclude model files; use Install "
+                    "verified Parakeet v2 INT8 below to download the English model"
+                ),
                 # (task-3305) Example content, not the label repeated: an
                 # empty Input otherwise shows label-as-placeholder stutter.
                 placeholder="/path/to/parakeet-model",

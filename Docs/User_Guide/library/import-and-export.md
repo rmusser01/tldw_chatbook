@@ -252,6 +252,15 @@ checkpoint before any tool is allowed to run, as required by
 | "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
 | "Retry this batch" | Below the queue, once your last import of the session has settled (while a job is still queued/parsing/writing it is hidden, and `r` is inert too — re-staging mid-run invites a duplicate batch): one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. If the form currently holds work the re-stage would overwrite (a different path, a title you started typing, an option you flipped), it takes two presses: the first renames the button "Press again to replace form" and changes nothing. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
 
+**Parakeet setup:** Installing the Python package adds the transcription runtime;
+it does not download the model files. In the Audio & video options, select
+"Parakeet (ONNX)", then press "Install verified Parakeet v2 INT8 (630.6 MiB)…"
+and confirm the displayed download plan. This installs the English v2 INT8 model
+and selects it for the batch. Leave "Local Parakeet model folder" blank to use
+the model installed through Chatbook; that field is an optional override for
+model files you already have. The install button downloads v2 INT8 specifically,
+so use English and INT8 with that bundle.
+
 For native clipboard copying on Fedora Wayland, install
 [`wl-clipboard`](https://packages.fedoraproject.org/pkgs/wl-clipboard/wl-clipboard/)
 (`sudo dnf install wl-clipboard`). X11 sessions can use `xclip` or `xsel`.

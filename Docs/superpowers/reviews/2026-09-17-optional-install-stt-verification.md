@@ -112,3 +112,35 @@ The full suite was not run.
 - `Tests/UI/test_library_ingest_inline_consent.py::test_enter_armed_consent_survives_the_start_click_and_submits`
 - `Tests/UI/test_library_ingest_inline_consent.py::test_path_blur_alone_keeps_the_pending_confirm`
 - `Tests/UI/test_library_ingest_inline_consent.py::test_browse_picking_a_new_file_disarms_the_pending_confirm`
+
+## Follow-up: Parakeet runtime package versus model files
+
+The reporter confirmed they had only installed the Python package. That supplies
+the ONNX runtime; model acquisition is a separate explicit action under ADR-025
+and ADR-050. The Library already exposes “Install verified Parakeet v2 INT8…”;
+on success it prefers the managed v2 INT8 source and clears the external-folder
+override. Users do not need to find the managed installation directory themselves.
+The button installs the English model specifically.
+
+The folder-field hint and user guide now explain this distinction and point to
+the existing download action. This is a copy clarification; acquisition and
+source-selection behavior remain as verified above.
+
+Follow-up validation:
+
+- 151 tests pass across the existing Parakeet install UI, ingest capabilities,
+  clipboard UI and design-token governance files.
+- Existing full-bundle and VAD-only localhost acquisition checks pass when
+  invoked with a stable temporary config/recovery profile. They exercise real
+  preflight, transfer, digest verification, publication and managed resolution
+  against tiny fixture bytes; no 630 MiB public download or inference is claimed.
+- The hint paints fully in three rows at 100×40, with the folder blank and the
+  existing model-install button enabled. Screenshot export checked for the
+  package/model guidance and optional-folder text.
+- No added Ruff diagnostics; diff whitespace check passes.
+
+The initial broader Parakeet run had 79 passes and five infrastructure failures:
+three existing profile-rebinding failures, plus two tests prevented from opening
+a localhost socket by the sandbox. After socket access, those two also hit
+profile rebinding; the stable-profile invocation above verified their original
+assertions without replacing acquisition or source-resolution logic.
