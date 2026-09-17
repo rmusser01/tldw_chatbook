@@ -11,6 +11,8 @@ recovery after panel rebuilds; TASK-32707 keeps live keyboard focus visible when
 search results arrive. TASK-32712 keeps retrieval failure/recovery beside Run and
 clears it on retry without hiding provider disclosure.
 TASK-32713 extends that visible recovery to answer-generation failures.
+TASK-32714 verifies and documents keyboard reading of generated answers and
+citation feedback without changing the existing UI.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -921,3 +923,33 @@ followed by the remaining feature/component surfaces. Controlled replies do not
 qualify real provider behavior, semantic retrieval or factual grounding; answer
 captures use an explicit inspection scroll. No full suite, push or merge was
 performed.
+
+
+## RAG answer keyboard reading — 2026-09-17 UTC (TASK-32714)
+
+[Evidence](../qa/2026-09-17-rag-answer-navigation/README.md) verifies the existing
+Tab-to-evidence, Page Up/Page Down answer-reading route in both themes and at
+170×48 / 80×24. The guide now documents it and removes a fixed-five-Tab claim.
+Production code, widgets, styles and bindings are unchanged; ADR-150 and ADR-031
+remain the governing decisions.
+
+The final targeted checks pass 89 tests: 24 production-styled mounted journeys
+cover 2/80-line replies and all three citation states, and 65 answer-service
+tests pass. Each navigation case reconstructs actual painted rows in both
+scroll directions, preserving query/source choices/answer and avoiding repeat
+calls, then reaches an evidence action. An earlier probe incorrectly required
+a whole wrapped sentence in one frame; that test assumption was corrected.
+Static checks pass; independent review has no outstanding finding after a
+stale pending-native-status sentence was corrected.
+
+Twelve native long-answer journeys pass using real local keyword retrieval
+adapted to RAG requests and a controlled answer seam. All sixteen captures were
+inspected. The source/default files are unchanged, ten private databases are
+healthy, no conversation messages were added, and normal shutdown/PID absence
+are verified. The final runner sets up each query viewport explicitly; two prior
+attempts failed only their between-cell return-to-query assumptions. This
+qualifies keyboard answer reading, not keyboard return across resize, real
+provider behavior, semantic retrieval or factual grounding.
+
+Next bounded review: query return and resize transitions, then the remaining
+feature/component surfaces. No full suite, push or merge was performed.

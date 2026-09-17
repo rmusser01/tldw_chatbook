@@ -1,0 +1,13 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+6.98s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_warning[True-textual-light-size1]
+6.94s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_warning[True-textual-dark-size1]
+4.30s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_warning[True-textual-light-size0]
+4.21s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_warning[True-textual-dark-size0]
+3.01s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_warning[False-textual-dark-size1]
+2.93s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_warning[False-textual-light-size1]
+2.80s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_warning[False-textual-dark-size0]
+2.75s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_warning[False-textual-light-size0]
+
+(16 durations < 1s hidden.)
+8 passed in 36.68s

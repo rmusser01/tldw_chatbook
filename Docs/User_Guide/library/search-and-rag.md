@@ -497,16 +497,23 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 |---|---|
 | Enter (in the query box) | Run the search |
 | Tab | Move focus through the panel, including each evidence card in turn |
+| Page Up / Page Down (with an evidence card focused) | Scroll the panel to read the generated answer, citation feedback and evidence |
 | Enter (on a focused evidence card) | Select that evidence — the same as clicking its select action |
 | `o` (on a focused evidence card) | Open that item in its own Library surface |
 | `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library. With an evidence card focused it selects that card first, so one key stages what you're looking at |
 | Esc (in the query box) | Leave the query box for the panel, so the panel's own keys work on the next keystroke. Nothing you typed is cleared |
 
-Five Tabs from the query box reach the first evidence card: Run, then each
-enabled source toggle, then the cards. The card you are on draws a solid
-block down its left edge — a shape, not just a colour — so it stays
+From the query box, Tab visits Run, each enabled source toggle, then the
+evidence cards. The number of stops depends on which sources are available.
+The card you are on draws a solid block down its left edge — a shape, not just a colour — so it stays
 visible in a monochrome terminal and next to a card that is merely
 selected.
+
+The text-only Answer region is above the evidence cards. After tabbing to a
+card, use **Page Up** to read the answer and its citation warning or note;
+use **Page Down** to return through the answer to the evidence. Focus stays
+on the card while the panel scrolls. Scrolling preserves your question and
+source choices and does not run another search or provider call.
 
 The footer's **enter** hint names what Enter does on the control you are
 actually on: "run search" in the query box and on **Run**, "toggle
@@ -856,3 +863,11 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). The "mode: ✓ Search ⇄ RAG Answer" toggle this page documents
 was re-checked live at 235x52 and is the first control on the canvas — the
 critique row claiming it does not exist was wrong, and nothing here changed.*
+
+
+*Keyboard answer-reading route verified on `feat/component-pattern-library`
+from `b4a085de18` — 2026-09-17 UTC (TASK-32714): 24 mounted cases cover
+short/long replies and all three citation states in both themes at 170×48
+and 80×24; 12 native long-answer cases use real local keyword retrieval and
+controlled replies. This verifies reading/navigation, not real-provider output
+or factual grounding. [Evidence](../../superpowers/qa/2026-09-17-rag-answer-navigation/README.md).*
