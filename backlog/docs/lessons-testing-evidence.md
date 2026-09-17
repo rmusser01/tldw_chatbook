@@ -14519,3 +14519,16 @@ assertions to run at 5, 15 and 23 on both revisions. Keep profile/default/fallba
 coverage in its dedicated state/config tests; a rendering unit test should control
 that input before any guarded import. Assert the package import root when checking
 an exported revision with an interpreter that has another checkout installed.
+
+
+## A display cache belongs to one rendered container (TASK-2377)
+
+The September 17 Search/RAG review reproduced a stale recovery banner in both
+directions with counts A → B → A around a Search → Notes → Search visit. The
+boolean cache still described the first scope container, so returning to A skipped
+repairing the new B widgets. Pairing the target with a weak container reference
+also repaired whole-screen and panel recomposition. An identical snapshot was a
+false no-churn probe: the outer snapshot equality guard returned before reaching
+this cache. Direct repeated sync calls, retained recovery-child identity, and a
+wrapped scheduling spy verify the actual gate. The spy matters for ready scopes,
+where an unnecessary mirror removes/mounts nothing and identity alone still passes.

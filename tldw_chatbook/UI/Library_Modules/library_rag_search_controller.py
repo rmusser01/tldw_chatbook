@@ -339,6 +339,7 @@ from __future__ import annotations
 
 import dataclasses
 from typing import Any, TYPE_CHECKING
+from weakref import ref
 
 from loguru import logger
 from textual import on
@@ -1520,7 +1521,10 @@ class LibraryRagSearchController:
         quiet line, derived from the same state, shows no paid notice
         while one is in force. Accepted narrowly for this snapshot-driven
         path only; other panel refresh callers still run the full
-        `_refresh_search_rag_panel_state_widgets` and are unaffected.
+        `_refresh_search_rag_panel_state_widgets` and are unaffected:
+        `update_library_rag_query`, `_start_library_rag_query`,
+        `_select_library_rag_result_by_index`, `_apply_library_rag_search_outcome`,
+        and `_apply_library_rag_answer`.
 
         (task-2075 D5) The *scope* region's own recovery block --
         `#library-rag-source-scope`'s `has-recovery` class plus its
@@ -1534,14 +1538,11 @@ class LibraryRagSearchController:
         in-place branch precisely because the row is already Search --
         previously never told that banner counts had arrived, leaving a
         stale "No Library sources yet" beside populated, enabled toggles.
-        Comparing `library_rag_scope_shows_recovery(...)` against
-        `self._library_rag_scope_recovery_visible` (cached, `None` until
-        the first call) means steady-state snapshots -- the overwhelming
-        common case, and RAG-27's whole point -- see no change and take
-        the same no-op, no-yield path as everything else in this method;
-        only an actual flip schedules `_mirror_library_rag_scope_recovery`
-        as a worker (see that method for why a worker rather than an
-        inline remove/mount here).
+        The change gate pairs the current scope container's weak identity
+        with `library_rag_scope_shows_recovery(...)`. A new container from
+        compose, navigation or panel recompose always gets a first mirror;
+        repeated snapshots for that same container and visibility are no-ops.
+        The weak reference avoids retaining a replaced widget tree (task-2377).
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
             "#library-search-rag-panel"
@@ -1575,14 +1576,21 @@ class LibraryRagSearchController:
         except (NoMatches, QueryError):
             pass
 
-        shows_recovery = library_rag_scope_shows_recovery(panel_state.scope)
-        if shows_recovery != self._library_rag_scope_recovery_visible:
+        try:
+            scope_container = self.query_one("#library-rag-source-scope", Vertical)
+        except (NoMatches, QueryError):
+            return
+        recovery_key = (
+            ref(scope_container),
+            library_rag_scope_shows_recovery(panel_state.scope),
+        )
+        if recovery_key != self._library_rag_scope_recovery_key:
             # Updated eagerly (before the worker even starts) so a burst of
             # snapshots landing faster than the worker can run only ever
             # schedules one mirror per actual flip -- a repeat call with the
             # SAME new value during that window already matches the cache
             # and takes the branch above instead.
-            self._library_rag_scope_recovery_visible = shows_recovery
+            self._library_rag_scope_recovery_key = recovery_key
             self.run_worker(
                 self._mirror_library_rag_scope_recovery(),
                 exclusive=True,

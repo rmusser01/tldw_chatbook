@@ -828,3 +828,24 @@ integration into dev or qualification of all retrieval/provider journeys.
 Next bounded review: the remaining Search/RAG query execution and recovery
 journeys, followed by the remaining feature/component surfaces. No full suite,
 push or merge was performed.
+
+## Search/RAG scope recovery — 2026-09-17 UTC (TASK-2377)
+
+[Evidence](../qa/2026-09-17-rag-scope-recovery/README.md) closes stale scope recovery
+after a Search → Notes → Search round trip and screen/panel recomposition. The
+change gate now includes a weak reference to the scope container, so replacement
+widgets cannot inherit a previous visit's cached visibility. Unchanged mounted
+scopes retain their widgets. The caller docstring now names all five refresh paths.
+
+Six mounted regressions failed before repair. The targeted gate passes 268 tests
+without exclusions; the six cases also pass strengthened direct-sync no-churn
+assertions. Independent review found no actionable issue. The native four-cell
+matrix passes eight scope transitions, four real local keyword searches and four
+Import media actions; ten databases are healthy, sources/default profile files
+are unchanged, and shutdown/PID absence are verified. Counts are injected for
+timing; this does not qualify source-snapshot producers or provider generation.
+
+Next bounded review is TASK-32707: native result arrival reveals Evidence while
+the query retains focus outside the viewport (y=-19 at 80×24 in both themes).
+Recovery focus/copy is readable when reached; the separate result-arrival focus
+issue remains open. No full suite, push or merge was performed.

@@ -28,6 +28,7 @@ from functools import partial
 import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+from weakref import ref
 
 from loguru import logger
 from loguru import logger as loguru_logger
@@ -34626,8 +34627,9 @@ class LibraryScreen(BaseAppScreen):
             # triggered scheduling): if a newer snapshot superseded this one
             # before the worker's turn came up, the cache must reflect what
             # actually got mirrored, not what was true a moment earlier.
-            self._rag_search_state.scope_recovery_visible = library_rag_scope_shows_recovery(
-                panel_state.scope
+            self._rag_search_state.scope_recovery_key = (
+                ref(scope_container),
+                library_rag_scope_shows_recovery(panel_state.scope),
             )
 
     async def _apply_library_rag_scope_recovery_block(
@@ -34695,15 +34697,12 @@ class LibraryScreen(BaseAppScreen):
             await self._apply_library_rag_scope_recovery_block(
                 scope_container, panel_state
             )
-            # Keep the snapshot-driven mirror's change-gate (task-2075 D5)
-            # accurate after a full refresh too: this path renders the
-            # recovery block unconditionally, so without this the cache
-            # could go stale relative to what is now actually on screen --
-            # never wrong (the mirror always re-derives its target from a
-            # fresh `panel_state`, not from the cache), just a possible
-            # redundant reconciliation on the next in-place snapshot.
-            self._rag_search_state.scope_recovery_visible = library_rag_scope_shows_recovery(
-                panel_state.scope
+            # Full refreshes also replace the rendered recovery target.
+            # Record this container and visibility so the next snapshot
+            # cannot skip a needed mirror using a pre-refresh cache.
+            self._rag_search_state.scope_recovery_key = (
+                ref(scope_container),
+                library_rag_scope_shows_recovery(panel_state.scope),
             )
 
             # Deliberately ABOVE the `include_results_and_history` gate: the
