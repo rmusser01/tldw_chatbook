@@ -42,6 +42,7 @@ import concurrent.futures
 import contextlib
 import json
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -1273,9 +1274,8 @@ class MCPToolProvider:
             args: The call's arguments, passed through unchanged.
             decision: The audit decision string this call was authorized
                 under (e.g. `"allowed"`/`"approved"`/`"approved-session"`),
-                forwarded to `execute_hub_tool` and, on a bridge failure
-                this method itself must record (see the discriminator
-                comment below), to the best-effort audit record below.
+                forwarded to `execute_hub_tool` and the same service owner's
+                coordinated best-effort bridge audit on submission/wait failure.
 
         Returns:
             A `ToolResult`: `ok=True` with the formatted result on
@@ -1285,6 +1285,7 @@ class MCPToolProvider:
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
         observation = MCPDispatchObservation()
+        started = time.monotonic()
         typed_entry = getattr(self._service, "execute_hub_tool_result", None)
         execute = (
             typed_entry if callable(typed_entry) else self._service.execute_hub_tool
@@ -1359,36 +1360,40 @@ class MCPToolProvider:
                 dispatch_state = observation.state
             else:
                 dispatch_state = "settled"
-            # C2: record here ONLY when `execute_hub_tool` could NOT have
-            # recorded this failure itself. The real service's contract
-            # (`UnifiedMCPControlPlaneService.execute_hub_tool`) records via
-            # `_record_tool_execution` BEFORE every exception that
-            # propagates through `future.result()` normally -- its own
-            # inner `asyncio.TimeoutError` branch and its generic
-            # except-and-reraise branch both record-then-raise. Recording
-            # again here for those would double the audit trail for one
-            # logical failure (Finding F2 originally fixed a genuine gap;
-            # this discriminator fixes the over-correction). The three
-            # cases where `execute_hub_tool` truly never got a chance to
-            # record are:
-            #   - the submit itself raised (`future is None` -- the
-            #     coroutine never started, e.g. a dead/closed loop);
-            #   - the OUTER slack wait timed out
-            #     (`concurrent.futures.TimeoutError` -- the wedged-loop
-            #     case: the coroutine hadn't finished, and may not even
-            #     have reached its own inner timeout clock yet);
-            #   - the future was cancelled before completing
-            #     (`concurrent.futures.CancelledError`).
-            if (
-                future is None
-                or isinstance(exc, concurrent.futures.TimeoutError)
-                or isinstance(exc, concurrent.futures.CancelledError)
+            # Future completion and service audit publication race independently.
+            # The unified owner coordinates a single best-effort append attempt.
+            if future is None or isinstance(
+                exc,
+                (concurrent.futures.TimeoutError, concurrent.futures.CancelledError),
             ):
-                self._record_decision_safe(
-                    tool,
-                    decision=decision,
-                    error="bridge execution failed: mcp_execution_failed",
-                )
+                bridge_audit = getattr(self._service, "_record_bridge_failure", None)
+                if callable(bridge_audit):
+                    try:
+                        bridge_audit(
+                            tool.server_key,
+                            tool.name,
+                            observation=observation,
+                            dispatch_state=dispatch_state,
+                            duration_ms=int((time.monotonic() - started) * 1000),
+                            argument_names=set(args),
+                            registered_argument_names=schema_argument_names(
+                                tool.input_schema
+                            ),
+                            decision=decision,
+                        )
+                    # Best-effort audit cannot mask the execution failure.
+                    except Exception as audit_exc:  # noqa: BLE001
+                        logger.warning(
+                            "MCP bridge audit unavailable (exception_type={})",
+                            type(audit_exc).__name__,
+                        )
+                else:
+                    # Unqualified duck-typed adapters retain their legacy contract.
+                    self._record_decision_safe(
+                        tool,
+                        decision=decision,
+                        error="bridge execution failed: mcp_execution_failed",
+                    )
             return ToolResult(ok=False, error=error, dispatch_state=dispatch_state)
         return self._format_result(raw_result)
 

@@ -33,6 +33,8 @@ from .hub_tool_catalog import (
 )
 from .local_control_service import MCPGovernanceDenied
 from .tool_results import (
+    DispatchState,
+    MCPDispatchObservation,
     MCPToolResult,
     current_dispatch,
     observe_dispatch,
@@ -311,6 +313,8 @@ class UnifiedMCPControlPlaneService:
         )
         self._execution_log: MCPExecutionLog | None = None
         self._execution_log_init_lock = threading.Lock()
+        self._bridge_audit_lock = threading.Lock()
+        self._bridge_audit_in_flight = False
         self._permission_store: MCPPermissionStore | None = None
         self._hub_test_state_lock = threading.Lock()
         self._hub_test_previews: ToolTestPreviewRegistry | None = None
@@ -2419,6 +2423,7 @@ class UnifiedMCPControlPlaneService:
         result: Any,
         initiator: str = "test",
         decision: str = "allowed",
+        _audit_observation: MCPDispatchObservation | None = None,
     ) -> None:
         # Recording is best-effort: it must never mask the tool result or
         # the tool error being propagated (Phase 2 masking lesson). N1: the
@@ -2435,6 +2440,8 @@ class UnifiedMCPControlPlaneService:
         # pass them (there are none left in this module, but external
         # callers via reflection/monkeypatching should not break) keep the
         # original byte-compatible record shape.
+        if _audit_observation is not None and not _audit_observation.claim_audit():
+            return
         try:
             log = self.execution_log
             if log is None:
@@ -2459,6 +2466,75 @@ class UnifiedMCPControlPlaneService:
             logger.warning(
                 "MCP execution log record failed (exception_type={})",
                 type(exc).__name__,
+            )
+
+    def _record_bridge_failure(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        observation: MCPDispatchObservation,
+        dispatch_state: DispatchState,
+        duration_ms: int,
+        argument_names: set[str],
+        registered_argument_names: set[str],
+        decision: str,
+    ) -> None:
+        """Offer one nonqueued metadata audit to the existing execution-log owner.
+
+        Admission never waits for append I/O. A stalled append retains one daemon
+        per service; saturation/start/write failure may lose a best-effort row.
+        Only the started worker claims publication, so unscheduled work cannot
+        suppress the service's own eventual record.
+        """
+        if not self._bridge_audit_lock.acquire(blocking=False):
+            return
+        try:
+            if self._bridge_audit_in_flight:
+                return
+            self._bridge_audit_in_flight = True
+        finally:
+            self._bridge_audit_lock.release()
+
+        def publish() -> None:
+            try:
+                self._record_tool_execution(
+                    server_key,
+                    tool_name,
+                    ok=False,
+                    duration_ms=duration_ms,
+                    status="error",
+                    error_category=(
+                        "bridge_not_started"
+                        if dispatch_state == "not_started"
+                        else "completion_uncertain"
+                    ),
+                    exception_type=None,
+                    status_code=None,
+                    arguments=dict.fromkeys(argument_names),
+                    registered_argument_names=registered_argument_names,
+                    result=None,
+                    initiator="agent",
+                    decision=decision,
+                    _audit_observation=observation,
+                )
+            except Exception as exc:  # noqa: BLE001 -- audit is best-effort
+                logger.warning(
+                    "MCP bridge audit failed (exception_type={})", type(exc).__name__
+                )
+            finally:
+                with self._bridge_audit_lock:
+                    self._bridge_audit_in_flight = False
+
+        try:
+            threading.Thread(
+                target=publish, name="mcp-bridge-audit", daemon=True
+            ).start()
+        except Exception as exc:  # noqa: BLE001 -- audit is best-effort
+            with self._bridge_audit_lock:
+                self._bridge_audit_in_flight = False
+            logger.warning(
+                "MCP bridge audit start failed (exception_type={})", type(exc).__name__
             )
 
     async def execute_hub_tool_result(
@@ -2598,6 +2674,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=None,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                _audit_observation=observation,
                 result=None,
                 initiator=initiator,
                 decision=decision,
@@ -2619,6 +2696,7 @@ class UnifiedMCPControlPlaneService:
                     status_code=None,
                     arguments=normalized_arguments,
                     registered_argument_names=registered_argument_names,
+                    _audit_observation=observation,
                     result=None,
                     initiator=initiator,
                     decision=decision,
@@ -2664,6 +2742,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=None,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                _audit_observation=observation,
                 result=None,
                 initiator=initiator,
                 # task-32280 fix round: governance refused this; no card was
@@ -2697,6 +2776,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=status_code,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                _audit_observation=observation,
                 result=None,
                 initiator=initiator,
                 decision=decision,
@@ -2722,6 +2802,7 @@ class UnifiedMCPControlPlaneService:
             status_code=None,
             arguments=normalized_arguments,
             registered_argument_names=registered_argument_names,
+            _audit_observation=observation,
             result=(
                 project_tool_result(result)
                 if isinstance(result, MCPToolResult)

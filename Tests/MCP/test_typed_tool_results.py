@@ -758,6 +758,15 @@ async def test_provider_unacknowledged_cancellation_is_uncertain_even_before_wri
         monkeypatch.setattr(service, "_tool_call_timeout", lambda: 0.5)
         monkeypatch.setattr(provider_module, "_RESULT_WAIT_SLACK_SECONDS", -0.49)
         outcomes = []
+        audit_threads = []
+        start_thread = threading.Thread.start
+
+        def tracked_start(thread):
+            if thread.name == "mcp-bridge-audit":
+                audit_threads.append(thread)
+            start_thread(thread)
+
+        monkeypatch.setattr(threading.Thread, "start", tracked_start)
         thread = threading.Thread(
             target=lambda: outcomes.append(provider.invoke(tool_id, {"delay": 0.08}))
         )
@@ -767,13 +776,19 @@ async def test_provider_unacknowledged_cancellation_is_uncertain_even_before_wri
         assert not thread.is_alive()
         assert outcomes[0].ok is False
         assert outcomes[0].dispatch_state == "uncertain"
+        for audit_thread in audit_threads:
+            await asyncio.to_thread(audit_thread.join, 1)
+            assert not audit_thread.is_alive()
         await asyncio.sleep(0.03)
         control = await asyncio.wait_for(
             client.call_tool_result("fixture", "fixture", {"counter": True}), 1
         )
         # Unacknowledged cancellation may still race one actual dispatch, never a replay.
         assert control.content[0]["text"] in {"2", "3"}
-        assert len(service.execution_log.read_recent()) == 2
+        rows = service.execution_log.read_recent()
+        assert len(rows) == 2
+        assert rows[0]["status"] == "error"
+        assert rows[0]["error_category"] == "completion_uncertain"
 
 
 @pytest.mark.asyncio
@@ -886,3 +901,346 @@ async def test_builtin_delegate_settlement_preserves_host_truth_without_wire_evi
             )
         assert observation.state == "settled"
         assert len(service.execution_log.read_recent()) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stall_before_append", [False, True])
+@pytest.mark.parametrize("audit_fails", [False, True])
+async def test_provider_audit_publication_race_records_one_truthful_outcome(
+    tmp_path, monkeypatch, stall_before_append, audit_fails
+):
+    import asyncio
+    import time
+
+    import tldw_chatbook.Agents.mcp_tool_provider as provider_module
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    async with controlled_stdio_client(tmp_path) as client:
+        service = await controlled_service(tmp_path, client)
+        provider = provider_module.MCPToolProvider(
+            service=service, main_loop=asyncio.get_running_loop()
+        )
+        await provider.compose_catalog()
+        tool = HubTool(
+            server_key="local:fixture",
+            server_label="fixture",
+            source="local",
+            name="fixture",
+            description="",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        service.set_tool_state("local:fixture", "fixture", "allow", tool=tool)
+        tool_id = provider.list_catalog()[0].id
+        control = await asyncio.to_thread(provider.invoke, tool_id, {})
+        assert control.ok is True
+        assert [row["status"] for row in service.execution_log.read_recent()] == [
+            "success"
+        ]
+        monkeypatch.setattr(service, "_tool_call_timeout", lambda: 0.5)
+        monkeypatch.setattr(provider_module, "_RESULT_WAIT_SLACK_SECONDS", -0.45)
+        append = service.execution_log.append
+
+        def slow_append(record):
+            if stall_before_append:
+                time.sleep(0.15)
+            if not audit_fails:
+                append(record)
+            if not stall_before_append:
+                time.sleep(0.15)
+            if audit_fails:
+                raise OSError("PRIVATE_AUDIT_ERROR")
+
+        monkeypatch.setattr(service.execution_log, "append", slow_append)
+        result = await asyncio.to_thread(provider.invoke, tool_id, {})
+        assert result.ok is False
+        assert result.dispatch_state == "uncertain"
+        await asyncio.sleep(0.02)
+        rows = service.execution_log.read_recent()
+        assert [row["status"] for row in rows] == (
+            ["success"] if audit_fails else ["success", "success"]
+        )
+        counter = await client.call_tool_result("fixture", "fixture", {"counter": True})
+        assert counter.content[0]["text"] == "3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bridge_failure", ["closed_loop", "cancelled_future"])
+@pytest.mark.parametrize("audit_fails", [False, True])
+async def test_provider_bridge_audit_is_bounded_and_best_effort(
+    tmp_path, monkeypatch, bridge_failure, audit_fails
+):
+    import asyncio
+    import concurrent.futures
+    import threading
+
+    import tldw_chatbook.Agents.mcp_tool_provider as provider_module
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    async with controlled_stdio_client(tmp_path) as client:
+        service = await controlled_service(tmp_path, client)
+        provider = provider_module.MCPToolProvider(
+            service=service, main_loop=asyncio.get_running_loop()
+        )
+        await provider.compose_catalog()
+        tool = HubTool(
+            server_key="local:fixture",
+            server_label="fixture",
+            source="local",
+            name="fixture",
+            description="",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        service.set_tool_state("local:fixture", "fixture", "allow", tool=tool)
+        tool_id = provider.list_catalog()[0].id
+        assert (await asyncio.to_thread(provider.invoke, tool_id, {})).ok
+        append = service.execution_log.append
+        entered, release, finished = (
+            threading.Event(),
+            threading.Event(),
+            threading.Event(),
+        )
+        attempts = []
+        audit_threads = []
+        start_thread = threading.Thread.start
+
+        def tracked_start(thread):
+            if thread.name == "mcp-bridge-audit":
+                audit_threads.append(thread)
+            start_thread(thread)
+
+        monkeypatch.setattr(threading.Thread, "start", tracked_start)
+
+        def stalled_append(record):
+            attempts.append(record)
+            entered.set()
+            try:
+                assert release.wait(2)
+                if audit_fails:
+                    raise OSError("PRIVATE_AUDIT_ERROR")
+                append(record)
+            finally:
+                finished.set()
+
+        monkeypatch.setattr(service.execution_log, "append", stalled_append)
+        if bridge_failure == "closed_loop":
+            closed_loop = asyncio.new_event_loop()
+            closed_loop.close()
+            provider._main_loop = closed_loop
+        else:
+
+            def cancelled_submission(coro, loop):
+                coro.close()
+                future = concurrent.futures.Future()
+                future.cancel()
+                return future
+
+            monkeypatch.setattr(
+                asyncio, "run_coroutine_threadsafe", cancelled_submission
+            )
+        outcomes = []
+        worker = threading.Thread(
+            target=lambda: outcomes.append(provider.invoke(tool_id, {}))
+        )
+        worker.start()
+        try:
+            assert await asyncio.to_thread(entered.wait, 1)
+            await asyncio.to_thread(worker.join, 0.2)
+            assert not worker.is_alive(), "bridge return waited for audit I/O"
+            assert outcomes[0].ok is False
+            state = "not_started" if bridge_failure == "closed_loop" else "uncertain"
+            assert outcomes[0].dispatch_state == state
+            # Saturation drops another best-effort audit without a queue or wait.
+            saturated = await asyncio.wait_for(
+                asyncio.to_thread(provider.invoke, tool_id, {}), 0.2
+            )
+            assert saturated.ok is False
+            assert saturated.dispatch_state == state
+            assert len(attempts) == 1
+        finally:
+            release.set()
+            await asyncio.to_thread(worker.join, 1)
+            assert await asyncio.to_thread(finished.wait, 1)
+            for audit_thread in audit_threads:
+                await asyncio.to_thread(audit_thread.join, 1)
+                assert not audit_thread.is_alive()
+        assert len(audit_threads) == 1
+        assert len(attempts) == 1
+        assert attempts[0].status == "error"
+        assert attempts[0].error_category == (
+            "bridge_not_started"
+            if bridge_failure == "closed_loop"
+            else "completion_uncertain"
+        )
+        assert len(service.execution_log.read_recent()) == (1 if audit_fails else 2)
+        # The actual worker exited, so a new fallback can use the released slot.
+        assert not (await asyncio.to_thread(provider.invoke, tool_id, {})).ok
+        for audit_thread in audit_threads:
+            await asyncio.to_thread(audit_thread.join, 1)
+            assert not audit_thread.is_alive()
+        assert len(audit_threads) == 2
+        assert len(attempts) == 2
+        assert len(service.execution_log.read_recent()) == (1 if audit_fails else 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reject_thread_start", [False, True])
+async def test_provider_bridge_first_audit_and_unscheduled_fallback(
+    tmp_path, monkeypatch, reject_thread_start
+):
+    import asyncio
+    import threading
+    import time
+
+    import tldw_chatbook.Agents.mcp_tool_provider as provider_module
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    async with controlled_stdio_client(tmp_path) as client:
+        service = await controlled_service(tmp_path, client)
+        provider = provider_module.MCPToolProvider(
+            service=service, main_loop=asyncio.get_running_loop()
+        )
+        await provider.compose_catalog()
+        tool = HubTool(
+            server_key="local:fixture",
+            server_label="fixture",
+            source="local",
+            name="fixture",
+            description="",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        service.set_tool_state("local:fixture", "fixture", "allow", tool=tool)
+        tool_id = provider.list_catalog()[0].id
+        assert (await asyncio.to_thread(provider.invoke, tool_id, {})).ok
+        monkeypatch.setattr(service, "_tool_call_timeout", lambda: 0.5)
+        monkeypatch.setattr(provider_module, "_RESULT_WAIT_SLACK_SECONDS", -0.45)
+        record = service._record_tool_execution
+        start_thread = threading.Thread.start
+        audit_threads = []
+
+        def delayed_service_record(*args, **kwargs):
+            if threading.current_thread().name != "mcp-bridge-audit":
+                time.sleep(0.15)
+            return record(*args, **kwargs)
+
+        def controlled_start(thread):
+            if thread.name == "mcp-bridge-audit":
+                if reject_thread_start:
+                    raise RuntimeError("PRIVATE_THREAD_START_ERROR")
+                audit_threads.append(thread)
+            start_thread(thread)
+
+        monkeypatch.setattr(service, "_record_tool_execution", delayed_service_record)
+        monkeypatch.setattr(threading.Thread, "start", controlled_start)
+        try:
+            result = await asyncio.to_thread(provider.invoke, tool_id, {})
+            assert result.ok is False
+            assert result.dispatch_state == "uncertain"
+        finally:
+            for thread in audit_threads:
+                await asyncio.to_thread(thread.join, 1)
+                assert not thread.is_alive()
+        rows = service.execution_log.read_recent()
+        assert len(rows) == 2
+        assert rows[0]["status"] == ("success" if reject_thread_start else "error")
+        if not reject_thread_start:
+            assert rows[0]["error_category"] == "completion_uncertain"
+        # Start failure also releases capacity without claiming publication.
+        reject_thread_start = False
+        monkeypatch.setattr(service, "_record_tool_execution", record)
+        closed_loop = asyncio.new_event_loop()
+        closed_loop.close()
+        provider._main_loop = closed_loop
+        assert not (await asyncio.to_thread(provider.invoke, tool_id, {})).ok
+        for thread in audit_threads:
+            await asyncio.to_thread(thread.join, 1)
+            assert not thread.is_alive()
+        rows = service.execution_log.read_recent()
+        assert len(rows) == 3
+        assert rows[0]["error_category"] == "bridge_not_started"
+
+
+@pytest.mark.asyncio
+async def test_saturated_bridge_writer_does_not_suppress_later_service_audit(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import threading
+    import time
+
+    import tldw_chatbook.Agents.mcp_tool_provider as provider_module
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    async with controlled_stdio_client(tmp_path) as client:
+        service = await controlled_service(tmp_path, client)
+        loop = asyncio.get_running_loop()
+        provider = provider_module.MCPToolProvider(service=service, main_loop=loop)
+        await provider.compose_catalog()
+        tool = HubTool(
+            server_key="local:fixture",
+            server_label="fixture",
+            source="local",
+            name="fixture",
+            description="",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        service.set_tool_state("local:fixture", "fixture", "allow", tool=tool)
+        tool_id = provider.list_catalog()[0].id
+        assert (await asyncio.to_thread(provider.invoke, tool_id, {})).ok
+        append = service.execution_log.append
+        record = service._record_tool_execution
+        entered, release = threading.Event(), threading.Event()
+        audit_threads = []
+
+        def blocked_bridge_append(row):
+            if threading.current_thread().name == "mcp-bridge-audit":
+                audit_threads.append(threading.current_thread())
+                entered.set()
+                assert release.wait(2)
+            append(row)
+
+        def delayed_service_record(*args, **kwargs):
+            if threading.current_thread().name != "mcp-bridge-audit":
+                time.sleep(0.15)
+            return record(*args, **kwargs)
+
+        monkeypatch.setattr(service.execution_log, "append", blocked_bridge_append)
+        closed_loop = asyncio.new_event_loop()
+        closed_loop.close()
+        provider._main_loop = closed_loop
+        try:
+            assert not (await asyncio.to_thread(provider.invoke, tool_id, {})).ok
+            assert await asyncio.to_thread(entered.wait, 1)
+            provider._main_loop = loop
+            monkeypatch.setattr(service, "_tool_call_timeout", lambda: 0.5)
+            monkeypatch.setattr(provider_module, "_RESULT_WAIT_SLACK_SECONDS", -0.45)
+            monkeypatch.setattr(
+                service, "_record_tool_execution", delayed_service_record
+            )
+            result = await asyncio.to_thread(provider.invoke, tool_id, {})
+            assert result.ok is False
+            assert result.dispatch_state == "uncertain"
+            assert [row["status"] for row in service.execution_log.read_recent()] == [
+                "success",
+                "success",
+            ]
+        finally:
+            release.set()
+            for thread in audit_threads:
+                await asyncio.to_thread(thread.join, 1)
+                assert not thread.is_alive()
+        rows = service.execution_log.read_recent()
+        assert len(audit_threads) == 1
+        assert len(rows) == 3
+        assert rows[0]["error_category"] == "bridge_not_started"

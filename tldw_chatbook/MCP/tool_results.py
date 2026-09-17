@@ -12,7 +12,8 @@ import math
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
 from types import SimpleNamespace
 from typing import Any, Literal, Self
 
@@ -29,6 +30,18 @@ class MCPDispatchObservation:
     """Per-call host observation; owns no timeout, authority or resource."""
 
     state: DispatchState = "not_started"
+    _audit_claimed: bool = field(default=False, init=False, repr=False)
+    _audit_lock: Any = field(
+        default_factory=Lock, init=False, repr=False, compare=False
+    )
+
+    def claim_audit(self) -> bool:
+        """Claim one best-effort publication attempt, without holding I/O locks."""
+        with self._audit_lock:
+            if self._audit_claimed:
+                return False
+            self._audit_claimed = True
+            return True
 
 
 _dispatch: ContextVar[MCPDispatchObservation | None] = ContextVar(
