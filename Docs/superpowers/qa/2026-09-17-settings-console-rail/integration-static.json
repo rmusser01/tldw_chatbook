@@ -1,0 +1,9 @@
+{
+  "parents": [
+    "2614d6c135",
+    "d8fb4053f9"
+  ],
+  "file": "tldw_chatbook/app.py",
+  "new_lint_diagnostics": [],
+  "ast_parse": true
+}

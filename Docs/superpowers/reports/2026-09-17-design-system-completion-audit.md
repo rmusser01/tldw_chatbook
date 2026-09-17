@@ -91,3 +91,8 @@ TASK-32757 also reconciles the four incoming dev commits through `c97a64eba5`.
 Both Import guide additions are preserved. Select validation now participates in
 the retained option update path, with 102 targeted integration cases passing;
 no new ingestion native or external-service qualification is claimed.
+
+TASK-32759 also reconciles dev `d8fb4053f9` after the draft PR became conflicting.
+Both lesson additions and the incoming parent-side STT diagnostics are preserved;
+15 affected STT tests and all seven derived-artifact guards pass. The native rail
+captures predate that callback-only merge; the receipt states this boundary.

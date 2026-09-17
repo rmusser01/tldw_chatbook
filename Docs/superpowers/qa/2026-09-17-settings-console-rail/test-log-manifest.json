@@ -33,5 +33,15 @@
     "file": "production-style-red.txt",
     "original_sha256": "c0485b34996b1ba0c6cf1632f2aea34d4ad5c3dad22c15e61fb945691c65bb81",
     "stored_sha256": "875761657f9c32ea408fd980aed84e1aeea5ba7a2e888b98cf33e78bd25fc034"
+  },
+  {
+    "file": "integration-tests.txt",
+    "original_sha256": "ab603ef3c8eb5036cbcdc9d3713c4ae8676fb2678586320a5a8f0b671429ff2a",
+    "stored_sha256": "ab603ef3c8eb5036cbcdc9d3713c4ae8676fb2678586320a5a8f0b671429ff2a"
+  },
+  {
+    "file": "integration-preflight.txt",
+    "original_sha256": "dfe569acb339dece91e669b07f68c4879458b1ba24bdab410d99c0b4088e34bd",
+    "stored_sha256": "dfe569acb339dece91e669b07f68c4879458b1ba24bdab410d99c0b4088e34bd"
   }
 ]

@@ -5233,11 +5233,18 @@ class LibraryIngestQueueMixin:
         job_id: str,
         failure: ExecutorFailure,
     ) -> None:
+        """Record an accepted worker failure and its safe diagnostic context.
+
+        Args:
+            job_id: Owning Library job identifier.
+            failure: Generation-fenced, path-private worker failure.
+        """
         if self._ingest_shutdown or not self._local_stt_terminal_matches(
             job_id, failure
         ):
             return
-        if self._claim_ingest_local_stt_job(job_id) is None:
+        current = self._claim_ingest_local_stt_job(job_id)
+        if current is None:
             self._ingest_local_stt_jobs.pop(job_id, None)
             return
         self._ingest_local_stt_jobs.pop(job_id, None)
@@ -5245,6 +5252,27 @@ class LibraryIngestQueueMixin:
         if failure.code is TranscriptionFailureCode.CANCELLED:
             self.library_ingest_jobs.mark_cancelled(job_id, reason=message)
         else:
+            # Worker log sinks are silenced; this parent owns the application
+            # log. Preserve correlation and stage without native exception text
+            # or caller-controlled paths/progress messages.
+            phase_value = (
+                current.progress.get("phase")
+                if isinstance(current.progress, dict)
+                else None
+            )
+            try:
+                phase = WorkerPhase(phase_value).value
+            except (TypeError, ValueError):
+                phase = "unknown"
+            logger.error(
+                "Library local STT failed "
+                "(job_id={}, attempt_id={}, generation={}, phase={}, code={}).",
+                job_id,
+                failure.attempt_id,
+                failure.generation,
+                phase,
+                failure.code.value,
+            )
             self.library_ingest_jobs.mark_failed(
                 job_id,
                 error=message,

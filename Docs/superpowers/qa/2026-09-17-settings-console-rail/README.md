@@ -88,3 +88,22 @@ Other Console Behavior controls, instant-apply groups, save/validation journeys,
 resize behavior and Storage still need their own review. Initial broader Console
 and Storage tests hit the known profile-lifetime fixture failure before UI
 behavior; that setup issue is not evidence of a production storage defect.
+
+## Dev integration
+
+After this repair was pushed, dev advanced to `d8fb4053f9` and made PR #2704
+conflicting. The merge preserves both testing-lessons additions and the reviewed
+single diagnostic-call change from TASK-32758. The inventory keeps branch-owned
+changes while adding the incoming app entry and one call to its total (7763).
+Independent read-only review confirmed the app callback delta exactly matches
+the incoming branch, with no unexpected production change.
+
+All 15 incoming STT diagnostic cases pass (`integration-tests.txt`), in addition
+to the 45 rail/governance cases above: 60 distinct targeted cases total. All seven
+derived-artifact checks pass (`integration-preflight.txt`). The new STT test file
+passes Ruff check/format. `integration-static.json` records no new app.py lint
+findings against the union of both merge parents; it does not claim the entire
+legacy file is lint-clean.
+
+The native matrix predates this callback-only integration. Rail source hashes
+still match; no new native STT or model-inference verification is claimed.

@@ -317,6 +317,18 @@ preserve quoted strings and original whitespace boundaries, and compare parsed
 selector structure. The regression now covers all source modules as well as
 compound/descendant selector examples.
 
+## A terminal failure does not prove an application log exists (TASK-32758, 2026-09-17)
+
+**Incident.** A local transcription failure set the Library job to failed, but
+the application log stayed empty. The worker intentionally silences its logging
+sinks, and the parent callback recorded state without logging the failure. Tests
+of the typed worker failure alone did not exercise that missing parent step.
+
+For diagnostic behavior, invoke the mounted parent callback with a real file
+sink and assert the persisted record. Keep native exception text and paths out
+of the record; verify the allowed identifiers, stage and failure code instead.
+
+---
 
 ## Observe completed callbacks before reading their files (TASK-32628, 2026-09-16)
 
