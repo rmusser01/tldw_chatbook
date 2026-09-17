@@ -14494,3 +14494,14 @@ form. A mounted, nonzero-sized label does not prove the user can read it. The
 added compositor assertion reproduced the overlap before the fix; the final
 native confirmation covers both themes. Evidence:
 `Docs/superpowers/qa/2026-09-16-filtered-picker/`.
+
+## Display cleanup must not grant a record identity (TASK-4111, 2026-09-17)
+
+The Search/RAG Open repair initially validated the already-sanitized display ID.
+Independent review reproduced `media_javascript:17`, `media_onclick=17`, and
+`media_1\x007` all becoming `media_17` and opening record 17. Testing only the
+resolver with hand-built rows missed the upstream transformation. Regressions
+now enter through `LibraryRagResultRow.from_result`; a sanitation-change flag
+refuses activation while preserving existing safe display/citation values.
+Validate identity before any lossy display transform, or retain enough information
+to reject transformed identities. Evidence: `Docs/superpowers/qa/2026-09-17-rag-source-open/`.

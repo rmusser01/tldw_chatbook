@@ -1,0 +1,22 @@
+{
+  "tldw_chatbook/Library/library_rag_state.py": {
+    "baseline_diagnostics": 7,
+    "current_diagnostics": 7,
+    "new_diagnostics": []
+  },
+  "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": {
+    "baseline_diagnostics": 2,
+    "current_diagnostics": 2,
+    "new_diagnostics": []
+  },
+  "Tests/UI/test_library_shell.py": {
+    "baseline_diagnostics": 42,
+    "current_diagnostics": 42,
+    "new_diagnostics": []
+  },
+  "Tests/UI/test_product_maturity_gate16_library_search_rag.py": {
+    "baseline_diagnostics": 5,
+    "current_diagnostics": 5,
+    "new_diagnostics": []
+  }
+}

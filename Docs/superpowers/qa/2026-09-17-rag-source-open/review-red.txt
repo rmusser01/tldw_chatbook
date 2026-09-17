@@ -1,0 +1,203 @@
+FFFFFFFFFFFFF                                                            [100%]
+=================================== FAILURES ===================================
+_ test_display_sanitization_cannot_grant_a_different_record_identity[javascript:17-media] _
+
+kind = 'media', suffix = 'javascript:17'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-16 20:55:38.171 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-16 20:55:38.179 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:24 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-16 20:55:38.265 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-16 20:55:38.384 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-16 20:55:38.384 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-16 20:55:38.385 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_ test_display_sanitization_cannot_grant_a_different_record_identity[javascript:17-prompt] _
+
+kind = 'prompt', suffix = 'javascript:17'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[javascript:17-notes] _
+
+kind = 'notes', suffix = 'javascript:17'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[javascript:17-conversations] _
+
+kind = 'conversations', suffix = 'javascript:17'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[onclick=17-media] _
+
+kind = 'media', suffix = 'onclick=17'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[onclick=17-prompt] _
+
+kind = 'prompt', suffix = 'onclick=17'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[onclick=17-notes] _
+
+kind = 'notes', suffix = 'onclick=17'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[onclick=17-conversations] _
+
+kind = 'conversations', suffix = 'onclick=17'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[1\x007-media] _
+
+kind = 'media', suffix = '1\x007'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[1\x007-prompt] _
+
+kind = 'prompt', suffix = '1\x007'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[1\x007-notes] _
+
+kind = 'notes', suffix = '1\x007'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+_ test_display_sanitization_cannot_grant_a_different_record_identity[1\x007-conversations] _
+
+kind = 'conversations', suffix = '1\x007'
+
+    @pytest.mark.parametrize("kind", ["media", "prompt", "notes", "conversations"])
+    @pytest.mark.parametrize("suffix", ["javascript:17", "onclick=17", "1\x007"])
+    def test_display_sanitization_cannot_grant_a_different_record_identity(kind, suffix):
+        row = _row(kind, f"{kind}_{suffix}")
+        assert row.source_id == f"{kind}_17"
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:81: Failed
+__________ test_excessively_long_numeric_id_has_a_user_facing_refusal __________
+
+    def test_excessively_long_numeric_id_has_a_user_facing_refusal():
+>       with pytest.raises(ValueError, match="Can't open.*source ID is invalid"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+Tests/Library/test_library_rag_open_identity.py:86: Failed
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[javascript:17-media]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[javascript:17-prompt]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[javascript:17-notes]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[javascript:17-conversations]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[onclick=17-media]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[onclick=17-prompt]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[onclick=17-notes]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[onclick=17-conversations]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[1\x007-media]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[1\x007-prompt]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[1\x007-notes]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_display_sanitization_cannot_grant_a_different_record_identity[1\x007-conversations]
+FAILED Tests/Library/test_library_rag_open_identity.py::test_excessively_long_numeric_id_has_a_user_facing_refusal
+13 failed, 53 deselected in 0.93s

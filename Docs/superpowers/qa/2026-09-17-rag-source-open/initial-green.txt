@@ -1,0 +1,28 @@
+........................................................................ [ 96%]
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+2.20s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{id}-media]
+2.03s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}-{id}-media]
+2.00s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{id}-prompt]
+2.00s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}-{id}-prompt]
+2.00s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{id}-prompt]
+1.98s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-local:{kind}:{id}-media]
+1.97s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-local:{kind}:{id}-prompt]
+1.95s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{id}-media]
+1.95s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}_{id}-media]
+1.94s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}_{id}-prompt]
+1.89s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}_{id}-media]
+1.81s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}-{id}-prompt]
+1.79s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-media]
+1.77s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}-{id}-media]
+1.76s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-prompt]
+1.72s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}_{id}-prompt]
+1.68s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[prompt-media_17-]
+1.64s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[media-media_bad-]
+1.60s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[media-server:media:17-]
+1.59s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[prompt-prompt_bad-]
+1.58s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[media-prompt_17-]
+1.56s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[prompt-17-server]
+
+(3 durations < 1s hidden.)
+75 passed in 55.27s

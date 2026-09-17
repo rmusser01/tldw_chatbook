@@ -1,0 +1,34 @@
+........................................................................ [ 15%]
+........................................................................ [ 30%]
+........................................................................ [ 46%]
+........................................................................ [ 61%]
+........................................................................ [ 77%]
+........................................................................ [ 92%]
+..................................                                       [100%]
+============================= slowest 25 durations =============================
+3.24s call     Tests/UI/test_library_media_reader_flow.py::test_thirty_step_traversal_settles_at_most_one_progress_write
+2.50s call     Tests/UI/test_library_media_reader_flow.py::test_filter_uses_authoritative_search_and_restores_page_three_anchor
+2.45s call     Tests/UI/test_library_media_reader_flow.py::test_zero_result_filter_repaints_the_mounted_reader_placeholder
+2.36s call     Tests/UI/test_library_shell.py::test_library_shell_search_result_open_conversation_locates_owning_page
+2.23s call     Tests/UI/test_library_media_reader_flow.py::test_delete_selects_following_row_then_previous_then_empty
+2.22s call     Tests/UI/test_library_media_reader_flow.py::test_edit_metadata_from_read_routes_to_info_form_actions
+2.20s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{id}-media]
+2.19s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}_{id}-prompt]
+2.19s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}_{id}-media]
+2.19s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-local:{kind}:{id}-prompt]
+2.17s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}-{id}-media]
+2.17s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}-{id}-prompt]
+2.16s call     Tests/UI/test_library_prompt_dirty_escape.py::test_the_prompt_editor_footer_chip_names_the_dirty_blocker
+2.14s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-local:{kind}:{id}-media]
+2.13s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{id}-media]
+2.12s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{id}-prompt]
+2.12s call     Tests/UI/test_library_media_reader_flow.py::test_find_prev_next_are_disabled_and_marked_with_no_matches
+2.11s call     Tests/UI/test_library_media_reader_flow.py::test_canvas_sync_failure_fallback_restores_media_focus[size0]
+2.11s call     Tests/UI/test_library_media_reader_flow.py::test_info_describes_the_same_stored_text_representation_sent_to_console
+2.10s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}-{id}-media]
+2.09s call     Tests/UI/test_library_media_reader_flow.py::test_background_whole_screen_recompose_keeps_reader_content_focus[size0]
+2.08s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{id}-prompt]
+2.07s call     Tests/UI/test_library_prompt_dirty_escape.py::test_escape_on_a_dirty_prompt_editor_states_why_it_will_not_leave
+2.07s call     Tests/UI/test_library_prompt_dirty_escape.py::test_a_busy_editor_that_is_also_dirty_names_the_blocker_that_wins
+2.05s call     Tests/UI/test_library_media_reader_flow.py::test_find_input_keeps_focus_through_a_reader_recompose[size0]
+466 passed, 1 deselected in 333.80s (0:05:33)

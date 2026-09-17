@@ -1,0 +1,34 @@
+{
+  "tldw-4111-run-001": {
+    "pid": 2846,
+    "passed": false,
+    "app_run_returned": true,
+    "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-source-open/native_check.py\", line 156, in journey\n    json.dumps(before, indent=2) + \"\\n\"\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py\", line 238, in dumps\n    **kw).encode(obj)\n          ^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py\", line 202, in encode\n    chunks = list(chunks)\n             ^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py\", line 432, in _iterencode\n    yield from _iterencode_dict(o, _current_indent_level)\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py\", line 406, in _iterencode_dict\n    yield from chunks\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py\", line 406, in _iterencode_dict\n    yield from chunks\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py\", line 406, in _iterencode_dict\n    yield from chunks\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py\", line 439, in _iterencode\n    o = _default(o)\n        ^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py\", line 180, in default\n    raise TypeError(f'Object of type {o.__class__.__name__} '\nTypeError: Object of type datetime is not JSON serializable\n",
+    "exit_code": 1,
+    "note": "Evidence writer needed default=str for database datetime values; no Open journey ran."
+  },
+  "tldw-4111-run-002": {
+    "pid": 3143,
+    "passed": true,
+    "app_run_returned": true,
+    "error": null,
+    "exit_code": 0,
+    "note": "All four cells passed; runner lint corrections followed."
+  },
+  "tldw-4111-run-003": {
+    "pid": 3533,
+    "passed": true,
+    "app_run_returned": true,
+    "error": null,
+    "exit_code": 0,
+    "note": "All four cells passed; stacked warnings obscured reader captures, so final runner waits for natural toast expiry."
+  },
+  "tldw-4111-run-004": {
+    "pid": 5190,
+    "passed": true,
+    "app_run_returned": true,
+    "error": null,
+    "exit_code": 0,
+    "note": "Final runner and unobscured captures."
+  }
+}

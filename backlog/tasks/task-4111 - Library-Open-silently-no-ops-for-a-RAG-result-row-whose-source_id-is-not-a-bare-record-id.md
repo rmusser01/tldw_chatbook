@@ -3,9 +3,11 @@ id: TASK-4111
 title: >-
   Library Open silently no-ops for a RAG result row whose source_id is not a
   bare record id
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-09 20:23'
+updated_date: '2026-09-17 04:09'
 labels:
   - library
   - rag
@@ -33,8 +35,33 @@ with a canonical ID fails. Evidence:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Opening a RAG result row whose source_id carries a source-type prefix lands on the item's detail surface
-- [ ] #2 A row that genuinely cannot be resolved reports why instead of doing nothing
-- [ ] #3 No open path swallows a parse failure into a silent return or a None detail
-- [ ] #4 A regression test covers a prefixed source_id and an unresolvable id, for media and for prompts
+- [x] #1 Opening a RAG result row whose source_id carries a source-type prefix lands on the item's detail surface
+- [x] #2 A row that genuinely cannot be resolved reports why instead of doing nothing
+- [x] #3 No open path swallows a parse failure into a silent return or a None detail
+- [x] #4 A regression test covers a prefixed source_id and an unresolvable id, for media and for prompts
+- [x] #5 Recognized local media/prompt IDs preserve source type and authority; malformed, mismatched, or server identities cannot silently open an unrelated local record.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR.
+ADR path: backlog/decisions/003-settings-library-rag-defaults.md; backlog/decisions/084-library-media-reader-ia.md; backlog/decisions/150-design-token-system-and-design-language.md.
+Reason: repair the existing local Search/RAG source-open boundary without changing reader ownership, backend authority, persistence, or route contracts.
+1. Reproduce recognized prefixed media/prompt IDs and invalid IDs through production-CSS result Open and focused-card keyboard actions. Distinguish the old canonical-selection test pin from real missing detail.
+2. Normalize only recognized matching local prefixes before invoking existing routes. Report invalid or nonlocal identities without changing the result list or routing to a guessed record. Keep existing missing-record errors, dirty-save vetoes, and generation fences.
+3. Verify targeted model, result-opening, retained-reader, dirty-edit, and token tests. Exercise real private-profile Media/Prompt reads and invalid-ID feedback in native dark/light wide/compact views, with no model request.
+4. Obtain independent review, record evidence and limitations, update audit/task documentation, and commit locally.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Search/RAG Open now resolves recognized matching local Media/Prompt ID wrappers before entering existing reader routes. Invalid, mismatched, server and display-sanitized identities report a warning while preserving Search and focus. Citation IDs, shared deep-link behavior, dirty-save vetoes and reader generation fences are unchanged.
+
+Changed the result model/controller, added 66 identity and 24 mounted UI regressions, and repaired two legacy Open test contracts. Independent review found a display-sanitization collision; 13 red regressions reproduced it, the refusal guard fixes it, and follow-up review found no remaining issues. Recorded the lesson in lessons-testing-evidence.md.
+
+466 targeted tests passed; TASK-15390 heading test deselected. New files pass lint/format, changed production ranges pass format, and existing files add no lint diagnostics. Four native dark/light 170x48/80x24 cells perform real local keyword retrieval with an explicit ID-shape adapter: eight exact stored-record opens and eight visible refusals pass. Sixteen captures inspected, records/default profile hashes unchanged, ten private databases healthy, clean exit verified. Missing Prompt records retain the existing generic load-error/Retry surface. No provider call, full suite, push or merge.
+
+ADR check: no new ADR; existing backlog/decisions/003-settings-library-rag-defaults.md, 084-library-media-reader-ia.md and 150-design-token-system-and-design-language.md apply. Evidence and limits: Docs/superpowers/qa/2026-09-17-rag-source-open/README.md. Continuation ledger updated. Two unrelated fixture failures reproduce with unchanged production modules and remain separately documented.
+<!-- SECTION:NOTES:END -->

@@ -25135,7 +25135,7 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         for _ in range(120):
             if (
-                screen._media_state.selected_media_id == "media-1"
+                screen._media_state.reader_session.loaded_id == "local:media:1"
                 and screen._media_state.view == "viewer"
             ):
                 break
@@ -25148,7 +25148,7 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
         assert any(
-            call["media_id"] == "media-1"
+            call["media_id"] == 1
             for call in app.media_reading_scope_service.detail_calls
         )
 

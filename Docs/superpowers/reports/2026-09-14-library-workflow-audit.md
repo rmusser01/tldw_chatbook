@@ -782,3 +782,26 @@ The initial targeted run also reproduced focused-card Open failing for a
 `media-1` source ID on the unchanged controller. Next bounded review: TASK-4111
 result opening, with the separate evidence-heading test drift still in TASK-15390.
 No full suite, push, merge, or complete Search/RAG qualification is implied.
+
+## Search/RAG source opening — 2026-09-17 UTC (TASK-4111)
+
+[Evidence](../qa/2026-09-17-rag-source-open/README.md) closes prefixed Media/Prompt
+Open failures at the result boundary. Matching local wrappers resolve exactly;
+malformed, mismatched, server and display-sanitized identities report a warning
+without leaving Search. The shared reader routes retain their existing save
+vetoes, generation fences and load-error recovery. The old keyboard Open fixture
+now reflects integer backing IDs and canonical reader identity.
+
+Final verification: 466 targeted tests pass, with TASK-15390's known heading test
+deselected. Independent review found and then cleared an ID sanitization collision.
+Four native theme/size cells use real local keyword retrieval and databases with an
+explicit result-ID adapter: eight exact-record opens and eight refusals pass.
+All 16 captures were inspected; source snapshots and default profile hashes match,
+ten private databases are healthy, and shutdown/process absence are verified.
+
+The broader route probe reproduced two unrelated fixture failures on unchanged
+production modules: Starter collection `active_authority` (already TASK-31249) and
+Console handoff `get_conversation_metadata`. Neither is qualified by this repair.
+Next bounded review: TASK-15390 evidence-heading contract, then the remaining
+Search/RAG journeys. Provider/remote journeys and full-suite verification remain
+outside this evidence; no push or merge was performed.

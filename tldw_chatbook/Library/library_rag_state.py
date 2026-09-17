@@ -1426,6 +1426,8 @@ class LibraryRagResultRow:
     #: equality/repr: it is a pure function of the same source data `snippet`
     #: is built from, never independently meaningful.
     _snippet_plain: str = field(default="", repr=False, compare=False)
+    # Display scrubbing must never turn an invalid identity into a record key.
+    _source_id_sanitized: bool = field(default=False, repr=False, compare=False)
 
     @classmethod
     def from_result(cls, result: Mapping[str, Any] | Any) -> "LibraryRagResultRow":
@@ -1502,6 +1504,7 @@ class LibraryRagResultRow:
                 escape=False,
             ),
             _snippet_plain=snippet_plain,
+            _source_id_sanitized=str(values.get("source_id") or "") != source_id,
         )
 
     @property
@@ -1709,8 +1712,52 @@ class LibraryRagResultRow:
 
     @property
     def can_open(self) -> bool:
-        """True when the row carries a resolvable parent id and known type."""
+        """Offer Open for a known source with an ID; validate it on activation."""
         return bool(self.open_source_type and self.source_id)
+
+    def resolve_local_open_id(self) -> str:
+        """Resolve known document-ID wrappers at the local reader boundary.
+
+        Media and Prompt records use positive integer IDs. Retrieval can
+        retain their legacy document prefix or local scope envelope; accept
+        only an exact matching wrapper, never a chunk suffix or another
+        source's ID. Preserve opaque Notes/Conversation IDs and the original
+        evidence identity used by citations and Console handoff.
+
+        Returns:
+            Canonical local Media identity or the source's bare record ID.
+
+        Raises:
+            ValueError: The result has no supported local record identity.
+        """
+        source_type = self.open_source_type
+        if not source_type or not self.source_id:
+            raise ValueError(
+                "Can't open this result: its source is missing. Run the search again."
+            )
+        invalid_id_message = f"Can't open this {source_type} result: its source ID is invalid. Run the search again."
+        if self._source_id_sanitized:
+            raise ValueError(invalid_id_message)
+        if (
+            "server" in self.runtime_backend.lower()
+            or str(self.provenance.get("source_authority", "")).lower() == "server"
+            or str(self.provenance.get("backend", "")).lower() == "server"
+            or self.source_id.lower().startswith("server:")
+        ):
+            raise ValueError("Can't open this server result in the local Library.")
+        if source_type not in {"media", "prompt"}:
+            return self.source_id
+        match = re.fullmatch(
+            rf"(?:local:{source_type}:|{source_type}[_-])?([0-9]+)",
+            self.source_id,
+        )
+        try:
+            record_id = int(match[1]) if match else 0
+        except ValueError:
+            raise ValueError(invalid_id_message) from None
+        if record_id < 1:
+            raise ValueError(invalid_id_message)
+        return f"local:media:{record_id}" if source_type == "media" else str(record_id)
 
 
 def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:

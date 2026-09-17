@@ -1143,9 +1143,16 @@ class LibraryRagSearchController:
         if index is None or not (0 <= index < len(rows)):
             return
         row = rows[index]
+        try:
+            record_id = row.resolve_local_open_id()
+        except ValueError as error:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(str(error), severity="warning")
+            return
         await self._open_library_item_by_id(
             row.open_source_type,
-            row.source_id,
+            record_id,
             display_name=row.title,
         )
 
