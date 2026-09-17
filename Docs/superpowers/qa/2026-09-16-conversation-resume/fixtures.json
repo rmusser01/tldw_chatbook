@@ -1,0 +1,134 @@
+[
+  {
+    "id": "eccd3080-dbfd-553e-a1a2-d4891595ed4c",
+    "title": "Resume audit DarkWide",
+    "messages": [
+      {
+        "id": "60aef08d-ba1c-532f-bcf5-d37a9af33dab",
+        "conversation_id": "eccd3080-dbfd-553e-a1a2-d4891595ed4c",
+        "sender": "user",
+        "role": "user",
+        "content": "DarkWide original question",
+        "timestamp": "2026-01-01T00:00:00.000000+00:00",
+        "parent_message_id": null
+      },
+      {
+        "id": "f4f26803-81bd-5f4e-b873-37fcaeff5f92",
+        "conversation_id": "eccd3080-dbfd-553e-a1a2-d4891595ed4c",
+        "sender": "assistant",
+        "role": "assistant",
+        "content": "DarkWide older selected answer",
+        "timestamp": "2026-01-01T00:00:01.000000+00:00",
+        "parent_message_id": "60aef08d-ba1c-532f-bcf5-d37a9af33dab"
+      },
+      {
+        "id": "5fa81088-fd68-5d33-8fe9-3e42403bf70d",
+        "conversation_id": "eccd3080-dbfd-553e-a1a2-d4891595ed4c",
+        "sender": "assistant",
+        "role": "assistant",
+        "content": "DarkWide newer off-path answer",
+        "timestamp": "2026-01-01T00:00:02.000000+00:00",
+        "parent_message_id": "60aef08d-ba1c-532f-bcf5-d37a9af33dab"
+      }
+    ]
+  },
+  {
+    "id": "4868a8b3-2e83-53e5-9f71-80b663b361b7",
+    "title": "Resume audit DarkCompact",
+    "messages": [
+      {
+        "id": "9e25d252-7604-5c8c-8f01-20dcab9e00ab",
+        "conversation_id": "4868a8b3-2e83-53e5-9f71-80b663b361b7",
+        "sender": "user",
+        "role": "user",
+        "content": "DarkCompact original question",
+        "timestamp": "2026-01-01T00:00:00.000000+00:00",
+        "parent_message_id": null
+      },
+      {
+        "id": "1ee749ee-e901-50f7-b269-c40f970779ba",
+        "conversation_id": "4868a8b3-2e83-53e5-9f71-80b663b361b7",
+        "sender": "assistant",
+        "role": "assistant",
+        "content": "DarkCompact older selected answer",
+        "timestamp": "2026-01-01T00:00:01.000000+00:00",
+        "parent_message_id": "9e25d252-7604-5c8c-8f01-20dcab9e00ab"
+      },
+      {
+        "id": "70f80ff9-a28e-596b-b478-745bdd57d784",
+        "conversation_id": "4868a8b3-2e83-53e5-9f71-80b663b361b7",
+        "sender": "assistant",
+        "role": "assistant",
+        "content": "DarkCompact newer off-path answer",
+        "timestamp": "2026-01-01T00:00:02.000000+00:00",
+        "parent_message_id": "9e25d252-7604-5c8c-8f01-20dcab9e00ab"
+      }
+    ]
+  },
+  {
+    "id": "2e7f21c4-b8ca-5321-a74a-ed9862f107af",
+    "title": "Resume audit LightWide",
+    "messages": [
+      {
+        "id": "d5dfce73-65a4-56c5-aa20-5e2b71dad320",
+        "conversation_id": "2e7f21c4-b8ca-5321-a74a-ed9862f107af",
+        "sender": "user",
+        "role": "user",
+        "content": "LightWide original question",
+        "timestamp": "2026-01-01T00:00:00.000000+00:00",
+        "parent_message_id": null
+      },
+      {
+        "id": "94c613df-9fff-5a34-b5f7-879103673e13",
+        "conversation_id": "2e7f21c4-b8ca-5321-a74a-ed9862f107af",
+        "sender": "assistant",
+        "role": "assistant",
+        "content": "LightWide older selected answer",
+        "timestamp": "2026-01-01T00:00:01.000000+00:00",
+        "parent_message_id": "d5dfce73-65a4-56c5-aa20-5e2b71dad320"
+      },
+      {
+        "id": "eb0f7228-9316-5989-8cfe-69a3d743f533",
+        "conversation_id": "2e7f21c4-b8ca-5321-a74a-ed9862f107af",
+        "sender": "assistant",
+        "role": "assistant",
+        "content": "LightWide newer off-path answer",
+        "timestamp": "2026-01-01T00:00:02.000000+00:00",
+        "parent_message_id": "d5dfce73-65a4-56c5-aa20-5e2b71dad320"
+      }
+    ]
+  },
+  {
+    "id": "4be9209f-c05e-521a-9f6e-e51a718bfc8b",
+    "title": "Resume audit LightCompact",
+    "messages": [
+      {
+        "id": "4cc14807-293a-5f24-befe-197bad7d384a",
+        "conversation_id": "4be9209f-c05e-521a-9f6e-e51a718bfc8b",
+        "sender": "user",
+        "role": "user",
+        "content": "LightCompact original question",
+        "timestamp": "2026-01-01T00:00:00.000000+00:00",
+        "parent_message_id": null
+      },
+      {
+        "id": "064543a5-0c28-52f4-95f5-1a514cc636bc",
+        "conversation_id": "4be9209f-c05e-521a-9f6e-e51a718bfc8b",
+        "sender": "assistant",
+        "role": "assistant",
+        "content": "LightCompact older selected answer",
+        "timestamp": "2026-01-01T00:00:01.000000+00:00",
+        "parent_message_id": "4cc14807-293a-5f24-befe-197bad7d384a"
+      },
+      {
+        "id": "a899a61a-3d7f-5d16-9a27-ec82147c1f9b",
+        "conversation_id": "4be9209f-c05e-521a-9f6e-e51a718bfc8b",
+        "sender": "assistant",
+        "role": "assistant",
+        "content": "LightCompact newer off-path answer",
+        "timestamp": "2026-01-01T00:00:02.000000+00:00",
+        "parent_message_id": "4cc14807-293a-5f24-befe-197bad7d384a"
+      }
+    ]
+  }
+]

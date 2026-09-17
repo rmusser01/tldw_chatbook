@@ -1,0 +1,9 @@
+{
+  "pid": 14457,
+  "pid_absent": true,
+  "app_run_returned": true,
+  "shell_exit_code": 0,
+  "owned_socket": "codex32705",
+  "owned_session": "resume",
+  "only_owned_terminal_closed_after_app_exit": true
+}

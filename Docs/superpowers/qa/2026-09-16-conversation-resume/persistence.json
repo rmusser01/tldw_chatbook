@@ -1,0 +1,75 @@
+{
+  "profile": "/private/tmp/tldw-32705-run-005",
+  "database_integrity": {
+    "data/db/agent_runs.db": [
+      "ok"
+    ],
+    "data/db/chachanotes.db": [
+      "ok"
+    ],
+    "data/db/evals.db": [
+      "ok"
+    ],
+    "data/db/library_collections.db": [
+      "ok"
+    ],
+    "data/db/media.db": [
+      "ok"
+    ],
+    "data/db/prompts.db": [
+      "ok"
+    ],
+    "data/db/subscriptions.db": [
+      "ok"
+    ],
+    "data/db/workspaces.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      "ok"
+    ]
+  },
+  "conversations": [
+    {
+      "id": "eccd3080-dbfd-553e-a1a2-d4891595ed4c",
+      "message_count": 3,
+      "active_leaf_message_id": "f4f26803-81bd-5f4e-b873-37fcaeff5f92",
+      "version": 1
+    },
+    {
+      "id": "4868a8b3-2e83-53e5-9f71-80b663b361b7",
+      "message_count": 3,
+      "active_leaf_message_id": "1ee749ee-e901-50f7-b269-c40f970779ba",
+      "version": 1
+    },
+    {
+      "id": "2e7f21c4-b8ca-5321-a74a-ed9862f107af",
+      "message_count": 3,
+      "active_leaf_message_id": "94c613df-9fff-5a34-b5f7-879103673e13",
+      "version": 1
+    },
+    {
+      "id": "4be9209f-c05e-521a-9f6e-e51a718bfc8b",
+      "message_count": 3,
+      "active_leaf_message_id": "064543a5-0c28-52f4-95f5-1a514cc636bc",
+      "version": 1
+    }
+  ],
+  "no_extra_conversations_or_messages": true,
+  "all_original_conversation_and_message_fields_unchanged": true,
+  "timestamp_normalization": "ISO datetime equivalence only",
+  "default_profile_hashes_unchanged": true,
+  "default_profile_files_checked": [
+    "/Users/macbook-dev/.config/tldw_cli/config.toml",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json"
+  ],
+  "error_lines": [],
+  "traceback_headers": 0,
+  "faulthandler_bytes": 0,
+  "sqlite_connection_mode": "ro",
+  "sqlite_version": "3.49.1"
+}

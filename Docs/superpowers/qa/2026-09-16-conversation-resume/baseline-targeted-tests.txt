@@ -1,0 +1,53 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.FF.................................................................... [ 86%]
+......F....                                                              [100%]
+=================================== FAILURES ===================================
+_ test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False] _
+Tests/UI/test_console_conversation_archive_flow.py:323: in test_restore_resume_then_send_retains_original_history_and_unrelated_draft
+    await console._submit_console_native_draft(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ChatScreen' object has no attribute '_submit_console_native_draft'
+_ test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True] _
+Tests/UI/test_console_conversation_archive_flow.py:323: in test_restore_resume_then_send_retains_original_history_and_unrelated_draft
+    await console._submit_console_native_draft(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ChatScreen' object has no attribute '_submit_console_native_draft'
+___________ test_resume_timer_list_registers_every_expected_consumer ___________
+Tests/UI/test_chat_screen_resume_handoff_registration.py:72: in test_resume_timer_list_registers_every_expected_consumer
+    assert not unexpected, (
+E   AssertionError: on_screen_resume schedules consumers this census does not pin: ['self._consume_pending_conversation_resume'] — add them to EXPECTED_RESUME_HANDOFF_CONSUMERS so omission stays detectable.
+E   assert not {'self._consume_pending_conversation_resume'}
+============================= slowest 25 durations =============================
+4.82s call     Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size0]
+4.33s call     Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]
+3.65s call     Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]
+3.39s call     Tests/UI/test_library_conversation_recovery_flow.py::test_real_saved_body_search_archive_restore_resume_and_undo[size1]
+3.37s call     Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]
+3.07s call     Tests/UI/test_library_conversation_recovery_flow.py::test_real_saved_body_search_archive_restore_resume_and_undo[size0]
+2.80s call     Tests/UI/test_console_resume_active_path.py::test_durable_resume_restores_only_guarded_roleplay_context
+2.03s call     Tests/UI/test_console_resume_active_path.py::test_restart_hides_off_lineage_banner_and_returning_restores_it[sibling-a3-alt-generated_prefix]
+1.95s call     Tests/UI/test_console_resume_active_path.py::test_restart_hides_off_lineage_banner_and_returning_restores_it[range-u2-generated_range]
+1.64s call     Tests/UI/test_console_resume_active_path.py::test_mounted_file_backed_sibling_navigation_clears_and_restores_banner
+1.53s call     Tests/UI/test_console_resume_active_path.py::test_file_backed_banner_add_replace_clear_restore_is_presentation_only
+1.37s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[corrupt-raw-None-None-None]
+1.34s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[dangling-raw-None-None-None]
+1.32s call     Tests/UI/test_console_resume_active_path.py::test_legacy_flat_before_first_then_new_root_restart_preserves_all_rows
+1.25s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[sibling-raw-None-None-None]
+1.24s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[range-generated_range-range-u2-Context uses a summary of turns #2-#2 - full transcript remains visible.]
+1.24s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[auto-generated_prefix-prefix-u2-\u2935 Earlier turns summarized for context \u2014 full history above]
+1.23s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[reset-raw-None-None-None]
+1.22s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[manual_prefix-generated_prefix-prefix-u2-\u2935 Earlier turns summarized for context \u2014 full history above]
+1.05s teardown Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size0]
+1.04s teardown Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]
+FAILED Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]
+FAILED Tests/UI/test_chat_screen_resume_handoff_registration.py::test_resume_timer_list_registers_every_expected_consumer
+3 failed, 80 passed in 77.87s (0:01:17)

@@ -29,6 +29,7 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 #: on_mount's cold-path set. (``_consume_pending_console_roleplay_repair``
 #: is absent by design: resume invokes it synchronously, not via timer.)
 EXPECTED_RESUME_HANDOFF_CONSUMERS = {
+    "self._consume_pending_conversation_resume",
     "self._consume_pending_chat_handoff",
     "self._consume_pending_console_prompt_insert",
     "self.consume_pending_console_provider_intent",

@@ -2,7 +2,7 @@
 
 Current checkpoint (2026-09-16): the initial findings and subsequent bounded
 reviews have progressed through Prompts, Skills, Collections, Import and
-Conversations reading, Archive, Restore and Export. Real local Import
+Conversations reading, Archive, Restore, Export and exact Resume. Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
 limits; the latest continuation
@@ -711,7 +711,13 @@ The gaps left after TASK-32667 are closed in their bounded follow-ups:
   written bundles match their advertised contents; 122 targeted checks pass after
   reconciling stale tests. No production fix was needed.
 
-Next bounded journey: Conversations exact Resume. The later
+- [TASK-32705](../qa/2026-09-16-conversation-resume/README.md) qualifies exact cold
+  Resume and existing-tab reuse in both themes/sizes, preserving the older selected
+  branch, off-path sibling and an unrelated populated draft. All original source
+  records remain unchanged; 83 targeted tests pass after repairing stale fixtures.
+  No production fix was needed.
+
+Next bounded journey: Conversations Use as source. The later
 Search/RAG, Settings and other application destinations remain governed by the
 original review sequence; a completed slice
 does not qualify every action in its destination. Full-suite verification has
