@@ -606,3 +606,88 @@ async def test_inline_skill_precheck_and_dispatched_child_budget_have_distinct_p
     finally:
         await engine.close()
         db.close()
+
+
+@pytest.mark.parametrize("dependent", [False, True])
+@pytest.mark.parametrize("completion", ["failure", "cleanup", "late_success"])
+def test_retired_operation_keeps_pending_custody_then_only_scoped_failure_ids(
+    dependent, completion
+):
+    import gc
+    import weakref
+
+    class OperationCapture:
+        pass
+
+    captured = OperationCapture()
+    reference = weakref.ref(captured)
+    store = checkpoint_store()
+    store.bind_owner("session")
+    store.bind_owner("operation", "session")
+    store.bind_owner("next-turn", "session")
+    token = store.begin(
+        post_event(),
+        () if dependent else ("required",),
+        dependency_requirements=("required",) if dependent else (),
+        owner_id="session",
+        retirement_owner_id="operation",
+        current=lambda _event, operation=captured: operation is not None,
+    )
+    del captured
+    store.retire_owner("operation")
+    assert token in store._entries and store._entries[token].pending
+    assert reference() is not None, "pending callback custody vanished early"
+    with pytest.raises(RuntimeError, match="pending"):
+        store.assert_next_input_allowed("next-turn", required_handler_ids=("required",))
+    if dependent:
+        store.assert_next_input_allowed("next-turn", required_handler_ids=())
+    if completion == "failure":
+        store.fail(token, "cancelled operation")
+    elif completion == "cleanup":
+        store.accept(
+            token, HookEventOutcome(outstanding_cleanup=("original-process-owner",))
+        )
+    else:
+        store.accept(token, success())
+    gc.collect()
+    assert not store._entries
+    assert reference() is None
+    assert store._failures == {
+        "session": (
+            frozenset() if dependent else frozenset({"required"}),
+            frozenset({"required"}) if dependent else frozenset(),
+        )
+    }
+    with pytest.raises(RuntimeError, match="failed"):
+        store.assert_next_input_allowed("next-turn", required_handler_ids=("required",))
+    if dependent:
+        store.assert_next_input_allowed("next-turn", required_handler_ids=())
+    else:
+        with pytest.raises(RuntimeError, match="failed"):
+            store.assert_next_input_allowed("next-turn", required_handler_ids=())
+    store.retire_owner("next-turn")
+    store.retire_owner("session")
+    assert not store._failures
+
+
+@pytest.mark.parametrize("dependent", [False, True])
+def test_settled_operation_failure_compacts_without_removing_the_live_gate(dependent):
+    store = checkpoint_store()
+    store.bind_owner("session")
+    store.bind_owner("operation", "session")
+    store.bind_owner("next-turn", "session")
+    token = store.begin(
+        post_event(),
+        () if dependent else ("required",),
+        dependency_requirements=("required",) if dependent else (),
+        owner_id="session",
+        retirement_owner_id="operation",
+    )
+    store.fail(token, "required operation failed")
+    assert token in store._entries
+    store.retire_owner("operation")
+    assert not store._entries
+    with pytest.raises(RuntimeError, match="failed"):
+        store.assert_next_input_allowed("next-turn", required_handler_ids=("required",))
+    if dependent:
+        store.assert_next_input_allowed("next-turn", required_handler_ids=())

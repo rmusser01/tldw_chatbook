@@ -2951,13 +2951,17 @@ class ConsoleRuntime:
                 if session_id is None
                 else (self._hooks_v2_engines.get(session_id),)
             )
-            for engine in engines:
-                if engine is not None:
-                    owner = getattr(engine, "lifecycle_owner", None)
-                    if owner is not None:
-                        owner.seal()
-                    else:
-                        engine.begin_close()
+        # Currentness reads take the map lock from the checkpoint condition.
+        # Never enter checkpoints while holding the map lock. Seal ordinary
+        # engine admission before any checkpoint wait or teardown publication.
+        for engine in engines:
+            if engine is not None:
+                engine.begin_close()
+        for engine in engines:
+            if engine is not None:
+                owner = getattr(engine, "lifecycle_owner", None)
+                if owner is not None:
+                    owner.seal()
 
     @property
     def hooks_v2_cleanup_pending(self) -> bool:

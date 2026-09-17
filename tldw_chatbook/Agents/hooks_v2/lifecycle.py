@@ -206,6 +206,7 @@ class HookSessionLifecycle:
             current=lambda _event: probe(),
             stage_context=self.context.accept if publish else lambda *_: None,
             retain_context=False,
+            retirement_owner_id=context_owner or owner,
         )
         self._executions[token] = (event, scope, plans)
         return token
@@ -281,6 +282,7 @@ class HookSessionLifecycle:
                 ):
                     self.diagnostics["late_context"] += 1
                 self.checkpoints.accept(token, result)
+                return result
             except BaseException:
                 try:
                     self.checkpoints.fail(token, "lifecycle completion failed")
@@ -416,7 +418,14 @@ class CompactionHooks:
 
     async def finish(self) -> None:
         if self.post_future is not None:
-            await asyncio.wrap_future(self.post_future)
+            result = await asyncio.wrap_future(self.post_future)
+            if self.reason == "manual" and (
+                not result.allowed or result.outstanding_cleanup
+            ):
+                # The session keeps compact failure evidence; this failed
+                # operation has no handoff and must release its closures.
+                self.lifecycle.close_scope(self.owner)
+                return
         if (
             self.reason == "manual"
             and self.memory is not None

@@ -457,3 +457,175 @@ async def test_manual_post_requirement_precedes_next_input_and_late_effects_are_
         lifecycle.seal()
         await engine.close()
         await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_successful_manual_post_checkpoints_retire_with_consumed_handoffs():
+    import gc
+    import weakref
+
+    engine = HookEngine((), lambda *_: True, HookBudgetOwner())
+    lifecycle = HookSessionLifecycle(engine, "session")
+    retired = []
+    try:
+        for index in range(3):
+            operation = lifecycle.open_scope()
+            hooks = CompactionHooks(
+                lifecycle,
+                operation,
+                reason="manual",
+                prepare=lambda *_: None,
+                current=lambda: True,
+                memory_current=lambda _: True,
+            )
+            hooks.committed(
+                SimpleNamespace(
+                    memory_id=f"memory-{index}",
+                    summarized_prefix_digest="digest",
+                    summary_text="private memory",
+                )
+            )
+            await hooks.finish()
+            receiver = lifecycle.open_scope()
+            await lifecycle.wait(receiver)
+            lifecycle.claim_handoff(receiver)
+            lifecycle.close_scope(receiver)
+            retired.append(weakref.ref(hooks))
+            del hooks
+            await asyncio.sleep(0)
+            gc.collect()
+            assert not lifecycle.checkpoints._entries
+            assert all(reference() is None for reference in retired)
+            assert tuple(lifecycle.checkpoints._parents) == (lifecycle.scope_id,)
+    finally:
+        lifecycle.seal()
+        await engine.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_previous_manual_handoff_does_not_keep_failed_operation_live(
+    tmp_path, cancelled
+):
+    from Tests.Chat.test_console_context_compaction import _real_selection_controller
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+        ContextBudgetMode,
+        ContextCompactionMode,
+    )
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    db, _repository, controller, store, session, _conversation_id, _ = (
+        _real_selection_controller(tmp_path, "h4-fix1-manual")
+    )
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    controller._agent_runtime_enabled = False
+    from Tests.console_provider_doubles import with_destination
+
+    async def resolve(_selection):
+        return with_destination(_resolution())
+
+    controller.provider_gateway.resolve_for_send = resolve
+    payloads = []
+
+    async def stream(_resolution, messages, **_kwargs):
+        payloads.append(getattr(messages, "messages_payload", messages))
+        yield "answer"
+
+    controller.provider_gateway.stream_chat = stream
+    for index in range(2):
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="question " + "x " * 450,
+            persist=True,
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer " + "y " * 450,
+            persist=True,
+        )
+    target = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="current request",
+        persist=True,
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="current answer",
+        persist=True,
+    )
+    store.set_session_context_policy_overrides(
+        session.id,
+        ConsoleContextPolicyOverrides(
+            budget_mode=ContextBudgetMode.CUSTOM,
+            custom_budget_tokens=1800,
+            compaction_mode=ContextCompactionMode.OFF,
+            summary_max_tokens=100,
+        ),
+    )
+    post = command(
+        'print(\'{"version":2,"decision":"pass","context":[{"text":"operation A handoff","lifetime":"turn"}]}\')',
+        name="PostCompact",
+        effects=["context"],
+        required=True,
+    )
+    runtime.ensure_hooks_v2(session.id, (post,), lambda *_: True)
+    try:
+        assert (await controller.summarize_up_to(target.id)).accepted
+        lifecycle = runtime._hooks_v2_lifecycles[session.id]
+        first_owner = lifecycle._handoff[0]
+        assert lifecycle.checkpoints.is_current(first_owner)
+        seen = []
+        entered = asyncio.Event()
+
+        async def failing_summary(**kwargs):
+            hooks = kwargs["hooks"]
+            seen.append(hooks.owner)
+            # Keep a real candidate checkpoint/event mapping so retirement has
+            # more to clean than an otherwise empty operation scope.
+            await hooks.before(
+                kwargs["plan"].auxiliary_messages, kwargs["plan"].requested_output_cap
+            )
+            entered.set()
+            if cancelled:
+                await asyncio.Event().wait()
+            raise ValueError("controlled second-operation failure")
+
+        controller._compaction_service.summarize_manual = failing_summary
+        pending = asyncio.create_task(controller.summarize_up_to(target.id))
+        await asyncio.wait_for(entered.wait(), 3)
+        if cancelled:
+            pending.cancel()
+        result = await pending
+        assert not result.accepted
+        assert len(seen) == 1
+        second_owner = seen[0]
+        assert lifecycle._handoff[0] == first_owner
+        assert not lifecycle.checkpoints.is_current(second_owner)
+        assert all(
+            owner != second_owner for owner, _ in lifecycle.context._events.values()
+        )
+        assert all(
+            entry.owner_id != second_owner
+            for entry in lifecycle.checkpoints._entries.values()
+        )
+        accepted = await controller.submit_draft("claim A", session_id=session.id)
+        assert accepted.accepted, accepted
+        assert len(payloads) == 1
+        assert str(payloads[0]).count("operation A handoff") == 1
+        assert not lifecycle.checkpoints.is_current(first_owner)
+        assert not lifecycle.checkpoints.is_current(second_owner)
+        assert lifecycle._handoff is None
+        assert all(
+            owner != second_owner for owner, _ in lifecycle.context._events.values()
+        )
+    finally:
+        await runtime.close_hooks_v2()
+        db.close()

@@ -19,6 +19,7 @@ class HookCheckpointError(RuntimeError):
 class _Checkpoint:
     event: HookEvent
     owner_id: str
+    retirement_owner_id: str
     current: Callable
     stage_context: Callable
     retain_context: bool
@@ -49,6 +50,9 @@ class HookCheckpointStore:
         self._accept_current = accept_current
         self._stage_context = stage_context
         self._entries: dict[str, _Checkpoint] = {}
+        # Settled failed operations need only handler IDs, never event bodies
+        # or callbacks. Aggregate owning/dependent failures per live gate owner.
+        self._failures: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
         self._contexts: dict[str, list[tuple[HookEvent, HookEventOutcome]]] = {}
         self._closed: set[str] = set()
         self._parents: dict[str, str | None] = {}
@@ -101,6 +105,7 @@ class HookCheckpointStore:
         current: Callable | None = None,
         stage_context: Callable | None = None,
         retain_context: bool = True,
+        retirement_owner_id: str | None = None,
     ) -> str:
         """Install before publishing completion; never reuse an event token."""
         owner = owner_id or self._owner(event)
@@ -108,6 +113,9 @@ class HookCheckpointStore:
             if owner_id is None and owner not in self._parents:
                 self.bind_owner(owner)
             self.owners(owner)
+            retirement_owner = retirement_owner_id or owner
+            if owner not in self.owners(retirement_owner):
+                raise HookCheckpointError("checkpoint retirement owner outside gate")
             if owner in self._closed:
                 raise HookCheckpointError("hook owner closed")
             if any(
@@ -118,6 +126,7 @@ class HookCheckpointStore:
             self._entries[token] = _Checkpoint(
                 event,
                 owner,
+                retirement_owner,
                 current or self._current,
                 stage_context or self._stage_context,
                 retain_context,
@@ -136,6 +145,7 @@ class HookCheckpointStore:
             try:
                 current = (
                     self.is_current(owner)
+                    and self.is_current(entry.retirement_owner_id)
                     and entry.current(entry.event)
                     and self._accept_current(entry.event, result)
                 )
@@ -178,8 +188,8 @@ class HookCheckpointStore:
                                 (entry.event, accepted_outcome)
                             )
             entry.pending = False
-            if owner not in self._parents:
-                self._entries.pop(token, None)
+            if entry.retirement_owner_id in self._closed:
+                self._retire_checkpoint(token)
             self._condition.notify_all()
 
     def fail(self, token: str, reason: str) -> None:
@@ -191,8 +201,8 @@ class HookCheckpointStore:
             entry.pending = False
             entry.failed = entry.requirements | entry.dependencies
             entry.reason = reason
-            if entry.owner_id not in self._parents:
-                self._entries.pop(token, None)
+            if entry.retirement_owner_id in self._closed:
+                self._retire_checkpoint(token)
             self._condition.notify_all()
 
     def _check(self, owner_id, required_handler_ids, terminal):
@@ -201,7 +211,11 @@ class HookCheckpointStore:
             raise HookCheckpointError("hook dependency mapping unknown")
         selected = frozenset(required_handler_ids)
         pending = False
-        failed = False
+        failed = any(
+            owning or dependent & selected
+            for owner, (owning, dependent) in self._failures.items()
+            if owner in owners
+        )
         for entry in self._entries.values():
             if entry.owner_id not in owners:
                 continue
@@ -260,7 +274,23 @@ class HookCheckpointStore:
         with self._condition:
             self._closed.add(owner_id)
             self._contexts.pop(owner_id, None)
+            self._failures.pop(owner_id, None)
             self._condition.notify_all()
+
+    def _retire_checkpoint(self, token: str) -> None:
+        """Discard settled operation closures, preserving only scoped failures."""
+        entry = self._entries[token]
+        if entry.pending:
+            return
+        if entry.failed and self.is_current(entry.owner_id):
+            owning, dependent = self._failures.get(
+                entry.owner_id, (frozenset(), frozenset())
+            )
+            self._failures[entry.owner_id] = (
+                owning | (entry.failed & entry.requirements),
+                dependent | (entry.failed & entry.dependencies),
+            )
+        self._entries.pop(token)
 
     def retire_owner(self, owner_id: str) -> None:
         """Drop terminal scope state once no live descendants retain it."""
@@ -268,11 +298,9 @@ class HookCheckpointStore:
             self.close_owner(owner_id)
             if any(parent == owner_id for parent in self._parents.values()):
                 return
-            self._entries = {
-                token: entry
-                for token, entry in self._entries.items()
-                if entry.owner_id != owner_id or entry.pending
-            }
+            for token, entry in tuple(self._entries.items()):
+                if entry.retirement_owner_id == owner_id:
+                    self._retire_checkpoint(token)
             parent = self._parents.pop(owner_id, None)
             # Runtime-bounded identity tombstones prevent a late owner from
             # being rebound. Bodies and completed checkpoints are discarded.

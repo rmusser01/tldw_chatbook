@@ -18938,7 +18938,10 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 -- hook boundary
             return self._summarize_block(session_id, "Required compaction hook failed.")
         finally:
-            if hooks is not None and hooks.lifecycle._handoff is None:
+            if hooks is not None and (
+                hooks.lifecycle._handoff is None
+                or hooks.lifecycle._handoff[0] != hooks.owner
+            ):
                 hooks.lifecycle.close_scope(hooks.owner)
         if transaction.terminal is CompactionTerminal.SUCCEEDED:
             turns = len(plan_result.plan.selected_units)
@@ -24223,7 +24226,10 @@ class ConsoleChatController:
                     "Required compaction hook failed; committed memory is retained."
                 )
             finally:
-                if hooks.reason == "manual" and hooks.lifecycle._handoff is None:
+                if hooks.reason == "manual" and (
+                    hooks.lifecycle._handoff is None
+                    or hooks.lifecycle._handoff[0] != hooks.owner
+                ):
                     hooks.lifecycle.close_scope(hooks.owner)
         if transaction.terminal is CompactionTerminal.SUCCEEDED:
             memory_rows_after: tuple[Mapping[str, Any], ...] = (

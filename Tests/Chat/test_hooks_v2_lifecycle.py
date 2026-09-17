@@ -318,3 +318,69 @@ async def test_idle_config_replacement_creates_a_new_hook_session(
     assert not first.live and second.live
     assert not first.context._rows
     assert marker.read_text() == "onetwo"
+
+
+@pytest.mark.asyncio
+async def test_session_seal_and_checkpoint_currentness_have_one_lock_order(
+    session_case, monkeypatch
+):
+    import asyncio
+    import threading
+
+    case = session_case
+    case.allow_required_initialization()
+    assert (await case.submit()).accepted
+    runtime = case.runtime
+    lifecycle = runtime._hooks_v2_lifecycles[case.session.id]
+    scope = lifecycle.open_scope()
+    checkpoint_entered = threading.Event()
+    sealing_entered = threading.Event()
+    original_current = lifecycle.current
+    original_lock = runtime._run_hooks_lock
+    original_seal = lifecycle.seal
+    lock_timeouts = []
+    admission_sealed = []
+
+    class BoundedMapLock:
+        def __enter__(self):
+            # Bound the actual get/seal lock, without acquiring it a second time.
+            if not original_lock.acquire(timeout=0.5):
+                lock_timeouts.append(True)
+                raise RuntimeError("runtime/checkpoint lock inversion")
+            return self
+
+        def __exit__(self, *_args):
+            original_lock.release()
+
+    def current_under_checkpoint():
+        checkpoint_entered.set()
+        assert sealing_entered.wait(2), "sealing never reached the owner"
+        return original_current()
+
+    def seal_under_runtime():
+        admission_sealed.append(lifecycle.engine._sealed_at is not None)
+        sealing_entered.set()
+        original_seal()
+
+    monkeypatch.setattr(runtime, "_run_hooks_lock", BoundedMapLock())
+    monkeypatch.setattr(lifecycle, "current", current_under_checkpoint)
+    monkeypatch.setattr(lifecycle, "seal", seal_under_runtime)
+    waiter = asyncio.create_task(lifecycle.wait(scope))
+    assert await asyncio.to_thread(checkpoint_entered.wait, 2)
+    closer = asyncio.create_task(
+        asyncio.to_thread(runtime._seal_hooks_v2, case.session.id)
+    )
+    results = await asyncio.wait_for(
+        asyncio.gather(waiter, closer, return_exceptions=True), 4
+    )
+    assert not lock_timeouts, results
+    assert admission_sealed == [True]
+    assert closer.exception() is None
+    assert not lifecycle.checkpoints.is_current(scope)
+    assert (
+        not runtime._disposed
+    )  # Exercise live session closure, not shutdown short-circuit.
+    outcome = await lifecycle.engine.fire_async(
+        lifecycle.event("SessionStart", data={"reason": "resume"})
+    )
+    assert not outcome.allowed
