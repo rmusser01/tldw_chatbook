@@ -299,9 +299,8 @@ def validate_mcp(value: object, capture) -> dict:
         require(
             url.scheme in ("http", "https")
             and bool(url.hostname)
-            and not url.username
-            and not url.password
-            and not url.fragment
+            and "@" not in url.netloc
+            and "#" not in value["url"]
         )
         require(
             url.scheme == "https" or url.hostname in ("localhost", "127.0.0.1", "::1")
@@ -309,11 +308,15 @@ def validate_mcp(value: object, capture) -> dict:
         headers = value.get("headers", {})
         require(
             isinstance(headers, dict)
+            and all(isinstance(k, str) for k in headers)
+            and len({k.lower() for k in headers}) == len(headers)
             and all(
                 isinstance(v, str)
                 and re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", k)
-                and "\r" not in v
-                and "\n" not in v
+                and (not v or v[0] not in " \t" and v[-1] not in " \t")
+                and all(
+                    char == "\t" or (ord(char) >= 32 and ord(char) != 127) for char in v
+                )
                 for k, v in headers.items()
             )
         )

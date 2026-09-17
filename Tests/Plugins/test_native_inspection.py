@@ -306,6 +306,76 @@ def test_bad_skill_and_mcp_entry_do_not_disable_siblings(native_package):
     assert "skill:bad" not in result.inventory
 
 
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"headers": {"X-Trace": "a", "x-trace": "b"}},
+        {"headers": {"X-Trace": "a\x00b"}},
+        {"headers": {"X-Trace": "a\x1fb"}},
+        {"headers": {"X-Trace": "a\x7fb"}},
+        {"headers": {"X-Trace": " a"}},
+        {"headers": {"X-Trace": "a "}},
+        {"headers": {"X-Trace": "\ta"}},
+        {"headers": {"X-Trace": "a\t"}},
+        {"url": "https://@example.com/mcp"},
+        {"url": "https://:@example.com/mcp"},
+        {"url": "https://example.com/mcp#"},
+    ],
+)
+def test_invalid_remote_mcp_syntax_isolated_from_valid_siblings(
+    native_package, invalid
+):
+    root = native_package()
+    bad = {"type": "streamable-http", "url": "https://example.com/mcp"}
+    bad.update(invalid)
+    (root / "mcp.json").write_text(
+        json.dumps(
+            {
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+                "mcpServers": {
+                    "bad": bad,
+                    "good": {
+                        "type": "streamable-http",
+                        "url": "https://example.com/mcp",
+                        "headers": {"X-Empty": "", "X-Interior": "a b\tc"},
+                    },
+                },
+            }
+        )
+    )
+    result = inspect_package(root)
+    assert not result.rejected
+    assert result.inventory["mcp:bad"].support == "invalid"
+    assert result.inventory["mcp:good"].support == "supported"
+    assert not result.inventory["skill:review"].activation_blockers
+    assert json.loads(result.inventory["mcp:good"].definition_json)["headers"] == {
+        "X-Empty": "",
+        "X-Interior": "a b\tc",
+    }
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/path@name",
+        "https://example.com/path%23name?query=%23value",
+    ],
+)
+def test_remote_mcp_url_delimiter_controls_remain_valid(native_package, url):
+    root = native_package()
+    (root / "mcp.json").write_text(
+        json.dumps(
+            {
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+                "mcpServers": {"good": {"type": "streamable-http", "url": url}},
+            }
+        )
+    )
+    result = inspect_package(root)
+    assert result.inventory["mcp:good"].support == "supported"
+    assert not result.inventory["skill:review"].activation_blockers
+
+
 def test_document_and_inventory_limits(native_package, monkeypatch):
     from tldw_chatbook.Plugins import inspection, package_files
 
