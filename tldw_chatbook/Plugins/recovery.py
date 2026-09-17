@@ -255,13 +255,21 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
         reconstructed = projection != target
         if expired:
             registry.forget_operation_hints(tuple(sorted(expired)))
+        for mapping in target["mappings"]:
+            from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+
+            mapping_owner = coordinator.mcp_mapping_owner
+            if not isinstance(mapping_owner, LocalMCPControlService):
+                raise TypeError("mapping reference owner verification required")
+            mapping_owner.validate_connection_mapping(
+                mapping,
+                inspections[(mapping["installation_id"], mapping["revision_digest"])],
+            )
         if reconstructed:
             # Only a secure marker (or its matching certified successor) can
             # authorize reconstruction. Genesis never erases untrusted rows.
             if target["operation_result"] is None:
                 raise ValueError("unexpected registry authority at bootstrap")
-            if target["mappings"]:
-                raise ValueError("mapping reference owner verification required")
             registry.restore_authority(target, inspections)
         if successor:
             authority.advance_marker(successor.old, successor.new)

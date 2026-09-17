@@ -979,9 +979,10 @@ class _PendingConnection:
 class MCPClient:
     """MCP Client for connecting to external MCP servers."""
 
-    def __init__(self, name: str = "tldw_chatbook_client"):
+    def __init__(self, name: str = "tldw_chatbook_client", *, credential_service=None):
         """Initialize the MCP client."""
         self.name = name
+        self.credential_service = credential_service
         self.sessions: Dict[str, _StdioJSONRPCConnection] = {}
         self.servers: Dict[str, Dict[str, Any]] = {}
         self.connection_diagnostics: dict[str, str] = {}
@@ -1118,7 +1119,11 @@ class MCPClient:
             if is_http:
                 from .streamable_http import StreamableHTTPConnection
 
-                session = StreamableHTTPConnection(_profile, client_name=self.name)
+                session = StreamableHTTPConnection(
+                    _profile,
+                    client_name=self.name,
+                    credential_service=self.credential_service,
+                )
             else:
                 session = _StdioJSONRPCConnection(
                     process,
@@ -1187,7 +1192,10 @@ class MCPClient:
         except Exception as exc:
             self.connection_diagnostics[server_id] = (
                 str(exc)
-                if str(exc).startswith("mcp_") and len(str(exc)) < 80
+                if str(exc).startswith(
+                    ("mcp_", "credential_", "unsupported_authentication")
+                )
+                and len(str(exc)) < 80
                 else "mcp_connection_failed"
             )
             try:
