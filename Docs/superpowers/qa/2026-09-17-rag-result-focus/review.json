@@ -1,0 +1,10 @@
+{
+  "reviewer": "rag_heading_review",
+  "finding": {
+    "priority": "P2",
+    "issue": "Initial matrix only covered focused panel descendants, not no-focus and foreign-focus fallback.",
+    "resolution": "Added four mounted fallback cases requiring Evidence heading paint and unchanged focus."
+  },
+  "final_findings": [],
+  "final_review": "No additional findings; matrix covers live in-panel focus, newer focus choice, empty outcomes, fallback, and keyboard Evidence reachability."
+}

@@ -1,0 +1,9 @@
+{
+  "pid": 26482,
+  "runner_sha256": "50efe5aab6a2bb77b67ca1ba806f1c941e2c5e7188794b806c3d0c18100a3dd1",
+  "cells": [],
+  "waiting_for": "result arrival",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-result-focus/native_check.py\", line 205, in journey\n    await screen.workers.wait_for_complete()\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/worker_manager.py\", line 179, in wait_for_complete\n    await asyncio.gather(*[worker.wait() for worker in (workers or self)])\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/worker.py\", line 454, in wait\n    raise WorkerCancelled(\"Worker was cancelled, and did not complete.\")\ntextual.worker.WorkerCancelled: Worker was cancelled, and did not complete.\n",
+  "app_run_returned": true
+}

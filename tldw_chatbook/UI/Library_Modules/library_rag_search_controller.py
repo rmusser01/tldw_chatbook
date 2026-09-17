@@ -1083,7 +1083,8 @@ class LibraryRagSearchController:
             # the visible half of the canvas pixel-identical. Reveal the
             # Evidence region the moment a run starts (it already shows the
             # in-flight "Searching…" line), so the action visibly did
-            # something at the point of action.
+            # something at the point of action. The reveal keeps any live
+            # panel control visible instead when it still owns focus.
             self.call_after_refresh(self._reveal_library_rag_results)
         self._execute_library_rag_search(request)
 
@@ -1336,21 +1337,29 @@ class LibraryRagSearchController:
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
         # task-4023 AC#6 (RC-08): the landed evidence must be visible at
-        # the point of action, not below the fold.
+        # the point of action, unless a focused panel control needs the
+        # viewport (TASK-32707). A newer focus choice takes precedence.
         self.call_after_refresh(self._reveal_library_rag_results)
 
     def _reveal_library_rag_results(self) -> None:
-        """Scroll the Search/RAG panel so the Evidence region is on screen.
+        """Reveal Evidence without scrolling the live keyboard target away.
 
         Mirrors the prompt-history idiom (``scroll_to_widget(..., top=True)``)
         on the panel's own ``VerticalScroll``. Called after a run starts and
         after its results land; a missing panel (user navigated away
-        mid-flight) is a silent no-op.
+        mid-flight) is a silent no-op. A focused descendant takes precedence:
+        the user may still be editing the query or have moved to another
+        control while retrieval was in flight. Read focus here, after refresh,
+        rather than restoring a stale submit-time target (TASK-32707).
         """
         try:
             panel = self.query_one("#library-search-rag-panel", LibrarySearchRagPanel)
             heading = self.query_one("#library-rag-results-heading", Static)
         except (NoMatches, QueryError):
+            return
+        focused = self.focused
+        if focused is not None and panel in focused.ancestors:
+            panel.scroll_to_widget(focused, animate=False)
             return
         panel.scroll_to_widget(heading, animate=False, top=True)
 

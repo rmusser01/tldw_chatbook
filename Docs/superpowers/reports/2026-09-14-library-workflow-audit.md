@@ -1,12 +1,14 @@
 # Library workflow audit — 2026-09-14
 
-Current checkpoint (2026-09-16): the initial findings and subsequent bounded
+Current checkpoint (2026-09-17): the initial findings and subsequent bounded
 reviews have progressed through Prompts, Skills, Collections, Import and
 Conversations reading, Archive, Restore, Export, exact Resume and source staging.
 TASK-2376 now closes the source-staging excerpt gap: media and conversation
 text reaches the evidence capture, with draft and saved records preserved.
 TASK-2530 now keeps Search/RAG Run and its provider disclosure coherent across
-snapshot races, with the recipient visible at compact width.
+snapshot races, with the recipient visible at compact width. TASK-2377 repairs
+recovery after panel rebuilds; TASK-32707 keeps live keyboard focus visible when
+search results arrive.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -849,3 +851,25 @@ Next bounded review is TASK-32707: native result arrival reveals Evidence while
 the query retains focus outside the viewport (y=-19 at 80×24 in both themes).
 Recovery focus/copy is readable when reached; the separate result-arrival focus
 issue remains open. No full suite, push or merge was performed.
+
+
+## Search/RAG result-arrival focus — 2026-09-17 UTC (TASK-32707)
+
+[Evidence](../qa/2026-09-17-rag-result-focus/README.md) closes the invisible-focus
+finding from TASK-2377. The existing reveal callback now keeps the currently
+focused panel control visible; no/foreign focus retains the automatic Evidence
+reveal. It reads focus after refresh, preserving choices made during retrieval.
+Query text and the Tab route to Evidence remain intact. At compact widths, the
+focused query takes viewport priority over automatically revealing results.
+
+The final targeted gate passes 118 tests without exclusions. The 20-case focus
+matrix includes ready/empty outcomes, newer focus, and both fallback cases.
+Independent review has no remaining findings. Eight real native keyword searches
+pass in dark/light at 170×48 and 80×24; all twelve captures were inspected. The
+source/default files are unchanged, ten private databases are healthy, and normal
+shutdown and PID absence are verified. The first native attempt stalled on an
+unrelated-worker wait in the runner; two corrected runs passed.
+
+Next bounded review: Search/RAG failure and retry journeys, then the remaining
+feature/component surfaces. Provider generation and semantic retrieval remain
+outside this qualification. No full suite, push or merge was performed.

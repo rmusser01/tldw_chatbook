@@ -1,0 +1,13 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+1.90s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-textual-light-size0]
+1.82s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-textual-dark-size0]
+1.76s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-textual-light-size1]
+1.70s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-textual-light-size0]
+1.69s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-textual-dark-size1]
+1.64s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-textual-dark-size1]
+1.63s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-textual-dark-size0]
+1.62s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-textual-light-size1]
+
+(16 durations < 1s hidden.)
+8 passed in 16.25s
