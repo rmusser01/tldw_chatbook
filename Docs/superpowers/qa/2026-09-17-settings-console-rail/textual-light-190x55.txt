@@ -1,0 +1,55 @@
+                                                                                                                                           ╭─────────────╮
+ ‹ 1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft.                   │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │ │ │ ▐X▌ Stack collapsed rail labels                                                                    │ │  │  │  │                                   │
+│  category search             │  │  │ │ │ Selected style: Stacked — unsaved                                                                  │ │  │  │  │ Selected category: Console        │
+│                              │  │  │ │ │ Uses narrower 3-column handles by stacking upright letters. Direction glyphs are omitted.          │ │  │  │  │ Behavior                          │
+│  Core                        │  │  │ │ │                                                                                                    │ │  │  │  │ Unsaved changes                   │
+│     Overview (view)          │  │  │ │ │  Status row placement                                                                              │ │  │  │  │  Guided edits: Save or Revert     │
+│     Providers & Models       │  │  │ │ │ Where the Console status chips sit relative to the composer.                                       │ │  │  │  │  changes.                         │
+│     Web Search               │  │  │ │ │  Above composer                                                                                    │ │  │  │  │     Save (s)                      │
+│     Speech & TTS             │  │  │ │ │ Above keeps the chips directly under the conversation; below closes the shell as a bottom status   │ │  │  │  │    Revert (r)                     │
+│  Interface                   │  │  │ │ │ row.                                                                                               │ │  │  │  │ Local-only: saves write your      │
+│     Appearance               │  │  │ │ │                                                                                                    │ │  │  │  │ config file.                      │
+│     Theme                    │  │  │ │ │  Composer paste handling                                                                           │ │▂ │  │  │                                   │
+│     Splash Screen            │  │  │ │ │ Collapse large pasted chunks only when they exceed the threshold.                                  │ │  │  │  │  Threshold: Minimum pasted        │
+│   > Console Behavior *       │  │  │ │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                     │ │  │  │  │  chunk size before collapse       │
+│  Data & Privacy              │  │  │ │ │ ▊ ▐X▌ Collapse large pastes  ▎                                                                     │ │  │  │  │                                   │
+│     Storage                  │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                     │ │  │  │  │ Focused field guide               │
+│     Workspaces               │  │  │ │ │ Threshold (chars)       │ 50                                                                       │ │  │  │  │  Purpose: Choose the collapsed    │
+│     Tool Profiles            │  │  │ │ │ Normal typing stays literal. The canonical message payload is preserved.                           │ │  │  │  │  Console rail label style.        │
+│     Privacy & Security       │  │  │ │ │                                                                                                    │ │  │  │  │                                   │
+│     Network                  │  │  │ │ │  Chat images                                                                                       │ │▁ │  │  │  Consequences: Stacked uses       │
+│     My Profile               │  │  │ │ │ Render images linked in assistant replies (remote fetch).                                          │ │  │  │  │  narrower 3-column handles;       │
+│  Troubleshooting             │  │  │ │ │     Disabled                                                                                       │ │  │  │  │  Horizontal uses the              │
+│     Diagnostics (view)       │  │  │ │ │ Off by default: fetching a model-suggested link reveals your IP address to that host.              │ │  │  │  │  established 13- and 11-column    │
+│     About (view)             │  │  │ │ │                                                                                                    │ │  │  │  │  handles.                         │
+│     Agents                   │  │  │ │ │  Parallel agent runs                                                                               │ │  │  │  │                                   │
+│  Expert                      │  │  │ │ │ Max parallel agent runs │ 3                                                                        │ │  │  │  │  Saved as: console.             ▃ │
+│     Internal Prompts         │  │  │ │ │                                                                                                    │ │  │  │  │    stack_collapsed_rail_labels    │
+│     Advanced Config          │  │  │ │ │  Agent run budget                                                                                  │ │  │  │  │                                   │
+│   Domain Defaults ▸ (11)     │  │  │ │ │  Limits on ONE agent run (one message you send). Raise them for long, expensive sessions. The      │ │  │  │  │  Applies: After saving, when      │
+│                              │  │  │ │ │  token budget is what normally stops a long run - the turn and step limits are backstops.          │ │  │  │  │  Console is next opened.          │
+│                              │  │  │ │ │  Sub-agents inherit these, so a run that spawns helpers can spend several times the token budget.  │ │  │  │  │                                   │
+│                              │  │  │ │ │ Token budget (per run)  │ 25000000                                                                 │ │  │  │  │ Override rules                    │
+│                              │  │  │ │ │  The limit that actually stops a long run. Counts prompt + completion for ONE run (one message),   │ │  │  │  │  Priority: active Console         │
+│                              │  │  │ │ │  not the whole conversation - and the whole conversation is re-sent every turn, so spend grows     │ │  │  │  │  session, then provider+model     │
+│                              │  │  │ │ │  quadratically: 25M is typically reached around turn 250. Sub-agents each get this same ceiling    │ │  │  │  │  profile, then these global       │
+│                              │  │  │ │ │  rather than a share of it, so one message's worst case is about 3x it. 0 = unlimited. Loop        │ │  │  │  │  fallbacks                        │
+│                              │  │  │ │ │  detection stops identical repeated calls and 3 consecutive failures from the same tool;           │ │  │  │  │                                   │
+│                              │  │  │ │ │  successful calls with changing arguments can still loop.                                          │ │  │  │  │  Scope:  response fallbacks and   │
+│                              │  │  │ │ │ Wall-clock limit        │ 86400.0                                                                  │ │  │  │  │  paste display settings           │
+│                              │  │  │ │ │  = 1d. How long ONE run may take end to end. Stop works throughout. Sub-agents are bounded         │ │  │  │  │                                   │
+│                              │  │  │ │ │  separately by  child_max_wall_seconds, so raising this does not extend them.                      │ │  │  │  │  Save: staged - press s to        │
+│                              │  │  │ │ │ Per-tool-call limit     │ 3600.0                                                                   │ │  │  │  │  save, r to revert                │
+│                              │  │  │ │ │  = 1h. Ceiling on a SINGLE tool call - the real limit on long crawls, ingests, and builds, which   │ │  │  │  │                                   │
+│                              │  │  │ │ │  a large wall-clock budget alone will not save. 0 = no ceiling (Stop still works: it is polled     │ │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+ Use narrower stacked Context and Inspector rail labels.
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

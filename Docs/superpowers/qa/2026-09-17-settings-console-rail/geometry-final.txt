@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+7.02s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size0-textual-dark]
+6.85s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size0-textual-light]
+6.66s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]
+6.59s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]
+
+(8 durations < 1s hidden.)
+4 passed, 9 deselected in 29.09s

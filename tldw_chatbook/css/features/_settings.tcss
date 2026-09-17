@@ -372,8 +372,9 @@ Button.settings-category-group-toggle:focus {
     height: auto;
 }
 
-/* These toggles live in compact, one-row fields; a bordered three-row
-   Checkbox otherwise paints only its top edge. */
+/* Compact toggles retain the full label and glyph without three-row
+   chrome, including the rail-label control in the narrow Settings pane. */
+#settings-console-stack-collapsed-rail-labels,
 #settings-appearance-animations-enabled,
 #settings-splash-enabled,
 #settings-splash-show-progress,
@@ -980,6 +981,12 @@ Button.settings-category-group-toggle:focus {
 
 #settings-console-behavior-card {
     min-height: $ds-size-12;
+}
+
+/* The outer focus card already supplies the compact pane inset. A second
+   inset leaves too few columns for the full rail-label checkbox. */
+.settings-workbench-compact #settings-console-behavior-card {
+    padding: $ds-space-0;
 }
 
 .settings-action-row {
