@@ -1,0 +1,181 @@
+........................................................................ [ 57%]
+................F............F.FFFFFFFF.F..F.........                    [100%]
+=================================== FAILURES ===================================
+_______ test_watchlists_destination_routes_latest_active_run_to_console ________
+Tests/UI/test_console_live_work_handoffs.py:1191: in test_watchlists_destination_routes_latest_active_run_to_console
+    await pilot.click("#watchlists-follow-in-console")
+.venv/lib/python3.12/site-packages/textual/pilot.py:249: in click
+    raise error from None
+.venv/lib/python3.12/site-packages/textual/pilot.py:238: in click
+    return await self._post_mouse_events(
+.venv/lib/python3.12/site-packages/textual/pilot.py:442: in _post_mouse_events
+    raise OutOfBounds(
+E   textual.pilot.OutOfBounds: Target offset is outside of currently-visible screen region.
+_ test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback _
+Tests/UI/test_console_live_work_handoffs.py:1858: in test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback
+    await _wait_for_production_chat_screen(app, pilot)
+Tests/UI/test_console_live_work_handoffs.py:151: in _wait_for_production_chat_screen
+    raise AssertionError(
+E   AssertionError: Timed out waiting for production ChatScreen; active=Screen
+_________________ test_console_renders_pending_launch_context __________________
+Tests/UI/test_console_live_work_handoffs.py:1932: in test_console_renders_pending_launch_context
+    screen = await _wait_for_production_chat_screen(app, pilot)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_live_work_handoffs.py:151: in _wait_for_production_chat_screen
+    raise AssertionError(
+E   AssertionError: Timed out waiting for production ChatScreen; active=Screen
+_ test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it _
+Tests/UI/test_console_live_work_handoffs.py:2122: in test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it
+    screen1 = await _wait_for_production_chat_screen(app, pilot)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_live_work_handoffs.py:151: in _wait_for_production_chat_screen
+    raise AssertionError(
+E   AssertionError: Timed out waiting for production ChatScreen; active=Screen
+_________ test_locked_console_shows_staged_evidence_receipt_task_2852 __________
+Tests/UI/test_console_live_work_handoffs.py:2218: in test_locked_console_shows_staged_evidence_receipt_task_2852
+    screen = await _wait_for_production_chat_screen(app, pilot)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_live_work_handoffs.py:151: in _wait_for_production_chat_screen
+    raise AssertionError(
+E   AssertionError: Timed out waiting for production ChatScreen; active=Screen
+_____ test_configured_console_staged_strip_unaffected_by_receipt_task_2852 _____
+Tests/UI/test_console_live_work_handoffs.py:2268: in test_configured_console_staged_strip_unaffected_by_receipt_task_2852
+    screen = await _wait_for_production_chat_screen(app, pilot)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_live_work_handoffs.py:151: in _wait_for_production_chat_screen
+    raise AssertionError(
+E   AssertionError: Timed out waiting for production ChatScreen; active=Screen
+_____ test_console_restored_launch_does_not_touch_an_empty_handoff_channel _____
+Tests/UI/test_console_live_work_handoffs.py:2307: in test_console_restored_launch_does_not_touch_an_empty_handoff_channel
+    screen = _bare_console_screen_for_restore(app)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_live_work_handoffs.py:2030: in _bare_console_screen_for_restore
+    screen._console_chat_store = ConsoleChatStore()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9938: in _console_chat_store
+    self._console_runtime().set_chat_store(value)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9905: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:4714: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:3970: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:3747: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:10276: in console_view_hooks
+    self._session._project_project_instruction_binding
+    ^^^^^^^^^^^^^
+E   AttributeError: 'ChatScreen' object has no attribute '_session'
+_ test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch _
+Tests/UI/test_console_live_work_handoffs.py:2367: in test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch
+    screen1 = await _wait_for_production_chat_screen(app, pilot)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_live_work_handoffs.py:151: in _wait_for_production_chat_screen
+    raise AssertionError(
+E   AssertionError: Timed out waiting for production ChatScreen; active=Screen
+_________ test_console_armed_sent_notice_round_trips_to_a_fresh_screen _________
+Tests/UI/test_console_live_work_handoffs.py:2430: in test_console_armed_sent_notice_round_trips_to_a_fresh_screen
+    screen = _bare_console_screen_for_restore()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_live_work_handoffs.py:2030: in _bare_console_screen_for_restore
+    screen._console_chat_store = ConsoleChatStore()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9938: in _console_chat_store
+    self._console_runtime().set_chat_store(value)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9905: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:4714: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:3970: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:3747: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:10276: in console_view_hooks
+    self._session._project_project_instruction_binding
+    ^^^^^^^^^^^^^
+E   AttributeError: 'ChatScreen' object has no attribute '_session'
+_ test_console_native_state_restore_tolerates_legacy_payload_without_launch_or_notice_keys _
+Tests/UI/test_console_live_work_handoffs.py:2494: in test_console_native_state_restore_tolerates_legacy_payload_without_launch_or_notice_keys
+    screen = _bare_console_screen_for_restore()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_live_work_handoffs.py:2030: in _bare_console_screen_for_restore
+    screen._console_chat_store = ConsoleChatStore()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9938: in _console_chat_store
+    self._console_runtime().set_chat_store(value)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9905: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:4714: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:3970: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:3747: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:10276: in console_view_hooks
+    self._session._project_project_instruction_binding
+    ^^^^^^^^^^^^^
+E   AttributeError: 'ChatScreen' object has no attribute '_session'
+__________ test_console_wc_live_work_action_button_routes_run_details __________
+Tests/UI/test_console_live_work_handoffs.py:2566: in test_console_wc_live_work_action_button_routes_run_details
+    screen = await _wait_for_production_chat_screen(app, pilot)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_live_work_handoffs.py:151: in _wait_for_production_chat_screen
+    raise AssertionError(
+E   AssertionError: Timed out waiting for production ChatScreen; active=Screen
+____ test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom ____
+Tests/UI/test_console_live_work_handoffs.py:2728: in test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
+    assert list(rail_body.children).index(tray) == 2
+E   AssertionError: assert 3 == 2
+E    +  where 3 = <built-in method index of list object at 0x113699280>(ConsoleStagedContextTray(id='console-staged-context-tray', classes='console-inspector-context-section console-frame-quiet h-auto w-full'))
+E    +    where <built-in method index of list object at 0x113699280> = [ConsoleInspectorSection(id='console-environment-section', classes='h-auto console-inspector-section'), ConsoleInspect...(id='console-retrieval-scope-row', classes='console-inspector-context-section console-frame-quiet h-auto w-full'), ...].index
+E    +      where [ConsoleInspectorSection(id='console-environment-section', classes='h-auto console-inspector-section'), ConsoleInspect...(id='console-retrieval-scope-row', classes='console-inspector-context-section console-frame-quiet h-auto w-full'), ...] = list(<NodeList [ConsoleInspectorSection(id='console-environment-section', classes='h-auto console-inspector-section'), Cons...n console-frame-quiet h-auto w-full'), Vertical(id='console-run-inspector'), Vertical(id='console-live-work-section')]>)
+E    +        where <NodeList [ConsoleInspectorSection(id='console-environment-section', classes='h-auto console-inspector-section'), Cons...n console-frame-quiet h-auto w-full'), Vertical(id='console-run-inspector'), Vertical(id='console-live-work-section')]> = _InspectorOuterBody(id='console-inspector-rail-body', classes='console-inspector-rail-body').children
+============================= slowest 25 durations =============================
+7.28s call     Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback
+6.93s call     Tests/UI/test_console_live_work_handoffs.py::test_console_renders_pending_launch_context
+6.68s call     Tests/UI/test_console_live_work_handoffs.py::test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it
+6.67s call     Tests/UI/test_console_live_work_handoffs.py::test_console_wc_live_work_action_button_routes_run_details
+6.63s call     Tests/UI/test_console_live_work_handoffs.py::test_configured_console_staged_strip_unaffected_by_receipt_task_2852
+6.62s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch
+6.62s call     Tests/UI/test_console_live_work_handoffs.py::test_locked_console_shows_staged_evidence_receipt_task_2852
+2.13s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_preserves_rail_scroll
+1.97s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_local_workspace_mouse_clicks
+1.65s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_workspace_receipts_and_actions_follow_mounted_source_transitions[textual-light]
+1.63s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_still_auto_opens_inspector
+1.59s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_restage_replaces_single_card
+1.58s call     Tests/UI/test_library_crit10_layout.py::test_undo_unlinks_the_workspace_the_receipt_names[recompose]
+1.49s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[notes]
+1.48s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_create_workspace_notification_names_console_retarget
+1.48s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_skips_archived_local_workspace_identity
+1.45s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_can_create_and_select_local_workspace
+1.44s call     Tests/UI/test_library_crit8_conversation_handoff.py::test_mounted_reader_offers_the_link_then_enables_the_handoff
+1.43s call     Tests/UI/test_console_live_work_handoffs.py::test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context
+1.43s call     Tests/UI/test_console_live_work_handoffs.py::test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged
+1.42s call     Tests/UI/test_console_live_work_handoffs.py::test_media_handoff_evidence_bundle_reaches_capture_as_real_context
+1.42s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[conversation]
+1.40s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_recomposes_after_activation_failure
+1.39s call     Tests/UI/test_console_live_work_handoffs.py::test_notes_handoff_evidence_bundle_reaches_capture_as_real_context
+1.39s call     Tests/UI/test_console_live_work_handoffs.py::test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_routes_latest_active_run_to_console
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_renders_pending_launch_context
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_locked_console_shows_staged_evidence_receipt_task_2852
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_configured_console_staged_strip_unaffected_by_receipt_task_2852
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_restored_launch_does_not_touch_an_empty_handoff_channel
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_armed_sent_notice_round_trips_to_a_fresh_screen
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_native_state_restore_tolerates_legacy_payload_without_launch_or_notice_keys
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_wc_live_work_action_button_routes_run_details
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
+12 failed, 113 passed in 169.36s (0:02:49)

@@ -2622,7 +2622,28 @@ was decorative.
 
 ---
 
+## A cold consumer does not cover a reusable screen's return
+
+**TASK-2502 / TASK-32706, 2026-09-16.** Repairing splash and controller fixtures
+exposed a live-work launch left pending after Library → Console navigation.
+The original test described a rebuilt screen, but Console had become reusable:
+compose consumed the channel only on the first visit. A tracked resume timer
+repaired the missing claim; the first launch on a warm screen also needed the
+same surface refresh as replacement launches. Regression cases now assert the
+same screen instance, exact revision settlement, actual strip/card state and
+preserved draft. A four-cell native matrix confirms both warm cases. Enumerate
+channels across cold and warm lifecycles; another channel's working resume
+consumer is not evidence for this one.
+
 ## The shared UI harness never loads the app stylesheet — geometry conclusions under it are void (2026-07-30)
+
+**Recurrence (TASK-32706, 2026-09-16).** The shared live-work routing test
+clicked Watchlists' Console-follow action below the 40-row viewport. Adding
+`scroll_visible` under the lightweight destination harness still failed because
+it omitted the app's Inspector scroll rule. The existing
+`_CssTrueDestinationHarness`, an explicit reveal, a compositor hit-target check
+and the actual click passed together. A routing test with pointer input also
+depends on production geometry; calling the handler directly would hide it.
 
 **Incident.** The V2 live gate failed its composer-overflow item AFTER the defect had
 been "fixed" twice, each fix RED-first, mutation-checked, 500k-trial fuzzed, and

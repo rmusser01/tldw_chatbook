@@ -1,0 +1,94 @@
+{
+  "profile": "/private/tmp/tldw-32706-run-002",
+  "database_integrity": {
+    "data/db/agent_runs.db": [
+      "ok"
+    ],
+    "data/db/chachanotes.db": [
+      "ok"
+    ],
+    "data/db/evals.db": [
+      "ok"
+    ],
+    "data/db/library_collections.db": [
+      "ok"
+    ],
+    "data/db/media.db": [
+      "ok"
+    ],
+    "data/db/prompts.db": [
+      "ok"
+    ],
+    "data/db/subscriptions.db": [
+      "ok"
+    ],
+    "data/db/workspaces.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      "ok"
+    ]
+  },
+  "conversations": [
+    {
+      "id": "a43ca09a-4ff1-5147-946f-264383af0881",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    },
+    {
+      "id": "1f3f0e81-0f8b-59b1-8f83-682eb1f0aa3a",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    },
+    {
+      "id": "895dc585-76f7-5781-8e74-86be8770604f",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    },
+    {
+      "id": "27c60fc2-9491-55bc-979a-46910cbb9f16",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    },
+    {
+      "id": "d06d68d9-4cd1-5dec-b0fd-702a2442792a",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    }
+  ],
+  "no_extra_conversations_or_messages": true,
+  "only_original_foreign_membership_remains": true,
+  "memberships": [
+    {
+      "membership_id": "workspace-link-aec956e0b0bf49e989702a2252b491cc",
+      "workspace_id": "source-other-workspace",
+      "item_type": "conversation",
+      "item_id": "d06d68d9-4cd1-5dec-b0fd-702a2442792a",
+      "role": "source",
+      "transfer_policy": "reference",
+      "title": "Source audit Foreign",
+      "created_at": "2026-09-17T01:17:11.205549+00:00"
+    }
+  ],
+  "all_original_conversation_and_message_fields_unchanged": true,
+  "timestamp_normalization": "ISO datetime equivalence only",
+  "default_profile_hashes_unchanged": true,
+  "default_profile_files_checked": [
+    "/Users/macbook-dev/.config/tldw_cli/config.toml",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json"
+  ],
+  "error_lines": [],
+  "traceback_headers": 0,
+  "faulthandler_bytes": 0,
+  "sqlite_connection_mode": "ro",
+  "sqlite_version": "3.49.1"
+}

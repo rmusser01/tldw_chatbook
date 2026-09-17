@@ -723,14 +723,16 @@ Empty state: "No conversations yet. Chat in Console and it appears here."
 There is no create, rename, or delete here — this panel treats your chats
 as source material, not sessions.
 
-**"Open in Console" does not resume the chat.** It hands the conversation
-to Console as staged context, pre-filling the prompt "Use this conversation
-as source context for my next question." — your next message continues in
-the *current* Console session, grounded by the old conversation. To switch
-back into a past session and keep chatting in it, use Console's own
-conversation rail instead; that one resumes sessions, this one quotes them.
-This explicit handoff **does not change the conversation's Auto or Assistant
-setting**; it supplies one bundle of **staged context** for the next send.
+**Use as source** stages a reference to the selected conversation in the
+*current* Console session. It preserves an existing draft; if the draft is
+empty, it fills in "Use this conversation as source context for my next
+question." It does not send automatically or change the conversation's Auto
+or Assistant setting. The current reference contains a title-based summary
+label, not the transcript text; real excerpts remain tracked in task-2376.
+
+**Resume conversation** (keyboard: `c`) instead opens the original saved
+conversation and its active branch. **Restore and resume** first recovers
+an archived conversation, with confirmation where required.
 
 ## Common tasks
 
@@ -759,14 +761,18 @@ setting**; it supplies one bundle of **staged context** for the next send.
 3. Press "Add highlight" — it appears in the list with a ● swatch.
 
 ### Stage a conversation as Console context
-1. In **Conversations**, click a row, then "Open in Console" in the reader
-   header (beside Read/Info, or press `c`). If the button reads "○ Open in
-   Console" with "This conversation is not in this workspace. Press 'Link to
-   workspace' to add it to the active workspace." beneath it, press "Link to
-   workspace" first.
-2. Console opens with the conversation staged and the prompt "Use this
-   conversation as source context for my next question." ready to go — edit
-   or replace it, then send.
+1. In **Conversations**, open a row and choose **Use as source** in the reader
+   header. When the inline notice says it will add the conversation to the
+   active workspace, the same press links it and continues. **Link to
+   workspace** adds membership without staging; `c` invokes Resume instead.
+2. Console opens with the selected reference staged and your existing draft
+   preserved. An empty draft receives the suggested context prompt. Edit the
+   draft before sending; staging itself sends nothing. See the excerpt limit
+   above before relying on the conversation's contents.
+3. **Un-stage** clears the staged evidence without changing the draft or
+   workspace link. Return to the same Library reader to use **Undo link** for
+   a membership this action added. Undo link removes membership; it does not
+   clear evidence already staged in Console.
 
 ### Export selected items as a bundle
 1. Click "Select", check the rows you want ("Select all N shown" grabs the

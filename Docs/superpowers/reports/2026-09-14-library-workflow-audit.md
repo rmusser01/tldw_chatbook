@@ -2,7 +2,9 @@
 
 Current checkpoint (2026-09-16): the initial findings and subsequent bounded
 reviews have progressed through Prompts, Skills, Collections, Import and
-Conversations reading, Archive, Restore, Export and exact Resume. Real local Import
+Conversations reading, Archive, Restore, Export, exact Resume and source staging.
+Source staging still has the known TASK-2376 missing-transcript-excerpt defect.
+Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
 limits; the latest continuation
@@ -717,7 +719,20 @@ The gaps left after TASK-32667 are closed in their bounded follow-ups:
   records remain unchanged; 83 targeted tests pass after repairing stale fixtures.
   No production fix was needed.
 
-Next bounded journey: Conversations Use as source. The later
+- [TASK-32706](../qa/2026-09-16-conversation-source/README.md) qualifies source
+  linking/staging, existing-link reuse, populated-draft preservation, Un-stage
+  and retained-receipt Undo in both themes/sizes. Eight handoffs leave original
+  records unchanged; independent SQLite checks retain only the foreign link.
+  Stale shared test fixtures are repaired. The review also repairs TASK-2502:
+  warm Console returns now consume and paint first/replacement live-work
+  launches. Eight native live-work launches pass in addition to the eight
+  conversation-source handoffs; 130 focused tests pass. The staged conversation content remains a
+  generic title label, not transcript text.
+  Eight neighboring suspend/roleplay-resume test failures reproduce unchanged
+  against the original production screen; their broader paths remain unqualified.
+
+Next bounded repair: TASK-2376, real media/conversation excerpts in staged evidence.
+The later
 Search/RAG, Settings and other application destinations remain governed by the
 original review sequence; a completed slice
 does not qualify every action in its destination. Full-suite verification has

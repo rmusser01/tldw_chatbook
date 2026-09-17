@@ -1,0 +1,35 @@
+{
+  "reviewer": "parent agent",
+  "method": "qlmanage SVG rasterization, then view_image for each of twelve captures",
+  "review_batches": 2,
+  "captures": [
+    "textual-dark-170-linked.svg",
+    "textual-dark-170-reader.svg",
+    "textual-dark-170-staged.svg",
+    "textual-dark-170-warm.svg",
+    "textual-dark-80-linked.svg",
+    "textual-dark-80-reader.svg",
+    "textual-dark-80-staged.svg",
+    "textual-dark-80-warm.svg",
+    "textual-light-170-linked.svg",
+    "textual-light-170-reader.svg",
+    "textual-light-170-staged.svg",
+    "textual-light-170-warm.svg",
+    "textual-light-80-linked.svg",
+    "textual-light-80-reader.svg",
+    "textual-light-80-staged.svg",
+    "textual-light-80-warm.svg"
+  ],
+  "observations": [
+    "Use as source focus and link-on-use explanation are readable in both themes at 170x48 and 80x24.",
+    "Exact fixture title and Un-stage control paint in the source strip above the preserved populated draft.",
+    "Compact draft wraps to three visible lines, retaining brackets and accented text.",
+    "Retained link receipt names Default; its two-line compact text and focused Undo link are readable.",
+    "Compact reader transcript extends below the viewport while header actions are focused; Items was explicitly collapsed.",
+    "Wide inspector truncates secondary details while the complete staged title remains available in the source strip.",
+    "First and replacement live-work titles paint in the source strip in every theme/size; replacement ordinal 2 is captured with the unchanged draft."
+  ],
+  "actionable_source_control_paint_findings": [],
+  "content_delivery_limit": "The reference snippet is only Conversation staged: <title>; TASK-2376 remains open.",
+  "final_batch_reason": "TASK-2502 production repair and eight additional warm live-work launches"
+}
