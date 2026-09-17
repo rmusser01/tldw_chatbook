@@ -16,6 +16,8 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_notes_state import LibraryNotesListRow
@@ -146,7 +148,10 @@ def _note_selected_app(pane_width: int, **overrides) -> _CanvasApp:
 
 
 @pytest.mark.asyncio
-async def test_notes_toolbar_paints_whole_labels_with_a_note_open_at_235x52() -> None:
+@private_profile_test
+async def test_notes_toolbar_paints_whole_labels_with_a_note_open_at_235x52(
+    request,
+) -> None:
     """task-32544 AC#1/AC#3: no toolbar label is cut off beside an open note.
 
     The width is the one the production resolver hands the list at 235
@@ -166,7 +171,8 @@ async def test_notes_toolbar_paints_whole_labels_with_a_note_open_at_235x52() ->
 
 
 @pytest.mark.asyncio
-async def test_notes_folder_actions_wrap_rather_than_run_off_the_pane() -> None:
+@private_profile_test
+async def test_notes_folder_actions_wrap_rather_than_run_off_the_pane(request) -> None:
     """task-32544 AC#1: the row that cannot fit takes another row.
 
     The guide's own narrow-pane rule ("the toolbar moves the action that
@@ -288,7 +294,10 @@ async def test_new_at_60x24_promotes_the_create_view_with_blank_note_focused() -
 
 
 @pytest.mark.asyncio
-async def test_notes_toolbar_labels_paint_whole_or_elided_at_sixty_columns() -> None:
+@private_profile_test
+async def test_notes_toolbar_labels_paint_whole_or_elided_at_sixty_columns(
+    request,
+) -> None:
     """task-32557 AC#1/AC#2: a narrowed pane re-shapes before it paints.
 
     Driven through the real screen and a real resize, because that is where
@@ -349,7 +358,8 @@ async def test_notes_toolbar_labels_paint_whole_or_elided_at_sixty_columns() -> 
 
 
 @pytest.mark.asyncio
-async def test_a_pane_that_widens_again_records_the_width_it_was_given() -> None:
+@private_profile_test
+async def test_a_pane_that_widens_again_records_the_width_it_was_given(request) -> None:
     """task-32557, review M1: growth does not re-shape, but it is recorded.
 
     `apply_pane_width` deliberately re-shapes only on a shrink -- re-shaping

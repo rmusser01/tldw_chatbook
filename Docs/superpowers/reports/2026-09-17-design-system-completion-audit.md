@@ -37,7 +37,8 @@ Fresh integration verification: 280 distinct affected/governance cases pass in t
 [TASK-32749 receipt](../qa/2026-09-17-component-current-dev/README.md).
 Boot CSS is 620,062 bytes, below the unchanged 634,050-byte limit. Independent
 review found no integration-specific blocker; native inspection found the incoming
-empty Notes toolbar clipping tracked separately as TASK-32752.
+empty Notes toolbar clipping subsequently repaired by TASK-32752, with 62 targeted
+checks and four inspected native captures in its [QA receipt](../qa/2026-09-17-notes-empty-toolbar/README.md).
 
 The approved Python property set is `background`, `color`, `border*`, `width`,
 `height`, `padding*`, `margin*`, and `opacity*`. Min/max dimensions and display/
@@ -63,7 +64,7 @@ or permission configuration.
 | Remaining Settings categories and modal patterns | Prior compact Providers/Network geometry is qualified, not all category behavior | Inventory and review Overview, Web Search, Speech/TTS, Appearance/Theme/Splash, Storage, Workspaces, Tool Profiles, Privacy, Network, Personal Context, Console Behavior, Library/RAG, Artifacts, Personas, Skills, Schedules, Watchlists, Workflows, MCP/ACP defaults, Diagnostics/About, Advanced Config, Internal Prompts, Image/Video Generation and Agents |
 | Roleplay, Watchlists, Artifacts, Schedules, Workflows, MCP, ACP, Lab, Logs, Research, Meetings | No whole-destination completion claim in this workstream | Bounded keyboard/state/resize/theme review, fix confirmed defects, and record representative native evidence |
 | Current dev integration | TASK-32749 reconciles 71 commits through `1c0327b3bb3d95b61e3e1b9a83b30e7030453ad6`; generated artifacts, token floors, 280 cases, independent review and four native cells qualified | [Integration report](2026-09-17-component-current-dev-integration.md) records exact bounds; subsequent dev changes require their own review |
-| Empty Notes folder actions | Integration captures expose clipped disabled Remove placement copy at 170×48 in both themes | TASK-32752 is the next repair; add actual-width empty-selection coverage and verify native labels |
+| Empty Notes folder actions | TASK-32752 corrects the available-width/chrome budget and repacks only overflowing composed rows; preserves growth and legacy-list identity | 62 targeted checks and four inspected native captures qualify the repair; [QA receipt](../qa/2026-09-17-notes-empty-toolbar/README.md) states exact limits |
 
 ## How to close the workstream
 
@@ -77,6 +78,7 @@ A full repository sweep requires explicit user opt-in.
 Before declaring completion, reconcile every remaining row with linked evidence,
 check that PR integration is reviewable, and report any documented backend limits.
 Do not substitute a Done parent task, passing governance, or a single successful
-native journey for the broader review the user approved. After saving the current
-integration, repair TASK-32752, then continue the remaining Settings categories and
+native journey for the broader review the user approved. Current-dev integration
+and the discovered Notes toolbar repair are saved; next review the remaining
+Settings categories, beginning with Overview and Web Search, then the remaining
 destinations. Their rows remain visible in this ledger until assessed.

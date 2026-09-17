@@ -1,0 +1,5 @@
+E           >           assert canvas.query_one("#library-notes-filter") is field
+E           E           AssertionError: assert LibraryRailSearchInput(id='library-notes-filter') is LibraryRailSearchInput(id='library-notes-filter')
+E           Tests/UI/test_library_notes_empty_toolbar.py:170: AssertionError
+E           1 failed in 2.70s
+1 failed in 7.23s

@@ -15,6 +15,8 @@ from typing import Mapping
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from loguru import logger as loguru_logger
 from rich.cells import cell_len
 from textual import events
@@ -24455,7 +24457,10 @@ async def test_library_note_60x20_temporary_region_allocation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_note_compact_labels_round_trip_without_recompose() -> None:
+@private_profile_test
+async def test_library_note_compact_labels_round_trip_without_recompose(
+    request,
+) -> None:
     selector = "#library-notes-select-all"
     compact_label = "All 2"
     wide_label = "Select all 2 shown"

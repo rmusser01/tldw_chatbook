@@ -443,6 +443,11 @@ pane that *widens* keeps its shape until the next time the list refreshes —
 a row with room to spare costs nothing, and re-shaping on every resize would
 undo the in-place updates that keep a terminal drag cheap.
 
+The same wrapping applies when no note is selected: on the wide layout,
+disabled folder actions keep their complete labels and the selection explanation
+stays below them. The compact layout keeps its existing single **New folder**
+action so the list retains its row budget.
+
 ### Edit, Preview, and Info
 
 | Control | What it does |

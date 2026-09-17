@@ -1,0 +1,15 @@
+Transcribed from the inspected pytest child log before pytest temp retention removed it:
+/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1125/test_empty_notes_actions_fit_t0/private-profile-process/pytest.log
+
+AssertionError: action=library-notes-placement-remove, label=○ Remove placement
+button=Region(x=97, y=21, width=22, height=1)
+canvas/content=Region(x=45, y=7, width=68, height=38)
+contract=72, measured=68
+row=Region(x=45, y=21, width=68, height=1)
+row_content=Region(x=46, y=21, width=66, height=1)
+button padding=Spacing(top=0, right=1, bottom=0, left=1)
+button margin=Spacing(top=0, right=1, bottom=0, left=0)
+assert 119 <= 113 failed (six cells outside canvas).
+
+The raw parent run log digest is in run-history.json. The earlier integration
+captures independently preserve the cropped native label.

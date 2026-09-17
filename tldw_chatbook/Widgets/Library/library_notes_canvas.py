@@ -327,13 +327,12 @@ def browse_row_width(labels: tuple[str, ...]) -> int:
     return sum(len(label) + _TOOLBAR_ACTION_CHROME for label in labels)
 
 
-#: Cells a ``ds-toolbar`` row costs before its first action: the row's own
-#: left padding. MEASURED at the 64-column pane a 235-column terminal gives
-#: the Notes list beside an open note, where every action's region starts at
-#: x=1 rather than x=0 -- which is why the four folder actions, 64 cells of
-#: buttons by ``_TOOLBAR_ACTION_CHROME``, still ran one cell off a 64-column
-#: pane (task-32544).
-_TOOLBAR_ROW_INDENT = 1
+# TASK-32752: a tree action's painted width includes two Button edge cells
+# and two padding cells; the right margin consumes a fifth cell. The row
+# itself has padding on both sides. Measured with production CSS, including
+# disabled labels, rather than borrowed from the older browse-row budget.
+_TREE_ACTION_CHROME = 5
+_TREE_TOOLBAR_PADDING = 2
 
 
 def toolbar_action_rows(
@@ -365,12 +364,12 @@ def toolbar_action_rows(
     """
     if pane_width <= 0 or not labels:
         return (tuple(range(len(labels))),)
-    budget = pane_width - _TOOLBAR_ROW_INDENT
+    budget = pane_width - _TREE_TOOLBAR_PADDING
     rows: list[tuple[int, ...]] = []
     current: list[int] = []
     used = 0
     for index, label in enumerate(labels):
-        cost = cell_len(label) + _TOOLBAR_ACTION_CHROME
+        cost = cell_len(label) + _TREE_ACTION_CHROME
         if current and used + cost > budget:
             rows.append(tuple(current))
             current, used = [], 0
@@ -1025,6 +1024,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._browse_row_needed = 0
         self._browse_overflow = False
         self._measured_width = 0
+        self._tree_action_labels: tuple[str, ...] = ()
+        self._rendered_tree_action_rows: tuple[tuple[int, ...], ...] = ()
         #: task-32356: create mode's template disclosure. Canvas-local on
         #: purpose -- nothing outside this widget reads or writes it, so it
         #: needs no ``LibraryNotesState`` field and no kwargs plumbing. It
@@ -1371,6 +1372,34 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         return merged, stacked, overflow
 
+    def _tree_toolbar_width(self, pane_width: int) -> int:
+        """Remove the stable Items host chrome from its outer-width contract."""
+        if pane_width <= 0:
+            return pane_width
+        host = self.parent
+        gutter = self.styles.gutter.width
+        # The fallback measurement already excludes the Items host chrome.
+        if self.pane_width and host is not None and host.id == "library-canvas":
+            gutter += host.styles.gutter.width
+        return max(1, pane_width - gutter)
+
+    def _tree_actions_need_repack(self) -> bool:
+        """Whether a composed row no longer fits the settled width contract.
+
+        Compare the actual composition, including the initial unmeasured row.
+        Extra rows after growth are harmless and must not force recomposition.
+        """
+        width = self._tree_toolbar_width(self._effective_pane_width())
+        return any(
+            len(
+                toolbar_action_rows(
+                    tuple(self._tree_action_labels[index] for index in row), width
+                )
+            )
+            > 1
+            for row in self._rendered_tree_action_rows
+        )
+
     def on_resize(self, event: Resize) -> None:
         """Re-decide the toolbar's shape once this pane has a real width.
 
@@ -1391,7 +1420,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         before = self._toolbar_decisions(self._effective_pane_width())
         self._measured_width = width
-        if before != self._toolbar_decisions(self._effective_pane_width()):
+        if (
+            before != self._toolbar_decisions(self._effective_pane_width())
+            or self._tree_actions_need_repack()
+        ):
             self.refresh(recompose=True)
 
     def apply_pane_width(self, pane_width: int) -> None:
@@ -1432,8 +1464,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         before = self._toolbar_decisions(self._effective_pane_width())
         self.pane_width = pane_width
-        if self.mode == "list" and before != self._toolbar_decisions(
-            self._effective_pane_width()
+        if self.mode == "list" and (
+            before != self._toolbar_decisions(self._effective_pane_width())
+            or self._tree_actions_need_repack()
         ):
             self.refresh(recompose=True)
 
@@ -1695,6 +1728,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     )
 
     def _compose_list(self) -> ComposeResult:
+        self._tree_action_labels = ()
+        self._rendered_tree_action_rows = ()
         list_state = self.list_state
         if list_state is None:
             return
@@ -2419,10 +2454,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="destination-section",
                 markup=False,
             )
+        self._tree_action_labels = tuple(str(button.label) for button in buttons)
         rows = toolbar_action_rows(
-            tuple(str(button.label) for button in buttons),
-            self._effective_pane_width(),
+            self._tree_action_labels,
+            self._tree_toolbar_width(self._effective_pane_width()),
         )
+        self._rendered_tree_action_rows = rows
         for row_index, row in enumerate(rows):
             container = Horizontal(
                 id=(

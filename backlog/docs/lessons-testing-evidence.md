@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## Row packing must recheck what was composed before measurement
+
+**TASK-32752, 2026-09-17.** Correcting Notes' tree-toolbar button cost and removing
+host gutters still left the first empty-list frame clipped: it had composed one
+row while width was unknown, and the generic merge/stack/browse decisions never
+changed to trigger a rebuild. The passing repair checks the actual composed
+partition against the settled width and only repacks overflowing rows. Review also
+found that those cached labels survived a tree-to-legacy-list transition; a negative
+control reproduced filter identity loss on the next shrink. Clear derived packing
+state when its source composition disappears, and test actual paint plus field
+identity across both width and state transitions.
+
 ## Profile-lifetime failures need process isolation, including the parent fixture
 
 **TASK-32749, 2026-09-17.** The incoming recovery/config lifetime made old UI

@@ -1257,3 +1257,13 @@ Existing ADR-006/031/150/161 apply. The guide, finite-input lesson and full
 completion ledger were updated. Current dev has 71 incoming commits and the
 read-only merge preview found 12 conflict paths, so integration comes next before
 additional Settings/destination reviews. No full suite or merge into dev ran.
+
+## TASK-32752: empty Notes folder-action packing
+
+Current-dev integration revealed a clipped disabled Remove placement label at
+170×48. Tree packing now uses the actual available canvas budget, includes margin
+and row padding, and repacks overflowing composed rows while preserving identity
+on growth and tree-to-legacy-list transitions. 62 targeted cases and four inspected
+native dark/light wide/compact captures qualify the repair; see the
+[QA receipt](../qa/2026-09-17-notes-empty-toolbar/README.md). This is an empty-state
+layout check, not further sync/backend qualification. Existing ADR-150/161 apply.
