@@ -1,0 +1,30 @@
+diff --git a/Docs/User_Guide/library/import-and-export.md b/Docs/User_Guide/library/import-and-export.md
+remerge CONFLICT (content): Merge conflict in Docs/User_Guide/library/import-and-export.md
+index 05a2e0db35..c064f3cfe7 100644
+--- a/Docs/User_Guide/library/import-and-export.md
++++ b/Docs/User_Guide/library/import-and-export.md
+@@ -265,7 +265,6 @@ checkpoint before any tool is allowed to run, as required by
+ | "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
+ | "Retry this batch" | Below the queue, once your last import of the session has settled (while a job is still queued/parsing/writing it is hidden, and `r` is inert too — re-staging mid-run invites a duplicate batch): one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. If the form currently holds work the re-stage would overwrite (a different path, a title you started typing, an option you flipped), it takes two presses: the first renames the button "Press again to replace form" and changes nothing. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
+
+-<<<<<<< 65cc565d84 (Fix Interface settings layout and save-state ownership)
+ Resizing the terminal keeps the current Import control focused and visible,
+ including metadata fields, options, queue Details and Recent imports. Your draft,
+ text selection and open Recent imports history stay in place.
+@@ -275,7 +274,7 @@ row, an accepted model selection retries that job; cancelling the picker or
+ choosing an unusable model leaves it failed. If the retry removes the focused
+ row action, focus returns to the source field. A newer focus move or navigation
+ away from Import is respected when model validation finishes.
+-=======
++
+ **Parakeet setup:** Installing the Python package adds the transcription runtime;
+ it does not download the model files. In the Audio & video options, select
+ "Parakeet (ONNX)", then press "Install verified Parakeet v2 INT8 (630.6 MiB)…"
+@@ -291,7 +290,6 @@ For native clipboard copying on Fedora Wayland, install
+ SSH and browser sessions use the client-facing clipboard route; terminal or
+ browser permissions can prevent delivery. An unconfirmed-copy warning leaves
+ the command visible for manual selection.
+->>>>>>> c97a64eba5 (Merge pull request #2705 from rmusser01/codex/optional-deps-stt-fixes)
+
+ **Consent for risky imports** — starting with "⚠" tooling warnings
+ outstanding takes two presses, right at the Start button (task-3314

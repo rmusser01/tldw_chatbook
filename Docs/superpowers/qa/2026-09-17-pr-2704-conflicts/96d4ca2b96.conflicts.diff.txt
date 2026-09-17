@@ -1,0 +1,45 @@
+diff --git a/Docs/security/production-diagnostic-inventory.json b/Docs/security/production-diagnostic-inventory.json
+remerge CONFLICT (content): Merge conflict in Docs/security/production-diagnostic-inventory.json
+index e82d8ac566..a7914d7434 100644
+--- a/Docs/security/production-diagnostic-inventory.json
++++ b/Docs/security/production-diagnostic-inventory.json
+@@ -11510,10 +11510,6 @@
+     "persistent_sink_files": 14,
+     "task_31551_calls": 55,
+     "task_492_calls": 1407,
+-<<<<<<< 2614d6c135 (Normalize saved rail review test logs)
+-    "task_494_calls": 7762
+-=======
+-    "task_494_calls": 7771
+->>>>>>> d8fb4053f9 (Merge pull request #2706 from rmusser01/codex/transcription-failure-diagnostics)
++    "task_494_calls": 7763
+   }
+ }
+diff --git a/backlog/docs/lessons-testing-evidence.md b/backlog/docs/lessons-testing-evidence.md
+remerge CONFLICT (content): Merge conflict in backlog/docs/lessons-testing-evidence.md
+index 151e2fbd0d..2e863554d5 100644
+--- a/backlog/docs/lessons-testing-evidence.md
++++ b/backlog/docs/lessons-testing-evidence.md
+@@ -207,7 +207,6 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
+
+ ---
+
+-<<<<<<< 2614d6c135 (Normalize saved rail review test logs)
+ ## A same-band resize can still change an exact cell-width contract
+
+ **TASK-32599, 2026-09-14.** A zero-query gate called 168/167/166-column
+@@ -318,7 +317,6 @@ preserve quoted strings and original whitespace boundaries, and compare parsed
+ selector structure. The regression now covers all source modules as well as
+ compound/descendant selector examples.
+
+-=======
+ ## A terminal failure does not prove an application log exists (TASK-32758, 2026-09-17)
+
+ **Incident.** A local transcription failure set the Library job to failed, but
+@@ -331,7 +329,6 @@ sink and assert the persisted record. Keep native exception text and paths out
+ of the record; verify the allowed identifiers, stage and failure code instead.
+
+ ---
+->>>>>>> d8fb4053f9 (Merge pull request #2706 from rmusser01/codex/transcription-failure-diagnostics)
+
+ ## Observe completed callbacks before reading their files (TASK-32628, 2026-09-16)

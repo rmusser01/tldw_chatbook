@@ -1,0 +1,24 @@
+..............................                                           [100%]
+============================= slowest 25 durations =============================
+6.61s call     Tests/UI/test_settings_console_reasoning_history.py::test_reasoning_history_remembers_normalized_target_and_clears_override
+6.52s call     Tests/UI/test_settings_console_side_chat.py::test_console_side_chat_settings_are_searchable_and_have_focused_guidance
+5.86s call     Tests/UI/test_settings_console_side_chat.py::test_console_side_chat_settings_render_loaded_values_and_stage_edits
+5.47s call     Tests/UI/test_settings_console_reasoning_history.py::test_reasoning_history_defaults_automatic_and_persists_each_mode[all]
+5.46s call     Tests/UI/test_settings_console_reasoning_history.py::test_reasoning_history_defaults_automatic_and_persists_each_mode[off]
+5.29s call     Tests/UI/test_settings_console_reasoning_history.py::test_reasoning_history_defaults_automatic_and_persists_each_mode[current]
+5.26s call     Tests/UI/test_settings_configuration_hub.py::test_settings_storage_save_and_revert_defaults
+5.06s call     Tests/UI/test_settings_console_reasoning_history.py::test_mounted_reasoning_selectors_use_shared_validation
+4.90s call     Tests/UI/test_settings_console_reasoning_history.py::test_gemma_status_explains_fenced_tool_round_limit
+4.87s call     Tests/UI/test_settings_configuration_hub.py::test_settings_storage_surfaces_check_action_before_long_path_editor
+4.66s call     Tests/UI/test_settings_configuration_hub.py::test_settings_first_slice_categories_have_real_content[#settings-category-storage-Config path]
+4.60s call     Tests/UI/test_settings_console_status_row.py::test_status_row_position_toggle_flips_and_pokes_live_config
+4.52s call     Tests/UI/test_settings_configuration_hub.py::test_settings_storage_test_shortcut_runs_safety_check
+4.47s call     Tests/UI/test_settings_console_side_chat.py::test_console_side_chat_save_payload_is_exact_and_updates_runtime
+4.42s call     Tests/UI/test_settings_console_side_chat.py::test_console_side_chat_revert_restores_loaded_values
+4.40s call     Tests/UI/test_settings_console_side_chat.py::test_console_side_chat_failed_save_keeps_draft
+4.23s call     Tests/UI/test_settings_configuration_hub.py::test_settings_storage_renders_guided_defaults_and_validates
+3.21s call     Tests/UI/test_settings_configuration_hub.py::test_remote_images_toggle_label_reflects_config
+3.19s call     Tests/UI/test_settings_configuration_hub.py::test_remote_images_toggle_persists_and_pokes_live_config
+
+(6 durations < 1s hidden.)
+30 passed, 403 deselected in 97.30s (0:01:37)

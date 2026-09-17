@@ -1,5 +1,19 @@
 # Lessons: what counts as evidence a change works
 
+## Settings category navigation does not exercise screen departure
+
+**TASK-32761, 2026-09-17.** Fourteen immediate-toggle cases passed while
+switching only Settings categories. Independent review showed that leaving the
+Settings destination cancels its async worker even though the threaded config
+write continues. Holding an older enable write, selecting disable, then removing
+and recreating Settings reproduced saved enable with live disable. Another case
+reloaded configuration and exposed a stale saved baseline. Recreated-screen tests
+now hold the writer across actual removal and verify final file, runtime and
+receipt; the queue belongs to the app and drains admitted writes independently
+of that screen. A further enable/disable/enable case proved that matching the
+latest value is insufficient: the final receipt must also belong to the latest
+choice and retain any post-replace refresh warning.
+
 ## Exercise both sides of a form's actual responsive threshold
 
 **TASK-32756, 2026-09-17.** Speech's 170-column Settings shell already used

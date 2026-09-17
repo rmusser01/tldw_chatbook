@@ -665,6 +665,18 @@ class _AudioCppResultTransactionError(RuntimeError):
     """Bounded internal failure for one Settings result transaction."""
 
 
+@dataclass(slots=True)
+class _ConsoleToggleWrite:
+    """One app-lifetime preference write, shared by recreated Settings screens."""
+
+    confirmed: bool | str
+    desired: bool | str
+    screen: "SettingsScreen"
+    running: bool = False
+    revision: int = 0
+    lock: Any = field(default_factory=threading.Lock, repr=False)
+
+
 @dataclass(frozen=True, slots=True)
 class _VllmDefaultPresentationSnapshot:
     """Complete provider presentation restored after a late handoff failure."""
@@ -2954,6 +2966,14 @@ class SettingsScreen(BaseAppScreen):
         self._thinking_visibility_desired_value = initial_thinking_visibility
         self._thinking_visibility_confirmed_value = initial_thinking_visibility
         self._thinking_visibility_in_flight: tuple[bool, int] | None = None
+        toggle_writes = getattr(app_instance, "_settings_console_toggle_writes", None)
+        if toggle_writes is None:
+            toggle_writes = {}
+            app_instance._settings_console_toggle_writes = toggle_writes
+        self._console_toggle_writes: dict[str, _ConsoleToggleWrite] = toggle_writes
+        for pending in toggle_writes.values():
+            with pending.lock:
+                pending.screen = self
         self._syncing_console_rail_layout_scope = False
         self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
@@ -6449,53 +6469,16 @@ class SettingsScreen(BaseAppScreen):
         return "Enabled" if self._remote_images_enabled() else "Disabled"
 
     def _toggle_remote_images(self) -> bool:
-        """Flip render_remote_images: persist it AND poke the live config.
-
-        ADR-020-style immediate write (no category draft): the toggle is a
-        single security-relevant boolean. The App captures ``app_config``
-        once at startup, so persisting alone would not take effect until
-        restart -- the raw in-memory tree the transcript gate reads is
-        updated in place too.
-
-        Returns:
-            The new (post-toggle) enabled value.
-        """
+        """Apply the choice immediately and reconcile it with the saved result."""
         next_value = not self._remote_images_enabled()
         self._persist_remote_images_toggle(next_value)
-        app_config = getattr(self.app_instance, "app_config", None)
-        if isinstance(app_config, dict):
-            raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
-            if isinstance(raw, dict):
-                raw.setdefault("chat", {}).setdefault("images", {})[
-                    "render_remote_images"
-                ] = next_value
-            chat_section = app_config.get("chat")
-            if isinstance(chat_section, dict) and isinstance(
-                chat_section.get("images"), dict
-            ):
-                chat_section["images"]["render_remote_images"] = next_value
+        self._apply_console_toggle_runtime("remote-images", next_value)
         return next_value
 
-    @work(thread=True)
     def _persist_remote_images_toggle(self, next_value: bool) -> None:
-        """Write the render_remote_images preference off the event loop.
-
-        task-15470: this was a synchronous ``save_settings_to_cli_config``
-        call straight in a Button.Pressed handler -- a full config.toml
-        read+atomic-rewrite+cache-reload per click. The in-memory
-        ``app_config`` update in ``_toggle_remote_images`` (which the
-        transcript gate reads live) stays synchronous; only the disk write
-        moves to a worker. Guarded broadly: an uncaught exception in a
-        ``@work(thread=True)`` worker is fatal to the app by default
-        (``exit_on_error=True``), so a config-write hiccup must not crash
-        the whole session.
-        """
-        try:
-            save_settings_to_cli_config(
-                {"chat.images": {"render_remote_images": next_value}}
-            )
-        except Exception:
-            logger.warning("Failed to persist render_remote_images.")
+        self._queue_console_toggle(
+            "remote-images", next_value, self._remote_images_enabled()
+        )
 
     def _status_row_position_value(self) -> str:
         """Return the live [console].status_chips_position value."""
@@ -6513,44 +6496,149 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _toggle_status_row_position(self) -> str:
-        """Flip status_chips_position: persist it AND poke the live config.
-
-        ADR-020-style immediate write (no category draft), the same shape
-        as the remote-images toggle (task-17652). The cached Console screen
-        re-applies the position on resume, so the change lands on return
-        without a restart.
-
-        Returns:
-            The new (post-toggle) position value.
-        """
-        from ..Console_Modules.status_row import (
-            STATUS_CHIPS_POSITION_ABOVE,
-            STATUS_CHIPS_POSITION_BELOW,
-            poke_console_setting,
-        )
-
+        """Apply placement immediately; serialize writes to preserve the last choice."""
         next_value = (
-            STATUS_CHIPS_POSITION_BELOW
-            if self._status_row_position_value() == STATUS_CHIPS_POSITION_ABOVE
-            else STATUS_CHIPS_POSITION_ABOVE
+            "below" if self._status_row_position_value() == "above" else "above"
         )
         self._persist_status_row_position(next_value)
-        poke_console_setting(
-            getattr(self.app_instance, "app_config", None),
-            "status_chips_position",
-            next_value,
-        )
+        self._apply_console_toggle_runtime("status-row-position", next_value)
         return next_value
 
-    @work(thread=True)
     def _persist_status_row_position(self, next_value: str) -> None:
-        """Write the status-row placement off the event loop (task-15470 shape)."""
+        self._queue_console_toggle(
+            "status-row-position", next_value, self._status_row_position_value()
+        )
+
+    def _apply_console_toggle_runtime(self, key: str, value: bool | str) -> None:
+        """Keep the immediate preference and any mounted button in sync."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if key == "remote-images":
+            if isinstance(app_config, dict):
+                raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+                if isinstance(raw, dict):
+                    raw.setdefault("chat", {}).setdefault("images", {})[
+                        "render_remote_images"
+                    ] = value
+                chat = app_config.get("chat")
+                if isinstance(chat, dict) and isinstance(chat.get("images"), dict):
+                    chat["images"]["render_remote_images"] = value
+            label = self._remote_images_button_label()
+        else:
+            from ..Console_Modules.status_row import poke_console_setting
+
+            poke_console_setting(app_config, "status_chips_position", value)
+            label = self._status_row_position_button_label()
         try:
-            save_settings_to_cli_config(
-                {"console": {"status_chips_position": next_value}}
+            self.query_one(f"#settings-console-{key}-toggle", Button).label = label
+        except QueryError:
+            pass
+
+    def _queue_console_toggle(
+        self, key: str, value: bool | str, current: bool | str
+    ) -> None:
+        """Share a single writer across Settings departures and new instances."""
+        state = self._console_toggle_writes.setdefault(
+            key, _ConsoleToggleWrite(current, current, self)
+        )
+        with state.lock:
+            start = not state.running
+            if start:
+                # Diagnostics/Advanced Config can replace app_config while idle.
+                state.confirmed = current
+            state.desired = value
+            state.revision += 1
+            state.screen = self
+            state.running = True
+        if start:
+            host = self.app
+            host.run_worker(
+                lambda: self._persist_console_toggle(key, state, host),
+                thread=True,
+                group="settings-console-instant-toggles",
             )
-        except Exception:
-            logger.warning("Failed to persist status_chips_position.")
+
+    def _persist_console_toggle(
+        self, key: str, state: _ConsoleToggleWrite, host
+    ) -> None:
+        """Drain admitted writes even if the originating screen is removed."""
+        reported_revision = -1
+        mutation = ConfigMutationResult(False, True, None)
+        while True:
+            with state.lock:
+                settled = state.desired == state.confirmed
+                value, revision = state.desired, state.revision
+                if settled:
+                    state.running = False
+            if settled:
+                if revision == reported_revision:
+                    return
+                # A coalesced return to the saved value still needs a receipt.
+                # Preserve a real post-replace refresh warning if one occurred.
+                if not mutation.file_replaced:
+                    mutation = ConfigMutationResult(False, True, None)
+                saved = True
+            else:
+                payload = (
+                    {"chat.images": {"render_remote_images": value}}
+                    if key == "remote-images"
+                    else {"console": {"status_chips_position": value}}
+                )
+                try:
+                    mutation = apply_settings_mutation_to_cli_config(payload)
+                except Exception:
+                    mutation = ConfigMutationResult(False, False, "before_replace")
+                saved = mutation.file_replaced or (
+                    not mutation.conflict and mutation.failure_phase is None
+                )
+                with state.lock:
+                    if saved:
+                        state.confirmed = value
+                        if state.desired == value:
+                            revision = state.revision
+                    elif revision == state.revision:
+                        state.desired = state.confirmed
+            try:
+                host.call_from_thread(
+                    self._finish_console_toggle, key, state, revision, mutation, saved
+                )
+            except RuntimeError:
+                # App shutdown cannot undo an admitted config write; drain the
+                # last choice without accessing a stopped UI.
+                pass
+            if settled:
+                return
+            reported_revision = revision
+
+    def _finish_console_toggle(
+        self,
+        key: str,
+        state: _ConsoleToggleWrite,
+        revision: int,
+        mutation: ConfigMutationResult,
+        saved: bool,
+    ) -> None:
+        """Reconcile the latest screen only when this result still owns its choice."""
+        with state.lock:
+            if revision != state.revision:
+                return
+            screen, value = state.screen, state.desired
+        label = "Linked images" if key == "remote-images" else "Status row placement"
+        screen._apply_console_toggle_runtime(key, value)
+        if not saved:
+            message = f"Could not save {label.lower()}; the prior setting was restored. Try again."
+        elif mutation.file_replaced and not mutation.caches_reloaded:
+            message = f"{label} saved, but live settings could not be refreshed."
+        else:
+            message = f"{label} saved."
+        screen._console_behavior_result = message
+        if screen.is_attached:
+            screen._set_static_text("#settings-console-behavior-result", message)
+            screen.app.notify(
+                message,
+                severity="information"
+                if saved and mutation.failure_phase is None
+                else "error",
+            )
 
     #: Qodo review #11: generation guard for the instant-apply
     #: permission-summary writes. Each dispatch stamps a token; a worker
@@ -17251,7 +17339,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-console-reasoning-override",
                 )
                 yield Checkbox(
-                    "This server is configured for native tool calls",
+                    "Native tool support",
                     value=self._reasoning_native_override_value(),
                     disabled=target is None,
                     id="settings-console-reasoning-native-tools",
@@ -17283,7 +17371,7 @@ class SettingsScreen(BaseAppScreen):
             )
             yield Static("Exchange capture", classes="destination-section")
             yield Checkbox(
-                "Capture future provider exchanges",
+                "Capture future exchanges",
                 value=self._console_capture_policy.enabled,
                 id="settings-console-exchange-capture-enabled",
             )
@@ -17298,7 +17386,7 @@ class SettingsScreen(BaseAppScreen):
             legacy_detail.display = False
             yield legacy_detail
             yield Checkbox(
-                "Mask detected PII in traces (future calls)",
+                "Mask PII in future traces",
                 value=getattr(
                     self._console_capture_policy,
                     "pii_redaction_enabled",
@@ -25366,25 +25454,13 @@ class SettingsScreen(BaseAppScreen):
     def handle_console_remote_images_toggle(self, event: Button.Pressed) -> None:
         """Flip the remote-images toggle: immediate write, no category draft."""
         event.stop()
-        enabled = self._toggle_remote_images()
-        event.button.label = self._remote_images_button_label()
-        self.app.notify(
-            "Linked images in replies will now render."
-            if enabled
-            else "Linked images in replies will stay ignored.",
-            severity="information",
-        )
+        self._toggle_remote_images()
 
     @on(Button.Pressed, "#settings-console-status-row-position-toggle")
     def handle_console_status_row_position_toggle(self, event: Button.Pressed) -> None:
         """Flip the status-row placement: immediate write, no category draft."""
         event.stop()
-        next_value = self._toggle_status_row_position()
-        event.button.label = self._status_row_position_button_label()
-        self.app.notify(
-            f"Console status row will sit {next_value} the composer.",
-            severity="information",
-        )
+        self._toggle_status_row_position()
 
     @on(Input.Changed, "#settings-console-paste-collapse-threshold")
     def handle_console_paste_threshold_changed(self, event: Input.Changed) -> None:

@@ -118,10 +118,13 @@
    spend vertical space on the Connect/Network field rows instead.
    TASK-32748 includes the nested Generation defaults rows, where the same
    fixed label otherwise leaves only the final digit of Temperature visible.
+   Console Behavior and Storage use the same stacked field contract.
    Existing controls retain their compact border and focus contracts. */
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row,
-.settings-workbench-compact #settings-network-card > .settings-input-row {
+.settings-workbench-compact #settings-network-card > .settings-input-row,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row,
+.settings-workbench-compact #settings-storage-card .settings-input-row {
     layout: vertical;
     height: auto;
     min-height: $ds-size-2;
@@ -130,7 +133,9 @@
 
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
-.settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label {
+.settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-storage-card .settings-input-row > .settings-input-label {
     width: $ds-width-full;
     height: $ds-control-height-compact;
     min-height: $ds-control-height-compact;
@@ -141,7 +146,10 @@
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > Input,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > Select,
 .settings-workbench-compact #settings-network-card > .settings-input-row > Input,
-.settings-workbench-compact #settings-network-card > .settings-input-row > Select {
+.settings-workbench-compact #settings-network-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row > Input,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row > Select,
+.settings-workbench-compact #settings-storage-card .settings-input-row > Input {
     width: $ds-width-full;
 }
 
@@ -982,6 +990,27 @@ Button.settings-category-group-toggle:focus {
 #settings-console-behavior-card {
     min-height: $ds-size-12;
 }
+
+/* Textual checkboxes measure one row. Compact borders and concise labels
+   keep both the checkbox glyph and complete label inside the pane. */
+#settings-console-behavior-card Checkbox {
+    width: auto;
+    max-width: $ds-width-full;
+    height: auto;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+#settings-console-context-memory-jump {
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
 
 /* The outer focus card already supplies the compact pane inset. A second
    inset leaves too few columns for the full rail-label checkbox. */

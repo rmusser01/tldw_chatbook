@@ -9959,7 +9959,9 @@ WorktreeRecoveryDialog {
 
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
-.settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label {
+.settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-storage-card .settings-input-row > .settings-input-label {
     width: $ds-width-full;
     height: $ds-control-height-compact;
     min-height: $ds-control-height-compact;

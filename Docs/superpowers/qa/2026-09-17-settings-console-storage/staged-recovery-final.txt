@@ -1,0 +1,13 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+54.18s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_staged_keyboard_recovery[size0-Storage]
+53.12s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_staged_keyboard_recovery[size1-Storage]
+21.09s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-dark]
+20.94s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-light]
+18.29s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_staged_keyboard_recovery[size0-Console Behavior]
+18.25s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_staged_keyboard_recovery[size1-Console Behavior]
+7.64s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light]
+7.36s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark]
+
+(16 durations < 1s hidden.)
+8 passed, 18 deselected in 202.93s (0:03:22)

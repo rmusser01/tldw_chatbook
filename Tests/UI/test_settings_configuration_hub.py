@@ -2647,7 +2647,8 @@ def test_settings_storage_defaults_load_validate_and_build_save_payload(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_renders_guided_defaults_and_validates(tmp_path):
+@private_profile_test
+async def test_settings_storage_renders_guided_defaults_and_validates(request, tmp_path):
     app = _build_test_app()
     db_dir = tmp_path / "db"
     db_dir.mkdir()
@@ -2699,7 +2700,8 @@ async def test_settings_storage_renders_guided_defaults_and_validates(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_surfaces_check_action_before_long_path_editor(tmp_path):
+@private_profile_test
+async def test_settings_storage_surfaces_check_action_before_long_path_editor(request, tmp_path):
     app = _build_test_app()
     db_dir = tmp_path / "db"
     db_dir.mkdir()
@@ -2732,7 +2734,8 @@ async def test_settings_storage_surfaces_check_action_before_long_path_editor(tm
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
+@private_profile_test
+async def test_settings_storage_save_and_revert_defaults(request, monkeypatch, tmp_path):
     app = _build_test_app()
     db_dir = tmp_path / "db"
     db_dir.mkdir()
@@ -10442,7 +10445,8 @@ def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypa
     ],
 )
 @pytest.mark.asyncio
-async def test_settings_first_slice_categories_have_real_content(button_id, expected):
+@private_profile_test
+async def test_settings_first_slice_categories_have_real_content(request, button_id, expected):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -10999,18 +11003,15 @@ def test_settings_privacy_secret_count_ignores_non_secret_numeric_token_limits()
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp_path):
-    config_path = tmp_path / "config" / "config.toml"
-    # TASK-1310: 1df0c4cb4 made application_owned_config_directory() return
-    # None whenever TLDW_CONFIG_PATH is set (custom config parents are never
-    # auto-created -- see config.py's docstring "never a custom parent"), so
-    # the config bootstrap no longer recovers from a missing parent directory
-    # for a test-overridden path. Pre-create it, matching real deployments
-    # where the parent always exists before TLDW_CONFIG_PATH points at it.
+@private_profile_test
+async def test_settings_storage_test_shortcut_runs_safety_check(request, monkeypatch, tmp_path):
+    from tldw_chatbook import config
+
+    config_path = Path(config.get_cli_config_path())
+    # The private-profile child selects this path before imports.
     config_path.parent.mkdir(parents=True, exist_ok=True)
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     app = _build_test_app()
     app.user_data_dir = data_dir
     app.notifications_db_path = data_dir / "notifications.db"
@@ -11500,7 +11501,9 @@ def test_settings_source_labels_cover_every_resolvable_source():
 # ---- [chat.images] render_remote_images toggle (task-1537 settings UI) ----
 
 
-def test_remote_images_toggle_label_reflects_config():
+@pytest.mark.asyncio
+@private_profile_test
+def test_remote_images_toggle_label_reflects_config(request):
     """The remote-images toggle label mirrors [chat.images].render_remote_images."""
     app = _build_test_app()
     app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {
@@ -11516,7 +11519,9 @@ def test_remote_images_toggle_label_reflects_config():
     assert screen._remote_images_button_label() == "Disabled"
 
 
-def test_remote_images_toggle_persists_and_pokes_live_config(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+def test_remote_images_toggle_persists_and_pokes_live_config(request, monkeypatch):
     """Toggling persists the dotted section AND updates the live app_config.
 
     The App captures ``app_config`` once at startup, so the persisted write
@@ -11526,14 +11531,9 @@ def test_remote_images_toggle_persists_and_pokes_live_config(monkeypatch):
     app = _build_test_app()
     app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {"chat": {"images": {}}}
     screen = SettingsScreen(app)
-    # task-15470: the actual write moved into a `@work(thread=True)`
-    # instance method (`_persist_remote_images_toggle`), which needs a
-    # running/mounted app to dispatch through `run_worker` -- this screen
-    # is constructed but never pushed onto `app`'s screen stack. Patching
-    # the instance method (rather than the module-level
-    # `save_settings_to_cli_config` it wraps) keeps this test's own
-    # subject -- the dotted section shape and the live app_config poke --
-    # intact.
+    # Persistence is queued through an app-owned worker, while this screen
+    # is never mounted. Patch the enqueue seam to retain this test's original
+    # dotted-section payload and live-config assertions.
     saved = []
     screen._persist_remote_images_toggle = lambda next_value: saved.append(
         {"chat.images": {"render_remote_images": next_value}}

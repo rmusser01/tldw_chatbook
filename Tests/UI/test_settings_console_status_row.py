@@ -5,21 +5,22 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button
 
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
 )
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
-import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-
 
 POSITION_TOGGLE = "#settings-console-status-row-position-toggle"
 
 
 @pytest.mark.asyncio
-async def test_status_row_position_toggle_flips_and_pokes_live_config():
+@private_profile_test
+async def test_status_row_position_toggle_flips_and_pokes_live_config(request):
     """The toggle carries the state in its label and applies immediately.
 
     ADR-020-style immediate write (remote-images precedent): pressing the
@@ -49,7 +50,7 @@ async def test_status_row_position_toggle_flips_and_pokes_live_config():
 
 
 def test_status_row_position_is_field_search_indexed():
-    """"/" search must land on the placement control by its label."""
+    """ "/" search must land on the placement control by its label."""
     settings_screen_module._build_field_search_index()
     entries = settings_screen_module.FIELD_SEARCH_INDEX[
         SettingsCategoryId.CONSOLE_BEHAVIOR

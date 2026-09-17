@@ -8,6 +8,7 @@ import pytest
 from textual.widgets import Checkbox, Select
 
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -77,8 +78,9 @@ def test_reasoning_override_maps_are_known_freeform_console_config() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("saved_mode", ["current", "all", "off"])
+@private_profile_test
 async def test_reasoning_history_defaults_automatic_and_persists_each_mode(
-    monkeypatch, saved_mode: str
+    request, monkeypatch, saved_mode: str
 ) -> None:
     """Catches a missing mode option or saving replay under conversation policy."""
 
@@ -121,7 +123,9 @@ async def test_reasoning_history_defaults_automatic_and_persists_each_mode(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_reasoning_history_remembers_normalized_target_and_clears_override(
+    request,
     monkeypatch,
 ) -> None:
     """Catches storing a raw URL/model or making native-tool support implicit."""
@@ -191,15 +195,14 @@ async def test_reasoning_history_remembers_normalized_target_and_clears_override
 
 
 @pytest.mark.asyncio
-async def test_gemma_status_explains_fenced_tool_round_limit() -> None:
+@private_profile_test
+async def test_gemma_status_explains_fenced_tool_round_limit(request) -> None:
     app = _app_with_local_console_target(
         provider="local_vllm",
         endpoint="http://localhost:9099",
         model="gemma-4",
     )
-    key = reasoning_override_key(
-        "local_vllm", "http://localhost:9099", "gemma-4"
-    )
+    key = reasoning_override_key("local_vllm", "http://localhost:9099", "gemma-4")
     app.console_runtime.provider_gateway.reasoning_policies = {
         key: ReasoningReplayPolicy(
             "current",
@@ -223,7 +226,10 @@ async def test_gemma_status_explains_fenced_tool_round_limit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mounted_reasoning_selectors_use_shared_validation(monkeypatch) -> None:
+@private_profile_test
+async def test_mounted_reasoning_selectors_use_shared_validation(
+    request, monkeypatch
+) -> None:
     app = _app_with_local_console_target()
     calls: list[tuple[object, bool]] = []
 
@@ -241,7 +247,9 @@ async def test_mounted_reasoning_selectors_use_shared_validation(monkeypatch) ->
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
-        screen.query_one("#settings-console-reasoning-history", Select).value = "current"
+        screen.query_one(
+            "#settings-console-reasoning-history", Select
+        ).value = "current"
         screen.query_one("#settings-console-reasoning-override", Select).value = "all"
         await pilot.pause()
 
