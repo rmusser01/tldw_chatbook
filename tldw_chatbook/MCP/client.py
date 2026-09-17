@@ -1606,7 +1606,12 @@ class MCPClient:
         active_owner: Optional[_StdioJSONRPCConnection],
         pending_owner: Optional[_PendingConnection],
     ) -> None:
+        from .streamable_http import StreamableHTTPConnection
+
+        is_http = isinstance(cleanup_session, StreamableHTTPConnection)
         if cleanup_session is not None:
+            if is_http and self.sessions.get(server_id) is cleanup_session:
+                self.servers.pop(server_id, None)
             cleanup = asyncio.create_task(
                 self._teardown_connection(server_id, session=cleanup_session)
             )
@@ -1617,6 +1622,10 @@ class MCPClient:
             except asyncio.TimeoutError:
                 cleanup.cancel()
                 await asyncio.gather(cleanup, return_exceptions=True)
+        if is_http and not cleanup_session._cleanup_complete:
+            # An admission-closed HTTP session still owns incomplete resources.
+            # Keep it for later close attempts without advertising a live catalog.
+            raise MCPClientError("MCP HTTP cleanup incomplete")
         process = (
             pending_owner.process
             if pending_owner is not None

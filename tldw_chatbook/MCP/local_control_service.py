@@ -236,7 +236,12 @@ class LocalMCPControlService:
                 {
                     **profile.to_dict(),
                     "discovery_snapshot": snapshot,
-                    "is_connected": profile.profile_id in active_sessions,
+                    "is_connected": (
+                        profile.profile_id in active_sessions
+                        and not getattr(
+                            active_sessions[profile.profile_id], "_closed", False
+                        )
+                    ),
                 }
             )
         return servers

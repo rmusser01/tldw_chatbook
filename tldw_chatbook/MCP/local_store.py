@@ -381,6 +381,20 @@ class TransportProfile:
             _ = parsed.port
 
 
+def _validate_profile_transport_fields(data: Mapping[str, Any]) -> None:
+    """Reject unsupported HTTP fields before legacy stdio coercion drops them."""
+    if any(key in data for key in ("headers", "auth", "credentials")):
+        raise ValueError("mcp_authentication_unsupported")
+    if data.get("transport", "stdio") != "streamable_http":
+        return
+    for key in ("env", "env_placeholders", "env_literals", "legacy_env_literals"):
+        value = data.get(key)
+        if value is not None and value != {}:
+            raise ValueError("mcp_authentication_unsupported")
+    if data.get("command") not in (None, "") or data.get("args") not in (None, [], ()):
+        raise ValueError("mcp_profile_invalid")
+
+
 @dataclass(frozen=True)
 class LocalExternalMCPProfile:
     profile_id: str
@@ -397,6 +411,7 @@ class LocalExternalMCPProfile:
     development_loopback: bool = False
 
     def __post_init__(self) -> None:
+        _validate_profile_transport_fields(vars(self))
         object.__setattr__(self, "profile_id", _text(self.profile_id))
         object.__setattr__(self, "command", _text(self.command))
         object.__setattr__(
@@ -477,8 +492,7 @@ class LocalExternalMCPProfile:
     def from_input_dict(cls, data: Any) -> "LocalExternalMCPProfile":
         if not isinstance(data, Mapping):
             return cls(profile_id="", command="")
-        if any(key in data for key in ("headers", "auth", "credentials")):
-            raise ValueError("mcp_authentication_unsupported")
+        _validate_profile_transport_fields(data)
         raw_args = data.get("args")
         args = (
             tuple(str(item).strip() for item in raw_args)
@@ -503,8 +517,7 @@ class LocalExternalMCPProfile:
     def from_storage_dict(cls, data: Any) -> "LocalExternalMCPProfile":
         if not isinstance(data, Mapping):
             return cls(profile_id="", command="")
-        if any(key in data for key in ("headers", "auth", "credentials")):
-            raise ValueError("mcp_authentication_unsupported")
+        _validate_profile_transport_fields(data)
         raw_args = data.get("args")
         args = (
             tuple(str(item).strip() for item in raw_args)

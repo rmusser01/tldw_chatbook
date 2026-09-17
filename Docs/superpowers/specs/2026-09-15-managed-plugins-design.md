@@ -1393,6 +1393,16 @@ it. Cancellation or transport cleanup never proves remote completion. The
 existing unified service remains the timeout/audit owner. No request is replayed
 on reconnect, session expiry, header mismatch or uncertain response loss.
 
+HTTP admission closes before resource teardown. Request scopes drain independently
+of arbitrary caller finalization. The existing five-second client cleanup bound
+still applies: a cancelled wait leaves the same cleanup task and unready session
+owned for a later close attempt, with its live catalog withdrawn. A pending close
+may finish and then ordinary disconnect/reconnect can release/reuse the profile.
+An actual lower close failure remains incomplete and cannot be automatically
+replaced: HTTPX marks its client closed before closing the pool, so that flag or
+a second no-op client close cannot establish resource closure. Local cleanup
+never settles an uncertain remote outcome or authorizes invocation replay.
+
 The three explicit profiles have controlled stdio and HTTP JSON/SSE exchanges.
 Legacy HTTP can resume identified SSE responses using GET/Last-Event-ID and
 respects retry within the existing deadline; modern HTTP never uses protocol

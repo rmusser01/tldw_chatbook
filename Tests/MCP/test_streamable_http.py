@@ -48,6 +48,9 @@ async def peer(
             method = message.get("method")
             status, media = 200, "application/json"
             extra = ""
+            if verb == "DELETE" and fault == "hang_delete":
+                await reader.read()
+                return
             if verb == "GET" and resume:
                 media, payload = (
                     "text/event-stream",
@@ -243,6 +246,10 @@ async def peer(
                 if fault == "bad_media" and method == "tools/call":
                     media = "text/html"
             framing = f"Content-Length: {len(payload)}\r\nConnection: close\r\n"
+            if fault == "keepalive" and method == "tools/call":
+                framing = (
+                    f"Content-Length: {len(payload)}\r\nConnection: keep-alive\r\n"
+                )
             if fault == "open_final" and method == "tools/call":
                 framing = "Connection: keep-alive\r\n"
             writer.write(
@@ -250,7 +257,7 @@ async def peer(
                 + payload
             )
             await writer.drain()
-            if fault == "open_final" and method == "tools/call":
+            if fault in {"open_final", "keepalive"} and method == "tools/call":
                 await reader.read()
         finally:
             writers.discard(writer)
@@ -944,3 +951,269 @@ async def test_query_endpoint_redirect_refusal_has_same_entry_success(
                     assert not client.sessions and not client._pending_connections
             finally:
                 await client.disconnect_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", VERSIONS)
+@pytest.mark.parametrize("fault", [None, "hang"])
+async def test_disconnect_closes_http_resources_before_caller_finalization(
+    monkeypatch, version, fault
+):
+    from tldw_chatbook.MCP.client import MCPClient
+    from tldw_chatbook.MCP.local_store import TransportProfile
+    from tldw_chatbook.MCP.tool_results import MCPDispatchObservation, observe_dispatch
+
+    async with peer(monkeypatch, version=version, fault=fault) as (url, _, calls):
+        client = MCPClient()
+        release = asyncio.Event()
+        finalizing = asyncio.Event()
+        caller = None
+        session = None
+        try:
+            assert await client.connect_profile(
+                TransportProfile(
+                    profile_id="owned",
+                    transport="streamable_http",
+                    url=url,
+                    protocol_version=version,
+                    development_loopback=True,
+                )
+            )
+            session = client.sessions["owned"]
+            observation = MCPDispatchObservation()
+
+            async def call_and_finalize():
+                try:
+                    return await client.call_tool_result("owned", "echo", {})
+                except asyncio.CancelledError:
+                    finalizing.set()
+                    await release.wait()
+                    raise
+
+            with observe_dispatch(observation):
+                caller = asyncio.create_task(call_and_finalize())
+            async with asyncio.timeout(2):
+                while not calls["count"]:
+                    await asyncio.sleep(0.001)
+            connections = list(session._http._transport._pool.connections)
+            if fault is None:
+                result = await caller
+                assert result.structured_content == {"pass": True}
+            await asyncio.wait_for(client.disconnect_all(), timeout=8)
+            assert session._http.is_closed
+            assert not session._http._transport._pool.connections
+            assert all(connection.is_closed() for connection in connections)
+            if fault == "hang":
+                assert finalizing.is_set() and not caller.done()
+                assert observation.state == "uncertain"
+            else:
+                assert observation.state == "settled"
+            assert not client.sessions and not client._pending_connections
+            await session.close()
+            assert session._http.is_closed and calls["count"] == 1
+        finally:
+            release.set()
+            if caller is not None:
+                await asyncio.gather(caller, return_exceptions=True)
+            await client.disconnect_all()
+            if session is not None:
+                await session._http.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", VERSIONS[1:])
+async def test_interrupted_http_close_finishes_resources_and_can_repeat(
+    monkeypatch, version
+):
+    from tldw_chatbook.MCP.client import MCPClient
+    from tldw_chatbook.MCP.local_store import TransportProfile
+
+    async with peer(monkeypatch, version=version, fault="hang_delete") as (
+        url,
+        messages,
+        calls,
+    ):
+        client = MCPClient()
+        session = None
+        closing = None
+        try:
+            assert await client.connect_profile(
+                TransportProfile(
+                    profile_id="owned",
+                    transport="streamable_http",
+                    url=url,
+                    protocol_version=version,
+                    development_loopback=True,
+                )
+            )
+            session = client.sessions["owned"]
+            assert (
+                await client.call_tool_result("owned", "echo", {})
+            ).dispatch_state == "settled"
+            closing = asyncio.create_task(session.close())
+            async with asyncio.timeout(2):
+                while not any(verb == "DELETE" for verb, _, _ in messages):
+                    await asyncio.sleep(0.001)
+            connections = list(session._http._transport._pool.connections)
+            with pytest.raises(RuntimeError, match="mcp_connection_closed"):
+                await session.notify("notifications/cancelled", {"requestId": 999})
+            closing.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await closing
+            await asyncio.wait_for(session.close(), timeout=2)
+            assert session._http.is_closed
+            assert all(connection.is_closed() for connection in connections)
+            await client.disconnect_all()
+            assert not client.sessions and calls["count"] == 1
+        finally:
+            if closing is not None:
+                await asyncio.gather(closing, return_exceptions=True)
+            await client.disconnect_all()
+            if session is not None:
+                await session._http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stalled_real_http_close_keeps_bounded_retryable_owner(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.MCP.client import MCPClient
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+    from tldw_chatbook.MCP.local_store import (
+        LocalExternalMCPProfile,
+        LocalMCPStore,
+        TransportProfile,
+    )
+
+    async with peer(monkeypatch) as (url, _, calls):
+        client = MCPClient()
+        release = asyncio.Event()
+        closing_http = asyncio.Event()
+        session = None
+        try:
+            assert await client.connect_profile(
+                TransportProfile(
+                    profile_id="owned",
+                    transport="streamable_http",
+                    url=url,
+                    development_loopback=True,
+                )
+            )
+            session = client.sessions["owned"]
+            assert (
+                await client.call_tool_result("owned", "echo", {})
+            ).dispatch_state == "settled"
+            real_close = session._http.aclose
+
+            async def delayed_real_close():
+                closing_http.set()
+                await release.wait()
+                await real_close()
+
+            monkeypatch.setattr(session._http, "aclose", delayed_real_close)
+            assert not await asyncio.wait_for(
+                client.disconnect_from_server("owned"), timeout=7
+            )
+            store = LocalMCPStore(tmp_path / "closing.json")
+            store.save_profile(
+                LocalExternalMCPProfile(
+                    profile_id="owned",
+                    transport="streamable_http",
+                    url=url,
+                    development_loopback=True,
+                    protocol_version="2026-07-28",
+                )
+            )
+            local = LocalMCPControlService(
+                store=store, client=client, manifest_provider=dict
+            )
+            assert closing_http.is_set() and not session._http.is_closed
+            assert local.get_external_servers()[0]["is_connected"] is False
+            assert client.get_server_tools("owned") == []
+            before = len(calls["targets"])
+            assert not await asyncio.wait_for(
+                client.connect_profile(
+                    TransportProfile(
+                        profile_id="owned",
+                        transport="streamable_http",
+                        url=url,
+                        development_loopback=True,
+                    )
+                ),
+                timeout=7,
+            )
+            assert len(calls["targets"]) == before
+            assert client.sessions["owned"] is session
+            with pytest.raises(RuntimeError, match="mcp_connection_closed"):
+                await session.request("tools/list")
+            retry = asyncio.create_task(session.close())
+            await asyncio.sleep(0)
+            retry.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await retry
+            assert client.sessions["owned"] is session
+            release.set()
+            await asyncio.wait_for(client.disconnect_all(), timeout=2)
+            assert session._http.is_closed
+            assert not session._http._transport._pool.connections
+            assert not client.sessions and calls["count"] == 1
+            await session.close()
+            assert await local.connect_profile("owned")
+            assert local.get_external_servers()[0]["is_connected"] is True
+            assert client.sessions["owned"] is not session
+        finally:
+            release.set()
+            await client.disconnect_all()
+            if session is not None:
+                await session._http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_failed_lower_http_close_never_settles_from_client_closed_bit(
+    monkeypatch,
+):
+    from tldw_chatbook.MCP.client import MCPClient
+    from tldw_chatbook.MCP.local_store import TransportProfile
+
+    async with peer(monkeypatch, fault="keepalive") as (url, _, calls):
+        client = MCPClient()
+        session = None
+        real_close = None
+        try:
+            assert await client.connect_profile(
+                TransportProfile(
+                    profile_id="owned",
+                    transport="streamable_http",
+                    url=url,
+                    development_loopback=True,
+                )
+            )
+            session = client.sessions["owned"]
+            assert (
+                await client.call_tool_result("owned", "echo", {})
+            ).dispatch_state == "settled"
+            connections = list(session._http._transport._pool.connections)
+            assert connections and any(
+                not connection.is_closed() for connection in connections
+            )
+            real_close = session._http._transport.aclose
+
+            async def failed_lower_close():
+                raise RuntimeError("owned lower-close failure")
+
+            monkeypatch.setattr(session._http._transport, "aclose", failed_lower_close)
+            assert not await client.disconnect_from_server("owned")
+            assert session._http.is_closed
+            assert any(not connection.is_closed() for connection in connections)
+            assert client.sessions["owned"] is session
+            # HTTPX's second aclose is a no-op after it sets its CLOSED bit.
+            assert not await client.disconnect_from_server("owned")
+            assert client.sessions["owned"] is session
+            assert any(not connection.is_closed() for connection in connections)
+            assert calls["count"] == 1
+        finally:
+            if real_close is not None:
+                await real_close()
+            await client.disconnect_all()
+            if session is not None:
+                assert not session._http._transport._pool.connections

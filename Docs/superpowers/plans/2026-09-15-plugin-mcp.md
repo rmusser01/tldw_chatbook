@@ -387,6 +387,16 @@ profiles discover advertised catalogs only; unavailable optional catalogs and
 invalid modern header annotations have fixed diagnostics. The legacy
 `connect_to_server` entry retains its exact-version compatibility contract.
 
+HTTP admission closes before resource teardown. Request scopes drain independently
+of arbitrary caller finalization. The existing five-second client cleanup bound
+still applies: a cancelled wait leaves the same cleanup task and unready session
+owned for a later close attempt, with its live catalog withdrawn. A pending close
+may finish and then ordinary disconnect/reconnect can release/reuse the profile.
+An actual lower close failure remains incomplete and cannot be automatically
+replaced: HTTPX marks its client closed before closing the pool, so that flag or
+a second no-op client close cannot establish resource closure. Local cleanup
+never settles an uncertain remote outcome or authorizes invocation replay.
+
 Wire qualification uses original, repository-owned stdio peers and loopback
 HTTP peers: the three explicit versions each exercise actual stdio plus HTTP
 JSON and SSE, with full M1 raw-result/dispatch provenance. These are controlled

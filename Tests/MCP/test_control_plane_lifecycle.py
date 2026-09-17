@@ -264,3 +264,80 @@ async def test_actual_http_auth_challenge_has_explicit_service_diagnostic(
             await service.connect_profile("owned")
         assert not client.sessions and not client._pending_connections
         assert calls["count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"env_placeholders": {"API_KEY": "$M2_MISSING_REVIEW_KEY"}},
+        {"env_literals": {"LOG_LEVEL": "debug"}},
+        {"legacy_env_literals": {"MODE": "private"}},
+        {"env": {"API_KEY": "$M2_MISSING_REVIEW_KEY"}},
+        {"env_placeholders": {"": ""}},
+        {"env_literals": ["discarded"]},
+        {"legacy_env_literals": "discarded"},
+        {"env": ["discarded"]},
+        {"headers": {"Authorization": "private sentinel"}},
+        {"auth": {}},
+        {"credentials": None},
+        {"command": "   "},
+        {"args": ["   "]},
+        {"args": "discarded"},
+    ],
+)
+async def test_reopened_http_unsupported_fields_never_dispatch(
+    tmp_path, monkeypatch, fields
+):
+    import json
+
+    from Tests.MCP.test_streamable_http import peer
+    from tldw_chatbook.MCP.client import MCPClient
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+    from tldw_chatbook.MCP.local_store import (
+        LocalExternalMCPProfile,
+        LocalMCPStoreLoadError,
+    )
+
+    async with peer(monkeypatch) as (url, messages, calls):
+        path = tmp_path / "reopened-http.json"
+        store = LocalMCPStore(path)
+        store.save_profile(
+            LocalExternalMCPProfile(
+                profile_id="owned",
+                transport="streamable_http",
+                url=url,
+                protocol_version="2026-07-28",
+                development_loopback=True,
+            )
+        )
+        valid_bytes = path.read_bytes()
+        client = MCPClient()
+        try:
+            valid = LocalMCPControlService(
+                store=LocalMCPStore(path), client=client, manifest_provider=dict
+            )
+            assert (await valid.connect_profile("owned"))["tools"][0]["name"] == "echo"
+            await client.disconnect_all()
+            payload = json.loads(valid_bytes)
+            payload["profiles"][0].update(fields)
+            invalid_bytes = json.dumps(payload).encode()
+            path.write_bytes(invalid_bytes)
+            reopened = LocalMCPControlService(
+                store=LocalMCPStore(path), client=client, manifest_provider=dict
+            )
+            before = len(messages)
+            with pytest.raises(LocalMCPStoreLoadError, match="mcp_store_invalid"):
+                await reopened.connect_profile("owned")
+            assert len(messages) == before and calls["count"] == 0
+            assert not client.sessions and not client._pending_connections
+            assert path.read_bytes() == invalid_bytes
+            path.write_bytes(valid_bytes)
+            restored = LocalMCPControlService(
+                store=LocalMCPStore(path), client=client, manifest_provider=dict
+            )
+            assert (await restored.connect_profile("owned"))["tools"][0][
+                "name"
+            ] == "echo"
+        finally:
+            await client.disconnect_all()

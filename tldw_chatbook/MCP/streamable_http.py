@@ -48,7 +48,9 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
         self._session_id: str | None = None
         self._request_ids = count(1)
         self._closed = False
-        self._requests: set[asyncio.Task] = set()
+        self._requests: dict[asyncio.Task, asyncio.Future] = {}
+        self._cleanup_task: asyncio.Task | None = None
+        self._cleanup_complete = False
         self._tool_headers: dict[str, tuple] = {}
         self._on_transport_failure = None
         self._http = httpx.AsyncClient(
@@ -129,7 +131,8 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
             {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
         )
         task = asyncio.current_task()
-        self._requests.add(task)
+        drained = asyncio.get_running_loop().create_future()
+        self._requests[task] = drained
         failed = False
         try:
             async with asyncio.timeout(
@@ -166,7 +169,8 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
             failed = True
             raise
         finally:
-            self._requests.discard(task)
+            self._requests.pop(task, None)
+            drained.set_result(None)
             if (
                 (failed or "mcp_catalog_changed" in self.diagnostics)
                 and self.protocol_version
@@ -379,6 +383,8 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
                     raise ValueError("mcp_notification_invalid")
 
     async def notify(self, method: str, params: dict | None = None) -> None:
+        if self._closed:
+            raise RuntimeError("mcp_connection_closed")
         if self.profile.modern:
             raise ValueError("mcp_notification_unsupported")
         await self._post_oneway(
@@ -386,22 +392,31 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
         )
 
     async def close(self) -> None:
-        if self._closed:
-            return
+        # Admission closure does not mean the HTTP client/pool finished closing.
+        # A cancelled wait can rejoin this owned task. Never restart a failed
+        # aclose: HTTPX sets its CLOSED bit before lower transport cleanup.
         self._closed = True
-        current = asyncio.current_task()
-        tasks = [task for task in self._requests if task is not current]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if self._cleanup_task is None:
+            self._cleanup_task = asyncio.create_task(self._close_resources())
+        await asyncio.shield(self._cleanup_task)
+
+    async def _close_resources(self) -> None:
         try:
+            requests = list(self._requests.items())
+            for task, _ in requests:
+                task.cancel()
+            # Only the request scope belongs to us; callers may perform arbitrary
+            # asynchronous finalization after request() has already unwound.
+            await asyncio.gather(*(drained for _, drained in requests))
             if self._session_id is not None:
-                async with asyncio.timeout(1.0):
-                    async with self._http.stream(
-                        "DELETE", self.url, headers=self._headers()
-                    ):
-                        pass
-        except Exception:  # noqa: BLE001 -- best-effort session close
-            logger.debug("MCP session termination could not be confirmed")
+                try:
+                    async with asyncio.timeout(1.0):
+                        async with self._http.stream(
+                            "DELETE", self.url, headers=self._headers()
+                        ):
+                            pass
+                except Exception:  # noqa: BLE001 -- best-effort session close
+                    logger.debug("MCP session termination could not be confirmed")
         finally:
             await self._http.aclose()
+            self._cleanup_complete = True
