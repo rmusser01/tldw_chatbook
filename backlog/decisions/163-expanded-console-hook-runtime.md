@@ -335,7 +335,7 @@ Stop event, chain start/count and inherited configuration. Only successful
 accepted root settlement can issue it; retired operation/run scopes are never
 rebound. Required post gates settle before transfer to the live session owner.
 
-ChaChaNotes schema 74 adds `console_hook_continuation_receipts`, keyed uniquely
+ChaChaNotes schema 75 adds `console_hook_continuation_receipts`, keyed uniquely
 by `(parent_turn_id, stop_event_id)`. The existing acceptance transaction inserts
 the receipt, user-role attributed untrusted input, assistant owner and active
 dispatch checkpoint together. A duplicate rolls the competing acceptance back.
