@@ -10,6 +10,7 @@ snapshot races, with the recipient visible at compact width. TASK-2377 repairs
 recovery after panel rebuilds; TASK-32707 keeps live keyboard focus visible when
 search results arrive. TASK-32712 keeps retrieval failure/recovery beside Run and
 clears it on retry without hiding provider disclosure.
+TASK-32713 extends that visible recovery to answer-generation failures.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -895,3 +896,28 @@ Next bounded review: Search/RAG answer-generation and recovery states, followed 
 the remaining feature/component surfaces. Provider generation and semantic/remote
 retrieval are not qualified by this local retry evidence. No full suite, push or
 merge was performed.
+
+## RAG answer failure recovery — 2026-09-17 UTC (TASK-32713)
+
+[Evidence](../qa/2026-09-17-rag-answer-recovery/README.md) closes the matching
+answer-phase gap: a failed generation now reports beside Run while the query
+retains focus. Provider disclosure and detailed Answer recovery remain intact.
+The existing gate clears the notice during retry, and success removes the error.
+Only the notice helper changes; existing tokens and lifecycle handling suffice.
+
+The final targeted gate passes 326 tests without exclusions. Eight new mounted
+journeys cover exception/empty-answer failure, painted disclosure, busy-state
+clearance, retained query/scope/focus and cited success at both sizes/themes.
+Independent review found no actionable issue and static checks add no diagnostics.
+Eight native journeys pass using real keyword retrieval adapted to RAG mode and
+a controlled provider seam; all twelve captures were inspected. The source and
+default profile files are unchanged, ten databases are healthy, and normal
+shutdown/PID absence are verified. Two earlier runner assumptions were corrected
+without changing production: keyword evidence body shape and inspection-scroll
+restoration between cells.
+
+Next bounded review: keyboard access to generated answers and citation warnings,
+followed by the remaining feature/component surfaces. Controlled replies do not
+qualify real provider behavior, semantic retrieval or factual grounding; answer
+captures use an explicit inspection scroll. No full suite, push or merge was
+performed.

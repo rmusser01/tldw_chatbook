@@ -951,13 +951,19 @@ def library_rag_query_quiet_text(state: LibraryRagPanelState) -> str:
 
 
 def library_rag_retrieval_notice_text(state: LibraryRagPanelState) -> str:
-    """Explain a settled retrieval failure beside the still-usable query."""
+    """Explain a settled retrieval or answer failure beside the usable query."""
     if not state.query_state.run_action.enabled:
         return ""
     if state.retrieval_status == "failed":
         return "Retrieval failed. Run again to retry."
     if state.retrieval_status == "blocked":
         return f"Retrieval unavailable. {state.next_action}"
+    if (
+        state.query_state.mode == "rag"
+        and state.answer is not None
+        and state.answer.status == ANSWER_STATUS_FAILED
+    ):
+        return "Answer failed. Run again to retry."
     return ""
 
 

@@ -1,0 +1,13 @@
+{
+  "pid": 36788,
+  "runner_sha256": "531fd2c8ad94ad4a8a0929dfecbd40531535ecd70a788a0e9b7be88d88de68f3",
+  "cells": [],
+  "waiting_for": "retry provider called",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-answer-recovery/native_check.py\", line 243, in journey\n    assert screen._rag_search_state.answer_in_flight\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "app_run_returned": true,
+  "exit_code": 1,
+  "pid_absent_verified": true,
+  "owned_terminal_closed": true,
+  "classification": "Runner asserted full Media body in keyword evidence; shipping keyword rows intentionally carry a source label. Product unchanged."
+}

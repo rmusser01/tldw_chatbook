@@ -1,0 +1,11 @@
+{
+  "reviewer": "rag_heading_review",
+  "final_findings": [],
+  "final_review": "No actionable findings. The new branch is correctly gated to runnable RAG answer failures and reuses the existing busy/stale lifecycle.",
+  "reviewed_edges": [
+    "Retrieval failures take precedence; the answer notice is restricted to RAG mode and a runnable settled failure.",
+    "Constant new text introduces no additional provider/error data exposure; detailed existing recovery is unchanged.",
+    "Busy and stale-answer reset/generation guards retain their existing behavior.",
+    "Mounted exception/empty-answer matrix covers both sizes/themes, disclosure, retained focus/query/scope, busy clear, and cited retry success."
+  ]
+}
