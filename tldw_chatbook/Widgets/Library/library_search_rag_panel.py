@@ -78,6 +78,10 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         # rebuild (the ingest canvas's template-name cache pattern), so the
         # fetched line survives `sync_state` recomposes without re-querying.
         self._legacy_chunk_report: str = ""
+        # Feedback belongs to this panel's worker, not its replaceable children.
+        # A different panel still relies on the shared slot's refusal notice.
+        self._rechunk_running = False
+        self._rechunk_summary = ""
 
     def sync_state(self, state: LibraryRagPanelState) -> None:
         """Rebuild only this mounted Search/RAG panel from ``state``.
@@ -215,9 +219,9 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
 
         The control shares the report line's visibility (both derive from
         the cached report): it is offered exactly when older-engine items
-        exist, so a fully stamped library shows neither. Always mounted and
-        ``display``-gated -- the same never-remove/mount rule the report
-        line follows, so a mid-run recompose cannot eat the summary.
+        exist, so a fully stamped library shows neither. The panel caches
+        its worker state and receipt so rebuilding these display-gated
+        children preserves progress and completion feedback.
         """
         shown = bool(self._legacy_chunk_report) or bulk_rag_slot_in_flight(
             RECHUNK_SLOT
@@ -226,6 +230,7 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
             "Re-chunk older-engine items",
             id=self.RECHUNK_BUTTON_ID,
             classes="library-rag-recovery-action",
+            disabled=self._rechunk_running,
             tooltip=(
                 "Re-chunk items persisted before the current chunking "
                 "engine through the template-aware path, then re-index "
@@ -234,14 +239,13 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         )
         button.display = shown
         summary = Static(
-            "",
+            self._rechunk_summary,
             id=self.RECHUNK_SUMMARY_ID,
             classes="library-rag-quiet-line",
             # Counts plus service-built notes -- literal, never markup.
             markup=False,
         )
-        summary.add_class("h-1")
-        summary.display = False
+        summary.display = bool(self._rechunk_summary)
         return [button, summary]
 
     @on(Button.Pressed, f"#{RECHUNK_BUTTON_ID}")
@@ -279,19 +283,14 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         if refusal is not None:
             self.app.notify(refusal, severity="warning")
             return
+        self._rechunk_running = True
         try:
             button = self.query_one(f"#{self.RECHUNK_BUTTON_ID}", Button)
         except NoMatches:
             pass
         else:
             button.disabled = True
-        try:
-            summary = self.query_one(f"#{self.RECHUNK_SUMMARY_ID}", Static)
-        except NoMatches:
-            pass
-        else:
-            summary.update("Re-chunking…")
-            summary.display = True
+        self._apply_rechunk_summary("Re-chunking…")
         self._rechunk_legacy_worker()
 
     @work(thread=True, group=RECHUNK_WORKER_GROUP, exclusive=False)
@@ -363,6 +362,7 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
 
     def _apply_rechunk_summary(self, line: str) -> None:
         """Surface the run summary (main thread)."""
+        self._rechunk_summary = line
         try:
             summary = self.query_one(f"#{self.RECHUNK_SUMMARY_ID}", Static)
         except NoMatches:
@@ -372,6 +372,7 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
 
     def _finish_rechunk_run(self) -> None:
         """Re-enable the control and refresh the (now lower) report count."""
+        self._rechunk_running = False
         try:
             button = self.query_one(f"#{self.RECHUNK_BUTTON_ID}", Button)
         except NoMatches:
@@ -382,18 +383,11 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
                 RECHUNK_SLOT
             ):
                 button.display = False
-        try:
-            summary = self.query_one(f"#{self.RECHUNK_SUMMARY_ID}", Static)
-        except NoMatches:
-            pass
-        else:
-            # A failure path never lands a summary line -- retire the
-            # in-flight placeholder so it cannot read as a stuck run.
-            # (On success this runs BEFORE the summary lands, so a real
-            # summary is never cleared.)
-            if str(summary.renderable) == "Re-chunking…":
-                summary.update("")
-                summary.display = False
+        # A failure path never lands a receipt. Retire its placeholder even
+        # between child mounts; a later recompose must not resurrect progress.
+        # On success this runs before the receipt arrives.
+        if self._rechunk_summary == "Re-chunking…":
+            self._apply_rechunk_summary("")
         # The report count dropped by however many items were re-chunked;
         # refresh it in place rather than waiting for the next remount.
         self._request_legacy_chunk_report_refresh()

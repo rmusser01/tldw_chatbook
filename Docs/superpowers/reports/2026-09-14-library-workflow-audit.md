@@ -19,6 +19,8 @@ TASK-32716 synchronizes both query fields on history replay and keeps the focuse
 history control visible when an answer expands above it.
 TASK-32717 keeps mode and source toggles focused through canvas recomposition and
 verifies their existing in-flight retrieval/answer behavior.
+TASK-32718 retains Re-chunk progress and receipts through those changes and
+wraps completion notes at compact width.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -1038,3 +1040,30 @@ added. Next bounded review: older-engine chunk reporting and the Re-chunk contro
 Real-provider behavior, semantic retrieval, factual grounding and very narrow
 single-pane layouts remain outside qualification. No full suite, push or merge
 was performed.
+
+## Re-chunk progress and completion feedback — 2026-09-17 UTC (TASK-32718)
+
+[Evidence](../qa/2026-09-17-rag-rechunk-feedback/README.md) closes lost Re-chunk
+progress/disabled state and receipts after mode/source changes, plus clipped
+completion notes at compact width. Seven initial cases reproduce the defects.
+The panel now owns its worker feedback and lets the receipt wrap, preserving the
+existing policy and shared Re-chunk/backfill admission contracts. Existing
+ADR-078/ADR-031/ADR-150 apply; no stylesheet or token changes were required.
+
+All 75 targeted checks pass, including eleven new progress, receipt and
+failure/retry cases. Two older CSS checks now read the app's complete generated
+sheet set; both failed against the starting panel source before this test repair.
+Four final native theme/size journeys use the real scope and SQLite re-chunk
+service. Each migrates one item and retains one empty skipped item, preserving
+all five source records. All eight final captures show readable progress/counts
+and wrapped compact notes after natural notification expiry. Semantic indexing
+was disabled; the receipt correctly discloses the skipped re-index step.
+
+Static checks add no diagnostics, independent review found no actionable issue,
+and normal shutdown/PID absence are verified. Ten private databases are healthy;
+default profile files are unchanged and no conversation messages were added.
+The guide and testing lesson document same-panel feedback persistence and the
+recomposition/paint traps. Next bounded review: leaving and returning to
+Search/RAG during Re-chunk. Cross-destination receipts and actual semantic
+reindexing remain outside this qualification. No full suite, push or merge was
+performed.

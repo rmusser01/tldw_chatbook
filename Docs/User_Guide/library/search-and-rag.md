@@ -233,6 +233,12 @@ configured) — never a bare "done". The reported count drops by exactly
 the number re-chunked; skipped and failed items keep their older-engine
 chunks.
 
+Use Tab to focus **Re-chunk older-engine items**, then Enter to start. The
+button stays disabled and **Re-chunking…** remains visible while this panel's
+run is active, including when you change mode or source selections. Completion
+counts and notes remain through those changes while the Search/RAG panel stays
+open. In a compact terminal, scroll the panel to read the wrapped summary.
+
 Details worth knowing before you press:
 
 - **Skips are honest, not silent.** An item whose source text is empty or

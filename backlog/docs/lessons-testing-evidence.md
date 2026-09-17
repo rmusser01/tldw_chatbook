@@ -14543,3 +14543,12 @@ resize repair. Gate only the panel's `_reveal_focused_control` callback and
 forward other callbacks to the original scheduler. The four delayed-reveal
 cases then pass with newer focus both inside and outside the panel; the eight
 resize journeys separately verify retention and paint without the gate.
+
+## Recomposition replaces display-gated children too (TASK-32718, 2026-09-17)
+
+Re-chunk updated its existing Static and disabled button, but mode/scope changes
+rebuilt both children and discarded progress or completed counts. Retaining the
+worker feedback on the panel fixes that lifecycle. The compact receipt also held
+the full text while `h-1` clipped the re-index disclosure. Test active and landed
+feedback across real parent recomposition, and assert painted wrapped text rather
+than only the Static's value. Evidence: `Docs/superpowers/qa/2026-09-17-rag-rechunk-feedback/`.
