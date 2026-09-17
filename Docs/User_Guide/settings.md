@@ -192,7 +192,7 @@ The biggest page, and where to start.
 | **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, plus "Manual / custom provider"), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
 | **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
-| **Automatic refresh** | **Auto-refresh model lists on startup**, **Refresh after (hours):**, and per-provider **auto-refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
+| **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
 | **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text; fields a provider doesn't support are hidden, not greyed. Global fallbacks live under Console Behavior. |
 
 Use **Tab** to reach the discovered-model list, arrow keys to move, and
@@ -204,6 +204,13 @@ saved ID fills it as an unsaved draft; an existing Model value is kept.
 keeping the saved list. A failed save or clear keeps the checked rows for retry.
 Changing provider, endpoint or credentials clears the old results; a delayed
 operation cannot replace the new form’s results or Model value.
+
+Automatic refresh shows whether changes are saving, saved, or could not be saved.
+If a write fails, your choices remain visible when you leave this category and
+return; choose **Retry** after making the config file writable. The interval
+accepts fractional hours; **0** refreshes on every launch. Empty, negative, and
+invalid values explain how to recover without replacing the saved interval.
+Changing these controls does not record startup consent.
 
 **Test Provider** checks your current draft before saving. URL-based local
 providers also get a short endpoint or model-listing probe. The result separates

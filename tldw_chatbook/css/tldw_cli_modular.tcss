@@ -10071,6 +10071,11 @@ WorktreeRecoveryDialog {
     text-style: bold underline;
 }
 
+.settings-workbench-compact #settings-model-catalog-group Input,
+.settings-workbench-compact #settings-model-catalog-group .settings-input-label {
+    width: $ds-width-full;
+}
+
 .settings-speech-stacked .settings-speech-input-row .settings-input-label,
 .settings-speech-stacked .settings-speech-input-row .settings-speech-control-stack,
 .settings-speech-stacked .settings-speech-input-row > Input,

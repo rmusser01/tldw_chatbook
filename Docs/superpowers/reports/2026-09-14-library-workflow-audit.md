@@ -1207,3 +1207,27 @@ The accumulated workstream was first pushed as draft PR #2704 against dev, then
 this review continued. The PR has integration conflicts; no merge or full suite
 ran. Existing ADR-002/020/031/150/161 apply. Next bounded review: automatic
 model-refresh controls and their persistence/failure feedback.
+
+## Automatic model-refresh persistence — TASK-32746
+
+The [bounded review](../qa/2026-09-17-settings-model-catalog/README.md) reproduced
+silent failed writes, older writes overwriting the latest choice, and a clipped
+startup checkbox at 80 columns. The existing Settings owner now serializes
+writes, retains pending/failed values across category rebuilds and exposes
+truthful saving/saved/error receipts with keyboard Retry. Invalid/non-finite
+intervals do not write; fractional intervals are editable. Scoped token styles
+keep full labels visible, and edits continue to omit startup consent.
+
+All **223 distinct targeted checks** pass, including 19 new production-CSS cases.
+Independent review found no actionable defect. Four private native journeys
+passed in dark/light at 170×48 and 80×24: injected false-save results recovered
+through the real writer, exact parsed-config checks confirmed only intended
+fields changed, and eight captures were inspected. Eleven databases, default
+fingerprints, normal shutdown and exact process absence passed lifecycle checks.
+The fault injection qualifies the adapter-result recovery, not real OS denial.
+
+Existing ADR-020/031/150/161 apply. The guide and
+[full completion ledger](2026-09-17-design-system-completion-audit.md) now state
+the verified scope and remaining work. Next bounded review: provider generation
+defaults, followed by remaining Settings categories and destination workflows.
+Current-dev integration remains open; no full suite or merge into dev ran.

@@ -725,6 +725,29 @@ Button.settings-category-group-toggle:focus {
     padding: $ds-space-0 $ds-space-1;
 }
 
+/* Keep refresh controls inside the scrolled group at compact widths. */
+#settings-model-catalog-group .settings-input-row {
+    height: auto;
+}
+
+#settings-model-catalog-group Checkbox {
+    width: auto;
+    max-width: $ds-width-full;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}
+
+#settings-model-catalog-group Input {
+    width: $ds-width-fill;
+}
+
+.settings-workbench-compact #settings-model-catalog-group .settings-input-row {
+    layout: vertical;
+}
+
 .settings-instant-apply-hint {
     color: $ds-text-muted;
     text-style: italic;

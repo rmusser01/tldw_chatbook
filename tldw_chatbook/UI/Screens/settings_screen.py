@@ -10,6 +10,7 @@ import copy
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -2876,6 +2877,15 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
         self._model_discovery_revision = 0
+        self._model_catalog_form_values: dict[str, dict[str, object]] | None = None
+        self._model_catalog_save_status = ""
+        self._model_catalog_save_failed = False
+        self._model_catalog_save_revision = 0
+        self._model_catalog_save_lock = threading.Lock()
+        self._model_catalog_save_running = False
+        self._model_catalog_pending_save: (
+            tuple[int, dict[str, dict[str, object]]] | None
+        ) = None
         # ADR-146 task-7 custom endpoints panel: the entry slug (if any)
         # whose inline Rename/Edit form is open, the slug whose delete is
         # blocked awaiting the Detach-references confirmation, and the
@@ -14006,7 +14016,7 @@ class SettingsScreen(BaseAppScreen):
             return
         self._reset_provider_model_discovery_state("Discovered model cache cleared.")
 
-    def _persist_model_catalog_settings(self) -> None:
+    def _persist_model_catalog_settings(self, *, retry: bool = False) -> None:
         """Persist the model catalog toggles to ``[model_catalog]`` (ADR-020).
 
         The toggles gate a background behavior, so changes save immediately
@@ -14037,23 +14047,10 @@ class SettingsScreen(BaseAppScreen):
             }
         except QueryError:
             return
-        stale_hours_text = stale_hours_raw.strip()
-        if not stale_hours_text:
-            # Empty intermediate input; keep the last persisted value.
-            return
-        try:
-            stale_after_hours: float | int = float(stale_hours_text)
-        except (TypeError, ValueError):
-            # Invalid intermediate input; keep the last persisted value.
-            return
-        if stale_after_hours < 0:
-            return
-        if stale_after_hours.is_integer():
-            stale_after_hours = int(stale_after_hours)
-        section_values = {
+        form_values = {
             "model_catalog": {
                 "auto_refresh_enabled": auto_refresh_enabled,
-                "stale_after_hours": stale_after_hours,
+                "stale_after_hours": stale_hours_raw,
                 "auto_refresh_disabled": [
                     provider
                     for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
@@ -14066,13 +14063,39 @@ class SettingsScreen(BaseAppScreen):
                 ],
             }
         }
+        # Rebuilt controls post their constructor values. Keep pending/failed
+        # edits and their receipt without treating those echoes as another save.
+        if not retry and form_values == self._model_catalog_form_values:
+            return
+        try:
+            stale_after_hours = float(stale_hours_raw.strip())
+            valid_hours = math.isfinite(stale_after_hours) and stale_after_hours >= 0
+        except ValueError:
+            valid_hours = False
+        self._model_catalog_save_revision += 1
+        self._model_catalog_form_values = form_values
+        self._model_catalog_save_failed = False
+        if not valid_hours:
+            with self._model_catalog_save_lock:
+                self._model_catalog_pending_save = None
+            self._model_catalog_save_status = (
+                "Enter 0 or a positive number of hours. Changes are not saved."
+            )
+            self._refresh_model_catalog_save_widgets()
+            return
+        section_values = copy.deepcopy(form_values)
+        section_values["model_catalog"]["stale_after_hours"] = (
+            int(stale_after_hours)
+            if stale_after_hours.is_integer()
+            else stale_after_hours
+        )
         # Compare every field EXCEPT consent: only the one-time startup
         # dialog records consent, and the write below never touches it.
         # Including it here would make a consented config never compare
         # equal, rewriting config.toml on every toggle/keystroke.
         candidate = load_model_catalog_settings(section_values)
         current = load_model_catalog_settings(load_settings())
-        if (
+        unchanged = (
             candidate.auto_refresh_enabled,
             candidate.stale_after_hours,
             candidate.auto_refresh_disabled,
@@ -14082,30 +14105,83 @@ class SettingsScreen(BaseAppScreen):
             current.stale_after_hours,
             current.auto_refresh_disabled,
             current.write_to_config,
-        ):
+        )
+        with self._model_catalog_save_lock:
+            if unchanged and not self._model_catalog_save_running:
+                self._model_catalog_form_values = None
+                self._model_catalog_save_status = "Saved. Applies at next startup."
+                start_worker = False
+            else:
+                # A return to the saved value still queues behind an older
+                # in-flight write, which could otherwise undo the latest edit.
+                self._model_catalog_pending_save = (
+                    self._model_catalog_save_revision,
+                    section_values,
+                )
+                start_worker = not self._model_catalog_save_running
+                self._model_catalog_save_running = True
+                self._model_catalog_save_status = "Saving automatic refresh settings..."
+        self._refresh_model_catalog_save_widgets()
+        if start_worker:
+            self._persist_model_catalog_section_values()
+
+    def _refresh_model_catalog_save_widgets(self) -> None:
+        self._set_static_text(
+            "#settings-model-catalog-save-status", self._model_catalog_save_status
+        )
+        try:
+            retry = self.query_one("#settings-model-catalog-retry", Button)
+            if retry.has_focus and not self._model_catalog_save_failed:
+                self.query_one("#settings-model-catalog-auto-refresh", Checkbox).focus()
+            retry.display = self._model_catalog_save_failed
+        except QueryError:
+            pass
+
+    def _model_catalog_save_finished(self, revision: int, saved: bool) -> None:
+        if revision != self._model_catalog_save_revision:
             return
-        self._persist_model_catalog_section_values(section_values)
+        self._model_catalog_save_failed = not saved
+        if saved:
+            self._model_catalog_form_values = None
+            self._model_catalog_save_status = "Saved. Applies at next startup."
+        else:
+            self._model_catalog_save_status = (
+                "Automatic refresh changes were not saved. Check that the config "
+                "file is writable, then choose Retry."
+            )
+            self.app.notify(
+                "Automatic refresh settings were not saved. Retry in Automatic refresh.",
+                severity="error",
+            )
+        self._refresh_model_catalog_save_widgets()
 
     @work(thread=True)
-    def _persist_model_catalog_section_values(
-        self, section_values: dict[str, dict[str, object]]
-    ) -> None:
-        """Write ``[model_catalog]`` off the event loop.
+    def _persist_model_catalog_section_values(self) -> None:
+        """Drain the latest pending snapshot with only one writer at a time.
 
-        task-15470: ``#settings-model-catalog-stale-hours`` is bound to
-        ``Input.Changed`` -- this used to call ``save_settings_to_cli_
-        config`` (a full config.toml read+atomic-rewrite+cache-reload)
-        synchronously on the event loop once per keystroke that parses as a
-        valid, changed value (every digit of a multi-digit number). The
-        no-op guard above (cheap: reads the cached settings, no I/O) stays
-        synchronous; only the actual write is deferred. Guarded broadly: an
-        uncaught exception in a ``@work(thread=True)`` worker is fatal to
-        the app by default (``exit_on_error=True``).
+        A thread cancellation cannot undo a config write. Keep the queue under a
+        lock rather than cancelling/replacing workers, and never let an older
+        completion overwrite a newer form's receipt.
         """
-        try:
-            save_settings_to_cli_config(section_values)
-        except Exception:
-            logger.warning("Failed to persist model_catalog settings.")
+        app = self.app
+        while True:
+            with self._model_catalog_save_lock:
+                pending = self._model_catalog_pending_save
+                self._model_catalog_pending_save = None
+                if pending is None:
+                    self._model_catalog_save_running = False
+                    return
+            revision, section_values = pending
+            try:
+                saved = bool(save_settings_to_cli_config(section_values))
+            except Exception:  # noqa: BLE001 - recover without exposing config details
+                logger.warning("Failed to persist model_catalog settings.")
+                saved = False
+            try:
+                app.call_from_thread(self._model_catalog_save_finished, revision, saved)
+            except RuntimeError:
+                # The app stopped; admitted writes still drain without UI access.
+                pass
 
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.
@@ -16097,7 +16173,9 @@ class SettingsScreen(BaseAppScreen):
             # task-1341: instant-apply is the labeled exception to the staged
             # default; the bordered group and hint line separate these
             # operational flags visually from the staged Connect fields.
-            model_catalog_settings = load_model_catalog_settings(load_settings())
+            model_catalog_settings = load_model_catalog_settings(
+                self._model_catalog_form_values or load_settings()
+            )
             # TASK-387: keep the internal decision-record id (ADR-020) out of the
             # user-facing heading; it survives in the code comment above.
             with Vertical(
@@ -16111,26 +16189,43 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-instant-apply-hint",
                 )
                 yield Checkbox(
-                    "Auto-refresh model lists on startup",
+                    "Refresh on startup",
                     value=model_catalog_settings.auto_refresh_enabled,
                     id="settings-model-catalog-auto-refresh",
                 )
                 with Horizontal(classes="settings-input-row"):
                     yield Static(
-                        "Refresh after (hours):", classes="settings-status-row"
+                        "Refresh after (hours)", classes="settings-input-label"
                     )
                     yield Input(
-                        f"{model_catalog_settings.stale_after_hours:g}",
+                        (
+                            str(
+                                self._model_catalog_form_values["model_catalog"][
+                                    "stale_after_hours"
+                                ]
+                            )
+                            if self._model_catalog_form_values is not None
+                            else f"{model_catalog_settings.stale_after_hours:g}"
+                        ),
                         id="settings-model-catalog-stale-hours",
-                        type="integer",
+                        type="number",
                         tooltip="0 = refetch every launch.",
                     )
+                yield Static(
+                    self._model_catalog_save_status,
+                    id="settings-model-catalog-save-status",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+                retry = Button("Retry", id="settings-model-catalog-retry")
+                retry.display = self._model_catalog_save_failed
+                yield retry
                 for _provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:
                     _provider_key = provider_config_key(_provider)
                     _pid = _provider.lower()
                     with Horizontal(classes="settings-input-row"):
                         yield Checkbox(
-                            f"{_provider}: auto-refresh",
+                            f"{_provider}: refresh",
                             value=(
                                 _provider_key
                                 not in model_catalog_settings.auto_refresh_disabled
@@ -27211,6 +27306,11 @@ class SettingsScreen(BaseAppScreen):
         if self._vllm_default_actions_fenced():
             return
         self._clear_discovered_provider_models_worker()
+
+    @on(Button.Pressed, "#settings-model-catalog-retry")
+    def handle_model_catalog_retry(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._persist_model_catalog_settings(retry=True)
 
     @on(Checkbox.Changed)
     def handle_model_catalog_toggle_changed(self, event: Checkbox.Changed) -> None:

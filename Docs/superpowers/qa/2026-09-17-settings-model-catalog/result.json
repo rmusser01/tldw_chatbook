@@ -1,0 +1,427 @@
+{
+  "pid": 75609,
+  "runner_sha256": "1d9bb377a759e145d66b5e51c2d4085580b235e7f1bcb9515f5d671b9df1c034",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "19179b3b77989d64fd862128baaf92ef51de339a504159294dbd4b2840d085e4",
+    "tldw_chatbook/css/features/_settings.tcss": "2bf53bc89a81432e61b4f2083727915a6db261fa0bd03502bea56a733ed76ad2",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "fa79a27b5308611b4e044d5334ee446b46ec4e329961914c1c54a3abb8e55b79",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "c4372cd899f745ccac52b194114fb7dedfecf0f4961b41f1e97bb2ec37735309"
+  },
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "saved": {
+        "use_models_dev": false,
+        "auto_refresh_enabled": true,
+        "refresh_consent_recorded": true,
+        "stale_after_hours": 0.5,
+        "auto_refresh_disabled": [
+          "OpenAI"
+        ],
+        "write_to_config": [
+          "OpenAI"
+        ]
+      },
+      "rebuild_preserved": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "saved": {
+        "use_models_dev": false,
+        "auto_refresh_enabled": false,
+        "refresh_consent_recorded": true,
+        "stale_after_hours": 0.5,
+        "auto_refresh_disabled": [],
+        "write_to_config": []
+      },
+      "rebuild_preserved": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "saved": {
+        "use_models_dev": false,
+        "auto_refresh_enabled": true,
+        "refresh_consent_recorded": true,
+        "stale_after_hours": 0.5,
+        "auto_refresh_disabled": [
+          "OpenAI"
+        ],
+        "write_to_config": [
+          "OpenAI"
+        ]
+      },
+      "rebuild_preserved": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "saved": {
+        "use_models_dev": false,
+        "auto_refresh_enabled": false,
+        "refresh_consent_recorded": true,
+        "stale_after_hours": 0.5,
+        "auto_refresh_disabled": [],
+        "write_to_config": []
+      },
+      "rebuild_preserved": true
+    }
+  ],
+  "writes": [
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 24,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": true,
+      "saved": false
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 24,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": true,
+      "saved": false
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": true,
+      "saved": false
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": true,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": true,
+      "saved": false
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [
+            "OpenAI"
+          ],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [],
+          "write_to_config": [
+            "OpenAI"
+          ]
+        }
+      },
+      "injected": false,
+      "saved": true
+    },
+    {
+      "sections": {
+        "model_catalog": {
+          "auto_refresh_enabled": false,
+          "stale_after_hours": 0.5,
+          "auto_refresh_disabled": [],
+          "write_to_config": []
+        }
+      },
+      "injected": false,
+      "saved": true
+    }
+  ],
+  "waiting_for": "Notifications dismissed",
+  "passed": true,
+  "consent_unchanged": true,
+  "unrelated_config_unchanged": true,
+  "app_run_returned": true
+}
