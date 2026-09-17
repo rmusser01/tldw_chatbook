@@ -1,11 +1,11 @@
 ---
 id: TASK-32682
 title: Add qualified direct Streamable HTTP MCP transport
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:27'
-updated_date: '2026-09-17 21:08'
+updated_date: '2026-09-17 21:22'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Direct stdio and Streamable HTTP profiles qualify 2026-07-28, 2025-11-25 and 2025-03-26 behavior with correct per-request or initialize/session lifecycle and JSON/SSE handling.
-- [ ] #2 Detection uses side-effect-free discovery; unsupported versions, pagination failures and optional capabilities produce explicit readiness diagnostics.
-- [ ] #3 Cancellation and reconnect retain uncertain invocation outcomes without automatic replay, and connection readiness includes protocol and discovery success.
-- [ ] #4 HTTPS is required except explicitly selected loopback development origins; redirects cannot forward credentials or weaken transport, and legacy stdio profile storage remains readable.
+- [x] #1 Direct stdio and Streamable HTTP profiles qualify 2026-07-28, 2025-11-25 and 2025-03-26 behavior with correct per-request or initialize/session lifecycle and JSON/SSE handling.
+- [x] #2 Detection uses side-effect-free discovery; unsupported versions, pagination failures and optional capabilities produce explicit readiness diagnostics.
+- [x] #3 Cancellation and reconnect retain uncertain invocation outcomes without automatic replay, and connection readiness includes protocol and discovery success.
+- [x] #4 HTTPS is required except explicitly selected loopback development origins; redirects cannot forward credentials or weaken transport, and legacy stdio profile storage remains readable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,4 +60,20 @@ Verification handoff from H2 review F3: any child bootstrap/network/profile fixt
 11. Initial independent review found I1/I2 at commit5875926a9f. Repair only these findings in Fix1: HTTP resource cleanup must survive interruption of caller-task draining, retain honest cleanup ownership/retryability, and close actual HTTP resources within the existing bounded owner without inventing remote completion or replay. Reopened HTTP records must apply the same discriminated unsupported env/auth validation before any fields are normalized/dropped or a network connection is attempted; retain historical stdio behavior and valid HTTP controls. Read task-15-review.md/task-15-fix1-findings.md verbatim. Allowed repair paths are MCP/streamable_http.py, MCP/client.py, MCP/local_store.py, MCP/local_control_service.py and Tests/MCP/test_streamable_http.py, test_local_store.py, test_protocol_profiles.py, test_control_plane_lifecycle.py; use only those actually needed and report any additional path/contract change first. Add genuine same-entry regressions for in-flight disconnect with asynchronous caller cleanup, interrupted/repeated close and actual closed HTTP resources; raw schema2 reopen with unsupported env/auth fields must never become ready or dispatch, with valid HTTP and legacy stdio controls. Use the recorded eight-file covering set, private runner and exact scoped loopback fixtures; preserve original evidence, compare static against the23 captured Fix1BASE snapshots, freeze the final bytes and append the fix report. Root owns exact commit and fresh scoped rereview. Existing bootstrap noise remains final triage, not this fix.
 
 12. Fix1 documentation may update only the existing M2 implementation-boundary sections in Docs/superpowers/plans/2026-09-15-plugin-mcp.md and Docs/superpowers/specs/2026-09-15-managed-plugins-design.md. Explain pending versus failed local cleanup, retained unready ownership, no false completion based on HTTPX closed flags, and no automatic replay/replacement. A cancelled wait can rejoin a still-running close; actual resource-close failure remains explicitly incomplete. This documents the existing truthful cleanup/uncertainty contract (ADR162/R49), not a new cleanup runtime or guarantee of remote termination. Both docs are already among the23 Fix1BASE snapshots and24 freeze paths; include them in final exact diff/static/whitespace/freeze evidence if changed.
+
+13. After the independent Fix1 review accepts I1/I2, record the factual HTTPX closed-flag versus actual resource-cleanup incident in backlog/docs/lessons-testing-evidence.md. Keep this closeout documentation-only; the final frozen558-test result qualifies unchanged runtime/test bytes. Record reviewed fixes, existing ADR111/162/163 and R60/R61, exact verification limits, four ACs and final Implementation Notes through the Backlog CLI.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented direct stdio and Streamable HTTP profiles for the three selected MCP revisions using the existing MCPClient, discovery, permission, typed-result and audit owners. HTTP handles bounded JSON/SSE exchanges, explicit version/session lifecycle, origin/TLS/redirect policy and literal endpoint queries. Profile schema2 explicitly migrates old stdio records; reopened unsupported HTTP fields now refuse before coercion or dispatch.
+
+Fix1 gives HTTP request scopes their own completion evidence and retains one shielded cleanup task. Cancellation or the existing cleanup deadline cannot falsely release the owner: incomplete cleanup withdraws readiness, refuses new work and blocks replacement. A pending cleanup may later complete; an actual lower-close failure remains owned/unready and repeats its failure. Local closure never proves a remote invocation settled, and reconnect never replays it. Stdio teardown ordering is preserved.
+
+Validation: final frozen eight-file covering run 558 passed in 36.94s, zero skips; all 24 source/test/doc/runner hashes and 23 exact Fix1BASE snapshots verified. Ten Python paths passed syntax; Ruff 169 baseline/current, no added diagnostics; Black no new edits and all four files introduced by M2 wholly clean; whitespace passed. Initial 534 tests overlap and are historical. Controlled actual Darwin IPv4 HTTP and stdio peers qualify the selected matrix; public HTTPS trust, external/vendor servers, IPv6, Linux/Windows and unavailable optional mcp-unified remain unqualified. Credentials, scoped plugin ownership and hook-effect acceptance retain their M3/M4/H6 owners. Bootstrap log noise remains final-review triage.
+
+Independent review: Fresh scoped review accepted I1/I2, with no new Critical, Important or Minor findings at commit 4a4537427aa6710eed514b08e252100cd1e508a0. Initial findings I1/I2 and three scope boundaries are recorded in task-15-review-resolution.md; both Important findings are addressed with no new blocking breakage.
+
+ADR check: existing ADR162/163 and reciprocal ADR111 partial supersession, R4/R49/R58/R59/R60/R61; no new ADR. Code/operation boundaries are documented in the MCP subplan and managed-plugin spec. Factual HTTPX cleanup incident lesson is recorded in lessons-testing-evidence.md.
+<!-- SECTION:NOTES:END -->

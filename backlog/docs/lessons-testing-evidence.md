@@ -13749,3 +13749,9 @@ the publication window itself. Future cancellation acknowledges the bridge
 handle; it does not prove the operation, cleanup or audit never happened.
 Coordinate publication before I/O, preserve uncertainty, and keep slow logging
 out of caller waits without adding unbounded background work.
+
+## A transport closed flag can precede actual resource closure
+
+**TASK-32682, direct MCP transport Fix1, 2026-09-17.** The initial HTTP close path cancelled whole caller tasks before entering its resource-close finally block. A caller performing asynchronous cancellation cleanup outlived the client owner's five-second bound; the owner was dropped while the HTTP pool remained open, and a closed-admission latch made repeated close return early. During repair, inspection of installed HTTPX 0.28.1 showed that `AsyncClient.aclose()` sets CLOSED before awaiting the lower transport. An injected lower-close failure then proved `is_closed=True` while an actual keep-alive connection remained open; retrying client close could silently do nothing.
+
+**What to do.** Track completion of the connection-owned request scope separately from arbitrary caller finalization, retain one cleanup operation across interrupted waits, and distinguish admission closure from successful resource cleanup. Verify captured real connections and the pool, not only flags. A still-pending close can finish later; a failed close cannot be declared successful from a no-op retry. Keep failed ownership unready instead of replacing it, and never treat local socket closure as proof that a remote invocation settled. The final 558-test targeted run also preserved stdio slow-reap ordering after a shared-field type check initially selected both transports.
