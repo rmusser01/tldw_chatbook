@@ -1,0 +1,45 @@
+........................................................................ [ 25%]
+........................................................................ [ 51%]
+..............................................................FFF....... [ 77%]
+.............................................................            [100%]
+=================================== FAILURES ===================================
+__ test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[5] ___
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:245: in test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional
+    rag_state = LibraryRagPanelState.from_values(
+E   TypeError: LibraryRagPanelState.from_values() got an unexpected keyword argument 'top_k'
+__ test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[15] __
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:245: in test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional
+    rag_state = LibraryRagPanelState.from_values(
+E   TypeError: LibraryRagPanelState.from_values() got an unexpected keyword argument 'top_k'
+__ test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[23] __
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:245: in test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional
+    rag_state = LibraryRagPanelState.from_values(
+E   TypeError: LibraryRagPanelState.from_values() got an unexpected keyword argument 'top_k'
+============================= slowest 25 durations =============================
+1.77s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_mode_toggle_mid_answer_discards_stale_answer
+1.70s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_tab_reaches_and_focuses_evidence_card
+1.66s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_new_search_mid_answer_leaves_no_dangling_status
+1.57s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_disabled_answer_seam_generates_nothing
+1.47s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_keyword_mode_never_calls_the_answer_seam
+1.47s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_o_on_focused_card_opens_like_button
+1.27s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_keyboard_enter_runs_query_and_handoff_button
+1.25s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_starting_a_new_search_drops_the_previous_answer
+1.24s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_server_result_launches_server_console_live_work
+1.22s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence
+1.16s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_u_on_focused_card_selects_then_stages
+1.12s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_query_updates_action_and_survives_recompose
+1.11s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_enter_on_focused_card_selects_evidence
+1.10s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_selected_result_launches_console_live_work
+1.09s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_use_in_console_warns_before_navigating_when_locked_task_2852
+1.06s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_use_in_console_configured_console_no_locked_notice_task_2852
+1.06s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_empty_results_render_quiet_state_end_to_end
+1.02s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_rag_mode_generates_answer_after_results_land
+1.00s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_all_weak_matches_reach_the_generation_prompt
+1.00s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_zero_results_answer_needs_no_provider
+
+(5 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[5]
+FAILED Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[15]
+FAILED Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[23]
+3 failed, 274 passed in 55.90s

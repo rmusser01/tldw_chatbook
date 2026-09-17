@@ -1,0 +1,58 @@
+Package under test: /private/tmp/tldw-15390-dev-check/tldw_chatbook/__init__.py
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+__ test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[5] ___
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:232: in test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional
+    from tldw_chatbook.RAG_Search.simplified import active_config
+tldw_chatbook/RAG_Search/simplified/__init__.py:31: in <module>
+    from .rag_service import RAGService, RAGConfig, create_and_index
+tldw_chatbook/RAG_Search/simplified/rag_service.py:96: in <module>
+    _config = load_settings()
+              ^^^^^^^^^^^^^^^
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:64: in _load_settings_with_ready_openai_key
+    settings = dict(real_load_settings(*args, **kwargs))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:408: in wrapped
+    raise bootstrap.RecoveryRequired("config_source_not_installed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: config_source_not_installed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-16 21:26:23.110 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-16 21:26:23.115 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-16 21:26:23.116 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-16 21:26:23.116 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+__ test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[15] __
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:232: in test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional
+    from tldw_chatbook.RAG_Search.simplified import active_config
+tldw_chatbook/RAG_Search/simplified/__init__.py:31: in <module>
+    from .rag_service import RAGService, RAGConfig, create_and_index
+tldw_chatbook/RAG_Search/simplified/rag_service.py:96: in <module>
+    _config = load_settings()
+              ^^^^^^^^^^^^^^^
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:64: in _load_settings_with_ready_openai_key
+    settings = dict(real_load_settings(*args, **kwargs))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:408: in wrapped
+    raise bootstrap.RecoveryRequired("config_source_not_installed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: config_source_not_installed
+__ test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[23] __
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:232: in test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional
+    from tldw_chatbook.RAG_Search.simplified import active_config
+tldw_chatbook/RAG_Search/simplified/__init__.py:31: in <module>
+    from .rag_service import RAGService, RAGConfig, create_and_index
+tldw_chatbook/RAG_Search/simplified/rag_service.py:96: in <module>
+    _config = load_settings()
+              ^^^^^^^^^^^^^^^
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:64: in _load_settings_with_ready_openai_key
+    settings = dict(real_load_settings(*args, **kwargs))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:408: in wrapped
+    raise bootstrap.RecoveryRequired("config_source_not_installed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: config_source_not_installed
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[5]
+FAILED Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[15]
+FAILED Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional[23]
+3 failed in 1.75s

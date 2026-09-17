@@ -805,3 +805,26 @@ Console handoff `get_conversation_metadata`. Neither is qualified by this repair
 Next bounded review: TASK-15390 evidence-heading contract, then the remaining
 Search/RAG journeys. Provider/remote journeys and full-suite verification remain
 outside this evidence; no push or merge was performed.
+
+## Search/RAG evidence-heading contract — 2026-09-17 UTC (TASK-15390)
+
+[Evidence](../qa/2026-09-17-rag-evidence-heading/README.md) closes the heading
+test task. The original child-order drift was already corrected by `67c667d063`;
+earlier slices carried the open task forward as a known failure without a fresh
+branch reproduction. The unchanged gate16 file now reproduces 69 passing tests.
+
+Saved dev has a separate fixture problem: real profile/config storage can be
+unavailable, yielding the intended fallback depth 5 while the test assumes 15.
+The rendering test now controls depth at the existing helper and checks 5/15/23,
+retaining real panel/rendering, mode suffixes, coverage and child-order assertions.
+Production code is unchanged; separate model/config tests retain resolver coverage.
+
+Final verification: 277 targeted tests pass without exclusions, and all three
+repaired heading cases pass against a clean source export of saved dev
+`24094f23d5`. Independent review found no remaining issue; no lint diagnostics
+were added. Native paint was not repeated for this test-only repair. This is not
+integration into dev or qualification of all retrieval/provider journeys.
+
+Next bounded review: the remaining Search/RAG query execution and recovery
+journeys, followed by the remaining feature/component surfaces. No full suite,
+push or merge was performed.

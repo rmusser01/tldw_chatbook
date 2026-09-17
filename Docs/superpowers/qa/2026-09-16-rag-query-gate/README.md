@@ -104,3 +104,10 @@ The unrelated context-metadata drift (deprecated PRODUCT register, stale design
 metadata, missing buildPath) remains outside this repair.
 
 Next bounded review: TASK-4111 result opening, then the remaining Search/RAG journey.
+
+Follow-up, 2026-09-17: [TASK-15390](../2026-09-17-rag-evidence-heading/README.md)
+is closed. The heading exclusion above relied on the open historical task; its
+original ordering failure was already fixed and did not reproduce on this branch.
+The follow-up isolates a separate saved-dev profile-storage dependency and runs
+the complete gate16 file without exclusions. Historical run counts above are
+unchanged.

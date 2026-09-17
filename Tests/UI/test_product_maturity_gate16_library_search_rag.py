@@ -219,18 +219,24 @@ async def _wait_for_evidence_selected(
 # --- Task 8: mode-aware Evidence heading + semantic coverage note ----------
 
 
-def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> None:
+@pytest.mark.parametrize("top_k", [5, 15, 23])
+def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional(
+    top_k: int,
+    monkeypatch,
+) -> None:
     """(Task 8) RAG mode's Evidence heading drops the false "per source"
     claim -- the semantic leg is one merged store query trimmed to top_k,
     not a fan-out per selected source the way the keyword leg is -- and the
     coverage-note Static mounts directly under the heading, only when there
     is a specific, honest thing to say."""
+    from tldw_chatbook.Library import library_rag_state
     from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
     from tldw_chatbook.Widgets.Library import (
         library_rag_results_body_children,
         results_heading_text,
     )
 
+    monkeypatch.setattr(library_rag_state, "library_rag_profile_top_k", lambda: top_k)
     result = LibraryRagResultRow.from_result(
         {
             "title": "Media doc",
@@ -257,11 +263,10 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> 
 
     # A3's "top_k" claim is only accurate for keyword mode's per-source
     # fan-out; rag mode drops the "per source" suffix outright.
-    # TASK-15020/B3: the depth itself is the active RAG profile's
-    # `search.default_top_k` (15 on the shipped default profile), not the
-    # old hardcoded 5.
-    assert results_heading_text(rag_state) == "Evidence · top 15"
-    assert results_heading_text(search_state) == "Evidence · top 15 per source"
+    # Pin rendering at an explicit depth. Profile/default resolution has its
+    # own state/config tests and must not make this unit test depend on storage.
+    assert results_heading_text(rag_state) == f"Evidence · top {top_k}"
+    assert results_heading_text(search_state) == f"Evidence · top {top_k} per source"
 
     rag_children = library_rag_results_body_children(rag_state)
     coverage_statics = [

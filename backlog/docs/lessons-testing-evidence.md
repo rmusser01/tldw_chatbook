@@ -14505,3 +14505,17 @@ now enter through `LibraryRagResultRow.from_result`; a sanitation-change flag
 refuses activation while preserving existing safe display/citation values.
 Validate identity before any lossy display transform, or retain enough information
 to reject transformed identities. Evidence: `Docs/superpowers/qa/2026-09-17-rag-source-open/`.
+
+
+## A rendering fixture must patch above guarded config imports (TASK-15390)
+
+During the September 17 evidence-heading review, the old test passed on the
+working branch but failed on a clean saved-dev source export: newer storage
+admission refused profile access, the real helper fell back to 5, and the
+rendering test assumed the shipped default 15. Patching the lower resolver still
+failed because importing its module itself read guarded config. Patching the
+already-loaded UI profile-depth helper allowed the same real panel/rendering
+assertions to run at 5, 15 and 23 on both revisions. Keep profile/default/fallback
+coverage in its dedicated state/config tests; a rendering unit test should control
+that input before any guarded import. Assert the package import root when checking
+an exported revision with an interpreter that has another checkout installed.

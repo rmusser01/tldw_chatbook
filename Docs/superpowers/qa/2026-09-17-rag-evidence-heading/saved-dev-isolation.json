@@ -1,0 +1,13 @@
+{
+  "saved_dev": "24094f23d59c7a9d3cfac964c19fd263bc0393b2",
+  "package_import_root": "/private/tmp/tldw-15390-dev-check/tldw_chatbook",
+  "patched_heading_matches_current_ast": true,
+  "other_test_nodes_match_saved_dev_ast": true,
+  "production_files_unchanged_sha256": {
+    "tldw_chatbook/Library/library_rag_state.py": "c2a634531ff89b3373406220a1eb4e7be79a1d52e0aca70e57f8f3256095cf75",
+    "tldw_chatbook/Widgets/Library/library_search_rag_panel.py": "cebc6d58d86583d34d606d8d6d86f753dbcaa196720ca196d0281c4ba40ce1ea",
+    "tldw_chatbook/RAG_Search/simplified/active_config.py": "a66230210816db3bf4c01cc04f321fe9aa351aa057c17a58d389fafb8dde892c",
+    "tldw_chatbook/RAG_Search/config_profiles.py": "3bfd300c97680817642b31a74409069478d0df715fd45f2af8bc1448348e4ee0",
+    "tldw_chatbook/Backup_Recovery/config_participants.py": "37f9e4feeff45ff819bcd2b432e222e12cc05c0295c425a9c798d6b57d92644a"
+  }
+}

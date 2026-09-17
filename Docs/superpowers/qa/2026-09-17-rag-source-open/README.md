@@ -115,3 +115,10 @@ Limits: programmatic field entry/focus followed by actual key activation, not a
 full Tab-only or pointer journey. This uses keyword retrieval plus an ID adapter;
 it does not qualify semantic retrieval, remote opening, provider calls, or every
 Search/RAG action. No full test suite, push or merge was run.
+
+Follow-up, 2026-09-17: [TASK-15390](../2026-09-17-rag-evidence-heading/README.md)
+is closed. Its original child-order failure had already been corrected; the
+exclusion above came from the open historical task, not a fresh reproduction on
+this branch. A separate saved-dev profile-storage dependency is now removed from
+the rendering test. The complete gate16 file passes without exclusions in that
+follow-up's targeted run. The 466-test record above remains unchanged.

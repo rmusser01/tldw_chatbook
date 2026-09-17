@@ -1,0 +1,7 @@
+{
+  "baseline_diagnostics": 5,
+  "current_diagnostics": 5,
+  "new_diagnostics": [],
+  "comparison": "Ruff code/message multiplicities",
+  "changed_range_format_check": "222-310: 1 file already formatted"
+}
