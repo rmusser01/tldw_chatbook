@@ -1,11 +1,11 @@
 ---
 id: TASK-32679
 title: Wire session child and compaction hook boundaries
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-09-17 02:11'
+updated_date: '2026-09-17 02:38'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 SessionStart uses cancellable provisional admission and publishes dependent capabilities/context only after controlling requirements succeed; tab focus and package inspection emit no session events.
-- [ ] #2 SubagentStart narrows inherited tools and budgets, and SubagentStop contributes only to an active parent checkpoint without restarting settled work.
-- [ ] #3 PreCompact supplies required compactor input and PostCompact fences subsequent input after committed summaries; runtime context blocks are reassembled without duplication.
-- [ ] #4 Manual-only UserPromptSubmit, idle hook-set replacement, SessionEnd, required-context failures and independent component success are covered at actual Console and agent boundaries.
+- [x] #1 SessionStart uses cancellable provisional admission and publishes dependent capabilities/context only after controlling requirements succeed; tab focus and package inspection emit no session events.
+- [x] #2 SubagentStart narrows inherited tools and budgets, and SubagentStop contributes only to an active parent checkpoint without restarting settled work.
+- [x] #3 PreCompact supplies required compactor input and PostCompact fences subsequent input after committed summaries; runtime context blocks are reassembled without duplication.
+- [x] #4 Manual-only UserPromptSubmit, idle hook-set replacement, SessionEnd, required-context failures and independent component success are covered at actual Console and agent boundaries.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,4 +62,22 @@ H3 composition handoff: read final task11 report/API plus R48/R49 rulings. Reuse
 12. Resolve the implementer-reported R53 retirement tradeoff explicitly under R55 before initial review: retain identifier-only closed-scope tombstones for that hook-session owner's lifetime to reject rebinding of retired host IDs, while removing context bodies, delivery maps, parent/currentness maps and settled checkpoint state. No durable/global closed-owner registry or cross-session reuse is permitted; retained process cleanup keeps only its required original custody. Record the linear metadata cost and ownership limit in the existing hook spec/ADR163 and controller review inputs. This is a documentation/contract clarification for the already-frozen implementation, not a new runtime feature or a claim of constant-memory session metadata. The independent reviewer must still assess actual retirement, lifetime and resource behavior. Source/test hashes and qualified behavior remain unchanged.
 
 13. Address initial independent review I1-I3 in one scoped Fix1 from 08189e704e09fe7339a65cfbec78e67a25425fda, preserving R53/R55 and existing ADR163/162. Remove the runtime-map/checkpoint-condition lock inversion in tldw_chatbook/Chat/console_runtime.py while preserving immediate ordinary-admission sealing. Retire settled successful manual PostCompact records with their owning operation/handoff, preserving pending cleanup and compact owning/dependency failure evidence in tldw_chatbook/Agents/hooks_v2/checkpoints.py and lifecycle.py; context.py is authorized only if this retirement requires it. In tldw_chatbook/Chat/console_chat_controller.py, retain only the exact manual operation owned by the active handoff and close all other failed/cancelled operation scopes. Add deterministic actual session-close/currentness interleaving and repeated success, prior-handoff/failure and prior-handoff/cancellation controls in Tests/Chat/test_hooks_v2_lifecycle.py, Tests/Chat/test_hooks_v2_compaction.py and, as needed, Tests/Agents/test_hooks_v2_post_checkpoints.py. Final affected covering runs must include those three files, Tests/Agents/test_hooks_v2_tool_pipeline.py, Tests/Chat/test_console_runtime_shutdown.py, Tests/Chat/test_console_viewless_hooks.py, and Tests/Chat/test_console_context_compaction.py. Preserve unchanged initial qualified hashes for other H4 boundaries; expand targeted verification only if actual changes or failures require it. Freeze amended code/tests, record real RED/positive controls and final output, verify Ruff/Black parity against FIX1_BASE snapshots and append the report/API retirement correction. Additional source/test paths require a further CLI amendment. Deferred Minor M1 and later I1/H6/I7 implementation are outside this fix. No new runtime/permission owner, storage change or ADR is required.
+
+14. After the clean Fix1 scoped re-review, complete metadata-only closeout. Add the actual Console/SQLite lineage incident to backlog/docs/lessons-testing-evidence.md and extend its existing controlled lock-inversion lesson with the observed self-deadlocking test-wrapper incident, exact baseline/control evidence and corrected bounded acquisition. These are factual testing lessons from TASK32679, not runtime changes or new requirements. Complete all four ACs, add concise implementation/verification notes with existing ADR163/162 links and retained platform/provider limits, and mark Done via CLI only after metadata whitespace and unchanged frozen-source checks. No additional source/test edit or new ADR is required.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented session, child and compaction hook producers through the existing Console/agent runtime and one session-owned checkpoint/context coordinator. Provisional root capacity precedes SessionStart; refusal/cancellation publishes neither an accepted turn nor root Stop. Manual-only UserPromptSubmit, idle hook-set replacement and viewless SessionEnd retain existing permission and cleanup ownership. Inline/fleet child hooks narrow inherited tools/budgets and hold active-parent input through durable settlement.
+
+PreCompact supplies the real pending candidate, including focused fallback; commit-adjacent PostCompact fences later input without rolling back saved memory. Attributed runtime context is reassembled once. Manual context has one exact-memory/branch handoff to the next matching accepted turn. A narrow prerequisite reads persisted parent/version authority for real accepted-message lineage without weakening repository guards.
+
+Fix1 removes the runtime-map/checkpoint lock inversion, retires successful manual checkpoint closures with their operations, keeps only owning/dependent handler-ID failure evidence under a live gate, and closes failed/cancelled operations even when an older handoff exists. Pending cleanup retains its original custody. Independent initial review plus scoped Fix1 review closed all three Important findings with no new findings. Session-lifetime identifier-only anti-rebind tombstones have a disclosed linear metadata cost.
+
+Validation: final seven-file targeted Fix1 run: 295 passed, zero skips, 57.25s; all 26 frozen hashes matched, with 7 changed and 19 unchanged. Initial 14-file run: 667 passed in 104.39s; its evidence is retained separately; counts overlap. New hook/test files pass Ruff/Black, shared controller/runtime retain existing diagnostic/formatting baselines with clean changed ranges. Syntax/TOML/whitespace pass. Corrected bounded race fixture detects the exact baseline method without hanging; two earlier diagnostic aborts from recursive test-lock acquisition are recorded separately. Real Console/SQLite lineage and test-lock incidents are documented in backlog/docs/lessons-testing-evidence.md.
+
+Evidence is controlled headless Darwin Console/SQLite/process execution. Full suite, live providers/MCP, graphical UI, non-Darwin and fresh dependency resolution are not claimed; later native/MCP/end-to-end tasks own those compositions. Bootstrap logging remains a deferred final-review minor.
+
+ADR required: yes; implemented and clarified backlog/decisions/163-expanded-console-hook-runtime.md and backlog/decisions/162-managed-agent-plugins.md with the existing expanded-hook spec. Changes span hooks_v2 lifecycle/context/checkpoints/validation/tool pipeline, AgentService/runtime, Console runtime/controller/compaction and targeted tests. No new scheduler, permission owner or storage schema was introduced in H4.
+<!-- SECTION:NOTES:END -->

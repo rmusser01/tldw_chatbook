@@ -785,6 +785,23 @@ events or barriers in a bounded child process, and enforce one documented
 global lock order. Focused green runs alone do not exercise the conflicting
 owners under representative load.
 
+**TASK-32679 / H4 Fix1, 2026-09-16.** The first bounded race probe acquired
+the runtime's nonreentrant map lock, then called the real getter that acquired
+that lock again. On the unfixed code, the intended earlier inversion timed out
+first and masked this fixture defect. Once production lock ordering was fixed,
+two exploratory test processes self-deadlocked and were explicitly aborted to
+preserve their thread stacks. Neither run counts as passing qualification.
+Wrapping the actual lock once, leaving the getter unchanged, corrected the
+probe. Running that corrected probe with the exact pre-fix seal method still
+produced the intended **1 failed, 1 passed** without hanging; the fixed method
+produced **2 passed**, and the final seven-file run passed **295 tests**.
+
+A bounded probe must bound the actual acquisition rather than recursively
+acquire a nonreentrant lock around an already-locking method. Validate the
+instrumented successful path too, and prove both the old-code failure and
+fixed-code success terminate. Keep diagnostic aborts separate from final test
+evidence even when provisional output filenames contain "green".
+
 ## A completed Textual product contract can still be cancelled by test-loop teardown
 
 **TASK-20009, 2026-08-21.** The real-provider three-turn Console benchmark
@@ -13684,3 +13701,26 @@ closure. Check built distribution requirements for every new production import
 and verify wheel-code provenance separately. The controlled smoke above reused
 read-only installed dependencies; it did not prove fresh full dependency
 resolution or another platform's package set.
+
+## Real Console acceptance must feed compaction lineage checks
+
+During TASK-32679/H4 hook integration, helper compaction tests passed while the
+actual Console plus SQLite path refused its memory commit: cached newly accepted
+user/assistant rows did not yet carry their persisted parent links. The existing
+`_durable_context_snapshots` projection trusted those cached fields, and the
+repository correctly rejected a lineage that was not one ordered parent chain.
+The same projection made a just-committed manual hook-context handoff look stale.
+
+A controlled probe executed the exact pre-H4 `_durable_context_snapshots` method
+from BASE `8192f1fb1fdd0da929b2c776db1a2c8ee95f0457` and the corrected method against
+the same genuine durable Console acceptance. It observed two parent mismatches
+for the baseline method and zero for the corrected projection. This was a method
+comparison in the current isolated test environment, not a full baseline-checkout
+qualification. Production correction reads the authoritative persisted parent
+and version, retaining the existing commit guard.
+
+For changes spanning Console acceptance and branch-memory commits, include the
+real durable submit/cache hydration path and the real repository guard. A helper
+that appends already-hydrated rows or accepts a fabricated compaction result
+cannot expose this boundary. Preserve the refusal and successful control rather
+than changing the fixture to bypass authoritative ancestry checks.
