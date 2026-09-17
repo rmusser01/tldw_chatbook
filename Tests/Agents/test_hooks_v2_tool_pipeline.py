@@ -983,3 +983,143 @@ def test_catalog_last_dispatch_recheck_after_existing_argument_repair(
     assert bool(invoked) == (change == "none")
     if change != "none":
         assert result.dispatch_state == "not_started"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entry", "mode"),
+    [("spawn", mode) for mode in ("empty", "budget", "forbidden", "success", "error")]
+    + [
+        (entry, mode)
+        for entry in ("send", "message", "load")
+        for mode in ("refused", "success", "error")
+    ],
+)
+async def test_runtime_predispatch_refusal_has_no_posts_but_invocation_settles(
+    entry, mode
+):
+    from tldw_chatbook.Agents.agent_models import ToolLoadSelection
+    from tldw_chatbook.Agents.fleet_message_tools import REPORT_TO_SUPERVISOR_SCHEMA
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.hooks_v2.tool_pipeline import ToolHookRun
+    from tldw_chatbook.Agents.tool_catalog import (
+        LOAD_TOOLS_SCHEMA,
+        SEND_TO_AGENT_SCHEMA,
+        SPAWN_TOOL_SCHEMA,
+        ToolDefinitionSnapshot,
+    )
+
+    schema, arguments = {
+        "spawn": (SPAWN_TOOL_SCHEMA, {"task": "" if mode == "empty" else "valid task"}),
+        "send": (SEND_TO_AGENT_SCHEMA, {"id": "child", "message": "hello"}),
+        "message": (REPORT_TO_SUPERVISOR_SCHEMA, {"message": "report"}),
+        "load": (LOAD_TOOLS_SCHEMA, {"ids": [CALC.id]}),
+    }[entry]
+    invoked = []
+    posted = []
+    results = []
+    sent = []
+
+    def invoke(*args):
+        invoked.append(args)
+        return ToolResult(ok=mode == "success", content="returned", error="known error")
+
+    def authority(_handler, event, stage):
+        if stage == "launch":
+            posted.append(event.event)
+        return True
+
+    engine = HookEngine(
+        tuple(
+            hook_command(
+                name,
+                event=name,
+                required=True,
+                match={"tool_id": [schema.id]},
+                effects=("context",),
+                code='print(\'{"version":2,"decision":"pass","context":[{"text":"post invocation sentinel","lifetime":"turn"}]}\')',
+            )
+            for name in ("PostToolUse", "PostToolUseFailure")
+        ),
+        authority,
+        HookBudgetOwner(),
+    )
+    definitions = {
+        item.name: ToolDefinitionSnapshot.from_schema(
+            item, "runtime" if item is schema else "builtin", 0, 1
+        )
+        for item in (schema, CALC)
+    }
+    owner = ToolHookRun(
+        engine,
+        run_id="run",
+        session_id="session",
+        turn_id="turn",
+        resolve_definition=lambda call: definitions[call.name],
+    )
+    calls = [ToolCall(schema.name, arguments, "target")]
+    if entry == "load" and mode == "refused":
+        calls.append(ToolCall(CALC.name, {}, "other"))
+    deps = make_deps(
+        [ModelTurn(tool_calls=tuple(calls)), ModelTurn(text="done")], spawn=invoke
+    )
+    model = deps.call_model
+    deps.call_model = lambda messages, schemas: sent.append(list(messages)) or model(
+        messages, schemas
+    )
+    if entry == "send" and mode != "refused":
+        deps.send_to_agent = invoke
+    if entry == "message" and mode != "refused":
+        deps.report_to_supervisor = invoke
+    if entry == "load":
+
+        def load(*args):
+            invoked.append(args)
+            return (
+                ToolLoadSelection(accepted=(CALC,))
+                if mode == "success"
+                else ToolLoadSelection(details_omitted_for_budget=True)
+            )
+
+        deps.load_schemas = load
+    deps.prepare_hook_call = owner.prepare_call
+    deps.accept_hook_preparation = owner.validate_dispatch
+    deps.validate_hook_dispatch = lambda call: owner.validate_dispatch(
+        call, accept_context=False
+    )
+
+    def install(call, result):
+        if call.name == schema.name:
+            results.append(result)
+        owner.install_result(call, result)
+
+    deps.install_tool_checkpoint = install
+    deps.await_hook_checkpoints = owner.admit_input
+    config = replace(
+        CFG,
+        allowed_tools=() if mode == "forbidden" else CFG.allowed_tools,
+        budget=replace(CFG.budget, max_subagents=0 if mode == "budget" else 1),
+    )
+    try:
+        outcome = await asyncio.to_thread(
+            run_agent_loop,
+            config,
+            [{"role": "user", "content": "go"}],
+            [CALC, schema],
+            deps,
+        )
+        await asyncio.to_thread(owner.settle)
+        dispatched = mode in {"success", "error"}
+        assert bool(invoked) is dispatched
+        assert posted == (
+            []
+            if not dispatched
+            else ["PostToolUse"] + (["PostToolUseFailure"] if mode == "error" else [])
+        )
+        assert ("post invocation sentinel" in str(sent[-1])) is dispatched
+        assert outcome.status == "done"
+        if not dispatched:
+            assert results[0].dispatch_state == "not_started"
+    finally:
+        await engine.close()

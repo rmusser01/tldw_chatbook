@@ -5745,7 +5745,8 @@ class AgentService:
                 return ToolResult(
                     ok=False,
                     error="sub-agent budget exhausted",
-                    dispatch_state="not_started",
+                    # The runtime spawn callback ran; only child admission failed.
+                    dispatch_state="settled",
                 )
             sub_agent_spawns += 1
             # PR3a-1 Task 5 -- CORRECTED after review caught Defect 1: the
@@ -6917,7 +6918,11 @@ class AgentService:
                 # render/trust round-trip once the shared budget is spent.
                 if sub_agent_spawns >= config.budget.max_subagents:
                     return _observed_skill_result(
-                        ToolResult(ok=False, error="sub-agent budget exhausted")
+                        ToolResult(
+                            ok=False,
+                            error="sub-agent budget exhausted",
+                            dispatch_state="not_started",
+                        )
                     )
                 # PR2a Task 6.5: a SKILL call runs its child INLINE even
                 # when the fleet is on, so it still returns the skill's

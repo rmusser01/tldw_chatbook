@@ -504,3 +504,105 @@ async def test_skill_completion_installs_requirements_before_service_observer(tm
     finally:
         await engine.close()
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["budget", "success", "error", "later_spawn_budget"])
+async def test_inline_skill_precheck_and_dispatched_child_budget_have_distinct_provenance(
+    tmp_path, mode
+):
+    from dataclasses import replace
+
+    from Tests.Agents.test_agent_service import ScriptedChat, fence
+    from Tests.Agents.test_hooks_v2_tool_pipeline import CFG, hook_command
+    from Tests.Agents.test_skill_tool_spawn import _registry_with_code_review_skill
+    from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME, ToolResult
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    posted = []
+    invoked = []
+    observed = []
+
+    def authority(_handler, event, stage):
+        if stage == "launch":
+            posted.append((event.data["tool_name"], event.event))
+        return True
+
+    engine = HookEngine(
+        tuple(
+            hook_command(name, event=name, required=True)
+            for name in ("PostToolUse", "PostToolUseFailure")
+        ),
+        authority,
+        HookBudgetOwner(),
+    )
+
+    class Runner:
+        def is_skill_tool(self, name):
+            return name == "code-review"
+
+        def run(self, _name, args, spawn):
+            invoked.append(args)
+            if mode == "later_spawn_budget":
+                return spawn("child task", allowed_tools=("calculator",))
+            return ToolResult(
+                ok=mode == "success", content="returned", error="known skill error"
+            )
+
+    script = [fence("code-review", {"args": "review"}), "done"]
+    if mode == "later_spawn_budget":
+        script = [
+            script[0],
+            "child done",
+            fence(SPAWN_TOOL_NAME, {"task": "second child"}),
+            "done",
+        ]
+    chat = ScriptedChat(script)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="h3-fix1-skill")
+    service = AgentService(
+        db,
+        _registry_with_code_review_skill(),
+        chat_call=chat,
+        skill_runner=Runner(),
+        post_tool_dispatch=lambda call, result, *_: observed.append(
+            (call.name, result.dispatch_state)
+        ),
+        hooks_v2_engine=engine,
+        hooks_v2_session_id="session",
+        hooks_v2_turn_id="turn",
+    )
+    try:
+        _run_id, outcome = await asyncio.to_thread(
+            service.run_turn,
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=replace(
+                CFG,
+                allowed_tools=("calculator", "code-review", SPAWN_TOOL_NAME),
+                budget=replace(CFG.budget, max_subagents=0 if mode == "budget" else 1),
+            ),
+            api_endpoint="test",
+        )
+        assert outcome.status == "done"
+        assert invoked == ([] if mode == "budget" else ["review"])
+        assert observed == [
+            ("code-review", "not_started" if mode == "budget" else "settled")
+        ]
+        expected = [] if mode == "budget" else [("code-review", "PostToolUse")]
+        if mode == "error":
+            expected.append(("code-review", "PostToolUseFailure"))
+        if mode == "later_spawn_budget":
+            expected.extend(
+                [
+                    (SPAWN_TOOL_NAME, "PostToolUse"),
+                    (SPAWN_TOOL_NAME, "PostToolUseFailure"),
+                ]
+            )
+            assert db.count_subagent_runs("c") == 1
+        assert posted == expected
+    finally:
+        await engine.close()
+        db.close()

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-09-17 00:11'
+updated_date: '2026-09-17 00:28'
 labels:
   - plugins
   - implementation
@@ -62,4 +62,6 @@ Reason: Direct implementation of the accepted common tool-preparation, permissio
 14. Apply R51 from h3-schema-reference-ruling.md in the already-approved pipeline and test paths: candidate schema validation uses a no-I/O local registry and refuses missing external references without dropping constraints or exposing URI/payload text. Preserve internal references and ordinary schema controls; qualify public preparation with a retrieval spy so no real network/filesystem access occurs. Installed jsonschema default remote retrieval was confirmed by source inspection; no fetch was attempted. Use current dependency APIs, no new retrieval owner/dependency. Document final API/unsupported boundary in existing hook spec/ADR/report and include frozen covering/static evidence.
 
 15. Apply R52 from h3-runtime-dependencies-ruling.md: add exact additional paths pyproject.toml and Tests/Packaging/test_hooks_v2_dependencies.py before changes. Declare jsonschema>=4.26,<5 and directly imported referencing>=0.37,<1 in core dependencies, remove the obsolete dev-only jsonschema declaration/comment, preserve unrelated pins/extras, and amend existing ADR163/spec dependency notes. Qualify real base distribution metadata without extra markers and the built wheel's isolated no-network import/validation using available controlled dependencies; distinguish this from a fresh full dependency resolution. Capture the pre-change metadata regression and positive control, include the packaging test in frozen targeted coverage and all added paths in hashes/static checks. No package install, new validator/retrieval owner, or optional validation bypass.
+
+16. Address initial review Important I1 in the existing runtime/service and approved H3 test paths: assign honest not_started provenance to common runtime and inline-skill refusals before their dispatch callbacks execute, retaining settled/uncertain semantics after actual host invocation. Inspect other pre-dispatch exits in the same common runtime fan-out and observer boundary; never infer child-start state from result text. Add actual loop/service refusal and successful controls in Tests/Agents/test_hooks_v2_tool_pipeline.py and/or test_hooks_v2_post_checkpoints.py. Final covering is those two files plus Tests/Agents/test_post_tool_dispatch_hook.py, Tests/Chat/test_console_run_hooks_regressions.py, Tests/Agents/test_agent_runtime.py and Tests/Agents/test_skill_tool_spawn.py; additional unchanged neighbors only if changed behavior warrants them, and any extra edited path must be recorded first. Freeze amended source/tests, preserve RED/GREEN and full covering/static output with shared baseline parity and updated hashes; append Fix1 report. Deferred Minor M1/M2 stay final-branch triage; actual later-owner integration/platform limits remain explicit. Existing ADR163/R49/AC3 apply, no new ADR.
 <!-- SECTION:PLAN:END -->

@@ -2689,7 +2689,9 @@ def run_agent_loop(
                         # Q6: refuse before dispatch — no budget consumption,
                         # no STEP_SPAWN, deps.spawn never called.
                         result = ToolResult(
-                            ok=False, error=f"Tool not permitted: {SPAWN_TOOL_NAME}"
+                            ok=False,
+                            error=f"Tool not permitted: {SPAWN_TOOL_NAME}",
+                            dispatch_state="not_started",
                         )
                     else:
                         task = str(call.args.get("task", "")).strip()
@@ -2710,11 +2712,15 @@ def run_agent_loop(
                             # G4: an empty task is refused with no budget
                             # consumption and no STEP_SPAWN.
                             result = ToolResult(
-                                ok=False, error="Task description cannot be empty"
+                                ok=False,
+                                error="Task description cannot be empty",
+                                dispatch_state="not_started",
                             )
                         elif spawned >= budget.max_subagents:
                             result = ToolResult(
-                                ok=False, error="sub-agent budget exhausted"
+                                ok=False,
+                                error="sub-agent budget exhausted",
+                                dispatch_state="not_started",
                             )
                         else:
                             spawn_step = add(
@@ -2855,13 +2861,19 @@ def run_agent_loop(
                         if call.name == REPORT_TO_SUPERVISOR_TOOL_NAME
                         else deps.read_agent_messages
                     )
-                    result = callback(call.args) if callback is not None else refused()
+                    result = (
+                        callback(call.args)
+                        if callback is not None
+                        else replace(refused(), dispatch_state="not_started")
+                    )
                 elif (
                     call.name == SEND_TO_AGENT_TOOL_NAME and deps.send_to_agent is None
                 ):
                     add(STEP_TOOL_CALL, tool_name=call.name, args={})
                     result = ToolResult(
-                        False, error="Tool not permitted: send_to_agent"
+                        False,
+                        error="Tool not permitted: send_to_agent",
+                        dispatch_state="not_started",
                     )
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
@@ -2873,6 +2885,7 @@ def run_agent_loop(
                         result = ToolResult(
                             ok=False,
                             error="call load_tools alone in its own tool batch",
+                            dispatch_state="not_started",
                         )
                     else:
                         # A bare string is one id, never a sequence of chars.
