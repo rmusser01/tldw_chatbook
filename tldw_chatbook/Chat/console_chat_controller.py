@@ -13368,12 +13368,17 @@ class ConsoleChatController:
         """
         self._stop_requested = True
         cancel_event = self._active_cancel_events.get(session_id)
+        if cancel_event is None:
+            cancel_event = self.prompt_queue_coordinator.pending_stop_cancellation(
+                session_id
+            )
         if cancel_event is not None:
             cancel_event.set()
             self.prompt_queue_coordinator.pause_for_stop(session_id)
             parent = self.prompt_queue_coordinator.interrupt_parent(session_id)
             if parent is not None:
                 self._interrupt_host.notify_hook_interrupt(cancel_event, *parent)
+            self.prompt_queue_coordinator.cancel_pending_stop(session_id, cancel_event)
 
     def _is_active_session_cancelled(self) -> bool:
         """Best-effort cancel-signal check that falls back to the VIEWED
@@ -17884,6 +17889,15 @@ class ConsoleChatController:
 
         return request_tool_call_abandon(run_id)
 
+    @property
+    def is_stop_allowed(self) -> bool:
+        """Project ordinary generation or exact pending Stop ownership for this tab."""
+        return self.run_state.is_stop_allowed or (
+            self.prompt_queue_coordinator.pending_continuation_stop_available(
+                self.store.active_session_id or ""
+            )
+        )
+
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the ACTIVE (viewed) session's stream to stop at the next
         safe boundary.
@@ -17907,6 +17921,7 @@ class ConsoleChatController:
         """
         session_id = self.store.active_session_id or ""
         if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
+            self._signal_stop(session_id=session_id)
             return True
         repair_session = self._active_citation_repair_sessions.get(session_id)
         if repair_session is not None and repair_session.selection_committed:
@@ -25670,6 +25685,9 @@ class ConsoleChatController:
         # must never be torn down by a stale reference to THIS run's event.
         cancel_event = threading.Event()
         self._active_cancel_events[owner_id] = cancel_event
+        self.prompt_queue_coordinator.bind_hook_parent_cancellation(
+            owner_id, assistant_message_id, cancel_event
+        )
         # Narrowed once, here, rather than inside the try below: every use
         # in this method (the gateway dispatch, the usage attachments, the
         # post-generation citation selection) then sees a real signals
@@ -26793,6 +26811,9 @@ class ConsoleChatController:
         # thread observe a Stop correctly (task-227).
         cancel_event = threading.Event()
         self._active_cancel_events[session_id] = cancel_event
+        self.prompt_queue_coordinator.bind_hook_parent_cancellation(
+            session_id, assistant_message_id, cancel_event
+        )
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
             session_id=session_id,

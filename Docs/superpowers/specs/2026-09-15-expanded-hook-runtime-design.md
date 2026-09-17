@@ -1228,3 +1228,28 @@ and uncertain acceptance retain ordinary recovery. User Stop seals its affected
 turn and emits Interrupt once; SessionEnd belongs to graceful session disposal.
 A later ordinary authorized turn can use the same session without reopening the
 cancelled turn's admission.
+
+## H5 pending Stop cancellation ownership (R57)
+
+The accepted parent's original provider cancellation Event may be retained by the
+existing queue coordinator only for that exact session, assistant and turn while
+its Stop settlement is pending. Bind it while the accepted parent is still known;
+provider-map removal does not revoke the coordinator's pending-settlement custody.
+Retire the reference when that settlement finishes. No synthetic cancellation
+identity, retired-scope rebind or later-turn borrowing is permitted.
+
+User Stop first seals admission for that parent, sets its original Event and
+notifies the shared interrupt host once for the exact parent. A child task owned
+by that settlement runs only its Stop fire_async call. Cancel and join that child
+through the existing per-event cancellation path: fire_handler_async stops the
+delivery, closes that event execution and retains the delivery/process cleanup
+owner until actual terminal proof. Never cancel the encompassing queue/root drain,
+close the session or emit SessionEnd for this operation. Suppress CancelledError
+only when this exact settlement's recorded user seal caused the child cancellation;
+unrelated cancellation propagates. Repeated Stop neither resets deadlines nor
+releases unresolved cleanup. Existing Interrupt observation and cleanup bounds
+remain unchanged. A fresh authorized turn on the live session remains usable.
+
+The composer exposes this pending Stop availability separately from generation
+activity. Expanded and collapsed Stop remain reachable while the hook is pending;
+Redirect and the Generating indicator still require an actual active generation.

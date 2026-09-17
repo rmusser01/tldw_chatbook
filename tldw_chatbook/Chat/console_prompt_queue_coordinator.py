@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from threading import Event
 from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
@@ -87,6 +89,10 @@ class _PromptChain:
     logical_outcome_id: str | None = None
     request: ConsoleTurnCustodyRequest | None = None
     hook_parent: object | None = None
+    pending_stop_key: tuple[str, str] | None = None
+    hook_cancel_event: Event | None = None
+    pending_stop_task: asyncio.Task | None = None
+    pending_stop_cancelled: bool = False
     continuation: object | None = None
     continuation_started: float | None = None
     initiator: str = "manual"
@@ -232,14 +238,29 @@ class ConsolePromptQueueCoordinator:
             return
         chain.hook_parent = None
         lifecycle, _scope, event, _assistant_id, request = parent
-        if not lifecycle.live or not lifecycle.current():
-            return
         # Stop has no context effect: execute under the live host session,
         # never resurrect an H4 retired operation/run owner.
         key = (request.turn_id, event.event_id)
         self._stop_parents[key] = (session_id, parent)
+        chain.pending_stop_key = key
+        self._changed(session_id)
         try:
-            outcome = await lifecycle.engine.fire_async(event)
+            if not lifecycle.live or not lifecycle.current():
+                return
+            stop_task = asyncio.create_task(lifecycle.engine.fire_async(event))
+            chain.pending_stop_task = stop_task
+            try:
+                outcome = await stop_task
+            except asyncio.CancelledError:
+                owner = asyncio.current_task()
+                if not (
+                    chain.pending_stop_cancelled
+                    and stop_task.cancelled()
+                    and owner is not None
+                    and not owner.cancelling()
+                ):
+                    raise
+                return
             if (
                 outcome.allowed
                 and not outcome.outstanding_cleanup
@@ -252,8 +273,15 @@ class ConsolePromptQueueCoordinator:
                     tuple(result for _, result in outcome.accepted),
                 )
         finally:
+            chain.pending_stop_key = None
+            chain.hook_cancel_event = None
+            chain.pending_stop_task = None
+            chain.pending_stop_cancelled = False
             self._stop_parents.pop(key, None)
             self._stop_outcomes.pop(key, None)
+            lifecycle.terminal_budgets.pop(request.turn_id, None)
+            lifecycle.terminal_budget_times.pop(request.turn_id, None)
+            self._changed(session_id)
 
     async def schedule_continuation(
         self, parent_turn_id: str, event_id: str, proposals: tuple[HookResult, ...]
@@ -275,6 +303,9 @@ class ConsolePromptQueueCoordinator:
         chain = self._chains.get(session_id)
         if chain is None:
             return None
+        # Consume every exact settlement once, including refusals. A later
+        # callback must never interpret a transferred budget as unrestricted.
+        self._continuation_keys.add(key)
         snapshot = self.registry.snapshot(session_id)
         started = chain.continuation_started
         if started is None:
@@ -353,7 +384,6 @@ class ConsolePromptQueueCoordinator:
         )
         if not admitted.applied:
             return None
-        self._continuation_keys.add(key)
         from tldw_chatbook.Agents.hooks_v2.models import HookResult
 
         authority_outcome = replace(
@@ -398,14 +428,62 @@ class ConsolePromptQueueCoordinator:
         self._changed(session_id)
         return next_request.turn_id
 
+    def bind_hook_parent_cancellation(
+        self, session_id: str, assistant_id: str, cancellation: Event
+    ) -> None:
+        """Retain only the accepted parent's genuine provider cancellation identity."""
+        chain = self._chains.get(session_id)
+        parent = chain.hook_parent if chain is not None else None
+        if (
+            chain is not None
+            and chain.accepted_live_turn
+            and chain.request is not None
+            and parent is not None
+            and parent[3] == assistant_id
+            and parent[4].session_id == session_id
+            and parent[4].turn_id == chain.request.turn_id
+        ):
+            chain.hook_cancel_event = cancellation
+
+    def pending_stop_cancellation(self, session_id: str) -> Event | None:
+        """Return the original Event only during its exact pending settlement."""
+        chain = self._chains.get(session_id)
+        if (
+            chain is not None
+            and chain.request is not None
+            and chain.pending_stop_key is not None
+            and chain.pending_stop_key[0] == chain.request.turn_id
+            and chain.pending_stop_key in self._stop_parents
+        ):
+            return chain.hook_cancel_event
+        return None
+
+    def cancel_pending_stop(self, session_id: str, cancellation: Event) -> None:
+        """Cancel only the joined Stop event task after sealing its original owner."""
+        if (
+            self.pending_stop_cancellation(session_id) is cancellation
+            and cancellation.is_set()
+            and session_id in self._sealed_continuations
+        ):
+            chain = self._chains[session_id]
+            if (
+                chain.pending_stop_task is not None
+                and not chain.pending_stop_task.done()
+            ):
+                chain.pending_stop_cancelled = True
+                chain.pending_stop_task.cancel()
+
     def interrupt_parent(
         self, session_id: str
     ) -> tuple[HookSessionLifecycle, str] | None:
-        """Return only the exact accepted live root, never a manual operation."""
+        """Return the exact accepted live root or its pending Stop settlement."""
         chain = self._chains.get(session_id)
-        if chain is None or not chain.accepted_live_turn or chain.hook_parent is None:
+        if chain is None:
             return None
-        return chain.hook_parent[0], chain.hook_parent[4].turn_id
+        parent = chain.hook_parent if chain.accepted_live_turn else None
+        if parent is None and self.pending_stop_cancellation(session_id) is not None:
+            parent = self._stop_parents[chain.pending_stop_key][1]
+        return (parent[0], parent[4].turn_id) if parent is not None else None
 
     def continuation_receipt(
         self, session_id: str, entry_id: str | None
@@ -723,14 +801,25 @@ class ConsolePromptQueueCoordinator:
         await self._drain_waiting(session_id, terminal_status)
         return resumed
 
-    def stop_pending_continuation(self, session_id: str) -> bool:
-        """Seal a minted machine preparation even before it has an assistant row."""
+    def pending_continuation_stop_available(self, session_id: str) -> bool:
+        """Read exact unsealed pending ownership without changing admission."""
         chain = self._chains.get(session_id)
-        if (
-            chain is None
-            or chain.accepted_live_turn
-            or chain.current_entry_id not in self._machine_entries
-        ):
+        return bool(
+            chain is not None
+            and not chain.accepted_live_turn
+            and not self._shutting_down
+            and session_id not in self._sealed_continuations
+            and (
+                chain.request is not None
+                and chain.pending_stop_key is not None
+                and chain.pending_stop_key[0] == chain.request.turn_id
+                or chain.current_entry_id in self._machine_entries
+            )
+        )
+
+    def stop_pending_continuation(self, session_id: str) -> bool:
+        """Seal this turn's pending Stop proposal or claimed machine preparation."""
+        if not self.pending_continuation_stop_available(session_id):
             return False
         self.pause_for_stop(session_id)
         return True
@@ -751,6 +840,7 @@ class ConsolePromptQueueCoordinator:
         self._invalidate_machine_admission(session_id)
         snapshot = self.registry.snapshot(session_id)
         if snapshot.total_count == 0:
+            self._changed(session_id)
             return PromptQueueMutationResult(QueueMutationStatus.UNCHANGED, snapshot)
         result = self.registry.pause(
             session_id,
@@ -1013,6 +1103,7 @@ class ConsolePromptQueueCoordinator:
                 self._settle_queued_claim(session_id, current_entry_id)
         chain.current_entry_id = None
         if status not in self._SUCCESS:
+            chain.hook_cancel_event = None
             reason = (
                 PromptQueuePauseReason.STOPPED
                 if status is ConsoleRunStatus.STOPPED

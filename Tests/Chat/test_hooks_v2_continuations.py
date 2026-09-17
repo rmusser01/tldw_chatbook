@@ -242,6 +242,55 @@ async def test_real_scheduler_failure_matrix_with_success_control(stop_case, kin
 
 
 @pytest.mark.asyncio
+async def test_actual_stop_seals_a_still_running_stop_proposal(stop_case):
+    import asyncio
+
+    case = stop_case
+    engine = case.install(
+        [{"continuation": {"message": "delayed machine proposal"}}], hold=True
+    )
+    request, pending = case.submit()
+    await case.wait_entered()
+    assert len(case.gateway.payloads) == 1
+    assert engine.processes.records
+    assert not case.coordinator.stop_pending_continuation("unrelated-session")
+    assert case.controller.stop_active_run()
+    assert case.session.id in case.coordinator._sealed_continuations
+    assert not case.controller.is_stop_allowed
+    case.controller.stop_active_run()
+    # Sealing does not abandon the still-running command's bounded custody.
+    assert engine.processes.records
+    case.release.touch()
+    await pending
+    assert len(case.gateway.payloads) == 1
+    assert (
+        case.db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_hook_continuation_receipts")
+        .fetchone()[0]
+        == 0
+    )
+    assert not case.coordinator._stop_parents
+    assert not case.coordinator._stop_outcomes
+    for _ in range(200):
+        if not engine.cleanup_pending:
+            break
+        await asyncio.sleep(0.01)
+    assert not engine.cleanup_pending
+    assert not engine.processes.records
+    assert not case.controller.stop_active_run()
+    fresh, followup = case.submit("fresh ordinary turn")
+    assert fresh.turn_id != request.turn_id
+    await followup
+    assert len(case.gateway.payloads) == 5
+    assert (
+        case.db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_hook_continuation_receipts")
+        .fetchone()[0]
+        == 3
+    )
+
+
+@pytest.mark.asyncio
 async def test_simultaneous_callbacks_reserve_one_scheduler_identity(stop_case):
     import asyncio
 
@@ -514,10 +563,17 @@ async def test_human_arrival_while_acceptance_worker_waits(stop_case, interrupti
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "model_cap, expected, wall_hold", [(1, 1, False), (3, 3, False), (3, 1, True)]
+    "model_cap, expected, wall_hold, duplicate",
+    [
+        (1, 1, False, False),
+        (3, 3, False, False),
+        (3, 1, True, False),
+        (1, 1, False, True),
+        (3, 3, False, True),
+    ],
 )
 async def test_actual_agent_remaining_budget_controls_real_scheduler(
-    stop_case, tmp_path, monkeypatch, model_cap, expected, wall_hold
+    stop_case, tmp_path, monkeypatch, model_cap, expected, wall_hold, duplicate
 ):
     import asyncio
     from dataclasses import replace
@@ -529,6 +585,16 @@ async def test_actual_agent_remaining_budget_controls_real_scheduler(
     engine = case.install(
         [{"continuation": {"message": "continue budget"}}], hold=wall_hold
     )
+    duplicate_results = []
+    if duplicate:
+        schedule = case.coordinator.schedule_continuation
+
+        async def simultaneous(*args):
+            results = await asyncio.gather(schedule(*args), schedule(*args))
+            duplicate_results.append(results)
+            return results[0]
+
+        case.coordinator.schedule_continuation = simultaneous
     db = AgentRunsDB(tmp_path / "real-agent-budget.db", client_id="h5")
     service, _ = make_inline_service(db, ["done"] * 5, monkeypatch)
     calls = []
@@ -569,6 +635,17 @@ async def test_actual_agent_remaining_budget_controls_real_scheduler(
             case.release.touch()
         await pending
         assert len(calls) == expected
+        if duplicate:
+            assert len(duplicate_results) == expected
+            assert (
+                sum(value is not None for pair in duplicate_results for value in pair)
+                == expected - 1
+            )
+        assert not engine.lifecycle_owner.terminal_budgets
+        assert not engine.lifecycle_owner.terminal_budget_times
+        assert not engine.lifecycle_owner.inherited_budgets
+        assert not case.coordinator._stop_parents
+        assert not case.coordinator._stop_outcomes
         assert case.coordinator.registry.snapshot(case.session.id).total_count == 0
         assert (
             case.db.get_connection()
@@ -845,3 +922,29 @@ async def test_other_actual_root_still_occupies_capacity(stop_case, monkeypatch,
     finally:
         release.set()
         await case.runtime.wait_for_turn(other_turn)
+
+
+@pytest.mark.asyncio
+async def test_unrelated_stop_task_cancellation_propagates(stop_case):
+    import asyncio
+
+    case = stop_case
+    engine = case.install([{"continuation": {"message": "never replay"}}], hold=True)
+    _, pending = case.submit()
+    await case.wait_entered()
+    settlement = case.coordinator._chains[case.session.id]
+    cancellation = settlement.hook_cancel_event
+    assert cancellation is not None and not cancellation.is_set()
+    settlement.pending_stop_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    for _ in range(200):
+        if not engine.cleanup_pending:
+            break
+        await asyncio.sleep(0.01)
+    assert not cancellation.is_set()
+    assert not engine.cleanup_pending
+    assert settlement.hook_cancel_event is None
+    assert settlement.pending_stop_task is None
+    assert settlement.pending_stop_key is None
+    assert len(case.gateway.payloads) == 1
