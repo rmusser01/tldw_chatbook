@@ -15,3 +15,13 @@ text, gives Enter guidance after settlement, and permits the next submission.
 Final reviewer assessment: no remaining important correctness issues found.
 The reviewer made no edits. Test results and native qualification are recorded
 separately in README.md and their receipts.
+
+Follow-up visual finding: compact Default card clipped even Random to Rand.
+Reviewer confirmed the three new selectors only stack compact Splash Select
+rows and their labels; the four size/theme cases pass. No actionable findings.
+
+Incoming dev review found a semantic automatic-merge issue: compose-only Select
+errors remained visible after Auto repaired state via sync_option_group. The
+fix keeps Select errors and placeholder options synchronized without replacing
+editors. Final independent review found no remaining important issue. The
+documentation conflict preserves both branches' guidance.

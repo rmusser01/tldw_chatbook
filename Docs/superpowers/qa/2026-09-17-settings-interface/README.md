@@ -57,6 +57,8 @@ across overlapping reruns:
   added newer-input success/failure cases.
 - `journeys-final.txt`: final keyboard, persistence, launch-default overlap,
   rendered values and resize qualification; includes the new dirty-marker case.
+- `default-card-paint-final.txt`: four Splash geometry cases repeated after the
+  final compact selector repair.
 - `governance.txt`: 32 token, component, generated CSS and boot-budget cases.
 - `static.json` and `static-fatal.txt`: zero new scoped Ruff/formatter debt
   against the exact base; fatal checks pass. Existing whole-file debt remains.
@@ -71,9 +73,23 @@ review findings and disposition are in `review.txt`.
 
 ## Native verification
 
-Final native run and capture inspection are pending after a compact Default card
-label defect found in attempt 003. Do not treat this draft
-section as a completed qualification receipt.
+Final run `/private/tmp/tldw-32757-native-004`, PID 77029, passed all four
+journeys starting in dark/light themes at 190×55 and 80×24. It used real
+`TldwCli.run`, LinuxDriver, attached tmux streams, a private HOME/config/data
+profile and an acquired instance lock. Appearance validation/Preview/Revert,
+actual saves, Theme browse/edit/Apply/theme-file Save/launch-default handoff,
+and Splash exact-value writes/reload/gallery replay all passed. Apply and
+Appearance Preview intentionally change the runtime theme during each journey.
+
+All 28 SVG captures and matching terminal text were inspected, including the
+complete compact `minimal_fade` selection. `native-result.json` fingerprints
+match the final Settings sources, stylesheets and runner. `lifecycle.json`
+records app.run return, exit zero, exact PID absence before terminal closure,
+11 healthy private databases, zero conversations/messages, no app ERROR records,
+empty faulthandler output and unchanged default-profile file fingerprints.
+The owned terminal is closed. `capture-manifest.json` retains original/stored
+hashes; only trailing whitespace was removed. Ingestion integration has separate
+automated evidence below; this native run exercises the Settings surfaces.
 
 Earlier attempt 001 exited 1 because the runner selected nonexistent card IDs;
 its initial terminal resize also made its first wide capture unsuitable. Attempt
@@ -85,6 +101,38 @@ reproduced `Random` painting as `Rand`; the field now stacks at full width.
 `compact-splash-before.svg` and `default-card-paint-red.txt` retain that evidence.
 None substitutes for the final source-matched run.
 `earlier-native-*.json` retain their outcomes and confirmed exits before relaunch.
+
+## Incoming dev integration
+
+Dev advanced by four commits through `c97a64eba5` during this review. The sole
+text conflict was the Import guide: both the existing resize/retry guidance and
+incoming Parakeet/runtime/clipboard guidance are retained. Incoming provider
+validation and asynchronous checked clipboard delivery remain present.
+
+Independent review found a semantic interaction in the automatic canvas merge:
+new Select errors were created on compose, while this branch updates option
+fields in place. Choosing Auto repaired state but left the old invalid-provider
+warning visible. Select error lines now remain mounted and update with their
+placeholder options; programmatic option replacement suppresses Changed events.
+The strengthened incoming test proves repair, invalid/valid snapshot transitions,
+retained editor identity and absence of extra edits. `integration-select-red.txt`
+records the actual stale-warning assertion; `integration-select-final.txt` passes.
+
+The initial five-file integration run had 51 passes and four known profile-setup
+failures. Isolation wrappers let all 55 original cases run. The expanded selection
+also exercises existing option identity and event ordering. Its 20 setup failures
+all report `raw_source_selection_changed`; four functions now use the same
+pre-import private-profile helper without altering their behavioral assertions.
+**102 distinct integration cases pass**: `integration-expanded-initial.txt`
+contains 82 passes and the 20 setup failures; `options-private-final.txt` passes
+all 20 after isolation. Overlapping five-file and single-case reruns are not
+added to this total. Together with the 98 Settings and 32 governance cases,
+this continuation qualifies **232 distinct targeted cases**.
+
+`integration-static.json` compares both merge parents and reports no additional
+lint/format debt. `integration-fatal.txt` passes. All seven merged preflight guards
+pass; the diagnostic-inventory and five CSS-sync checks were also repeated after
+the Select synchronization repair. No new architecture decision was required.
 
 ## Limits
 

@@ -15586,3 +15586,16 @@ the failure. Name-only BLOB extraction and local `surrogatepass` decoding fixed
 it without changing saved bytes or the connection's text factory. When moving
 JSON reads into SQL, test previously admitted string boundaries at the real
 query boundary; valid JSON and ordinary Unicode coverage alone are insufficient.
+
+## A clean text merge can omit a new control state from in-place updates
+
+**TASK-32757, 2026-09-17.** Merging dev's invalid STT-provider selector into
+the component branch produced no canvas conflict, and 55 focused tests passed.
+Review found that dev created its warning during compose while the branch
+updated option groups in place: choosing Auto fixed state but left the warning
+visible. The incoming canvas-only test recorded the choice without applying the
+screen's update. Extending it through `sync_option_group` reproduced the stale
+warning. Synchronizing Select errors/options and testing invalid-to-valid-to-
+invalid transitions fixed the interaction while preserving editor identity.
+When one branch adds a control state and another changes refresh strategy,
+exercise the composed control's next update, even after a clean text merge.

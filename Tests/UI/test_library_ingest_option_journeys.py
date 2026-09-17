@@ -3,6 +3,7 @@
 import pytest
 from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_prompt_collection_journeys import _focus
 from Tests.UI.test_library_shell import (
@@ -24,8 +25,9 @@ from tldw_chatbook.Widgets.Library import library_ingest_canvas as canvas_module
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("action", ["checkbox", "select", "reset", "text"])
+@private_profile_test
 async def test_option_actions_preserve_other_editors_and_visible_focus(
-    tmp_path, monkeypatch, size, theme, action
+    request, tmp_path, monkeypatch, size, theme, action
 ):
     monkeypatch.delenv("NO_COLOR", raising=False)
     # Availability is UI-only; these journeys never extract or install anything.
@@ -385,8 +387,9 @@ async def test_per_type_updates_keep_dependencies_and_editors_current(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@private_profile_test
 async def test_compact_library_shell_keeps_full_install_reason(
-    tmp_path, monkeypatch, theme
+    request, tmp_path, monkeypatch, theme
 ):
     """The compact shell's toolbar height must not clip this option explanation."""
     monkeypatch.delenv("NO_COLOR", raising=False)

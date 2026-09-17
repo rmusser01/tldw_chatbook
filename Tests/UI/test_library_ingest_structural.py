@@ -50,6 +50,7 @@ from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
     LibraryIngestCanvas,
 )
 from Tests.UI.consolidated_css import APP_STYLESHEETS
+from Tests.private_profile import private_profile_test
 
 
 _INSTALLED_PATCH = "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed"
@@ -143,6 +144,53 @@ def _panel_texts(app: App, group: str) -> list[str]:
     return texts
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_invalid_saved_stt_provider_is_visible_and_can_be_reset_to_auto(
+    request, monkeypatch
+):
+    monkeypatch.setattr(_INSTALLED_PATCH, lambda _: True)
+    monkeypatch.setattr(
+        "tldw_chatbook.Library.library_ingest_state._dependency_installed", lambda _: True
+    )
+    changes = []
+
+    class Host(_CssTrueCanvasHost):
+        def on_library_ingest_canvas_option_value_changed(self, event):
+            changes.append((event.group, event.name, event.value))
+            self.query_one(LibraryIngestCanvas).sync_option_group(
+                event.group, _audio_state(provider=event.value), apply_values=False
+            )
+
+    app = Host(_audio_state(provider="retired-provider"))
+    async with app.run_test(size=(110, 42)) as pilot:
+        await pilot.pause()
+        provider = app.query_one("#opt-audio_video-transcription_provider", Select)
+        assert provider.value != "default"
+        error = app.query_one("#opt-audio_video-transcription_provider-error", Static)
+        assert error.display
+        assert "Choose a supported transcription provider" in error.visual.plain
+        assert changes == []
+        model_folder = app.query_one("#opt-audio_video-transcription_model_dir", Input)
+        provider.value = "default"
+        await pilot.pause()
+        assert changes == [("audio_video", "transcription_provider", "default")]
+        assert not error.display
+        assert provider.value == "default"
+        canvas = app.query_one(LibraryIngestCanvas)
+        canvas.sync_option_group("audio_video", _audio_state(provider="retired-again"))
+        await pilot.pause()
+        assert error.display
+        assert provider.value != "default"
+        canvas.sync_option_group("audio_video", _audio_state(provider="default"))
+        await pilot.pause()
+        assert not error.display
+        assert provider.value == "default"
+        assert app.query_one("#opt-audio_video-transcription_model_dir") is model_folder
+        assert app.query_one("#opt-audio_video-transcription_provider") is provider
+        assert changes == [("audio_video", "transcription_provider", "default")]
+
+
 # --- MI-07: reason annotation at the control --------------------------------
 
 
@@ -164,8 +212,8 @@ async def test_value_gated_audio_fields_state_their_reason_when_disabled():
             assert model.disabled is True, "precondition: gate closed"
             texts = _panel_texts(pilot.app, "audio_video")
             assert any(
-                "Local Parakeet model folder — needs the parakeet-onnx provider"
-                in text
+                text.startswith("Local Parakeet model folder")
+                and text.endswith("— needs the parakeet-onnx provider")
                 for text in texts
             ), f"no reason at the model-folder control; panel texts: {texts!r}"
             assert any(
@@ -216,8 +264,8 @@ async def test_enabled_fields_carry_no_disabled_reason():
                 f"enabled field label must be plain; panel texts: {texts!r}"
             )
             assert any(
-                "Local Parakeet model folder — needs the parakeet-onnx provider"
-                in text
+                text.startswith("Local Parakeet model folder")
+                and text.endswith("— needs the parakeet-onnx provider")
                 for text in texts
             )
 
@@ -462,7 +510,8 @@ def _screen_harness():
 
 
 @pytest.mark.asyncio
-async def test_submit_brings_the_queue_heading_into_view(monkeypatch):
+@private_profile_test
+async def test_submit_brings_the_queue_heading_into_view(request, monkeypatch):
     """MI-08: after Start, the outcome area must not be left below the
     fold -- the canvas scrolls the queue heading into view."""
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
@@ -526,7 +575,7 @@ async def test_submit_brings_the_queue_heading_into_view(monkeypatch):
 # --- MI-17: install command recoverable at the warning -------------------------
 
 
-_LONG_COMMAND = 'pip install -e ".[transcription_lightning_whisper]"'
+_LONG_COMMAND = 'pip install -e ".[transcription_faster_whisper]"'
 
 
 def _warning_state():
@@ -538,8 +587,8 @@ def _warning_state():
             {"audio_video": ["/tmp/talk.mp3"]},
             warnings=[
                 {
-                    "feature": "lightning_whisper_mlx",
-                    "label": "Lightning Whisper MLX",
+                    "feature": "faster_whisper",
+                    "label": "Faster Whisper",
                     "hint": "audio transcription",
                     "command": _LONG_COMMAND,
                 }
@@ -572,7 +621,7 @@ async def test_warning_command_paints_unclipped_in_the_summary():
         )
         # The command's tail must survive paint; pre-fix it clipped at the
         # canvas edge mid-token ("...[transcription_lig").
-        assert "transcription_lightning_whisper" in painted.replace(" ", ""), (
+        assert "transcription_faster_whisper" in painted.replace(" ", ""), (
             f"command tail not painted; warning rows: {painted!r}"
         )
 
@@ -933,7 +982,8 @@ def _rows_below_the_fold(canvas, widget) -> int:
 
 
 @pytest.mark.asyncio
-async def test_the_fold_pays_for_itself_in_the_shipped_screen():
+@private_profile_test
+async def test_the_fold_pays_for_itself_in_the_shipped_screen(request):
     """AC#2's first half, re-measured where the canvas actually ships.
 
     Measured 2026-08-10 at 235x52, four staged groups, 11 warnings: the
@@ -985,7 +1035,8 @@ async def test_the_fold_pays_for_itself_in_the_shipped_screen():
 
 
 @pytest.mark.asyncio
-async def test_the_open_fold_survives_a_registry_tick_in_the_shipped_screen():
+@private_profile_test
+async def test_the_open_fold_survives_a_registry_tick_in_the_shipped_screen(request):
     """G3 on the path that actually broke it.
 
     ``_update_library_ingest_dynamic_regions`` runs on EVERY registry tick
@@ -1015,7 +1066,8 @@ async def test_the_open_fold_survives_a_registry_tick_in_the_shipped_screen():
 
 
 @pytest.mark.asyncio
-async def test_start_and_forecast_are_visible_without_scrolling_at_52_rows():
+@private_profile_test
+async def test_start_and_forecast_are_visible_without_scrolling_at_52_rows(request):
     """TASK-15702: the shipped shell pins the commit decision above the fold."""
     host = _screen_harness()
     async with host.run_test(size=(235, 52)) as pilot:

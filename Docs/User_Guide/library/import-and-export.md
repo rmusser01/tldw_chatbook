@@ -241,7 +241,7 @@ checkpoint before any tool is allowed to run, as required by
 | Import control | What it does |
 |---|---|
 | "Browse…" | Opens the "Import media" file picker (remembers your last folder). Large folders [load progressively with progress and sorting controls](../file-picker.md). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. That input is also the path field: type or paste an absolute path (or one starting with "~") into it and the listing jumps there as you type, and Ctrl+A selects what is in it. Folders and URLs are typed or pasted into the canvas's own path field instead. |
-| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. A compact "Copy install command" button sits right under the warnings (with several distinct commands, each button names its extra, e.g. "Copy install command (audio)", "Copy install command (video)"). |
+| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. Audio/video warnings follow the selected transcription provider; alternative backends and retired MLX providers are not requirements. Auto uses faster-whisper; choose Parakeet (ONNX) or transcribe.cpp explicitly to use that installed backend. A compact "Copy install command" button sits right under the warnings (with several distinct commands, each button names its extra, e.g. "Copy install command (audio)", "Copy install command (video)"). Copy checks native clipboard delivery where available. If delivery cannot be confirmed, the warning details open so you can select the literal command manually. |
 | "Choose a file…" / "Retry" | Offered under pre-check errors — pick a different path, or re-run the check after a network hiccup. |
 | Per-type options | Every dropdown shows a plain-language choice (the internal value still travels to the pipeline). PDF documents: "PDF engine" ("PyMuPDF (plain text)" / "PyMuPDF4LLM (Markdown)" / "Docling (layout-aware · OCR-capable)" / "Docext (vision-model OCR)"), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" ("Auto (let Docext choose)" / Docext / Tesseract / EasyOCR / PaddleOCR / Docling — docext engine only). Word/Office documents: "Processing method" ("Auto (Docling when installed)" / Docling / "Native per-format parser"), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" ("Auto (faster-whisper)" / "Parakeet (ONNX)" / "Faster Whisper" / "transcribe.cpp (GGUF)"), "Local Parakeet model folder", "Transcription model" (the full faster-whisper catalog — Tiny through Large v3 including the English-only ".en" variants, the distilled "Distil" family, and the community "Large v3 Turbo" / "CrisperWhisper" builds), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter", "Start at" / "Stop at" (trim bounds, HH:MM:SS or seconds — blank means unbounded; "Stop at" is an absolute position in the recording, not a length measured from "Start at", and means the same thing for audio and video files), "Cookies file for gated URLs" (a Netscape cookies.txt path for yt-dlp; video URLs only — the file must exist when the job runs, otherwise the import proceeds without cookies and the queue row says "cookies ignored: …"), "Recursive summary (map-reduce)" (with Analyze after import + chunking: summarizes each chunk, then combines the summaries). E-books: "Extraction method" ("Filtered (skips covers & front matter)" / "Markdown (keeps headings & structure)" / "Basic (every section · plain text)"), "Chunking method" ("By chapter" / "By sentence" / "By word count" / "By paragraph"), "Include table of contents". Images (.png/.jpg/.jpeg/.gif/.webp/.bmp/.tiff/.tif): "Extract text (OCR)" (on by default — the extracted text is what gets imported), "OCR language", "OCR backend" ("Auto (best installed backend)" / "Docext (vision model)" / Docling / Tesseract / EasyOCR / PaddleOCR). Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch" ("This page only" / "Site map" / "Pages under this URL" / "Follow links (recursive)"), "Maximum pages", "Maximum depth". |
 | PDF / document OCR | The OCR checkbox is inert under engines that cannot OCR — the label names the capable ones. "OCR language" rides the OCR toggle; the PDF "OCR backend" applies to the docext engine only. |
@@ -274,6 +274,22 @@ row, an accepted model selection retries that job; cancelling the picker or
 choosing an unusable model leaves it failed. If the retry removes the focused
 row action, focus returns to the source field. A newer focus move or navigation
 away from Import is respected when model validation finishes.
+
+**Parakeet setup:** Installing the Python package adds the transcription runtime;
+it does not download the model files. In the Audio & video options, select
+"Parakeet (ONNX)", then press "Install verified Parakeet v2 INT8 (630.6 MiB)…"
+and confirm the displayed download plan. This installs the English v2 INT8 model
+and selects it for the batch. Leave "Local Parakeet model folder" blank to use
+the model installed through Chatbook; that field is an optional override for
+model files you already have. The install button downloads v2 INT8 specifically,
+so use English and INT8 with that bundle.
+
+For native clipboard copying on Fedora Wayland, install
+[`wl-clipboard`](https://packages.fedoraproject.org/pkgs/wl-clipboard/wl-clipboard/)
+(`sudo dnf install wl-clipboard`). X11 sessions can use `xclip` or `xsel`.
+SSH and browser sessions use the client-facing clipboard route; terminal or
+browser permissions can prevent delivery. An unconfirmed-copy warning leaves
+the command visible for manual selection.
 
 **Consent for risky imports** — starting with "⚠" tooling warnings
 outstanding takes two presses, right at the Start button (task-3314

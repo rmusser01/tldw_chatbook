@@ -3,6 +3,7 @@
 import pytest
 from textual.widgets import Button, Checkbox, Input, Select, TextArea
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_library_ingest_canvas import _CanvasHost, _MessageRecordingHost
 from Tests.UI.test_library_shell import _wait_for_condition
 from tldw_chatbook.Library.library_ingest_state import (
@@ -183,7 +184,8 @@ async def test_detached_canvas_reveal_callback_preserves_current_editor():
 
 
 @pytest.mark.asyncio
-async def test_forwarded_option_edit_cannot_overtake_later_reset(monkeypatch):
+@private_profile_test
+async def test_forwarded_option_edit_cannot_overtake_later_reset(request, monkeypatch):
     """Screen delivery must reject a real forwarded edit superseded by Reset."""
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_library_shell import (
@@ -258,7 +260,10 @@ async def test_forwarded_option_edit_cannot_overtake_later_reset(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_option_dependency_refresh_keeps_later_pending_sibling_edit(monkeypatch):
+@private_profile_test
+async def test_option_dependency_refresh_keeps_later_pending_sibling_edit(
+    request, monkeypatch
+):
     """Delivering two real edits in order must retain the newer live editor."""
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_library_shell import (

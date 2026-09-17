@@ -19,6 +19,7 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     is_http_url as _is_http_url,
 )
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, OPTIONAL_FEATURES
+from tldw_chatbook.Utils.input_validation import validate_batch_transcription_provider
 
 
 @dataclass(frozen=True)
@@ -227,6 +228,7 @@ _FEATURE_TO_EXTRA: dict[str, str] = {
     "lxml": "ebook",
     "parakeet_onnx": "transcription_parakeet",
     "parakeet_mlx": "mlx_whisper",
+    "transcribe_cpp": "transcription_transcribe_cpp",
     # (task-3307) The OCR-backend umbrella recovers via the one extra that
     # is explicitly OCR-purposed. Docling (via [pdf]) or a bare
     # `pip install pytesseract` work just as well -- the failure detail
@@ -278,6 +280,7 @@ _FEATURE_LABELS: dict[str, str] = {
     "lxml": "lxml",
     "parakeet_onnx": "Parakeet ONNX",
     "parakeet_mlx": "Parakeet MLX",
+    "transcribe_cpp": "transcribe.cpp",
     "pdf_processing": "PDF processing",
     "pymupdf": "PyMuPDF",
     "pymupdf4llm": "PyMuPDF4LLM",
@@ -635,9 +638,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
         required_features=("audio_processing",),
         optional_features=(
             "faster_whisper",
-            "lightning_whisper_mlx",
             "parakeet_onnx",
-            "parakeet_mlx",
+            "transcribe_cpp",
             "yt_dlp",
             "video_processing",
         ),
@@ -670,6 +672,11 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="Local Parakeet model folder",
                 type="text",
                 default="",
+                hint=(
+                    "optional override; leave blank for a model installed through "
+                    "Chatbook. Python packages exclude model files; use Install "
+                    "verified Parakeet v2 INT8 below to download the English model"
+                ),
                 # (task-3305) Example content, not the label repeated: an
                 # empty Input otherwise shows label-as-placeholder stutter.
                 placeholder="/path/to/parakeet-model",
@@ -1495,6 +1502,45 @@ def classify_missing_features(
         tuple(f for f in capabilities.required_features if f in wanted),
         tuple(f for f in capabilities.optional_features if f in wanted),
     )
+
+
+def selected_stt_warnings(
+    warnings: list[dict[str, Any]], provider: object = "default"
+) -> list[dict[str, Any]]:
+    """Keep captured missing-tool warnings relevant to the selected batch STT.
+
+    The preflight inventories all supported backends so switching the form
+    can reuse that snapshot. Alternatives are not cumulative requirements.
+    Auto retains the existing faster-whisper route (ADR-025); this projection
+    never selects a replacement provider or probes native runtimes.
+
+    Args:
+        warnings: Captured dependency inventory and source advisories.
+        provider: Current audio/video import provider option.
+
+    Returns:
+        Warnings for non-STT dependencies and the selected STT backend.
+    """
+    try:
+        selected_provider = validate_batch_transcription_provider(provider)
+    except ValueError:
+        # The option validator blocks submission until the user corrects it.
+        # An unknown selection must not erase the captured dependency evidence.
+        return list(warnings)
+    features = {
+        "default": "faster_whisper",
+        "faster-whisper": "faster_whisper",
+        "parakeet-onnx": "parakeet_onnx",
+        "transcribe-cpp": "transcribe_cpp",
+    }
+    selected = features[selected_provider]
+    backends = set(features.values()) | {"lightning_whisper_mlx", "parakeet_mlx"}
+    return [
+        warning
+        for warning in warnings
+        if warning.get("feature") not in backends
+        or warning.get("feature") == selected
+    ]
 
 
 def get_tooling_warnings(group: str) -> list[dict[str, Any]]:

@@ -1,0 +1,24 @@
+
+ ‹  ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Splash Screen
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Auto-saved | Splash changes     │
+│     Storage                  │  │  │  take effect as you make them.          │
+│     Workspaces               │  │  │ │  needed; text fields apply on      │  │
+│     Tool Profiles            │  │  │ │  Enter                             │▂ │
+│     Privacy & Security       │  │  │ │ Default card                       │  │
+│     Network                  │  │  │ │ ┌────────────────────────────────┐ │  │
+│     My Profile               │  │  │ │ │ minimal_fade (minimal_fade)  ▼ │ │  │
+│  Troubleshooting           ▇ │  │  │ │ └────────────────────────────────┘ │▃ │
+│     Diagnostics (view)       │  │  │ │                                    │  │
+│     About (view)             │  │  │ │ Enabled             ▐X…Off         │  │
+│     Agents                   │  │  │ │ Show progress       ▐X…On          │  │
+│  Expert                      │  │  │ │ Skip on keypress    ▐X…On          │  │
+│     Internal Prompts         │  │  │ │ Duration (s)            │ 1.25     │  │
+│     Advanced Config          │  │  │ │ Animation speed (x)     █ 1.25     │  │
+│   Domain Defaults ▸ (11)     │  │  │ │                                    │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

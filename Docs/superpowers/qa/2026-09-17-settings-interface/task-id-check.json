@@ -1,7 +1,14 @@
 {
-  "ref_count": 270,
+  "ref_count": 271,
   "worktree_count": 29,
-  "refs_with_id": [],
+  "refs_with_id": [
+    {
+      "ref": "refs/heads/feat/component-pattern-library",
+      "matches": [
+        "backlog/tasks/task-32757 - Qualify-Appearance-Theme-and-Splash-Settings-workflows.md"
+      ]
+    }
+  ],
   "worktrees_with_id": [
     {
       "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
@@ -9,5 +16,7 @@
         "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/tasks/task-32757 - Qualify-Appearance-Theme-and-Splash-Settings-workflows.md"
       ]
     }
-  ]
+  ],
+  "incoming_dev": "c97a64eba54d18f88cecc77bf6233e208df8bf24",
+  "collision": false
 }

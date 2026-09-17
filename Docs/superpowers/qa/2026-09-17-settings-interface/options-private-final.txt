@@ -1,0 +1,25 @@
+....................                                                     [100%]
+============================= slowest 25 durations =============================
+8.10s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[select-textual-light-size0]
+7.80s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[select-textual-light-size1]
+7.80s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[text-textual-light-size0]
+7.68s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[select-textual-dark-size0]
+7.65s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[reset-textual-dark-size0]
+7.61s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[reset-textual-dark-size1]
+7.59s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[reset-textual-light-size0]
+7.59s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[reset-textual-light-size1]
+7.55s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[select-textual-dark-size1]
+7.50s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[checkbox-textual-light-size0]
+7.48s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[checkbox-textual-dark-size0]
+7.47s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[text-textual-dark-size0]
+7.43s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[text-textual-light-size1]
+7.42s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[checkbox-textual-dark-size1]
+7.37s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[text-textual-dark-size1]
+7.35s call     Tests/UI/test_library_ingest_option_journeys.py::test_option_actions_preserve_other_editors_and_visible_focus[checkbox-textual-light-size1]
+6.44s call     Tests/UI/test_library_ingest_option_journeys.py::test_compact_library_shell_keeps_full_install_reason[textual-dark]
+6.34s call     Tests/UI/test_library_ingest_option_journeys.py::test_compact_library_shell_keeps_full_install_reason[textual-light]
+5.09s call     Tests/UI/test_library_ingest_option_event_order.py::test_option_dependency_refresh_keeps_later_pending_sibling_edit
+5.04s call     Tests/UI/test_library_ingest_option_event_order.py::test_forwarded_option_edit_cannot_overtake_later_reset
+
+(5 durations < 1s hidden.)
+20 passed in 147.00s (0:02:27)
