@@ -4716,6 +4716,7 @@ class ConsoleAgentBridge:
         # default, and every pre-existing construction site -- i.e. all test
         # harnesses) means this bridge never wires a hooks engine at all.
         ensure_run_hooks: Callable[[], Any] | None = None,
+        get_hooks_v2: Callable[[str], Any] | None = None,
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
@@ -4741,6 +4742,7 @@ class ConsoleAgentBridge:
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
         self._ensure_run_hooks = ensure_run_hooks
+        self._get_hooks_v2 = get_hooks_v2
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -6867,6 +6869,16 @@ class ConsoleAgentBridge:
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
             guard_tool_calls=guard_tool_calls,
+            hooks_v2_engine=(
+                self._get_hooks_v2(session_id) if self._get_hooks_v2 else None
+            ),
+            hooks_v2_session_id=session_id,
+            hooks_v2_turn_id=assistant_message_id,
+            # I1 supplies graph-to-handler mapping. Missing plugin composition
+            # is unknown, never a ready empty requirement set.
+            hooks_v2_required_handler_ids=(
+                (lambda _run_id: None) if plugin_entries else (lambda _run_id: ())
+            ),
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,

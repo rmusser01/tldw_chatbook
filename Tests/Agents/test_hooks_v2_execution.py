@@ -918,3 +918,66 @@ async def test_scope_deadline_and_active_allowance_remain_engine_owned(monkeypat
     expired.close()
     assert not engine.processes.records
     await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_phase_plan_retains_unknown_dependency_without_rechecking():
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    reads = []
+
+    def dependency(*_args):
+        reads.append(1)
+        if len(reads) == 1:
+            raise RuntimeError("unavailable")
+        return False
+
+    engine = HookEngine(
+        (command(),), lambda *_: True, HookBudgetOwner(), dependency_required=dependency
+    )
+    scope = engine.begin_event(event())
+    try:
+        assert hasattr(engine, "plan_handlers"), "missing bounded phase planning entry"
+        plan = engine.plan_handlers(scope, event())
+        assert plan[0].phase == "validate"
+        assert plan[0].dependency_required
+        result = await engine.fire_handler_async(scope, "command", event())
+        assert result.failures[0].dependency_required
+        assert result.failures[0].code == "dependency_check_failed"
+        assert len(reads) == 1
+        assert not engine.notify_planned(scope, event())
+        assert len(reads) == 1
+        assert not engine.processes.records
+    finally:
+        scope.close()
+        await engine.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("required", [False, True])
+async def test_phase_plan_stable_dependency_and_closed_foreign_scopes(required):
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    owner = HookBudgetOwner()
+    engine = HookEngine(
+        (command(),), lambda *_: True, owner, dependency_required=lambda *_: required
+    )
+    other = HookEngine((command(),), lambda *_: True, owner)
+    scope = engine.begin_event(event())
+    try:
+        assert hasattr(engine, "plan_handlers"), "missing bounded phase planning entry"
+        assert engine.plan_handlers(scope, event())[0].phase == (
+            "validate" if required else "observe"
+        )
+        with pytest.raises(ValueError, match="event execution"):
+            other.plan_handlers(scope, event())
+        assert (await engine.fire_handler_async(scope, "command", event())).succeeded
+        scope.close()
+        with pytest.raises(ValueError, match="event execution"):
+            engine.plan_handlers(scope, event())
+    finally:
+        scope.close()
+        await engine.close()
+        await other.close()

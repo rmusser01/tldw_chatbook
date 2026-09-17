@@ -414,6 +414,16 @@ class PluginContextOrigin:
     byte_count: int
 
 
+@dataclass(frozen=True)
+class HookContextOrigin:
+    """Host attribution for one whole hook contribution, independent of Plugins."""
+
+    event_id: str
+    handler_id: str
+    byte_count: int
+    package_origins: tuple[PluginContextOrigin, ...] = ()
+
+
 class PluginContextText(str):
     """Live-only host attribution; JSON and transcript text contain no sidecar.
 
@@ -421,14 +431,28 @@ class PluginContextText(str):
     this type through parsing. Formatting must explicitly carry the origins.
     """
 
-    def __new__(cls, text: str, origins: tuple[PluginContextOrigin, ...]) -> Self:
+    def __new__(
+        cls,
+        text: str,
+        origins: tuple[PluginContextOrigin, ...],
+        hook_origins: tuple[HookContextOrigin, ...] = (),
+    ) -> Self:
         instance = super().__new__(cls, text)
         instance.origins = tuple(origins)
+        instance.hook_origins = tuple(hook_origins)
         instance.text_digest = hashlib.sha256(text.encode("utf-8")).digest()
         return instance
 
-    def __getnewargs__(self) -> tuple[str, tuple[PluginContextOrigin, ...]]:
-        return str(self), self.origins
+    def __getnewargs__(self) -> tuple:
+        return str(self), self.origins, self.hook_origins
+
+    def checked_hook_origins(self) -> tuple[HookContextOrigin, ...]:
+        self.checked_origins()
+        if any(
+            not isinstance(origin, HookContextOrigin) for origin in self.hook_origins
+        ):
+            raise ValueError("hook_context_origin_invalid")
+        return self.hook_origins
 
     def checked_origins(self) -> tuple[PluginContextOrigin, ...]:
         if hashlib.sha256(self.encode("utf-8")).digest() != self.text_digest:
@@ -446,7 +470,78 @@ def carry_plugin_context(text: str, *sources: str) -> str:
         if isinstance(source, PluginContextText)
         for origin in source.checked_origins()
     )
-    return PluginContextText(text, origins) if origins else text
+    hook_origins = tuple(
+        origin
+        for source in sources
+        if isinstance(source, PluginContextText)
+        for origin in source.checked_hook_origins()
+    )
+    return (
+        PluginContextText(text, origins, hook_origins)
+        if origins or hook_origins
+        else text
+    )
+
+
+def check_host_context(messages: list[dict], *, strip: bool = True) -> list[dict]:
+    """Validate whole attributed blocks on the exact text/multimodal send."""
+    from collections import Counter
+
+    total = 0
+    event_bytes: Counter[str] = Counter()
+
+    def checked(content):
+        nonlocal total
+        if not isinstance(content, PluginContextText):
+            return content
+        packages = Counter(content.checked_origins())
+        for origin in content.checked_hook_origins():
+            if (
+                not origin.event_id
+                or not origin.handler_id
+                or not 0 <= origin.byte_count <= 4096
+            ):
+                raise ValueError("hook_context_block_too_large")
+            total += origin.byte_count
+            event_bytes[origin.event_id] += origin.byte_count
+            for package in origin.package_origins:
+                if (
+                    not isinstance(package, PluginContextOrigin)
+                    or packages[package] <= 0
+                ):
+                    raise ValueError("hook_context_package_origin_invalid")
+                packages[package] -= 1
+        for origin, count in packages.items():
+            if not 0 <= origin.byte_count <= 8192:
+                raise ValueError("plugin_context_block_too_large")
+            total += origin.byte_count * count
+        return str(content) if strip else content
+
+    result = []
+    for row in messages:
+        content = row.get("content")
+        if isinstance(content, PluginContextText):
+            row = {**row, "content": checked(content)}
+        elif isinstance(content, list):
+            row = {
+                **row,
+                "content": [
+                    (
+                        {**part, "text": checked(part["text"])}
+                        if isinstance(part, dict)
+                        and part.get("type") == "text"
+                        and "text" in part
+                        else part
+                    )
+                    for part in content
+                ],
+            }
+        result.append(row)
+    if any(size > 16384 for size in event_bytes.values()):
+        raise ValueError("hook_context_event_too_large")
+    if total > 32768:
+        raise ValueError("plugin_context_send_too_large")
+    return result
 
 
 @dataclass(frozen=True)
@@ -457,6 +552,8 @@ class ToolResult:
     # Optional refusal provenance lets the runtime distinguish a permission
     # block from an ordinary failed dispatch without interpreting payload text.
     outcome: ToolOutcome | None = None
+    # Host dispatch ownership, never inferred from a remote result body.
+    dispatch_state: Literal["not_started", "settled", "uncertain"] | None = None
 
     @classmethod
     def blocked(cls, error: str) -> ToolResult:
@@ -468,7 +565,12 @@ class ToolResult:
         Returns:
             A failed tool result explicitly classified as blocked.
         """
-        return cls(ok=False, error=error, outcome=TOOL_OUTCOME_BLOCKED)
+        return cls(
+            ok=False,
+            error=error,
+            outcome=TOOL_OUTCOME_BLOCKED,
+            dispatch_state="not_started",
+        )
 
 
 @dataclass(frozen=True)
