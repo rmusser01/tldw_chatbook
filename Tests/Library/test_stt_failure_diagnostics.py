@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 from loguru import logger
 from textual.app import App
@@ -18,6 +21,53 @@ class _FailureHost(LibraryIngestQueueMixin, App):
         self._init_library_ingest_runtime_state()
         # Exercise accepted callbacks with new parse admission paused.
         self._ingest_maintenance_paused = True
+
+
+@pytest.mark.parametrize(
+    ("progress", "expected_phase"),
+    [
+        ({"phase": "loading", "message": "/private/native-secret"}, "loading"),
+        ({"phase": WorkerPhase.TRANSCRIBING}, "transcribing"),
+        (None, "unknown"),
+        ("/private/progress-secret", "unknown"),
+        (["/private/progress-secret"], "unknown"),
+        ({"phase": {"native": "/private/phase-secret"}}, "unknown"),
+    ],
+)
+def test_failure_callback_normalizes_progress_without_app_or_file_sink(
+    monkeypatch, progress, expected_phase
+):
+    error_log = Mock()
+    monkeypatch.setattr("tldw_chatbook.app.logger", SimpleNamespace(error=error_log))
+    host = SimpleNamespace(
+        _ingest_shutdown=False,
+        _local_stt_terminal_matches=lambda *_: True,
+        _claim_ingest_local_stt_job=lambda _: SimpleNamespace(progress=progress),
+        _ingest_local_stt_jobs={"job-1": (7, "attempt-123")},
+        library_ingest_jobs=SimpleNamespace(mark_failed=Mock()),
+        _top_up_ingest_parse_pool=Mock(),
+    )
+    LibraryIngestQueueMixin._on_ingest_local_stt_failure(
+        host,
+        "job-1",
+        ExecutorFailure(7, "attempt-123", TranscriptionFailureCode.INFERENCE_FAILED),
+    )
+
+    error_log.assert_called_once()
+    template, *fields = error_log.call_args.args
+    message = template.format(*fields)
+    for expected in (
+        "job_id=job-1",
+        "attempt_id=attempt-123",
+        "generation=7",
+        f"phase={expected_phase}",
+        "code=inference_failed",
+    ):
+        assert expected in message
+    assert "/private/" not in message
+    assert "secret" not in message
+    host.library_ingest_jobs.mark_failed.assert_called_once()
+    assert "job-1" not in host._ingest_local_stt_jobs
 
 
 @pytest.mark.asyncio
