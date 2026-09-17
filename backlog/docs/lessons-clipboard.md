@@ -20,3 +20,9 @@ Own and terminate the native subprocess tree before returning a failed copy.
 The regression releases a real descendant after timeout and verifies that it
 cannot perform the stale write. Native desktop verification must preserve and
 restore every existing clipboard format, not only its text representation.
+
+**PR #2705 cancellation reproduction:** Even after timeout cleanup was added,
+cancelling the coroutine waiting on `to_thread` left the clipboard helper alive.
+A real descendant could still write after cancellation returned. Use an async
+subprocess lifecycle that kills and waits for its child on cancellation too,
+and serialize native copies so an older write cannot race a later one.

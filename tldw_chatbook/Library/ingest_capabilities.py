@@ -19,6 +19,7 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     is_http_url as _is_http_url,
 )
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, OPTIONAL_FEATURES
+from tldw_chatbook.Utils.input_validation import validate_batch_transcription_provider
 
 
 @dataclass(frozen=True)
@@ -1504,7 +1505,7 @@ def classify_missing_features(
 
 
 def selected_stt_warnings(
-    warnings: list[dict[str, Any]], provider: str = "default"
+    warnings: list[dict[str, Any]], provider: object = "default"
 ) -> list[dict[str, Any]]:
     """Keep captured missing-tool warnings relevant to the selected batch STT.
 
@@ -1520,13 +1521,19 @@ def selected_stt_warnings(
     Returns:
         Warnings for non-STT dependencies and the selected STT backend.
     """
+    try:
+        selected_provider = validate_batch_transcription_provider(provider)
+    except ValueError:
+        # The option validator blocks submission until the user corrects it.
+        # An unknown selection must not erase the captured dependency evidence.
+        return list(warnings)
     features = {
         "default": "faster_whisper",
         "faster-whisper": "faster_whisper",
         "parakeet-onnx": "parakeet_onnx",
         "transcribe-cpp": "transcribe_cpp",
     }
-    selected = features.get(provider)
+    selected = features[selected_provider]
     backends = set(features.values()) | {"lightning_whisper_mlx", "parakeet_mlx"}
     return [
         warning

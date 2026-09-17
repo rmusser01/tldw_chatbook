@@ -8,12 +8,15 @@ import signal
 import subprocess
 import sys
 from typing import TYPE_CHECKING
+from weakref import WeakKeyDictionary
 
 if TYPE_CHECKING:
+    from textual.app import App
     from textual.widget import Widget
 
 
 _NATIVE_TIMEOUT_SECONDS = 2.0
+_NATIVE_COPY_LOCKS: WeakKeyDictionary[App, asyncio.Lock] = WeakKeyDictionary()
 # Qt's process-owned clipboard cannot survive this short-lived helper. Reject
 # its self-readback; Linux native delivery needs wl-clipboard/xclip/xsel/klipper.
 _COPY_SCRIPT = (
@@ -25,38 +28,42 @@ _COPY_SCRIPT = (
 )
 
 
-def _copy_native(command: str) -> bool:
+async def _copy_native(command: str) -> bool:
     """Bound the native write AND readback, including clipboard subprocesses."""
-    with subprocess.Popen(
-        [sys.executable, "-c", _COPY_SCRIPT],
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        _COPY_SCRIPT,
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=os.name == "posix",
-    ) as process:
+    )
+    try:
+        await asyncio.wait_for(
+            process.communicate(command.encode("utf-8")), _NATIVE_TIMEOUT_SECONDS
+        )
+    except (TimeoutError, asyncio.CancelledError) as exc:
+        # Own cleanup through cancellation as well as the timeout. Returning
+        # while a worker thread still owns the child permits a stale write.
         try:
-            process.communicate(
-                command.encode("utf-8"), timeout=_NATIVE_TIMEOUT_SECONDS
-            )
-        except subprocess.TimeoutExpired:
-            # Cancelling an asyncio/to_thread waiter leaves the write alive.
-            # Kill its owned process tree before allowing another copy.
             if os.name == "posix":
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                os.killpg(process.pid, signal.SIGKILL)
             else:
                 process.kill()
-            process.wait()
-            return False
-        return process.returncode == 0
+        except ProcessLookupError:
+            pass
+        await process.wait()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        return False
+    return process.returncode == 0
 
 
 async def copy_install_command(widget: Widget, command: str) -> bool:
     """Copy an install command and report whether delivery was confirmed.
 
-    Native clipboard work runs off the UI thread. Browser and SSH sessions
+    Native clipboard work runs in a child process. Browser and SSH sessions
     use Textual's client-facing clipboard route instead of the host desktop.
     OSC 52 has no acknowledgement, so that fallback cannot claim success.
 
@@ -77,7 +84,9 @@ async def copy_install_command(widget: Widget, command: str) -> bool:
     )
     if not remote:
         try:
-            confirmed = await asyncio.to_thread(_copy_native, command)
+            lock = _NATIVE_COPY_LOCKS.setdefault(app, asyncio.Lock())
+            async with lock:
+                confirmed = await _copy_native(command)
         except (OSError, subprocess.SubprocessError):
             confirmed = False
         if confirmed:

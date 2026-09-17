@@ -144,3 +144,38 @@ three existing profile-rebinding failures, plus two tests prevented from opening
 a localhost socket by the sandbox. After socket access, those two also hit
 profile rebinding; the stable-profile invocation above verified their original
 assertions without replacing acquisition or source-resolution logic.
+
+## Qodo review verification
+
+All three review findings were addressed. Native copying now owns an asyncio
+subprocess and kills/waits for its process group on cancellation as well as
+timeout. Copies are serialized per app. The cancelled coroutine emits neither a
+success notification nor fallback. A real descendant regression failed before
+the fix; cancellation and overlapping-copy regressions now pass.
+
+Persisted transcription providers are validated without coercion through the
+shared input-validation module. Unknown names, null, numbers, lists and mappings
+retain the captured dependency warnings and disable Start with an option error.
+The mounted selector shows an invalid-choice prompt with an inline error, and
+selecting Auto emits the correction event. These regressions failed before the
+fix. The copy event handler now has its Google-style Args docstring.
+
+Final verification after the review changes:
+
+- **692 passed, 19 deselected** across the reproduction file set above plus
+  `Tests/Utils/test_reasoning_history_input_validation.py` and
+  `Tests/Utils/test_vllm_input_validation.py`. The exclusions are still exactly
+  the 19 independently reproduced baseline cases listed above.
+- **20 passed** for the native subprocess and STT state tests in the disposable
+  Linux container; **35 passed** for the focused local regressions and token
+  governance (included in the expanded result).
+- Independent review found no remaining actionable issue and reran the 20
+  native/STT checks successfully.
+- Final async helper delivery verified with independent macOS `pbpaste`; every
+  original clipboard format and its bytes restored and compared.
+- All seven repository preflight guards pass; new-file Ruff lint/format and diff
+  whitespace pass, with no added lint diagnostics in modified existing files.
+
+The Parakeet hint changed the label text. Two existing structural assertions
+were updated to verify the field name and disabled reason around the hint; both
+pass independently and in the expanded run. No full test sweep was run.

@@ -1359,6 +1359,15 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 select_value = value if value in field.options else field.default
                 if select_value not in field.options and field.options:
                     select_value = field.options[0]
+                error_message = (
+                    "" if disabled else validate_ingest_option_value(field, value)
+                )
+                if error_message:
+                    # Show a repairable choice instead of silently painting Auto
+                    # while the persisted provider remains invalid. Selecting
+                    # Auto must emit a real change that corrects the form.
+                    select_value = "__invalid_saved_option__"
+                    select_options.insert(0, ("Choose a supported provider", select_value))
                 self._reported_option_values[(group, field.name)] = select_value
                 # (task-2043) Selects missed task-2012's labeling pass: a
                 # bare "pymupdf4llm" carries no meaning on its own.
@@ -1385,6 +1394,15 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                         allow_blank=False,
                     )
                 )
+                if error_message:
+                    children.append(
+                        Static(
+                            error_message,
+                            id=f"{widget_id}-error",
+                            classes="type-group-field-error",
+                            markup=False,
+                        )
+                    )
                 if group == "web" and field.name == "scrape_method":
                     # (task-3303 AC5) Local single-page honesty, right under
                     # the control that promises otherwise: the local article

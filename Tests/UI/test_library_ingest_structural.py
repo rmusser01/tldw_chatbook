@@ -143,6 +143,32 @@ def _panel_texts(app: App, group: str) -> list[str]:
     return texts
 
 
+@pytest.mark.asyncio
+async def test_invalid_saved_stt_provider_is_visible_and_can_be_reset_to_auto(monkeypatch):
+    monkeypatch.setattr(_INSTALLED_PATCH, lambda _: True)
+    monkeypatch.setattr(
+        "tldw_chatbook.Library.library_ingest_state._dependency_installed", lambda _: True
+    )
+    changes = []
+
+    class Host(_CssTrueCanvasHost):
+        def on_library_ingest_canvas_option_value_changed(self, event):
+            changes.append((event.group, event.name, event.value))
+
+    app = Host(_audio_state(provider="retired-provider"))
+    async with app.run_test(size=(110, 42)) as pilot:
+        await pilot.pause()
+        provider = app.query_one("#opt-audio_video-transcription_provider", Select)
+        assert provider.value != "default"
+        error = app.query_one("#opt-audio_video-transcription_provider-error", Static)
+        assert error.display
+        assert "Choose a supported transcription provider" in error.visual.plain
+        assert changes == []
+        provider.value = "default"
+        await pilot.pause()
+        assert changes == [("audio_video", "transcription_provider", "default")]
+
+
 # --- MI-07: reason annotation at the control --------------------------------
 
 
@@ -164,8 +190,8 @@ async def test_value_gated_audio_fields_state_their_reason_when_disabled():
             assert model.disabled is True, "precondition: gate closed"
             texts = _panel_texts(pilot.app, "audio_video")
             assert any(
-                "Local Parakeet model folder — needs the parakeet-onnx provider"
-                in text
+                text.startswith("Local Parakeet model folder")
+                and text.endswith("— needs the parakeet-onnx provider")
                 for text in texts
             ), f"no reason at the model-folder control; panel texts: {texts!r}"
             assert any(
@@ -216,8 +242,8 @@ async def test_enabled_fields_carry_no_disabled_reason():
                 f"enabled field label must be plain; panel texts: {texts!r}"
             )
             assert any(
-                "Local Parakeet model folder — needs the parakeet-onnx provider"
-                in text
+                text.startswith("Local Parakeet model folder")
+                and text.endswith("— needs the parakeet-onnx provider")
                 for text in texts
             )
 

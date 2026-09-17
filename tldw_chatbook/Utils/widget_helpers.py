@@ -108,6 +108,11 @@ class FeatureNotAvailableDialog(Container):
                 yield Button("OK", variant="default", id="dismiss")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Copy the install command or dismiss the missing-feature dialog.
+
+        Args:
+            event: Button press identifying the requested dialog action.
+        """
         if event.button.id == "copy-command":
             from .install_clipboard import copy_install_command
 

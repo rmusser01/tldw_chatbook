@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-17 20:19'
-updated_date: '2026-09-17 20:54'
+updated_date: '2026-09-17 21:15'
 labels:
   - bug
   - ingestion
@@ -24,6 +24,7 @@ Audio/video dependency warnings list mutually exclusive STT backends including r
 - [x] #2 Import warnings and start consent name only the selected supported STT backend while preserving genuine missing dependencies.
 - [x] #3 The selected backend reaches transcription execution and focused regression tests pass.
 - [x] #4 Parakeet setup explains that its Python runtime and model files are installed separately and points to the existing model-download action.
+- [x] #5 Invalid persisted transcription providers remain visible as option errors and cannot hide STT warnings or enable import.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,12 +37,11 @@ Reason: Correct stale capability metadata and warning projection, then clarify t
 2. Remove retired MLX providers from ingest capability inventory, add transcribe.cpp, and filter captured warnings for both display and consent.
 3. Verify URL parsing reaches the selected runner, run targeted state/UI/routing regressions and document findings.
 4. Follow-up: distinguish the Parakeet runtime package from separately installed model files beside the optional folder field; document the existing managed install action, verify its tests and rendered guidance, and update the open PR.
+5. Qodo follow-up: validate persisted provider values, preserve warnings for invalid selections, block Start and expose an inline repairable selector; verify state and mounted UI regressions.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Removed retired MLX providers from audio/video capability inventory, added transcribe.cpp metadata and projected warnings through the selected STT before both display and consent. Existing URL execution already preserves selection; Auto stays faster-whisper under ADR-025. Added 8 warning/state and 4 real media-pipeline routing regressions and updated retired display fixtures plus user guidance. Targeted validation has 657 distinct local passes and 13 Linux reruns; 19 failures reproduced on untouched dev are recorded in Docs/superpowers/reviews/2026-09-17-optional-install-stt-verification.md. No new ADR required.
-
-Follow-up: reporter installed only the Python runtime package. Clarified the separate English v2 INT8 model-download action beside the optional model-folder field and in the user guide. The existing installer already activates the managed source and clears the external override. 151 targeted tests pass; both original localhost acquisition checks pass with stable temporary config/recovery ownership, and the full hint paints in three rows. Existing fixture failures and validation limits are recorded in the verification report. ADR-025/ADR-050 unchanged.
+Audio/video warnings and consent now project captured dependency evidence through the selected supported STT backend; retired MLX entries are removed and transcribe.cpp is included. Existing execution preserves selection and Auto remains faster-whisper under ADR-025. Invalid persisted values retain warnings, block Start and show a repairable selector error through shared validation. Parakeet guidance distinguishes the Python runtime from its separately acquired English model and points to the existing managed installer, which clears the folder override. Final combined validation: 692 passes with 19 independently reproduced dev baseline exclusions, plus 20 Linux reruns. Parakeet setup also passed 151 scoped checks and both localhost acquisition assertions with a stable temporary profile; its full hint was checked in the rendered canvas. All seven preflight guards pass; no added lint diagnostics. No new ADR; ADR-025/ADR-050 unchanged. Details: Docs/superpowers/reviews/2026-09-17-optional-install-stt-verification.md.
 <!-- SECTION:NOTES:END -->

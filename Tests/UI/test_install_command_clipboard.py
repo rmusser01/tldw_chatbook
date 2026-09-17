@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 
 import pyperclip
 import pytest
@@ -26,8 +25,8 @@ COMMAND = 'pip install "tldw_chatbook[pdf]"'
 @pytest.fixture(autouse=True)
 def native_clipboard_boundary(monkeypatch):
     # Subprocess execution/readback has its own real-child tests. Here keep
-    # delivery controllable while exercising both mounted actions and threads.
-    def copy(command):
+    # delivery controllable while exercising both mounted actions.
+    async def copy(command):
         try:
             pyperclip.copy(command)
             return pyperclip.paste() == command
@@ -94,16 +93,11 @@ async def press_copy(host, pilot):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["feature", "ingest"])
-async def test_install_command_reaches_native_clipboard_off_ui_thread(
-    monkeypatch, surface
-):
-    main_thread = threading.get_ident()
+async def test_install_command_reaches_native_clipboard(monkeypatch, surface):
     clipboard = []
-    threads = []
 
     def copy(text):
         clipboard.append(text)
-        threads.append(threading.get_ident())
 
     for name in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"):
         monkeypatch.delenv(name, raising=False)
@@ -113,7 +107,6 @@ async def test_install_command_reaches_native_clipboard_off_ui_thread(
     async with host.run_test(size=(110, 42)) as pilot:
         await press_copy(host, pilot)
     assert clipboard == [COMMAND]
-    assert threads[0] != main_thread
     assert any(
         "copied" in text.lower() and severity == "information"
         for text, severity in host.notices

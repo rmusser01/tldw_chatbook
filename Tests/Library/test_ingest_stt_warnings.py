@@ -72,3 +72,28 @@ def test_changing_provider_reprojects_captured_warnings_and_preserves_missing_to
     third = build_library_ingest_state((), form=form)
     assert third.warning_lines == first.warning_lines
     assert form.preflight is preflight
+
+
+@pytest.mark.parametrize("provider", ["retired-provider", None, 12, [], {}])
+def test_invalid_saved_provider_keeps_warnings_and_blocks_start(monkeypatch, provider):
+    monkeypatch.setattr(
+        capabilities, "_is_installed", lambda name: name == "audio_processing"
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Library.library_ingest_state._dependency_installed",
+        lambda name: True,
+    )
+    preflight = analyze_path(URL, probe_url=False)
+    form = LibraryIngestFormState(
+        path=URL,
+        preflight=preflight,
+        type_options={"audio_video": {"transcription_provider": provider}},
+    )
+    state = build_library_ingest_state((), form=form)
+    assert any("Faster Whisper" in warning for warning in state.warning_lines)
+    assert state.forecast.consent_affected > 0
+    assert not state.start_enabled
+    assert any(
+        error[:2] == ("audio_video", "transcription_provider")
+        for error in state.option_errors
+    )

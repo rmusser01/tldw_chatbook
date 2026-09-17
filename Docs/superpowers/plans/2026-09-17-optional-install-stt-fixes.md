@@ -39,3 +39,13 @@ installer/source-selection tests and inspect the rendered hint.
 
 ADR required: no. ADR-025 and ADR-050 already govern explicit model acquisition
 and managed/external source selection; this follow-up only clarifies that flow.
+
+## Qodo review follow-up
+
+ADR required: no
+ADR path: N/A (clipboard); backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md (STT)
+Reason: Repair cancellation ownership and validate an existing persisted option; no interface or routing-policy change.
+
+1. Reproduce cancelled and overlapping native copies with a real subprocess boundary, then use cancellation-aware subprocess ownership and serialize copies per app.
+2. Reject unsupported persisted STT values through shared input validation, preserve dependency evidence, gate Start, and offer a visible selector correction.
+3. Add the event-handler docstring, update Parakeet label assertions to accommodate its hint, rerun affected checks, and resolve the review threads before merging against current dev.

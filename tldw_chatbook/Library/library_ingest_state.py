@@ -46,6 +46,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJob,
 )
 from tldw_chatbook.Library.server_ingest_request import server_ingest_refusal
+from tldw_chatbook.Utils.input_validation import validate_batch_transcription_provider
 
 
 def _generic_default(name: str, fallback: Any) -> Any:
@@ -210,7 +211,8 @@ def validate_ingest_option_value(field: Any, value: Any) -> str:
     (task-2130) Shared by the state gate and the canvas's inline per-field
     messages so the two can never disagree. ``number`` fields and the
     audio/video trim timestamps (task-3306) have a wrong shape; other
-    types are constrained by their widgets. The chunk-size bounds mirror
+    types are constrained by their widgets. Persisted transcription-provider
+    values are validated before they can reach submission. The chunk-size bounds mirror
     ``clamp_chunk_size``'s submit-time clamp (Qodo round: a value the UI
     blessed must not be silently rewritten at submit).
 
@@ -222,6 +224,12 @@ def validate_ingest_option_value(field: Any, value: Any) -> str:
         A human-readable problem statement, or ``""`` when the value is
         acceptable to every downstream consumer.
     """
+    if getattr(field, "name", "") == "transcription_provider":
+        try:
+            validate_batch_transcription_provider(value)
+        except ValueError:
+            return "Choose a supported transcription provider."
+        return ""
     if getattr(field, "name", "") in _TRIM_TIME_FIELDS:
         text = str(value).strip()
         if not text or _TRIM_TIME_RE.match(text):
