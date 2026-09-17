@@ -78,6 +78,12 @@ from tldw_chatbook.MCP.tool_naming import dedupe_names, llm_tool_name
 
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .run_context import current_run_id
+from tldw_chatbook.MCP.tool_results import (
+    MCPDispatchObservation,
+    MCPToolResult,
+    observe_dispatch,
+    project_tool_result,
+)
 from .tool_catalog import ToolExecutionPolicy
 from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
@@ -873,7 +879,11 @@ class MCPToolProvider:
                 try:
                     automatic_work.check()
                 except Exception as exc:  # noqa: BLE001 -- no authority, no approval or tool work
-                    return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
+                    return ToolResult(
+                        ok=False,
+                        error=str(exc)[:_MAX_ERROR_CHARS],
+                        dispatch_state="not_started",
+                    )
             return self._invoke_locked(tool_id, args)
 
     def _invoke_locked(self, tool_id: str, args: dict) -> ToolResult:
@@ -921,7 +931,9 @@ class MCPToolProvider:
         entry = self._entry_by_llm_name.get(tool_id)
         if entry is None:
             return ToolResult(
-                ok=False, error=f"Unknown MCP tool: {tool_id}"[:_MAX_ERROR_CHARS]
+                ok=False,
+                error=f"Unknown MCP tool: {tool_id}"[:_MAX_ERROR_CHARS],
+                dispatch_state="not_started",
             )
         tool, _cached_state = entry
         call_args = dict(args or {})
@@ -959,7 +971,11 @@ class MCPToolProvider:
                 self._service.gate_tool_test(tool, **self._profile_kwargs()), tool
             )
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
-            return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
+            return ToolResult(
+                ok=False,
+                error=str(exc)[:_MAX_ERROR_CHARS],
+                dispatch_state="not_started",
+            )
 
         if state.state == "deny":
             # task-32280: `DENY_REFUSAL` tells the model this was the
@@ -1004,7 +1020,11 @@ class MCPToolProvider:
         try:
             decisions = self._approval_callback([pending])
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
-            return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
+            return ToolResult(
+                ok=False,
+                error=str(exc)[:_MAX_ERROR_CHARS],
+                dispatch_state="not_started",
+            )
         # TASK-294: default to a DISTINCT sentinel, not "deny" -- a missing
         # verdict means nobody decided, and collapsing it into "deny" here
         # is what used to blame the user (or the permissions) for a refusal
@@ -1264,6 +1284,11 @@ class MCPToolProvider:
         """
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
+        observation = MCPDispatchObservation()
+        typed_entry = getattr(self._service, "execute_hub_tool_result", None)
+        execute = (
+            typed_entry if callable(typed_entry) else self._service.execute_hub_tool
+        )
         try:
             from .automatic_work_runtime import current_automatic_work
 
@@ -1278,7 +1303,7 @@ class MCPToolProvider:
             # audited with real provenance instead of the pre-Task-4
             # always-empty `argument_names: []`.
             def create_execution():
-                return self._service.execute_hub_tool(
+                return execute(
                     tool.server_key,
                     tool.name,
                     args,
@@ -1298,10 +1323,11 @@ class MCPToolProvider:
                 execution_coroutine = execute_authorized()
             else:
                 execution_coroutine = create_execution()
-            future = asyncio.run_coroutine_threadsafe(
-                execution_coroutine,
-                self._main_loop,
-            )
+            with observe_dispatch(observation):
+                future = asyncio.run_coroutine_threadsafe(
+                    execution_coroutine,
+                    self._main_loop,
+                )
             raw_result = future.result(timeout=timeout)
         except Exception as exc:  # noqa: BLE001 -- the never-raise/never-hang contract
             if future is None and execution_coroutine is not None:
@@ -1319,9 +1345,20 @@ class MCPToolProvider:
                     future.cancel()
                 except Exception:
                     pass
-            # Finding 1: TimeoutError/CancelledError have empty str(), so guarantee
-            # non-empty error via (str(exc) or repr(exc)) so the model receives actual info.
-            error = (str(exc) or repr(exc))[:_MAX_ERROR_CHARS]
+            # Fixed diagnostics cannot disclose arbitrary remote exception text.
+            error = "mcp_execution_failed"
+            if future is None:
+                dispatch_state = "not_started"
+            elif isinstance(
+                exc,
+                (concurrent.futures.TimeoutError, concurrent.futures.CancelledError),
+            ):
+                # cancel() acknowledges the Future, not termination of its coroutine.
+                dispatch_state = "uncertain"
+            elif callable(typed_entry):
+                dispatch_state = observation.state
+            else:
+                dispatch_state = "settled"
             # C2: record here ONLY when `execute_hub_tool` could NOT have
             # recorded this failure itself. The real service's contract
             # (`UnifiedMCPControlPlaneService.execute_hub_tool`) records via
@@ -1350,22 +1387,43 @@ class MCPToolProvider:
                 self._record_decision_safe(
                     tool,
                     decision=decision,
-                    error=f"bridge execution failed: {(str(exc) or repr(exc))[:200]}",
+                    error="bridge execution failed: mcp_execution_failed",
                 )
-            return ToolResult(ok=False, error=error)
+            return ToolResult(ok=False, error=error, dispatch_state=dispatch_state)
         return self._format_result(raw_result)
 
     def _format_result(self, raw_result: Any) -> ToolResult:
+        dispatch_state = "settled"
         try:
+            if isinstance(raw_result, MCPToolResult):
+                dispatch_state = raw_result.dispatch_state
+                if raw_result.transport_error or raw_result.is_error:
+                    return ToolResult(
+                        ok=False,
+                        error=raw_result.transport_error or "mcp_tool_error",
+                        dispatch_state=dispatch_state,
+                    )
+                raw_result = project_tool_result(raw_result)
             if isinstance(raw_result, Mapping):
                 if _has_non_text_content(raw_result):
-                    return ToolResult(ok=True, content=NON_TEXT_PLACEHOLDER)
+                    return ToolResult(
+                        ok=True,
+                        content=NON_TEXT_PLACEHOLDER,
+                        dispatch_state=dispatch_state,
+                    )
                 content = json.dumps(redact_mapping(raw_result), default=str)
             else:
-                # Defensive only: execute_hub_tool's real contract always
-                # returns a dict: a non-Mapping raw result would come from a
-                # nonconforming fake/future backend, not production.
+                # Legacy injected services retain display-only compatibility.
                 content = str(raw_result)
-            return ToolResult(ok=True, content=content[:_MAX_RESULT_CHARS])
-        except Exception as exc:  # noqa: BLE001 -- formatting must not turn success into a raise
-            return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
+            return ToolResult(
+                ok=True,
+                content=content[:_MAX_RESULT_CHARS],
+                dispatch_state=dispatch_state,
+            )
+        except Exception:  # noqa: BLE001
+            # Fixed diagnostics never include remote exception text.
+            return ToolResult(
+                ok=False,
+                error="mcp_result_format_failed",
+                dispatch_state=dispatch_state,
+            )

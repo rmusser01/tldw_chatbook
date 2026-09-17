@@ -32,6 +32,13 @@ from .hub_tool_catalog import (
     schema_argument_names,
 )
 from .local_control_service import MCPGovernanceDenied
+from .tool_results import (
+    MCPToolResult,
+    current_dispatch,
+    observe_dispatch,
+    project_tool_result,
+    transport_failure,
+)
 from .local_runtime_delegate import (
     PERMISSION_STATE_UNRESOLVED_CLAUSE,
     RAW_TOOL_CALL_REFUSED_MESSAGE,
@@ -2454,6 +2461,33 @@ class UnifiedMCPControlPlaneService:
                 type(exc).__name__,
             )
 
+    async def execute_hub_tool_result(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        initiator: str = "test",
+        decision: str = "allowed",
+        timeout_seconds: float | None = None,
+        registered_argument_names: set[str] | None = None,
+    ) -> MCPToolResult | dict[str, Any]:
+        """Typed external results through the shared execution/audit owner.
+
+        Builtins and legacy adapters retain their unqualified display mappings.
+        Hook callers must require a qualified MCPToolResult, never those mappings.
+        """
+        return await self.execute_hub_tool(
+            server_key,
+            tool_name,
+            arguments,
+            initiator=initiator,
+            decision=decision,
+            timeout_seconds=timeout_seconds,
+            registered_argument_names=registered_argument_names,
+            _typed_result=True,
+        )
+
     async def execute_hub_tool(
         self,
         server_key: str,
@@ -2464,7 +2498,8 @@ class UnifiedMCPControlPlaneService:
         decision: str = "allowed",
         timeout_seconds: float | None = None,
         registered_argument_names: set[str] | None = None,
-    ) -> dict[str, Any]:
+        _typed_result: bool = False,
+    ) -> MCPToolResult | dict[str, Any]:
         """Execute one tool call against a local or built-in server.
 
         The shared execute seam for the Hub's Test Tool runner and the
@@ -2521,9 +2556,15 @@ class UnifiedMCPControlPlaneService:
 
         if normalized_key.startswith("local:"):
             profile_id = normalized_key.split(":", 1)[1]
-            coro = self.local_service.execute_external_tool(
-                profile_id, normalized_tool_name, normalized_arguments
+            typed_call = getattr(
+                self.local_service, "execute_external_tool_result", None
             )
+            external_call = (
+                typed_call
+                if _typed_result and callable(typed_call)
+                else self.local_service.execute_external_tool
+            )
+            coro = external_call(profile_id, normalized_tool_name, normalized_arguments)
         elif normalized_key.startswith("builtin:"):
             coro = self.local_service.execute_tool(
                 normalized_tool_name, normalized_arguments
@@ -2539,8 +2580,10 @@ class UnifiedMCPControlPlaneService:
             else self._tool_call_timeout()
         )
         started = time.monotonic()
+        observation = current_dispatch()
         try:
-            result = await asyncio.wait_for(coro, timeout=timeout)
+            with observe_dispatch(observation):
+                result = await asyncio.wait_for(coro, timeout=timeout)
         except asyncio.TimeoutError:
             duration_ms = int((time.monotonic() - started) * 1000)
             message = f"Timed out after {timeout:.0f}s"
@@ -2559,6 +2602,8 @@ class UnifiedMCPControlPlaneService:
                 initiator=initiator,
                 decision=decision,
             )
+            if _typed_result and normalized_key.startswith("local:"):
+                return transport_failure("mcp_tool_timeout", observation)
             raise RuntimeError(message) from None
         except asyncio.CancelledError:
             if initiator == "test":
@@ -2659,18 +2704,29 @@ class UnifiedMCPControlPlaneService:
             raise
 
         duration_ms = int((time.monotonic() - started) * 1000)
+        failed = isinstance(result, MCPToolResult) and (
+            result.is_error or result.transport_error is not None
+        )
         self._record_tool_execution(
             normalized_key,
             normalized_tool_name,
-            ok=True,
+            ok=not failed,
             duration_ms=duration_ms,
-            status="success",
-            error_category=None,
+            status="error" if failed else "success",
+            error_category=(
+                ("transport_failed" if result.transport_error else "tool_error")
+                if failed
+                else None
+            ),
             exception_type=None,
             status_code=None,
             arguments=normalized_arguments,
             registered_argument_names=registered_argument_names,
-            result=result,
+            result=(
+                project_tool_result(result)
+                if isinstance(result, MCPToolResult)
+                else result
+            ),
             initiator=initiator,
             decision=decision,
         )
