@@ -1,0 +1,72 @@
+{
+  "pid": 37411,
+  "runner_sha256": "7ebcde1103f51efe4bde2ffc5b7e157d030428665155d6dfaef24fe62714932d",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "scope": "media",
+      "scope_off_blocks_run_and_hides_rows": true,
+      "scope_on_restores_rows_without_search": true,
+      "mode_resets_results_and_answer": true,
+      "repeated_enter_retains_visible_toggle_focus": true,
+      "query_history_retained": true,
+      "real_keyword_searches": 2,
+      "controlled_answers": 1
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "scope": "media",
+      "scope_off_blocks_run_and_hides_rows": true,
+      "scope_on_restores_rows_without_search": true,
+      "mode_resets_results_and_answer": true,
+      "repeated_enter_retains_visible_toggle_focus": true,
+      "query_history_retained": true,
+      "real_keyword_searches": 2,
+      "controlled_answers": 1
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "scope": "media",
+      "scope_off_blocks_run_and_hides_rows": true,
+      "scope_on_restores_rows_without_search": true,
+      "mode_resets_results_and_answer": true,
+      "repeated_enter_retains_visible_toggle_focus": true,
+      "query_history_retained": true,
+      "real_keyword_searches": 2,
+      "controlled_answers": 1
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "scope": "media",
+      "scope_off_blocks_run_and_hides_rows": true,
+      "scope_on_restores_rows_without_search": true,
+      "mode_resets_results_and_answer": true,
+      "repeated_enter_retains_visible_toggle_focus": true,
+      "query_history_retained": true,
+      "real_keyword_searches": 2,
+      "controlled_answers": 1
+    }
+  ],
+  "waiting_for": "toggle focus restored",
+  "real_keyword_searches": 8,
+  "controlled_provider_calls": 4,
+  "source_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

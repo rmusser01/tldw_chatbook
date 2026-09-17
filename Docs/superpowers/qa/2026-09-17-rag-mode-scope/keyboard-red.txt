@@ -1,0 +1,63 @@
+FFFFFFFF                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size0-textual-dark] _
+Tests/UI/test_library_rag_mode_scope_keyboard.py:39: in test_keyboard_toggle_and_reverse_keep_visible_focus
+    assert screen.focused is current
+E   AssertionError: assert LibrarySearchRagPanel(id='library-search-rag-panel') is Button(id='library-rag-mode-toggle', classes='-style-default')
+E    +  where LibrarySearchRagPanel(id='library-search-rag-panel') = LibraryScreen(classes='shell-header-normal').focused
+_ test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size0-textual-light] _
+Tests/UI/test_library_rag_mode_scope_keyboard.py:39: in test_keyboard_toggle_and_reverse_keep_visible_focus
+    assert screen.focused is current
+E   AssertionError: assert LibrarySearchRagPanel(id='library-search-rag-panel') is Button(id='library-rag-mode-toggle', classes='-style-default')
+E    +  where LibrarySearchRagPanel(id='library-search-rag-panel') = LibraryScreen(classes='shell-header-normal').focused
+_ test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size1-textual-dark] _
+Tests/UI/test_library_rag_mode_scope_keyboard.py:39: in test_keyboard_toggle_and_reverse_keep_visible_focus
+    assert screen.focused is current
+E   AssertionError: assert LibrarySearchRagPanel(id='library-search-rag-panel') is Button(id='library-rag-mode-toggle', classes='-style-default')
+E    +  where LibrarySearchRagPanel(id='library-search-rag-panel') = LibraryScreen(classes='shell-header-compact').focused
+_ test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size1-textual-light] _
+Tests/UI/test_library_rag_mode_scope_keyboard.py:39: in test_keyboard_toggle_and_reverse_keep_visible_focus
+    assert screen.focused is current
+E   AssertionError: assert LibrarySearchRagPanel(id='library-search-rag-panel') is Button(id='library-rag-mode-toggle', classes='-style-default')
+E    +  where LibrarySearchRagPanel(id='library-search-rag-panel') = LibraryScreen(classes='shell-header-compact').focused
+_ test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size0-textual-dark] _
+Tests/UI/test_library_rag_mode_scope_keyboard.py:39: in test_keyboard_toggle_and_reverse_keep_visible_focus
+    assert screen.focused is current
+E   AssertionError: assert LibrarySearchRagPanel(id='library-search-rag-panel') is Button(id='library-rag-scope-toggle-notes', classes='library-rag-scope-toggle -style-default')
+E    +  where LibrarySearchRagPanel(id='library-search-rag-panel') = LibraryScreen(classes='shell-header-normal').focused
+_ test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size0-textual-light] _
+Tests/UI/test_library_rag_mode_scope_keyboard.py:39: in test_keyboard_toggle_and_reverse_keep_visible_focus
+    assert screen.focused is current
+E   AssertionError: assert LibrarySearchRagPanel(id='library-search-rag-panel') is Button(id='library-rag-scope-toggle-notes', classes='library-rag-scope-toggle -style-default')
+E    +  where LibrarySearchRagPanel(id='library-search-rag-panel') = LibraryScreen(classes='shell-header-normal').focused
+_ test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size1-textual-dark] _
+Tests/UI/test_library_rag_mode_scope_keyboard.py:39: in test_keyboard_toggle_and_reverse_keep_visible_focus
+    assert screen.focused is current
+E   AssertionError: assert LibrarySearchRagPanel(id='library-search-rag-panel') is Button(id='library-rag-scope-toggle-notes', classes='library-rag-scope-toggle -style-default')
+E    +  where LibrarySearchRagPanel(id='library-search-rag-panel') = LibraryScreen(classes='shell-header-compact').focused
+_ test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size1-textual-light] _
+Tests/UI/test_library_rag_mode_scope_keyboard.py:39: in test_keyboard_toggle_and_reverse_keep_visible_focus
+    assert screen.focused is current
+E   AssertionError: assert LibrarySearchRagPanel(id='library-search-rag-panel') is Button(id='library-rag-scope-toggle-notes', classes='library-rag-scope-toggle -style-default')
+E    +  where LibrarySearchRagPanel(id='library-search-rag-panel') = LibraryScreen(classes='shell-header-compact').focused
+============================= slowest 25 durations =============================
+1.83s call     Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size0-textual-dark]
+1.80s call     Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size0-textual-light]
+1.80s call     Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size0-textual-dark]
+1.73s call     Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size1-textual-light]
+1.69s call     Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size1-textual-dark]
+1.42s call     Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size0-textual-light]
+1.40s call     Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size1-textual-dark]
+1.35s call     Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size1-textual-light]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size0-textual-dark]
+FAILED Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size0-textual-light]
+FAILED Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size1-textual-dark]
+FAILED Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[mode-size1-textual-light]
+FAILED Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size0-textual-dark]
+FAILED Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size0-textual-light]
+FAILED Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size1-textual-dark]
+FAILED Tests/UI/test_library_rag_mode_scope_keyboard.py::test_keyboard_toggle_and_reverse_keep_visible_focus[scope-size1-textual-light]
+8 failed in 16.00s

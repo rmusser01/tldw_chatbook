@@ -1,0 +1,50 @@
+{
+  "textual-dark-170-answered.svg": {
+    "raw_sha256": "3160dd94ee39c8b58cd5d54d0acd42cd5986323dd5cc426f1ef8b9f577295d76",
+    "stored_sha256": "e84cd04cb269d3297d0b57a1db09a66b35595387c0693f3df5a370b2af79c0a5"
+  },
+  "textual-dark-170-rag-mode.svg": {
+    "raw_sha256": "4c3ea63d1576d83d3d1fd980824d920395a77b6dd43df19ada7f4ec108cb1856",
+    "stored_sha256": "3272dc43dda8444280a208d0c94e32dcddc332adc15db835d099b3c6e76da7d5"
+  },
+  "textual-dark-170-scope-off.svg": {
+    "raw_sha256": "e42ebf17248d2e87f9f52be92b482faf3eb3a65b72767fcc2b6294424bd56e14",
+    "stored_sha256": "d2b0b23ce0a58884fb043cfaed20d67743c3cdfb62ccb7819e9c198968adb440"
+  },
+  "textual-dark-80-answered.svg": {
+    "raw_sha256": "8fa509ae3140aa38adf4a1f8c5c162280138d981eb1ac3fc0f05c3846325d469",
+    "stored_sha256": "e1d6497b5c1c18b9e7a4121014743de0c33751ad5296c6e06e823cfb0471ec60"
+  },
+  "textual-dark-80-rag-mode.svg": {
+    "raw_sha256": "5ae20c1fa97d80c93fdde4ea4d7d5b356870260dc793dfbb207e20d8a6f92478",
+    "stored_sha256": "9eb664dce88bfabde145f127db59a07afab96f6f445824f9370a3ae074dba19b"
+  },
+  "textual-dark-80-scope-off.svg": {
+    "raw_sha256": "9d61ec8faf72fbb614a594d6d623176587e4aee110023626094694d61d9e104c",
+    "stored_sha256": "8b8ada28e4a97bc9632b21753b7aa413a6114b54344d5914d7af6c6793cf09d8"
+  },
+  "textual-light-170-answered.svg": {
+    "raw_sha256": "913930f6f7d21ea2048d8b9c861fb6845f4cf41dee621b15d4bd97cdb8b27875",
+    "stored_sha256": "45661314779e8df9cc124315a3b5b60022a254fc9a3c27f74a8b9d6a9ea41c87"
+  },
+  "textual-light-170-rag-mode.svg": {
+    "raw_sha256": "42c65cf920eecb0faa23540a3f80510d1610983e4dc678ae5b90864b6b88e9e7",
+    "stored_sha256": "e3fb93dfe6b868a119bb3ac8873132a5d1a664dde88e62b52605f68d20bf2bd3"
+  },
+  "textual-light-170-scope-off.svg": {
+    "raw_sha256": "fc3c1231554e127c966742474e5137b530b2539aa227a5722b74d59bd0c13505",
+    "stored_sha256": "0a3a655c1acfa0ec59f894ce453c3343979dce28df5f9f02ab936fe533c31980"
+  },
+  "textual-light-80-answered.svg": {
+    "raw_sha256": "a238447f82f8838d86325e50d6364ca27ffabf4bf4fa0d0b6dacaf0210e41329",
+    "stored_sha256": "2e0a51ee298ad84d83b83bc7b70c155e5b6caa70d0a364db9096b973768ee757"
+  },
+  "textual-light-80-rag-mode.svg": {
+    "raw_sha256": "1353462d1ee55d662d531b9248ecbf5d6a43d3a41f27e98822dc44a898a9f227",
+    "stored_sha256": "c5d53cc8902b8d691d3cbc964d084b9454329e70656f6e319275d19c8f68919f"
+  },
+  "textual-light-80-scope-off.svg": {
+    "raw_sha256": "411a42be4a42f77fb869265180935e8cd41983dda9224256e537cb3431256ede",
+    "stored_sha256": "9483cd0db5d4b8372a47654ec8748d797b8aa562dcd4b37dc88b9bfbdb3e83fe"
+  }
+}

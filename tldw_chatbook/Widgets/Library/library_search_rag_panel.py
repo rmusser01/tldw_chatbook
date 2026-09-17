@@ -85,6 +85,7 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         Args:
             state: Complete Search/RAG controls and results state to render.
         """
+        self.preserve_same_id_focus_after_recompose()
         self.state = state
         self.refresh(recompose=True)
 

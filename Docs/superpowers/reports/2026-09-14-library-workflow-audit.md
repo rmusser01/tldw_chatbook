@@ -17,6 +17,8 @@ TASK-32715 repairs focus loss during RAG resize and verifies keyboard return
 to an editable query without additional retrieval or answer calls.
 TASK-32716 synchronizes both query fields on history replay and keeps the focused
 history control visible when an answer expands above it.
+TASK-32717 keeps mode and source toggles focused through canvas recomposition and
+verifies their existing in-flight retrieval/answer behavior.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -1011,3 +1013,28 @@ existing ten-entry/200-character storage limits. Next bounded review: Search/RAG
 mode and source-scope changes. Real-provider behavior, semantic retrieval,
 factual grounding and very narrow single-pane layouts remain outside this
 qualification. No full suite, push or merge was performed.
+
+## Search/RAG mode and source toggles — 2026-09-17 UTC (TASK-32717)
+
+[Evidence](../qa/2026-09-17-rag-mode-scope/README.md) closes keyboard focus loss
+when mode or source changes recompose the panel. All eight initial keyboard
+journeys lost the focused button to the panel. The repair calls the inherited
+same-ID focus helper before sync, preserving newer focus choices. No tokens,
+bindings or retrieval/answer contracts change; existing ADR-031/ADR-150 apply.
+
+All 149 targeted checks pass, including sixteen new keyboard, deferred-focus and
+in-flight cases. Four private native theme/size journeys pass with eight real
+keyword searches and four controlled answers. All twelve captures were inspected.
+Repeated Enter remains on the toggle; deselecting every source disables Run and
+hides evidence, and restoring scope brings the same rows back without calls.
+Mode switches reset answer/evidence and retain query/history. The guide now
+documents keyboard access and the existing distinction between mode resets and
+scope filtering during work.
+
+Static checks add no diagnostics, independent review found no actionable issue,
+and normal shutdown/PID absence are verified. Ten private databases are healthy;
+source/default profile files are unchanged and no conversation messages were
+added. Next bounded review: older-engine chunk reporting and the Re-chunk control.
+Real-provider behavior, semantic retrieval, factual grounding and very narrow
+single-pane layouts remain outside qualification. No full suite, push or merge
+was performed.

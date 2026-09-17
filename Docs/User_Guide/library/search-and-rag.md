@@ -83,6 +83,11 @@ Search mode) states the same fact before you press Run: "RAG Answer sends
 your question and the evidence to \<provider>. Search stays local." — a
 statement, not a confirmation gate; nothing blocks Run because of it.
 
+Use Tab or Shift+Tab to reach the mode toggle, then Enter to switch. Focus
+stays on the toggle so Enter can switch back. Changing mode clears the current
+evidence and answer, including any late result from the previous mode, while
+keeping your query and Recent searches. It does not start a new search.
+
 - **Search** — keyword matching over your sources; works with nothing extra
   installed.
 - **RAG Answer** — retrieval driven by your active RAG profile (see
@@ -185,7 +190,8 @@ are actually on screen right now.
 ### Sources scope
 
 The four toggles decide where the query looks: ☑ is in scope, ☐ is
-excluded; click to flip. A source whose count is (0) is disabled. If your
+excluded; click to flip, or reach a toggle with Tab and press Enter. Focus
+stays on that toggle. A source whose count is (0) is disabled. If your
 Library is empty, the scope block takes over entirely: "No Library sources
 yet — import media or create notes, then search." with an **"Open Import
 media"** button ([Import & export](import-and-export.md)).
@@ -200,6 +206,11 @@ loading (right after landing on this canvas, or after a count lookup
 fails) filtering is suspended, so rows are never wrongly hidden before
 real counts arrive — the toggle strip and the run gate read the same
 either way.
+
+Scope changes do not restart an in-flight search or regenerate its answer;
+the answer remains based on the evidence retrieved for that run. Press Run
+to retrieve and answer with the new scope. With every source off, Run stays
+disabled until you select a source again.
 
 ### Older-engine chunks: the report line and Re-chunk
 
