@@ -1,0 +1,34 @@
+[
+  {
+    "command": [
+      "check",
+      "tldw_chatbook/Widgets/Library/library_rechunk_run.py",
+      "Tests/UI/test_library_rag_rechunk_navigation.py",
+      "Docs/superpowers/qa/2026-09-17-rag-rechunk-navigation/native_check.py"
+    ],
+    "exit_code": 0,
+    "output": "All checks passed!\n"
+  },
+  {
+    "command": [
+      "format",
+      "--check",
+      "tldw_chatbook/Widgets/Library/library_rechunk_run.py",
+      "Tests/UI/test_library_rag_rechunk_navigation.py",
+      "Docs/superpowers/qa/2026-09-17-rag-rechunk-navigation/native_check.py"
+    ],
+    "exit_code": 0,
+    "output": "3 files already formatted\n"
+  },
+  {
+    "command": [
+      "format",
+      "--check",
+      "--range",
+      "264-301",
+      "tldw_chatbook/Widgets/Library/library_search_rag_panel.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  }
+]

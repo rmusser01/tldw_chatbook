@@ -1,0 +1,77 @@
+{
+  "pid": 48510,
+  "runner_sha256": "94741b2d88932287bbed091950fc6c9ae54fd9e071d868b9e93c7650a9606c02",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "media_id": 2,
+      "legacy_before": 2,
+      "legacy_after": 1,
+      "summary": "1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)",
+      "running_feedback_survives_notes_roundtrip": true,
+      "completion_in_console_visible_after_return": true,
+      "full_receipt_painted_after_keyboard_scroll": true,
+      "chunks_stamped": 1,
+      "skipped_chunks_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "media_id": 3,
+      "legacy_before": 2,
+      "legacy_after": 1,
+      "summary": "1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)",
+      "running_feedback_survives_notes_roundtrip": true,
+      "completion_in_console_visible_after_return": true,
+      "full_receipt_painted_after_keyboard_scroll": true,
+      "chunks_stamped": 1,
+      "skipped_chunks_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "media_id": 4,
+      "legacy_before": 2,
+      "legacy_after": 1,
+      "summary": "1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)",
+      "running_feedback_survives_notes_roundtrip": true,
+      "completion_in_console_visible_after_return": true,
+      "full_receipt_painted_after_keyboard_scroll": true,
+      "chunks_stamped": 1,
+      "skipped_chunks_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "media_id": 5,
+      "legacy_before": 2,
+      "legacy_after": 1,
+      "summary": "1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)",
+      "running_feedback_survives_notes_roundtrip": true,
+      "completion_in_console_visible_after_return": true,
+      "full_receipt_painted_after_keyboard_scroll": true,
+      "chunks_stamped": 1,
+      "skipped_chunks_unchanged": true
+    }
+  ],
+  "waiting_for": "completion toast expired",
+  "passed": true,
+  "real_rechunk_runs": 4,
+  "sources_unchanged": true,
+  "skipped_id": 1,
+  "semantic_indexing_enabled": false,
+  "app_run_returned": true
+}

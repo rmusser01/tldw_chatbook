@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from decimal import Decimal
 
 from loguru import logger
 from rich.markup import escape as escape_markup
 
-from textual import on, work
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -40,17 +39,14 @@ from ...Library.library_rag_state import (
 )
 from ...Library.library_rechunk_service import (
     RECHUNK_SLOT,
-    RECHUNK_WORKER_GROUP,
-    acquire_bulk_rag_slot,
     bulk_rag_slot_in_flight,
-    format_rechunk_summary,
-    release_bulk_rag_slot,
 )
 from ...Library.library_shell_state import (
     LIBRARY_GLYPH_SELECTED,
     LIBRARY_GLYPH_UNSELECTED,
 )
 from .library_rail import SelectAllOnFocusingClickInput
+from .library_rechunk_run import LibraryRechunkRun, get_library_rechunk_run
 
 
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -78,10 +74,6 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         # rebuild (the ingest canvas's template-name cache pattern), so the
         # fetched line survives `sync_state` recomposes without re-querying.
         self._legacy_chunk_report: str = ""
-        # Feedback belongs to this panel's worker, not its replaceable children.
-        # A different panel still relies on the shared slot's refusal notice.
-        self._rechunk_running = False
-        self._rechunk_summary = ""
 
     def sync_state(self, state: LibraryRagPanelState) -> None:
         """Rebuild only this mounted Search/RAG panel from ``state``.
@@ -219,10 +211,10 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
 
         The control shares the report line's visibility (both derive from
         the cached report): it is offered exactly when older-engine items
-        exist, so a fully stamped library shows neither. The panel caches
-        its worker state and receipt so rebuilding these display-gated
-        children preserves progress and completion feedback.
+        exist, so a fully stamped library shows neither. App-session state
+        preserves progress and receipts through child or panel replacement.
         """
+        run = get_library_rechunk_run(self.app)
         shown = bool(self._legacy_chunk_report) or bulk_rag_slot_in_flight(
             RECHUNK_SLOT
         )
@@ -230,7 +222,7 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
             "Re-chunk older-engine items",
             id=self.RECHUNK_BUTTON_ID,
             classes="library-rag-recovery-action",
-            disabled=self._rechunk_running,
+            disabled=run.running,
             tooltip=(
                 "Re-chunk items persisted before the current chunking "
                 "engine through the template-aware path, then re-index "
@@ -239,13 +231,13 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         )
         button.display = shown
         summary = Static(
-            self._rechunk_summary,
+            run.summary,
             id=self.RECHUNK_SUMMARY_ID,
             classes="library-rag-quiet-line",
             # Counts plus service-built notes -- literal, never markup.
             markup=False,
         )
-        summary.display = bool(self._rechunk_summary)
+        summary.display = bool(run.summary)
         return [button, summary]
 
     @on(Button.Pressed, f"#{RECHUNK_BUTTON_ID}")
@@ -271,126 +263,37 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
             )
         )
 
-    def _trigger_rechunk_legacy(self) -> None:
-        """Guard, then launch the re-chunk worker (spec §10.3).
+    def on_mount(self) -> None:
+        run = get_library_rechunk_run(self.app)
+        run.changed.subscribe(self, self._sync_rechunk_feedback, immediate=True)
+        self._sync_rechunk_feedback(run)
 
-        The mutual in-flight guard with the Settings backfill lives in the
-        shared slot registry -- a REFUSAL with a notice, never Textual
-        worker cancellation (``exclusive=True`` CANCELS same-group workers
-        on Textual 8.2.8; the task-228 lesson, deliberately not "fixed").
-        """
-        refusal = acquire_bulk_rag_slot(RECHUNK_SLOT)
-        if refusal is not None:
-            self.app.notify(refusal, severity="warning")
+    def on_unmount(self) -> None:
+        get_library_rechunk_run(self.app).changed.unsubscribe(self)
+
+    def _trigger_rechunk_legacy(self) -> None:
+        """Start through the app-session owner, retaining the shared refusal guard."""
+        get_library_rechunk_run(self.app).start()
+
+    def _sync_rechunk_feedback(self, run: LibraryRechunkRun) -> None:
+        """Render current session feedback only into this attached panel."""
+        if not self.is_attached:
             return
-        self._rechunk_running = True
         try:
             button = self.query_one(f"#{self.RECHUNK_BUTTON_ID}", Button)
-        except NoMatches:
-            pass
-        else:
-            button.disabled = True
-        self._apply_rechunk_summary("Re-chunking…")
-        self._rechunk_legacy_worker()
-
-    @work(thread=True, group=RECHUNK_WORKER_GROUP, exclusive=False)
-    def _rechunk_legacy_worker(self) -> None:
-        """The re-chunk worker (spec §10.2-§10.3), on its OWN group.
-
-        ``exclusive=False`` is written out deliberately: this worker group
-        must NEVER gain exclusive semantics -- Textual 8.2.8 cancels
-        same-group workers, and the mutual exclusion with the backfill is
-        the guard slot's job (a refusal notice), not cancellation's. The
-        spec documents this as a measured deviation from CLAUDE.md gotcha
-        9; do not "fix" it back.
-
-        Thread worker (not async-on-the-loop): the per-item chunking and
-        the chunk-row transaction are long synchronous stretches, exactly
-        like the backfill worker's rationale. Services are pre-resolved
-        OUTSIDE the transient ``asyncio.run`` loop (the #700-hardened
-        pattern the backfill worker documents) so the shared RAG service
-        is never constructed for the first time inside a loop that closes
-        when this run finishes.
-        """
-        from ...RAG_Search.ingestion_indexing import (
-            get_shared_rag_service,
-            semantic_indexing_available,
-        )
-        from ...runtime_policy.types import PolicyDeniedError
-
-        try:
-            scope = getattr(self.app, "rag_admin_scope_service", None)
-            launch = getattr(scope, "rechunk_legacy_media", None)
-            if scope is None or not callable(launch):
-                self.app.call_from_thread(
-                    self.app.notify,
-                    "Re-chunk could not start: the RAG admin service is "
-                    "unavailable right now.",
-                    severity="error",
-                )
-                return
-            # §10.2.1: the whole re-index step is conditional on the
-            # semantic index being enabled/present; the summary discloses
-            # the skip. Pre-resolved here, before the transient loop.
-            rag_service = None
-            if semantic_indexing_available():
-                rag_service = get_shared_rag_service()
-            summary = asyncio.run(
-                launch(mode="local", rag_service=rag_service)
-            )
-        except PolicyDeniedError as denied:
-            self.app.call_from_thread(
-                self.app.notify,
-                f"Re-chunk was blocked by policy: {denied.user_message}",
-                severity="error",
-            )
-            return
-        except Exception as exc:
-            logger.error(f"Legacy re-chunk worker crashed: {exc}")
-            self.app.call_from_thread(
-                self.app.notify, f"Re-chunk failed: {exc}", severity="error"
-            )
-            return
-        finally:
-            release_bulk_rag_slot(RECHUNK_SLOT)
-            self.app.call_from_thread(self._finish_rechunk_run)
-        line = format_rechunk_summary(summary)
-        self.app.call_from_thread(self._apply_rechunk_summary, line)
-        self.app.call_from_thread(
-            self.app.notify, f"Re-chunk finished: {line}", severity="information"
-        )
-
-    def _apply_rechunk_summary(self, line: str) -> None:
-        """Surface the run summary (main thread)."""
-        self._rechunk_summary = line
-        try:
             summary = self.query_one(f"#{self.RECHUNK_SUMMARY_ID}", Static)
         except NoMatches:
-            return
-        summary.update(line)
-        summary.display = bool(line)
-
-    def _finish_rechunk_run(self) -> None:
-        """Re-enable the control and refresh the (now lower) report count."""
-        self._rechunk_running = False
-        try:
-            button = self.query_one(f"#{self.RECHUNK_BUTTON_ID}", Button)
-        except NoMatches:
+            # Compose reads the same app-owned state between child mounts.
             pass
         else:
-            button.disabled = False
-            if not self._legacy_chunk_report and not bulk_rag_slot_in_flight(
+            button.disabled = run.running
+            button.display = bool(self._legacy_chunk_report) or bulk_rag_slot_in_flight(
                 RECHUNK_SLOT
-            ):
-                button.display = False
-        # A failure path never lands a receipt. Retire its placeholder even
-        # between child mounts; a later recompose must not resurrect progress.
-        # On success this runs before the receipt arrives.
-        if self._rechunk_summary == "Re-chunking…":
-            self._apply_rechunk_summary("")
-        # The report count dropped by however many items were re-chunked;
-        # refresh it in place rather than waiting for the next remount.
-        self._request_legacy_chunk_report_refresh()
+            )
+            summary.update(run.summary)
+            summary.display = bool(run.summary)
+        if not run.running:
+            self._request_legacy_chunk_report_refresh()
 
     def compose(self) -> ComposeResult:
         # task-2859 item 7: drop the "Library " prefix (this canvas already

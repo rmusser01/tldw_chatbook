@@ -216,9 +216,9 @@ disabled until you select a source again.
 
 Under the source toggles, the panel reports how much of your Library was
 chunked by the pre-parity engine: **"Chunked by an older engine: N items."**
-The line (and everything in this section) appears only when such items
-actually exist — a fully migrated Library shows nothing at all, rather
-than a zero. Beside the line sits **"Re-chunk older-engine items"**,
+The report and action appear when such items exist; a fully migrated Library
+omits the report rather than showing zero. A completed run's summary remains
+available for the app session. Beside the line sits **"Re-chunk older-engine items"**,
 which re-chunks exactly those items through the current template-aware
 path: each item is re-chunked honoring **its own stored template choice**
 (the one picked at import, or the `[chunking] default_template` config
@@ -234,10 +234,14 @@ the number re-chunked; skipped and failed items keep their older-engine
 chunks.
 
 Use Tab to focus **Re-chunk older-engine items**, then Enter to start. The
-button stays disabled and **Re-chunking…** remains visible while this panel's
-run is active, including when you change mode or source selections. Completion
-counts and notes remain through those changes while the Search/RAG panel stays
-open. In a compact terminal, scroll the panel to read the wrapped summary.
+button stays disabled and **Re-chunking…** remains visible while the run is
+active, including after mode/source changes or returning from another Library
+view or app destination. Re-chunk continues while you are away. Returning shows
+its progress or completed counts and notes, even if it finished elsewhere.
+Starting another run replaces the summary; closing the app clears it. This is
+session feedback, not a saved job history. A failed run shows an error notice
+and releases the action for retry. In a compact terminal, scroll the panel to
+read the wrapped summary.
 
 Details worth knowing before you press:
 

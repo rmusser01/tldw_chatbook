@@ -1,0 +1,41 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+______ test_return_to_rechunk_retains_progress_and_receipt[False-canvas] _______
+Tests/UI/test_library_rag_rechunk_navigation.py:70: in test_return_to_rechunk_retains_progress_and_receipt
+    assert screen.query_one(ACTION, Button).disabled
+E   AssertionError: assert False
+E    +  where False = Button(id='library-rag-rechunk-legacy', classes='-style-default library-rag-recovery-action').disabled
+E    +    where Button(id='library-rag-rechunk-legacy', classes='-style-default library-rag-recovery-action') = query_one('#library-rag-rechunk-legacy', Button)
+E    +      where query_one = LibraryScreen(classes='shell-header-compact').query_one
+______ test_return_to_rechunk_retains_progress_and_receipt[False-screen] _______
+Tests/UI/test_library_rag_rechunk_navigation.py:70: in test_return_to_rechunk_retains_progress_and_receipt
+    assert screen.query_one(ACTION, Button).disabled
+E   AssertionError: assert False
+E    +  where False = Button(id='library-rag-rechunk-legacy', classes='-style-default library-rag-recovery-action').disabled
+E    +    where Button(id='library-rag-rechunk-legacy', classes='-style-default library-rag-recovery-action') = query_one('#library-rag-rechunk-legacy', Button)
+E    +      where query_one = LibraryScreen(classes='shell-header-compact').query_one
+_______ test_return_to_rechunk_retains_progress_and_receipt[True-canvas] _______
+Tests/UI/test_library_rag_rechunk_navigation.py:61: in test_return_to_rechunk_retains_progress_and_receipt
+    await _wait_for_condition(
+Tests/UI/test_library_shell.py:3945: in _wait_for_condition
+    raise AssertionError(message() if callable(message) else message)
+E   AssertionError: Finished while away
+_______ test_return_to_rechunk_retains_progress_and_receipt[True-screen] _______
+Tests/UI/test_library_rag_rechunk_navigation.py:61: in test_return_to_rechunk_retains_progress_and_receipt
+    await _wait_for_condition(
+Tests/UI/test_library_shell.py:3945: in _wait_for_condition
+    raise AssertionError(message() if callable(message) else message)
+E   AssertionError: Finished while away
+============================= slowest 25 durations =============================
+16.45s call     Tests/UI/test_library_rag_rechunk_navigation.py::test_return_to_rechunk_retains_progress_and_receipt[True-canvas]
+16.08s call     Tests/UI/test_library_rag_rechunk_navigation.py::test_return_to_rechunk_retains_progress_and_receipt[True-screen]
+2.08s call     Tests/UI/test_library_rag_rechunk_navigation.py::test_return_to_rechunk_retains_progress_and_receipt[False-canvas]
+1.56s call     Tests/UI/test_library_rag_rechunk_navigation.py::test_return_to_rechunk_retains_progress_and_receipt[False-screen]
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_rechunk_navigation.py::test_return_to_rechunk_retains_progress_and_receipt[False-canvas]
+FAILED Tests/UI/test_library_rag_rechunk_navigation.py::test_return_to_rechunk_retains_progress_and_receipt[False-screen]
+FAILED Tests/UI/test_library_rag_rechunk_navigation.py::test_return_to_rechunk_retains_progress_and_receipt[True-canvas]
+FAILED Tests/UI/test_library_rag_rechunk_navigation.py::test_return_to_rechunk_retains_progress_and_receipt[True-screen]
+4 failed in 38.39s

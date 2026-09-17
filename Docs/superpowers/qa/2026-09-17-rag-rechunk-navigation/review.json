@@ -1,0 +1,17 @@
+{
+  "reviewer": "rag_heading_review",
+  "base": "4cc9819805",
+  "scope": "App-session run owner, panel subscription lifecycle, ADR-164, navigation tests and native runner.",
+  "findings": [
+    {
+      "priority": "P2",
+      "finding": "Add worker-scheduling failure coverage for shared slot release and retry.",
+      "resolution": "test_worker_scheduling_failure_releases_admission_for_retry exercises the app scheduler failure and successful retry; reviewer confirmed coverage and no additional findings.",
+      "status": "resolved"
+    }
+  ],
+  "closeout_review": {
+    "findings": [],
+    "scope": "README links, final result/lifecycle/hashes and guide/audit/ADR/index/lesson; counts and app-session/semantic-index/process-exit limits consistent."
+  }
+}

@@ -14552,3 +14552,13 @@ worker feedback on the panel fixes that lifecycle. The compact receipt also held
 the full text while `h-1` clipped the re-index disclosure. Test active and landed
 feedback across real parent recomposition, and assert painted wrapped text rather
 than only the Static's value. Evidence: `Docs/superpowers/qa/2026-09-17-rag-rechunk-feedback/`.
+
+## Same-panel continuity does not prove navigation continuity (TASK-32719)
+
+The prior Re-chunk checks preserved state through child recomposition, but actual
+Library rail and whole-screen replacement still returned an enabled action with
+no progress. Completion while away also failed to surface a notice. The threaded
+operation and its feedback needed an app-session owner, with mounted panels only
+subscribing to updates (ADR-164). Test return both before and after completion,
+using the real navigation boundary; toggling mode never removes the panel.
+Evidence: `Docs/superpowers/qa/2026-09-17-rag-rechunk-navigation/`.

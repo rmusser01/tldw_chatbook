@@ -21,6 +21,8 @@ TASK-32717 keeps mode and source toggles focused through canvas recomposition an
 verifies their existing in-flight retrieval/answer behavior.
 TASK-32718 retains Re-chunk progress and receipts through those changes and
 wraps completion notes at compact width.
+TASK-32719 extends Re-chunk continuity through Library and main-destination
+navigation with an app-session run owner (ADR-164).
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -1067,3 +1069,30 @@ recomposition/paint traps. Next bounded review: leaving and returning to
 Search/RAG during Re-chunk. Cross-destination receipts and actual semantic
 reindexing remain outside this qualification. No full suite, push or merge was
 performed.
+
+## Re-chunk navigation continuity — 2026-09-17 UTC (TASK-32719)
+
+[Evidence](../qa/2026-09-17-rag-rechunk-navigation/README.md) closes lost progress
+and completion feedback when navigation replaces the initiating panel. Four
+initial cases reproduce the problem across canvas and whole-screen replacement.
+[ADR-164](../../../backlog/decisions/164-rechunk-run-lifetime.md) gives the operation
+an ephemeral app-session owner and app-owned worker. Panels subscribe while
+mounted and read current state on return. Existing service/policy/shared-slot
+contracts remain intact; completion publishes and releases admission together.
+
+All 96 targeted checks pass, including twenty-one new navigation and failure/retry
+cases. The independent review's scheduling-failure coverage request is resolved.
+Four native theme/size journeys each visit Notes during work, finish in Console,
+and return to the updated receipt/census. Four real SQLite items are re-chunked,
+one empty source remains skipped, and all five source records stay unchanged.
+All eight final captures were inspected. The initial compact harness tried a hidden
+rail row; it now opens the existing Nav grip before selecting Search/RAG. No
+production repair was needed for that harness issue.
+
+Static checks add no diagnostics; normal shutdown/PID absence, ten healthy private
+databases and unchanged default fingerprints are verified. No conversation messages
+were added. The guide and testing lesson document navigation continuity, retry and
+the app-session limit. Semantic indexing was disabled and the receipt discloses
+that skip; actual semantic reindexing and process-exit resumption remain unqualified.
+Next bounded review: Search/RAG recovery links and return navigation. No full suite,
+push or merge was performed.

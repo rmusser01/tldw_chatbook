@@ -1,0 +1,18 @@
+{
+  "refs_scanned": 305,
+  "worktrees_scanned": 27,
+  "task": {
+    "reachable_owners": [],
+    "working_tree_owners": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/tasks/task-32719 - Review-Re-chunk-navigation-continuity.md"
+    ],
+    "no_other_owner": true
+  },
+  "adr": {
+    "reachable_owners": [],
+    "working_tree_owners": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/decisions/164-rechunk-run-lifetime.md"
+    ],
+    "no_other_owner": true
+  }
+}
