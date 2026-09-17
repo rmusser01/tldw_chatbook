@@ -474,7 +474,9 @@ class HomeScreen(BaseAppScreen):
 
     async def _build_home_content_snapshot(self) -> HomeContentSnapshot:
         """Assemble the T190 content snapshot from real seams, degrading quietly."""
-        console_ready = await asyncio.to_thread(self._home_console_provider_ready)
+        console_ready = await asyncio.to_thread(
+            self._home_console_provider_ready, background_credentials=False
+        )
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         conversation_service = getattr(
             self.app_instance, "chat_conversation_scope_service", None
@@ -596,7 +598,9 @@ class HomeScreen(BaseAppScreen):
             logger.debug(f"Home content snapshot seam call failed: {exc}")
             return None
 
-    def _home_console_provider_ready(self, *, allow_fresh_load: bool = True) -> bool:
+    def _home_console_provider_ready(
+        self, *, background_credentials: bool, allow_fresh_load: bool = True
+    ) -> bool:
         """Return Console provider readiness from the freshest config.
 
         Reuses the exact readiness seams Console uses
@@ -609,6 +613,9 @@ class HomeScreen(BaseAppScreen):
         ``_provider_readiness_app_config``.
 
         Args:
+            background_credentials: Return cached credential readiness without
+                waiting during compose. The content-snapshot thread passes
+                False so its completion publishes resolved readiness.
             allow_fresh_load: When True (the async content-snapshot path),
                 refresh from ``load_settings()`` for freshness. When False
                 (TASK-31805's synchronous compose path for the "Model:"
@@ -634,7 +641,11 @@ class HomeScreen(BaseAppScreen):
                 config = fresh
         try:
             settings = build_default_console_session_settings(config)
-            readiness = build_console_settings_readiness(settings, app_config=config)
+            readiness = build_console_settings_readiness(
+                settings,
+                app_config=config,
+                background_credentials=background_credentials,
+            )
         except Exception as exc:
             logger.debug(f"Home Console readiness check failed: {exc}")
             return False
@@ -672,7 +683,9 @@ class HomeScreen(BaseAppScreen):
         # config, keeping the badge in lockstep with ``console_ready``.
         dashboard_input = replace(
             dashboard_input,
-            model_ready=self._home_console_provider_ready(allow_fresh_load=False),
+            model_ready=self._home_console_provider_ready(
+                background_credentials=True, allow_fresh_load=False
+            ),
         )
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)

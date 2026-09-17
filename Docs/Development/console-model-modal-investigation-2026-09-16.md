@@ -339,3 +339,40 @@ provider account or reporter-machine reproduction was used.
 New Python files pass Ruff lint and formatting. Modified legacy files introduce
 no new Ruff diagnostics relative to dev; changed regions are formatted and
 scoped diff checks pass. Existing whole-file static debt remains unchanged.
+
+## PR-2703 review and merge verification
+
+Qodo identified three issues, all confirmed and addressed:
+
+- Metadata probes now validate their derived URL through the shared asynchronous
+  egress policy before opening a stream. Explicitly configured local origins
+  remain usable; denied metadata IPs/hostnames produce the ordinary fallback
+  without issuing a request. Four new blocked-destination regressions failed
+  before the fix, then passed alongside the existing local-server controls.
+- `ContextWindowCache.cached()` and `resolve()` now document parameters,
+  cache/fallback results, client ownership, and cancellation behavior.
+- Home explicitly uses background credentials during synchronous composition,
+  then resolves credentials in its existing content-snapshot worker. The mounted
+  valid-subscription regression reproduced the stuck blocked badge before the
+  fix; valid, missing, and expired credentials now settle without blocking UI.
+  Five related Home tests use the existing private-profile harness with their
+  assertions and production recovery guards preserved.
+
+CI also caught an eager import of the metadata module at first paint. Tracing
+showed both gateway construction and the visible context summary reached it.
+Pure capacity fallback now lives with the existing token-capacity helpers, and
+the gateway creates its network cache only on first metadata use. The original
+startup budgets remain unchanged: **1022/1022** modules at UI ready and
+**669/686** at import. An explicit absence assertion protects the deferred module.
+
+The diagnostic inventory's only delta was removal of the old token-counter
+lookup-failure debug statement; statement-level review confirmed no new log
+arguments or sinks. The regenerated inventory verifies successfully.
+
+Fresh combined startup/context/token/Home verification: **86 passed**, one
+loopback case deselected. That real-client loopback case passed separately.
+Home and its existing neighbors passed **8** focused checks; counts overlap.
+An additional screen-preload check measured 536 modules against its historical
+500 limit; unchanged dev measured the same 536 with original production modules,
+so that separate baseline breach was not changed or hidden. New files pass Ruff
+lint/format, changed legacy files add no diagnostics, and diff checks pass.

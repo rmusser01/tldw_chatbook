@@ -6,7 +6,7 @@ import asyncio
 import re
 from dataclasses import dataclass, field, fields, replace
 from functools import partial
-from typing import Any, Awaitable, Callable, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Protocol
 from uuid import uuid4
 
 from rich.markup import escape as escape_markup
@@ -28,7 +28,6 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.Chat.console_context_compaction import EffectiveMemoryKind
-from tldw_chatbook.Chat.console_context_window import ContextWindowResolution, resolve_context_window
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ConsoleContextPolicyDefaults,
@@ -160,6 +159,9 @@ from .console_provider_picker import ConsoleProviderPicker, ConsoleProviderPicke
 # edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_summary import build_console_readiness_presentation
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
 MODAL_BODY_MIN_HEIGHT = 0
@@ -6547,6 +6549,8 @@ class ConsoleSettingsModal(
         generation = self._context_window_generation
         if self._context_window_resolver is None:
             return
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
         self._publish_context_window(
             resolve_context_window(draft.provider, draft.model or ""), draft
         )

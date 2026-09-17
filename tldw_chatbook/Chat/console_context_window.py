@@ -13,67 +13,23 @@ from time import monotonic
 
 import httpx
 
+from tldw_chatbook.Utils.egress import (
+    EgressBlockedError,
+    check_url_or_raise_async,
+    origin_set,
+)
+from tldw_chatbook.Utils.token_counter import (
+    ContextWindowResolution,
+    positive_window,
+    resolve_context_window,
+)
+
 from .provider_endpoint_contract import resolve_provider_endpoint
 
-SYSTEM_CONTEXT_WINDOW = 32000
-MAX_CONTEXT_WINDOW = 2**31 - 1
 METADATA_MAX_BYTES = 256 * 1024
 METADATA_CHUNK_BYTES = 64 * 1024
 METADATA_SUCCESS_TTL = 60
 METADATA_FAILURE_TTL = 5
-PROVIDER_CONTEXT_WINDOWS = {
-    "anthropic": 200000,
-    "google": 30720,
-    "openai": 4096,
-    "mistral": 32000,
-    "mistralai": 32000,
-}
-
-
-def positive_window(value: object) -> int | None:
-    """Accept serving capacities, excluding bools and coerced strings."""
-    return value if type(value) is int and 0 < value <= MAX_CONTEXT_WINDOW else None
-
-
-@dataclass(frozen=True, slots=True)
-class ContextWindowResolution:
-    """A total token window and the evidence supporting it."""
-
-    tokens: int
-    source: str
-    verified: bool
-
-
-def resolve_context_window(
-    provider: str, model: str, *, server_tokens: object = None
-) -> ContextWindowResolution:
-    """Resolve server, model/API default, then the estimated system default."""
-    server = positive_window(server_tokens)
-    if server is not None:
-        return ContextWindowResolution(server, "server metadata", True)
-    from tldw_chatbook.model_capabilities import get_model_capabilities
-    from tldw_chatbook.Utils.token_counter import get_table_model_token_limit
-
-    provider = provider.lower().strip()
-    try:
-        window = positive_window(
-            get_model_capabilities()
-            .get_model_capabilities(provider, model)
-            .get("context_window")
-        )
-    except Exception:  # noqa: BLE001 -- optional catalog must not block request capacity
-        window = None
-    if window is None:
-        window = positive_window(get_table_model_token_limit(model, provider))
-    if window is not None:
-        return ContextWindowResolution(window, "model catalog", True)
-    if provider == "openrouter" and "/" in model:
-        upstream, upstream_model = model.split("/", 1)
-        return resolve_context_window(upstream, upstream_model)
-    window = PROVIDER_CONTEXT_WINDOWS.get(provider)
-    if window is not None:
-        return ContextWindowResolution(window, "provider fallback", False)
-    return ContextWindowResolution(SYSTEM_CONTEXT_WINDOW, "application fallback", False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +70,15 @@ class ContextWindowCache:
         self._pending: dict[tuple[str, ...], Future] = {}
 
     def cached(self, target: ContextWindowTarget) -> ContextWindowResolution:
+        """Read current cached capacity without starting network work.
+
+        Args:
+            target: Exact provider, endpoint, model, and credential identity.
+
+        Returns:
+            The unexpired server capacity, or the model/API/system fallback
+            when no current serving metadata is available.
+        """
         with self._lock:
             record = self._cache.get(target.key)
             value = record[1] if record and record[0] > monotonic() else None
@@ -122,6 +87,20 @@ class ContextWindowCache:
     async def resolve(
         self, target: ContextWindowTarget, client: httpx.AsyncClient
     ) -> ContextWindowResolution:
+        """Resolve capacity with bounded, shared asynchronous metadata work.
+
+        Args:
+            target: Exact provider, endpoint, model, and credential identity.
+            client: Caller-owned HTTP client; this method does not close it.
+
+        Returns:
+            Cached or discovered server capacity, falling back to the model,
+            API, or system default when metadata is unavailable or denied.
+
+        Raises:
+            asyncio.CancelledError: If the caller cancels; shared waiters
+                still settle without cancelling one another.
+        """
         key = target.key
         with self._lock:
             record = self._cache.get(key)
@@ -196,6 +175,12 @@ class ContextWindowCache:
             url = root + "/api/ps"
         else:
             url = endpoint.models_url
+        try:
+            await check_url_or_raise_async(
+                url, trusted_origins=origin_set(target.endpoint)
+            )
+        except EgressBlockedError:
+            return None
         headers = (
             {"Authorization": f"Bearer {target.api_key}"} if target.api_key else {}
         )

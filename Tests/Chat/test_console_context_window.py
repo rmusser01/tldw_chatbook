@@ -23,6 +23,15 @@ def known_capabilities(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def enabled_egress_policy(monkeypatch):
+    """Exercise real URL policy with isolated settings and no host exemptions."""
+    from tldw_chatbook.Utils import egress
+
+    monkeypatch.setattr(egress, "_config_enabled", lambda: True)
+    monkeypatch.setattr(egress, "_config_allowed_hosts", frozenset)
+
+
 @pytest.mark.parametrize("value", [None, 0, -1, True, "128000", 1.5, 10**400])
 def test_invalid_server_window_uses_exact_model_before_family(value):
     result = resolve_context_window("openai", "gpt-4o", server_tokens=value)
@@ -84,6 +93,35 @@ async def test_server_capacity_and_authorization_are_cached(family, path, payloa
     )
     assert len(calls) == 1
     assert "fake-test-key" not in repr(target)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://169.254.169.254",
+        "http://[fd00:ec2::254]",
+        "http://100.100.100.200",
+        "http://metadata.google.internal",
+    ],
+)
+async def test_metadata_egress_is_denied_before_request(endpoint):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200, json={"default_generation_settings": {"n_ctx": 8192}}
+        )
+
+    cache = ContextWindowCache()
+    target = ContextWindowTarget("llama_cpp", "llama_cpp", endpoint, "selected")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await cache.resolve(target, client)
+        assert await cache.resolve(target, client) == result
+    assert requests == []
+    assert result.tokens == 32000
+    assert result.verified is False
 
 
 @pytest.mark.asyncio

@@ -11,11 +11,6 @@ from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Callable, Literal, Mapping, Sequence, overload
 from urllib.parse import urlparse, urlunparse
 
-from tldw_chatbook.Chat.console_context_window import (
-    ContextWindowResolution,
-    resolve_context_window,
-)
-
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
     build_local_thinking_payload_fields,
@@ -90,6 +85,7 @@ if TYPE_CHECKING:
     # Imported lazily at call sites: custom_endpoint_registry imports this
     # module for URL normalization, so a module-level import would cycle.
     from tldw_chatbook.Chat.custom_endpoint_registry import CustomEndpointEntry
+    from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
@@ -2472,6 +2468,8 @@ def _resolve_token_limit_locally_with_provenance(
     provider: str,
 ) -> tuple[int, bool, str]:
     """Resolve the shared model/API/system default without network I/O."""
+    from tldw_chatbook.Utils.token_counter import resolve_context_window
+
     result = resolve_context_window(provider, model)
     return result.tokens, result.verified, result.source
 

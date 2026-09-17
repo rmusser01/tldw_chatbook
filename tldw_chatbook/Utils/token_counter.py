@@ -4,6 +4,7 @@
 # Imports
 import re
 import threading
+from dataclasses import dataclass
 from typing import List, Dict, Any, Union, Optional, Tuple
 
 #
@@ -478,10 +479,80 @@ def get_table_model_token_limit(model: str, provider: str = "openai") -> int | N
     return best_limit
 
 
+SYSTEM_CONTEXT_WINDOW = 32000
+MAX_CONTEXT_WINDOW = 2**31 - 1
+PROVIDER_CONTEXT_WINDOWS = {
+    "anthropic": 200000,
+    "google": 30720,
+    "openai": 4096,
+    "mistral": 32000,
+    "mistralai": 32000,
+}
+
+
+def positive_window(value: object) -> int | None:
+    """Accept serving capacities, excluding bools and coerced strings.
+
+    Args:
+        value: Untrusted capacity reported by a server or model catalog.
+
+    Returns:
+        A positive bounded integer, or None for an invalid capacity.
+    """
+    return value if type(value) is int and 0 < value <= MAX_CONTEXT_WINDOW else None
+
+
+@dataclass(frozen=True, slots=True)
+class ContextWindowResolution:
+    """A total token window and the evidence supporting it."""
+
+    tokens: int
+    source: str
+    verified: bool
+
+
+def resolve_context_window(
+    provider: str, model: str, *, server_tokens: object = None
+) -> ContextWindowResolution:
+    """Resolve server, model/API default, then the estimated system default.
+
+    Args:
+        provider: Provider or API family used for the fallback catalog.
+        model: Selected model identifier.
+        server_tokens: Optional serving capacity obtained from metadata.
+
+    Returns:
+        The selected capacity with its source and verification status.
+    """
+    server = positive_window(server_tokens)
+    if server is not None:
+        return ContextWindowResolution(server, "server metadata", True)
+    from tldw_chatbook.model_capabilities import get_model_capabilities
+
+    provider = provider.lower().strip()
+    try:
+        window = positive_window(
+            get_model_capabilities()
+            .get_model_capabilities(provider, model)
+            .get("context_window")
+        )
+    except Exception:  # noqa: BLE001 -- optional catalog must not block request capacity
+        window = None
+    if window is None:
+        window = positive_window(get_table_model_token_limit(model, provider))
+    if window is not None:
+        return ContextWindowResolution(window, "model catalog", True)
+    if provider == "openrouter" and "/" in model:
+        upstream, upstream_model = model.split("/", 1)
+        return resolve_context_window(upstream, upstream_model)
+    window = PROVIDER_CONTEXT_WINDOWS.get(provider)
+    if window is not None:
+        return ContextWindowResolution(window, "provider fallback", False)
+    return ContextWindowResolution(SYSTEM_CONTEXT_WINDOW, "application fallback", False)
+
+
 def get_model_token_limit(model: str, provider: str = "openai") -> int:
     """Return the shared model/API default, or the 32,000-token system default."""
-    from tldw_chatbook.Chat.console_context_window import resolve_context_window
-
     return resolve_context_window(_norm_provider(provider), model).tokens
 
 

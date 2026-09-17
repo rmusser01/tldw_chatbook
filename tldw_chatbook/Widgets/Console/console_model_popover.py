@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, replace
 from math import isfinite
-from typing import Any, Literal, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from textual import events, on
@@ -20,10 +20,6 @@ from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextCompactionMode,
     ContextCompactionRepresentation,
-)
-from tldw_chatbook.Chat.console_context_window import (
-    ContextWindowResolution,
-    resolve_context_window,
 )
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -58,6 +54,9 @@ from tldw_chatbook.Widgets.model_search_picker import (
     ModelPickerInput,
     ModelSearchPicker,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 CONSOLE_POPOVER_OPEN_FULL_SETTINGS = "open-full-settings"
 
@@ -689,6 +688,8 @@ class ConsoleModelPopover(
 
     def _refresh_context_window(self) -> None:
         """Resolve the exact target in a worker without retaining stale results."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
         if (
             not self.is_mounted
             or self not in self.app.screen_stack

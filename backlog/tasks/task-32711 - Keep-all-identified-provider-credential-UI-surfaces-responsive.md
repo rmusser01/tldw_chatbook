@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-17 01:39'
-updated_date: '2026-09-17 01:59'
+updated_date: '2026-09-17 03:28'
 labels: []
 dependencies: []
 ---
@@ -23,6 +23,7 @@ Slow subscription credential reads must not freeze canonical Settings, first-run
 - [x] #3 Persona handoff readiness remains responsive and automatically refreshes pending completion without stale selection updates
 - [x] #4 Targeted mounted regressions cover slow reads completion and failure without contacting real credentials or providers
 - [x] #5 Completing subscription setup preserves inactive stored keys and environment bindings unless the user explicitly clears or replaces them
+- [x] #6 Home remains responsive during subscription reads and refreshes its model readiness after the worker completes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,4 +51,8 @@ Validation (targeted runs only; overlapping counts):
 - Credential reads and provider effects are simulated; no real credentials/network, full suite, commits or publication. Existing RequestsDependencyWarning remains informational.
 
 Self-review and independent review completed; TASK-32710 separately closes the three stale fixture/assertion failures.
+
+Qodo PR2703 finding 3: investigate Home synchronous construction and threaded snapshot readiness. Add a mounted slow-credential completion regression, pass background credential policy explicitly at each execution boundary, and verify existing Home state tests. ADR required: no new ADR; restores the existing provider credential/UI boundary under ADR-012.
+
+PR2703 Qodo finding 3 fixed: Home compose explicitly uses nonblocking credential snapshots, while the existing background content-snapshot thread performs resolved readiness and republishes the dashboard. The mounted valid-subscription regression failed with a stuck Model Blocked badge before the fix. Valid/missing/expired states now settle automatically while heartbeat assertions prove UI responsiveness. Home combined run: 8 passed, 64 unrelated cases deselected; five affected existing cases use the private-profile child harness with assertions unchanged. Root combined startup/context/token/Home run: 86 passed. No new Ruff findings; source ranges and new tests formatted. ADR-012 boundary unchanged.
 <!-- SECTION:NOTES:END -->

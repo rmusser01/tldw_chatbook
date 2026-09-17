@@ -36,12 +36,6 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
-from tldw_chatbook.Chat.console_context_window import (
-    ContextWindowCache,
-    ContextWindowResolution,
-    ContextWindowTarget,
-    resolve_context_window,
-)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleResolvedDestination
 from tldw_chatbook.Chat.console_endpoint_provenance import (
     ConsoleEndpointProvenance,
@@ -182,6 +176,11 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
 )
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_context_window import (
+        ContextWindowCache,
+        ContextWindowResolution,
+        ContextWindowTarget,
+    )
     from tldw_chatbook.Chat.console_voice_trace_gateway import (
         ProvisionalTraceAttempt,
         ProvisionalTraceEnvelope,
@@ -2687,7 +2686,8 @@ class ConsoleProviderGateway:
         # doesn't accumulate dead entries waiting on GC alone.
         self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
         self._config_provider = config_provider or (lambda: {})
-        self._context_windows = ContextWindowCache()
+        self._context_windows: ContextWindowCache | None = None
+        self._context_windows_lock = threading.Lock()
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
@@ -3423,6 +3423,8 @@ class ConsoleProviderGateway:
                     return value
             return None
 
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
         context_window = resolution.context_window or resolve_context_window(
             resolution.provider, resolution.model or ""
         )
@@ -3686,6 +3688,8 @@ class ConsoleProviderGateway:
 
     def _context_window_target(self, settings: Any) -> ContextWindowTarget:
         """Project only the selected metadata endpoint and its own credential."""
+        from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
+
         config = self._config_provider() or {}
         entry = entry_for(config, settings.provider)
         family = family_execution_key(entry.family) if entry else settings.provider
@@ -3720,13 +3724,34 @@ class ConsoleProviderGateway:
             settings.provider, family, endpoint or "", settings.model or "", api_key
         )
 
+    def _get_context_windows(self) -> ContextWindowCache:
+        """Create the shared metadata cache on first use, outside startup."""
+        from tldw_chatbook.Chat.console_context_window import ContextWindowCache
+
+        with self._context_windows_lock:
+            if self._context_windows is None:
+                self._context_windows = ContextWindowCache()
+            return self._context_windows
+
     def cached_context_window(self, settings: Any) -> ContextWindowResolution:
         """Return metadata already discovered for this exact settings target."""
-        return self._context_windows.cached(self._context_window_target(settings))
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        # First paint needs the pure fallback, not the network metadata module.
+        with self._context_windows_lock:
+            cache = self._context_windows
+        if cache is None:
+            entry = entry_for(self._config_provider() or {}, settings.provider)
+            family = family_execution_key(entry.family) if entry else settings.provider
+            identity = resolve_console_provider_identity(family)
+            return resolve_context_window(
+                identity.readiness_key or family, settings.model or ""
+            )
+        return cache.cached(self._context_window_target(settings))
 
     async def resolve_context_window(self, settings: Any) -> ContextWindowResolution:
         """Refresh optional serving metadata without running a generation."""
-        return await self._context_windows.resolve(
+        return await self._get_context_windows().resolve(
             self._context_window_target(settings), self._active_http_client()
         )
 
@@ -3834,9 +3859,11 @@ class ConsoleProviderGateway:
         self, selection: ConsoleProviderSelection
     ) -> ConsoleProviderResolution:
         """Resolve readiness and attach the credential-free destination."""
+        from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
+
         resolution = await self._resolve_for_send_unclassified(selection)
         if resolution.ready:
-            window = await self._context_windows.resolve(
+            window = await self._get_context_windows().resolve(
                 ContextWindowTarget(
                     selection.provider,
                     resolution.readiness_key or resolution.provider,
