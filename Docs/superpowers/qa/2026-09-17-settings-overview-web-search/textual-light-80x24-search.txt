@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Web Search
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Shared    │
+│     Storage                  │  │  │  by basic and deep search; changes      │
+│     Workspaces               │  │  │  apply after Save.                      │
+│     Tool Profiles            │  │  │    Clear local instance url             │
+│     Privacy & Security       │  │  │  Required settings present.             │
+│     Network                  │  │  │  Saved. New searches use these          │
+│     My Profile               │  │  │  settings.                              │
+│  Troubleshooting           ▇ │  │  │  No unsaved changes.                    │
+│     Diagnostics (view)       │  │  │    Save all search settings             │
+│     About (view)             │  │  │    Revert search changes                │
+│     Agents                   │  │  │    Test saved settings                ▄ │
+│  Expert                      │  │  │  Sends “tldw chatbook” to this          │
+│     Internal Prompts         │  │  │  backend; may use API quota. No AI      │
+│     Advanced Config          │  │  │  answer is generated.                   │
+│   Domain Defaults ▸ (11)     │  │  │  Search completed successfully.         │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -1,0 +1,124 @@
+[("Button(id='settings-overview-open-providers-models', classes='-style-default settings-overview-open-category')", Region(x=41, y=17, width=25, height=1), Region(x=41, y=17, width=25, height=1), Offset(x=0, y=0), Size(width=25, height=1), Scalar(value=1.0, unit=<Unit.CELLS: 1>, percent_unit=<Unit.WIDTH: 4>)), ("Horizontal(classes='settings-action-row')", Region(x=41, y=17, width=34, height=1), Region(x=41, y=17, width=34, height=1), Offset(x=0, y=0), Size(width=34, height=1), Scalar(value=1.0, unit=<Unit.CELLS: 1>, percent_unit=<Unit.WIDTH: 4>)), ("Vertical(id='settings-overview-primary')", Region(x=41, y=14, width=34, height=1), Region(x=41, y=14, width=34, height=1), Offset(x=0, y=0), Size(width=34, height=15), Scalar(value=1.0, unit=<Unit.FRACTION: 2>, percent_unit=<Unit.WIDTH: 4>)), ("Vertical(id='settings-overview-card', classes='settings-focus-card')", Region(x=39, y=11, width=38, height=19), Region(x=41, y=12, width=34, height=17), Offset(x=0, y=0), Size(width=34, height=17), Scalar(value=1.0, unit=<Unit.AUTO: 8>, percent_unit=<Unit.AUTO: 8>)), ("VerticalScroll(id='settings-detail-pane-body', classes='h-fill')", Region(x=39, y=8, width=39, height=13), Region(x=39, y=8, width=39, height=13), Offset(x=0, y=0), Size(width=38, height=23), Scalar(value=1.0, unit=<Unit.FRACTION: 2>, percent_unit=<Unit.WIDTH: 4>)), ("SettingsRegion(id='settings-detail-pane', classes='destination-workbench-pane settings-workbench-compact-pane h-full')", Region(x=37, y=5, width=43, height=17), Region(x=39, y=6, width=39, height=15), Offset(x=0, y=0), Size(width=39, height=15), Scalar(value=100.0, unit=<Unit.HEIGHT: 5>, percent_unit=<Unit.WIDTH: 4>)), ("Horizontal(id='settings-workbench', classes='ds-panel settings-workbench-compact destination-workbench')", Region(x=0, y=5, width=80, height=17), Region(x=0, y=5, width=80, height=17), Offset(x=0, y=0), Size(width=80, height=17), Scalar(value=1.0, unit=<Unit.FRACTION: 2>, percent_unit=<Unit.WIDTH: 4>)), ("Vertical(id='settings-shell')", Region(x=0, y=3, width=80, height=20), Region(x=0, y=3, width=80, height=20), Offset(x=0, y=0), Size(width=80, height=20), Scalar(value=100.0, unit=<Unit.HEIGHT: 5>, percent_unit=<Unit.WIDTH: 4>)), ("Container(id='screen-content')", Region(x=0, y=3, width=80, height=20), Region(x=0, y=3, width=80, height=20), Offset(x=0, y=0), Size(width=80, height=20), Scalar(value=1.0, unit=<Unit.FRACTION: 2>, percent_unit=<Unit.WIDTH: 4>)), ("SettingsScreen(classes='shell-header-compact')", Region(x=0, y=0, width=80, height=24), Region(x=0, y=0, width=80, height=24), Offset(x=0, y=0), Size(width=80, height=24), None)]
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_overview_and_search_keyboard_recovery[size1-textual-dark] ________
+
+request = <FixtureRequest for <Coroutine test_overview_and_search_keyboard_recovery[size1-textual-dark]>>
+setup = (<tldw_chatbook.UI.Screens.settings_web_search.WebSearchSettings object at 0x111f333b0>, PosixPath('/private/var/folde...pytest-of-macbook-dev/pytest-1158/test_overview_and_search_keybo0/private-profile-process/profile/config/config.toml'))
+theme = 'textual-dark', size = (80, 24)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111fdf2c0>
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
+    @private_profile_test
+    async def test_overview_and_search_keyboard_recovery(
+        request, setup, theme, size, monkeypatch
+    ):
+        _, path = setup
+        app = _build_test_app()
+        app.app_config["chat_defaults"] = {"provider": "openai", "model": ""}
+        host = SearchSettingsHarness(app, "settings")
+        host.theme = theme
+        calls = []
+
+        def probe(backend):
+            calls.append(backend)
+            return catalog.ProbeResult(
+                False,
+                "Could not connect. Check network access and the configured endpoint.",
+            )
+
+        monkeypatch.setattr(catalog, "probe_saved_backend", probe)
+        async with host.run_test(size=size) as pilot:
+            await _settle(host, pilot)
+            text = str(
+                host.screen.query_one("#settings-overview-configuration", Static).renderable
+            )
+            assert "Not ready" in text
+            for target, category in (
+                ("providers-models", "providers-models"),
+                ("storage", "storage"),
+                ("privacy-security", "privacy-security"),
+            ):
+                try:
+>                   button = await _tab_to(host, pilot, f"#settings-overview-open-{target}")
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_settings_overview_search_journeys.py:70:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_settings_provider_keyboard_journeys.py:40: in _tab_to
+    _assert_painted(host.screen, target)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+screen = SettingsScreen(classes='shell-header-compact')
+widget = Button(id='settings-overview-open-providers-models', classes='-style-default settings-overview-open-category')
+
+    def _assert_painted(screen, widget):
+        """Require the whole control inside its compositor clip, not just the DOM."""
+        geometry = screen._compositor.visible_widgets.get(widget)
+>       assert geometry is not None, (widget.id, widget.region)
+E       AssertionError: ('settings-overview-open-providers-models', Region(x=41, y=17, width=25, height=1))
+E       assert None is not None
+
+Tests/UI/test_library_rag_result_focus.py:25: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 13:18:04.660 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 13:18:04.666 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 13:18:04.667 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 13:18:04.667 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-17 13:18:04.680 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6133 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1158/test_overview_and_search_keybo0/private-profile-process/profile/config/config.toml
+2026-09-17 13:18:04.684 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6154 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1158/test_overview_and_search_keybo0/private-profile-process/profile/config/config.toml
+2026-09-17 13:18:04.685 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6238 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server']
+2026-09-17 13:18:04.685 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6242 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+----------------------------- Captured stderr call -----------------------------
+2026-09-17 13:18:04.774 | INFO     | tldw_chatbook.app:__init__:7995 - Loaded app_config - strip_thinking_tags: True
+2026-09-17 13:18:04.797 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'notes_service' completed in 0.000s
+2026-09-17 13:18:04.797 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'prompts_service' completed in 0.000s
+2026-09-17 13:18:04.797 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'providers_models' completed in 0.000s
+2026-09-17 13:18:04.798 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'media_db' completed in 0.000s
+2026-09-17 13:18:04.876 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1158/test_overview_and_search_keybo0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-09-17 13:18:04.946 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-dw8_lrp_/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-17 13:18:05.116 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-dw8_lrp_/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-17 13:18:05.130 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-09-17 13:18:05.131 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-dw8_lrp_/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-17 13:18:05.132 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-dw8_lrp_/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-17 13:18:05.268 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+2026-09-17 13:18:05.308 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-09-17 13:18:05.352 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-09-17 13:18:05.395 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-09-17 13:18:05.432 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+2026-09-17 13:18:05.467 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-09-17 13:18:05.467 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-dw8_lrp_/scheduled_tasks.sqlite [Client: default]
+2026-09-17 13:18:05.513 | DEBUG    | tldw_chatbook.app:__init__:8175 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-09-17 13:18:05.514 | DEBUG    | tldw_chatbook.app:__init__:8178 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-09-17 13:18:05.521 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+2026-09-17 13:18:05.592 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-09-17 13:18:05.592 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1158/test_overview_and_search_keybo0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+2026-09-17 13:18:05.592 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-09-17 13:18:05.661 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-09-17 13:18:05.662 | INFO     | tldw_chatbook.app:_init_worker_handlers:11998 - Worker handler registry initialized with all handlers
+2026-09-17 13:18:05.662 | INFO     | tldw_chatbook.app:__init__:8356 - === STARTUP TIMING SUMMARY ===
+2026-09-17 13:18:05.662 | INFO     | tldw_chatbook.app:__init__:8357 - Total initialization time: 0.961 seconds
+2026-09-17 13:18:05.663 | INFO     | tldw_chatbook.app:__init__:8363 -   basic_init: 0.093s (9.7%)
+2026-09-17 13:18:05.663 | INFO     | tldw_chatbook.app:__init__:8363 -   attribute_init: 0.000s (0.0%)
+2026-09-17 13:18:05.663 | INFO     | tldw_chatbook.app:__init__:8363 -   parallel_init: 0.002s (0.2%)
+2026-09-17 13:18:05.664 | INFO     | tldw_chatbook.app:__init__:8376 -     - notes_service: 0.000s (0.1% of parallel_init)
+2026-09-17 13:18:05.664 | INFO     | tldw_chatbook.app:__init__:8376 -     - media_db: 0.000s (0.1% of parallel_init)
+2026-09-17 13:18:05.664 | INFO     | tldw_chatbook.app:__init__:8376 -     - providers_models: 0.000s (0.1% of parallel_init)
+2026-09-17 13:18:05.664 | INFO     | tldw_chatbook.app:__init__:8376 -     - prompts_service: 0.000s (0.0% of parallel_init)
+2026-09-17 13:18:05.665 | INFO     | tldw_chatbook.app:__init__:8380 - ==============================
+2026-09-17 13:18:05.912 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+2026-09-17 13:18:06.087 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+2026-09-17 13:18:10.301 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:8129 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:8233 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+============================= slowest 25 durations =============================
+5.61s call     Tests/UI/test_settings_overview_search_journeys.py::test_overview_and_search_keyboard_recovery[size1-textual-dark]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_overview_search_journeys.py::test_overview_and_search_keyboard_recovery[size1-textual-dark]
+1 failed in 7.58s

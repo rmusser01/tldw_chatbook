@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## An auto-height card can still clip a fractional-height child
+
+**TASK-32753, 2026-09-17.** Overview's outer card already used `height: auto`,
+but its primary `Vertical` retained the default `1fr` height. At 80×24 that
+child received one row for 15 rows of content. Tab focused Open Providers &
+Models at y17 without painting it, while wide-only checks passed. Giving the
+primary body auto height exposed a second defect: the paired Privacy action
+extended eight columns beyond its row. A compact stacked layout fixed that
+remaining clip. Check every ancestor and the full focused label; an auto-height
+outer container and a valid focused widget are not sufficient evidence.
+
+
 ## Row packing must recheck what was composed before measurement
 
 **TASK-32752, 2026-09-17.** Correcting Notes' tree-toolbar button cost and removing

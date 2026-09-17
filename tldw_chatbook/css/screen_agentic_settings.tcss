@@ -830,6 +830,17 @@ Button.settings-category-group-toggle:focus {
     background: $ds-surface-panel;
 }
 
+/* Overview shares the detail pane scroll owner; its primary rows must
+   grow with wrapped status copy instead of shrinking as a 1fr child. */
+#settings-overview-primary {
+    height: auto;
+}
+
+.settings-workbench-compact #settings-overview-primary .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+
 /* RAW CLI DANGER GATE START */
 .settings-raw-cli-danger {
     width: $ds-width-full;

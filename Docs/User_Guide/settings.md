@@ -172,10 +172,15 @@ page links to each backend's setup guide and displays these restrictions.
 
 ### Core — Overview
 
-A read-out grouped as **Provider readiness**, **Storage**, **Privacy**,
-**Server, sync, workspace, and handoff**, **Manual sync**, and **Where changes
-happen** (one line each for what Settings, Console, MCP, ACP, and sync own),
-plus three buttons.
+Overview leads with configuration readiness, the last connection test,
+storage/privacy, and sync status. **Open Providers & Models**, **Open Storage**,
+and **Open Privacy & Security** take you to the corresponding settings. Use
+**Tab** to reach each action; the detail pane scrolls to the focused control,
+and paired actions stack at compact widths.
+
+**Advanced / Diagnostics** holds server, workspace, handoff and manual-sync
+details. **Where changes happen** explains which destination owns each change.
+**Backup & Restore** opens the separate backup workflow.
 
 | Button | What it does |
 |---|---|

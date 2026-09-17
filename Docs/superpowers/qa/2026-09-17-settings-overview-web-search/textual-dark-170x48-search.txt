@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Web Search
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Shared by basic and deep search; changes apply after Save.     │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │                                                                                              │  │  │                              │
+│  category search             │  │  │  Web Search                                                                                  │  │  │ Selected category: Web       │
+│                              │  │  │  Default search backend                                                                      │  │  │ Search                       │
+│  Core                        │  │  │ ┌──────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ │ SearX / SearXNG                                                                        ▼ │ │  │  │  Guided edits: change a      │
+│     Providers & Models       │  │  │ └──────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  field first.                │
+│   > Web Search               │  │  │  Basic and deep search share this default.                                                   │  │  │  Save (s) — no               │
+│     Speech & TTS             │  │  │  Configure backend                                                                           │  │  │   Revert (r) —               │
+│  Interface                   │  │  │ ┌──────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │ │ SearX / SearXNG                                                                        ▼ │ │  │  │ config file.                 │
+│     Theme                    │  │  │ └──────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │  Editing another backend keeps your default unchanged.                                       │  │  │ Default backend and API      │
+│     Console Behavior         │  │  │  Use your own instance or one that allows JSON API searches.                                 │  │  │ keys, credentials, and setup │
+│  Data & Privacy              │  │  │  Open backend setup guide                                                                    │  │  │ for web search.              │
+│     Storage                  │  │  │  Instance URL                                                                                │  │  │  Runtime owner: web search   │
+│     Workspaces               │  │  │ │ http://127.0.0.1:60923/search?review=textual-dark-170x48                                   │  │  │  tools                       │
+│     Tool Profiles            │  │  │  Saved in local config.                                                                      │  │  │                              │
+│     Privacy & Security       │  │  │    Clear local instance url                                                                  │  │  │  Writes allowed: Yes         │
+│     Network                  │  │  │  Required settings present.                                                                  │  │  │                              │
+│     My Profile               │  │  │  Saved. New searches use these settings.                                                     │  │  │  Owns: SearchSettings.       │
+│  Troubleshooting             │  │  │    Test saved settings                                                                       │  │  │    search_provider_default   │
+│     Diagnostics (view)       │  │  │  Sends “tldw chatbook” to this backend; may use API quota. No AI answer is generated.        │  │  │  SearchEngines               │
+│     About (view)             │  │  │  Search completed successfully.                                                              │  │  │                              │
+│     Agents                   │  │  │                                                                                              │  │  │  Affected config: shared     │
+│  Expert                      │  │  │                                                                                              │  │  │  search default and backend  │
+│     Internal Prompts         │  │  │                                                                                              │  │  │  credentials                 │
+│     Advanced Config          │  │  │                                                                                              │  │  │                              │
+│   Domain Defaults ▸ (11)     │  │  │                                                                                              │  │  │  Recovery: Revert discards   │
+│                              │  │  │                                                                                              │  │  │  staged edits; test saved    │
+│                              │  │  │                                                                                              │  │  │  settings to check access    │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │  Boundary: environment       │
+│                              │  │  │                                                                                              │  │  │  values take precedence;     │
+│                              │  │  │                                                                                              │  │  │  tests send a sample query   │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

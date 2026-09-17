@@ -7,7 +7,9 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import toml
 
+from Tests.private_profile import is_private_profile_child, private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook import config
@@ -24,13 +26,14 @@ class SearchSettingsHarness(DestinationHarness):
 
 
 @pytest.fixture
-def setup(tmp_path, monkeypatch):
-    path = tmp_path / "config.toml"
-    path.write_text(
-        '[SearchSettings]\nsearch_provider_default = "serper"\n[SearchEngines]\nserper_search_api_key = "saved-secret"\n',
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+def setup(monkeypatch, request):
+    if not is_private_profile_child(request):
+        return None
+    path = Path(config.get_cli_config_path())
+    raw = tomllib.loads(path.read_text())
+    raw["SearchSettings"] = {"search_provider_default": "serper"}
+    raw["SearchEngines"] = {"serper_search_api_key": "saved-secret"}
+    path.write_text(toml.dumps(raw), encoding="utf-8")
     for spec in catalog.BACKENDS.values():
         for field in spec.fields:
             monkeypatch.delenv(field.env_var, raising=False)
@@ -50,7 +53,10 @@ def setup(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_other_backend_setup_preserves_default_and_saves_atomic_delta(setup):
+@private_profile_test
+async def test_other_backend_setup_preserves_default_and_saves_atomic_delta(
+    request, setup
+):
     model, path = setup
     model.select_backend("brave")
     model.edit("brave_search_api_key", "replacement")
@@ -65,7 +71,9 @@ async def test_other_backend_setup_preserves_default_and_saves_atomic_delta(setu
     assert not model.draft.is_dirty
 
 
-def test_blank_secret_keeps_saved_and_revert_preserves_config(setup):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_blank_secret_keeps_saved_and_revert_preserves_config(request, setup):
     model, path = setup
     original = path.read_text()
     assert model.input_value(catalog.BACKENDS["serper"].fields[0]) == ""
@@ -80,8 +88,9 @@ def test_blank_secret_keeps_saved_and_revert_preserves_config(setup):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_probe_is_explicit_saved_only_and_stale_completion_is_discarded(
-    setup, monkeypatch
+    request, setup, monkeypatch
 ):
     model, _ = setup
     started, release = threading.Event(), threading.Event()
@@ -108,7 +117,10 @@ async def test_probe_is_explicit_saved_only_and_stale_completion_is_discarded(
 
 
 @pytest.mark.asyncio
-async def test_save_failure_retains_draft_and_has_safe_message(setup, monkeypatch):
+@private_profile_test
+async def test_save_failure_retains_draft_and_has_safe_message(
+    request, setup, monkeypatch
+):
     model, _ = setup
     model.edit("serper_search_api_key", "draft-secret")
 
@@ -124,8 +136,9 @@ async def test_save_failure_retains_draft_and_has_safe_message(setup, monkeypatc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 35), (80, 24)])
+@private_profile_test
 async def test_settings_navigation_preserves_masked_drafts_and_save_revert_work(
-    setup, size
+    request, setup, size
 ):
     from textual.widgets import Input, Select
 
@@ -199,7 +212,8 @@ async def test_settings_navigation_preserves_masked_drafts_and_save_revert_work(
 
 
 @pytest.mark.asyncio
-async def test_all_backend_fields_render_and_switching_is_clean(setup):
+@private_profile_test
+async def test_all_backend_fields_render_and_switching_is_clean(request, setup):
     from textual.widgets import Input, Select
 
     import Tests.UI.test_settings_category_sweep as sweep
@@ -224,7 +238,8 @@ async def test_all_backend_fields_render_and_switching_is_clean(setup):
 
 
 @pytest.mark.asyncio
-async def test_external_change_is_not_overwritten(setup):
+@private_profile_test
+async def test_external_change_is_not_overwritten(request, setup):
     model, path = setup
     model.edit("serper_search_api_key", "draft")
     config.save_setting_to_cli_config(
@@ -240,7 +255,10 @@ async def test_external_change_is_not_overwritten(setup):
 
 
 @pytest.mark.asyncio
-async def test_clear_legacy_alias_and_env_precedence_are_explicit(setup, monkeypatch):
+@private_profile_test
+async def test_clear_legacy_alias_and_env_precedence_are_explicit(
+    request, setup, monkeypatch
+):
     model, path = setup
     config.save_setting_to_cli_config(
         "SearchEngines", "search_engine_api_key_bing", "legacy"
@@ -261,7 +279,8 @@ async def test_clear_legacy_alias_and_env_precedence_are_explicit(setup, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_category_search_finds_backend_terms(setup):
+@private_profile_test
+async def test_category_search_finds_backend_terms(request, setup):
     from textual.widgets import Input
 
     import Tests.UI.test_settings_category_sweep as sweep
@@ -276,7 +295,10 @@ async def test_category_search_finds_backend_terms(setup):
 
 
 @pytest.mark.asyncio
-async def test_probe_completion_does_not_repaint_another_category(setup, monkeypatch):
+@private_profile_test
+async def test_probe_completion_does_not_repaint_another_category(
+    request, setup, monkeypatch
+):
     import Tests.UI.test_settings_category_sweep as sweep
     from Tests.UI.test_destination_shells import _static_text
 
@@ -304,7 +326,9 @@ async def test_probe_completion_does_not_repaint_another_category(setup, monkeyp
         assert _static_text(screen.query_one(".settings-state-banner")) == banner
 
 
-def test_existing_searx_alias_is_visible_in_editable_url(setup):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_existing_searx_alias_is_visible_in_editable_url(request, setup):
     model, _ = setup
     config.save_setting_to_cli_config(
         "SearchEngines", "search_engine_searx_api", "http://localhost:9090/search"

@@ -30,6 +30,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -1105,7 +1106,8 @@ def test_settings_optional_int_defaults_load_invalid_values_as_blank():
 
 
 @pytest.mark.asyncio
-async def test_settings_defaults_to_overview_category():
+@private_profile_test
+async def test_settings_defaults_to_overview_category(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -1201,7 +1203,9 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         assert owner in boundary_text
 
 
-def test_settings_overview_ownership_rows_are_sourced_from_record():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_overview_ownership_rows_are_sourced_from_record(request):
     app = _build_test_app()
     screen = SettingsScreen(app)
 
@@ -2964,7 +2968,10 @@ def test_settings_server_sync_workspace_rows_use_source_contracts():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch):
+@private_profile_test
+async def test_settings_overview_detail_uses_cached_server_sync_rows(
+    request, monkeypatch
+):
     def fail_if_render_blocks_on_source_contracts(*_args, **_kwargs):
         raise AssertionError("Overview render must use cached source-contract rows")
 
@@ -2995,7 +3002,10 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_reselect_refreshes_cached_source_rows(monkeypatch):
+@private_profile_test
+async def test_settings_overview_reselect_refreshes_cached_source_rows(
+    request, monkeypatch
+):
     refresh_calls = 0
 
     def fake_refresh(self):
@@ -3501,7 +3511,10 @@ def test_settings_status_language_agrees_with_home_console_and_library_contracts
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_renders_server_sync_workspace_contracts_in_diagnostics():
+@private_profile_test
+async def test_settings_overview_renders_server_sync_workspace_contracts_in_diagnostics(
+    request,
+):
     class FakeWorkspaceRegistry:
         def get_active_workspace(self):
             return WorkspaceRecord(
@@ -3562,7 +3575,8 @@ def test_settings_ownership_record_falls_back_without_crashing():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_renders_ownership_contract_boundaries():
+@private_profile_test
+async def test_settings_overview_renders_ownership_contract_boundaries(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -3767,7 +3781,8 @@ async def test_settings_inspector_has_no_write_blocked_contradiction():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_leads_with_readiness_before_manual_sync():
+@private_profile_test
+async def test_settings_overview_leads_with_readiness_before_manual_sync(request):
     """task-181: Overview starts with user-relevant readiness, not Manual Sync."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -3794,7 +3809,8 @@ async def test_settings_overview_leads_with_readiness_before_manual_sync():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_renders_primary_user_tasks_before_diagnostics():
+@private_profile_test
+async def test_settings_overview_renders_primary_user_tasks_before_diagnostics(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5740,7 +5756,10 @@ async def test_settings_category_search_reveals_domain_matches():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch):
+@private_profile_test
+async def test_settings_overview_paste_summary_updates_after_toggle(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     # TASK-1310: 1df0c4cb4 ("reconcile privacy lifecycle eval and packaging
@@ -7113,7 +7132,10 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them_to_raw_cli():
+@private_profile_test
+async def test_settings_read_only_overview_hides_actions_and_clean_privacy_disables_them(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -7137,13 +7159,16 @@ async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them
             pilot,
             SettingsCategoryId.PRIVACY_SECURITY,
             expected_text=(
-                "Guided edit: raw CLI unlock only; posture remains read-only."
+                "Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secrets remain read-only and redacted."
             ),
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         visible = _visible_text(screen)
-        assert "Guided edit: raw CLI unlock only; posture remains read-only." in visible
+        assert (
+            "Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secrets remain read-only and redacted."
+            in visible
+        )
         assert "Check Privacy" in visible
 
 
@@ -11112,11 +11137,15 @@ def test_settings_config_path_delegates_to_shared_accessor(monkeypatch, tmp_path
     assert screen._config_path() == sentinel
 
 
-def test_settings_overview_config_path_label_hides_local_directory(
-    monkeypatch, tmp_path
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_overview_config_path_label_hides_local_directory(
+    request, monkeypatch, tmp_path
 ):
     config_path = tmp_path / "config" / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(
+        settings_screen_module, "get_cli_config_path", lambda: config_path
+    )
     screen = SettingsScreen(SimpleNamespace(app_config={}))
 
     value = screen._config_path_overview_value()
@@ -11843,7 +11872,9 @@ def test_internal_prompts_group_headers_use_display_titles():
     assert subsystem_display_title("console") == "Console"
 
 
-def test_mode_line_disclaimer_only_on_overview():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mode_line_disclaimer_only_on_overview(request):
     """'Runtime controls stay in MCP and ACP' repeated verbatim on all 17
     categories; it orients once on Overview, not as standing noise."""
     app = _build_test_app()
@@ -12461,7 +12492,8 @@ def test_toast_severity_variants_pin_the_left_edge():
 
 
 @pytest.mark.asyncio
-async def test_reassurance_short_line_off_overview():
+@private_profile_test
+async def test_reassurance_short_line_off_overview(request):
     """The long reassurance paragraph is Overview-only.
 
     task-1714: elsewhere a single line keeps the local-first promise
@@ -12481,7 +12513,10 @@ async def test_reassurance_short_line_off_overview():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_front_door_is_four_status_rows_with_open_affordances():
+@private_profile_test
+async def test_settings_overview_front_door_is_four_status_rows_with_open_affordances(
+    request,
+):
     """task-1369: the Overview landing card leads with at most four primary
     status rows, each with an Open-category affordance (the sync row carries
     the manual sync controls); the handoff detail and ownership table sit
@@ -12529,7 +12564,9 @@ async def test_settings_overview_front_door_is_four_status_rows_with_open_afford
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_overview_status_reports_not_ready_without_credential(
+    request,
     monkeypatch,
 ):
     """TASK-31805: the Overview 'Status:' reflects send-path readiness.
@@ -12562,13 +12599,18 @@ async def test_settings_overview_status_reports_not_ready_without_credential(
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_status_reports_ready_with_credential(monkeypatch):
+@private_profile_test
+async def test_settings_overview_status_reports_ready_with_credential(
+    request, monkeypatch
+):
     """Paired arm: a resolvable API key still reads 'Status: Ready'."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     api_settings = app.app_config.setdefault("api_settings", {})
-    api_settings.setdefault("openai", {})["api_key"] = "sk-test-overview-ready-0123456789"
+    api_settings.setdefault("openai", {})["api_key"] = (
+        "sk-test-overview-ready-0123456789"
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -12583,7 +12625,10 @@ async def test_settings_overview_status_reports_ready_with_credential(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_status_reports_not_ready_without_model(monkeypatch):
+@private_profile_test
+async def test_settings_overview_status_reports_not_ready_without_model(
+    request, monkeypatch
+):
     """Qodo #2 (TASK-31805): credential present but no model -> not-ready.
 
     A credential-only check would return Ready here while the Overview
@@ -12597,7 +12642,9 @@ async def test_settings_overview_status_reports_not_ready_without_model(monkeypa
     # Valid credential resolves, but NO model is selected.
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": ""}
     api_settings = app.app_config.setdefault("api_settings", {})
-    api_settings.setdefault("openai", {})["api_key"] = "sk-test-overview-nomodel-0123456789"
+    api_settings.setdefault("openai", {})["api_key"] = (
+        "sk-test-overview-nomodel-0123456789"
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -12615,7 +12662,8 @@ async def test_settings_overview_status_reports_not_ready_without_model(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_open_category_buttons_switch_category():
+@private_profile_test
+async def test_settings_overview_open_category_buttons_switch_category(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -12718,7 +12766,10 @@ def test_settings_screen_resume_skips_refresh_while_manual_sync_run_in_flight(
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recompose():
+@private_profile_test
+async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recompose(
+    request,
+):
     """An expanded Overview disclosure survives a sync-row change -- the user
     expands it precisely to watch a sync run.
 

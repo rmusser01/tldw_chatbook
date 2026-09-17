@@ -1,0 +1,98 @@
+[
+  {
+    "file": "textual-dark-170x48-overview.svg",
+    "original_sha256": "b3bd21ed9ce714c1e3bfb06493b2f3926594c81fbe35185f2d5d6fe356c3938c",
+    "stored_sha256": "21b8e252458949b413afa3bdd1c22e0de8472bcf6250fedeacf5363c739d8880",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-170x48-overview.txt",
+    "original_sha256": "6bcda1830970823084c87117f10b79af8f350ffe7b0fdf9fdddb18168c534a03",
+    "stored_sha256": "6bcda1830970823084c87117f10b79af8f350ffe7b0fdf9fdddb18168c534a03",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-170x48-search.svg",
+    "original_sha256": "33039f686a84e81f418281a4532f34acea22ade26836ed2f41fc2e3cdd65084f",
+    "stored_sha256": "aae2605db7076ec389ae92707f24a8b58c169aebd2a434e70caff90ae05b4e45",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-170x48-search.txt",
+    "original_sha256": "f14f617b48797690f46255a554ffa86bf3c31676adbc35ae64a3b3484bbe9c05",
+    "stored_sha256": "f14f617b48797690f46255a554ffa86bf3c31676adbc35ae64a3b3484bbe9c05",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-80x24-overview.svg",
+    "original_sha256": "37ae851eb25a8b2d78f3fd4ae2703dbafa98030d42ac9be5339de13e4ca472ff",
+    "stored_sha256": "27d6572b3ba14b9ac34e08510fa58449f9a5bdaf5d8dbee16817fafb137eea64",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-80x24-overview.txt",
+    "original_sha256": "530ba1bd28f7b3f51e48e76b413af097a440cb281d19a4af47055646371b1e3a",
+    "stored_sha256": "530ba1bd28f7b3f51e48e76b413af097a440cb281d19a4af47055646371b1e3a",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-80x24-search.svg",
+    "original_sha256": "9ff237289de231f9bc354abfa9f92bb64675d618c23cec568e30c3730e912a4b",
+    "stored_sha256": "f1fb92931b0cf21f4340fe6f0596c17176111e95b5b847eef88c685b0a9b72de",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-80x24-search.txt",
+    "original_sha256": "9aea89e44e26e742edd6f22bad2ea4b57927f23e37f01a2e1cddebed395f2d23",
+    "stored_sha256": "9aea89e44e26e742edd6f22bad2ea4b57927f23e37f01a2e1cddebed395f2d23",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-170x48-overview.svg",
+    "original_sha256": "1e3cc40df8048075cc801b1ba66defc91aaa9f38e0a5060dada1d74765b219af",
+    "stored_sha256": "7b1e872fac53a1bf4502db648ccd790f24c0207ac648fd9350076d37e1ac5b19",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-170x48-overview.txt",
+    "original_sha256": "0e81aade2e34303c68f922c420a8ac3f65f3bc738a5a34caf963259a95384906",
+    "stored_sha256": "0e81aade2e34303c68f922c420a8ac3f65f3bc738a5a34caf963259a95384906",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-170x48-search.svg",
+    "original_sha256": "eea1811f1e2814886ddecb5c4c0d25629ffff666355783e38a00aaa65425a044",
+    "stored_sha256": "c6b05336cb0e29da456f57e94335bded7a679e39a32fffaf3b129ed60ea30955",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-170x48-search.txt",
+    "original_sha256": "3032247b10ae201f0255b63e184dec32cf715cf421e2de2ff75fd84d4740a9cc",
+    "stored_sha256": "3032247b10ae201f0255b63e184dec32cf715cf421e2de2ff75fd84d4740a9cc",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-80x24-overview.svg",
+    "original_sha256": "0063b4b8687ac658205b0f5501f9468dff6c277e1abbc79ec28a93c2fa187c00",
+    "stored_sha256": "266dec7f2d83b18b66b8ba55490f6bf0fe0e37bf58e30033a169540728345fa8",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-80x24-overview.txt",
+    "original_sha256": "7273ae5fbd3a258fd15c9250cdac86cfd6043b5f61d3c96a137e94196277eb44",
+    "stored_sha256": "7273ae5fbd3a258fd15c9250cdac86cfd6043b5f61d3c96a137e94196277eb44",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-80x24-search.svg",
+    "original_sha256": "adf05dd1e73e684a9da873eb3f6b6a3e07026f6d26ca5fcb9c6309d7178b5fee",
+    "stored_sha256": "0428c3dc4bbc7645388faebf16fb594dee145fe5fc74b44d98209eb71b8605ff",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-80x24-search.txt",
+    "original_sha256": "22f748894b3b3b4d93f111468c5c35fa214abb1aae33e20b7784f99f24200935",
+    "stored_sha256": "22f748894b3b3b4d93f111468c5c35fa214abb1aae33e20b7784f99f24200935",
+    "normalization": "trailing whitespace only"
+  }
+]
