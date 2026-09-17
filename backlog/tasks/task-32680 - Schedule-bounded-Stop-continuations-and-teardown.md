@@ -1,11 +1,11 @@
 ---
 id: TASK-32680
 title: Schedule bounded Stop continuations and teardown
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:25'
-updated_date: '2026-09-17 17:59'
+updated_date: '2026-09-17 18:19'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Stop proposals combine into at most one scheduler turn keyed by parent turn and event, with three-turn and 120-second chain caps and inherited restrictions.
-- [ ] #2 Foreground user work, vetoes, update drain, revocation, closure and uncertain dispatch prevent stale continuation or automatic replay; continuations do not fire UserPromptSubmit.
-- [ ] #3 Interrupt and SessionEnd are bounded observations after admission sealing, cannot prompt/connect or extend cleanup, and revoked plugin handlers are suppressed.
-- [ ] #4 Mounted and viewless tests exercise continuation admission, deduplication, concurrent settlement and teardown with legacy hook behavior preserved.
+- [x] #1 Stop proposals combine into at most one scheduler turn keyed by parent turn and event, with three-turn and 120-second chain caps and inherited restrictions.
+- [x] #2 Foreground user work, vetoes, update drain, revocation, closure and uncertain dispatch prevent stale continuation or automatic replay; continuations do not fire UserPromptSubmit.
+- [x] #3 Interrupt and SessionEnd are bounded observations after admission sealing, cannot prompt/connect or extend cleanup, and revoked plugin handlers are suppressed.
+- [x] #4 Mounted and viewless tests exercise continuation admission, deduplication, concurrent settlement and teardown with legacy hook behavior preserved.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -70,4 +70,18 @@ R56 cleanup clarification within step14: a definitively rolled-back, exact minte
 I1 visible-entry completion within step15: root and worker source inspection found expanded/collapsed Stop hidden while the genuine Stop proposal is pending because UI projects only the completed parent's stream status; Redirect shares that input. After mounted behavioral confirmation, include exact additional production paths tldw_chatbook/UI/Screens/chat_screen.py and tldw_chatbook/Widgets/Console/console_composer_bar.py to project exact pending hook-continuation Stop availability separately from actual generation/Redirect activity. Preserve completed message/run semantics, existing Send/queue permission behavior, unrelated-session isolation and rest/hover/focus/disabled token styles; no new keys, layouts, colors, stylesheets or broader redesign. Use a read-only query on the existing controller/coordinator, not mutation to ask availability. Keep Redirect unavailable when only the completed parent's hook is pending. Read backlog/docs/design-language.md, DESIGN.md section7 and the repository impeccable skill/harden/craft-floor guidance before UI edits. Root ran context.mjs once; its output is h5-ui-context.txt, no matching Console surface brief is present and its unrelated stale metadata is not repair scope. Preserve the incumbent Operate surface. Do not increase screen line/method counts or relax the existing ratchet; the current screen already exceeds its historical budget, so record exact BASE/current measures instead of attributing that pre-existing overage to this fix. Add mounted held-Stop actual-button expanded/collapsed controls in the already authorized teardown tests, including absence of Redirect, idle/other-session controls and fresh-run recovery, at 80x24 and120x35 as feasible through existing responsive layouts. Include read-only Tests/UI/test_console_stop_feedback.py and Tests/UI/test_console_composer_collapse.py as affected UI regressions and Tests/UI/test_design_token_governance.py; inspect/check the named screen ratchet without editing its ceiling. The extra6 exactBASE snapshots are in the Fix1 manifest (44trackedplusunchangedrunner). Source/test freeze now covers45 paths if all named neighbors are used. Keep prior six-file run as intermediate if these presentation edits follow it. No broad UI sweep, stylesheet rebuild or automatic skill/context update is requested.
 
 R57 ownership clarification within step15: apply h5-pending-stop-cancellation-ruling.md and its existing ADR163/expanded-hook-spec clauses before the remaining transfer edits. Retain only the genuine accepted parent Event for the exact pending Stop settlement, bind it while assistant/session/turn match, and retire it in settlement finally. After synchronous seal, set it and notify the shared host once. Run Stop fire_async in an exact child task so user cancellation invokes the existing per-event delivery cancellation/retained process cleanup path; join only that task and suppress only cancellation demonstrably caused by this settlement's user seal. Do not cancel the encompassing queue/root drain, mint a new identity, reopen H4 scopes, close the live session or emit SessionEnd. Qualify mounted real Send/button Interrupt identity, no gate-release-dependent command completion, no SessionEnd, repeated cancellation, unrelated-session isolation and fresh actual Send at both incumbent terminal sizes. Existing original spec/ADR paths are authorized clarification edits; other source scope and final freeze/static/test requirements remain unchanged.
+
+16. Reviewed closeout documentation only: append the factual TASK32680 incident to backlog/docs/lessons-live-verification.md under Verify at the surface the user touches, distinguishing a callable mounted handler from an actually reachable expanded/collapsed Stop button during pending hooks. Record final exact-click cancellation/recovery evidence and its scope without claiming aggregate resource or baseline failures resolved. This adds no runtime/UI behavior; keep all qualified source/test/spec bytes frozen. Complete ACs/notes/Done through CLI only after independent Fix1 review closes both Important findings; retain disclosed predecessor/resource limits for final whole-branch triage.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented bounded Stop follow-ups through the existing Console queue and durable acceptance transaction. Schema74 adds one receipt per parent/Stop event, retained independently of active checkpoints. Machine input keeps hook attribution, skips manual UserPromptSubmit, inherits actual remaining budgets and is limited to three continuations/120seconds. Foreground work, authority changes, reviewed update drain, cancellation and uncertain acceptance prevent stale admission or replay. ADR162/ADR163 and the expanded-hook spec govern the implementation, including R56 transaction admission and R57 exact pending Stop cancellation ownership.
+
+The reviewed fixes keep actual expanded/collapsed Stop reachable after provider completion, transfer only the original accepted-parent Event, emit Interrupt once, and cancel/join only the matching Stop fire task while retaining engine/process cleanup. Duplicate callbacks consume exhausted/refused settlements once. Redirect/Generating remain tied to active generation; later ordinary Send remains usable. Main changes: hook continuation/lifecycle models, queue/coordinator/controller/interrupt/runtime, accepted-turn persistence/schema migration, and the two Console composer projections, with dedicated continuation/teardown/migration tests.
+
+Verification: initial four core files91passed; final amended sixfiles137passed1aggregateFDwarning, including mounted actual Send/Stop at80x24 and120x35, viewless ownership, real SQLite/commands and real Agent budget controls. Supplementary UI84passed5failed; exact failed nodes reproduce under a restored four-source Fix1BASE overlay. Ten initial neighbor failures likewise match immediate taskBASE. These are bounded predecessor comparisons, not proof of pre-branch origin; all15 remain final whole-branch triage inputs. Descriptor growth remains unclassified (final12→468,+456). Forty-five final frozen hashes and44exact BASE snapshots verified, no screen growth, AST/whitespace/changed-range Black and Ruff parity pass. No full suite, external server, fresh installation or cross-platform qualification claimed. Windows native v2 commands remain refused under R47; Linux qualification belongs to I7.
+
+Independent initial review identified two Important defects; Fix1 and the subsequent scoped review resolve both with no new Critical/Important issues. Initial bfd1f025f26c005d3a0e44c87c33ecc97328e397; Fix1 b4fbe9cfe626b82ed981d032f61f62c1f26e4e27. Evidence and scoped reviews remain in the delivery SDD workspace until the final whole-branch gate. A factual visible-entry testing lesson records the hidden-button blind spot. Actual MCP hook/transport integration and final lifecycle/platform/packaging qualification remain in their existing downstream tasks.
+<!-- SECTION:NOTES:END -->

@@ -221,6 +221,23 @@ top-to-bottom — no unit test would ever say so.
 **What to do.** For anything user-facing, run the app and look at it. Ask: does the
 screen read correctly top-to-bottom, and does the affordance actually lead somewhere?
 
+**TASK-32680, pending Stop hooks, 2026-09-17.** The initial mounted test called
+`_stop_console_generation_from_visible_action` directly during streaming; the
+91-test core run passed. Review then reproduced Stop failing while a completed
+parent's Stop hook was still running. Fixing the callable controller entry still
+left both composer Stop buttons hidden because visibility followed the completed
+parent's generation state. Two actual-button tests failed on `display=False`.
+The final fix projects pending-hook Stop separately from generation/Redirect and
+keeps the original cancellation Event through that exact settlement. Four mounted
+actual Send/Stop cases at 80x24 and 120x35 verify cancellation, once-only Interrupt,
+retained process cleanup and a fresh Send. These targeted checks do not resolve
+the separately recorded aggregate descriptor warning or predecessor UI failures.
+
+**Add to the check.** Exercise the visible action in each lifecycle phase where
+users need it, including after generation ends while follow-up work is pending.
+A mounted app plus direct handler invocation proves neither button reachability
+nor transfer of cancellation ownership across that phase boundary.
+
 Headless recipe (no repo tooling required):
 
 ```bash
