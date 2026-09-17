@@ -1,0 +1,18 @@
+.............                                                            [100%]
+============================= slowest 25 durations =============================
+6.48s call     Tests/UI/test_settings_speech_tts_panel.py::test_speech_save_and_revert_clicks_work_while_a_field_is_focused
+5.57s call     Tests/UI/test_settings_speech_tts_panel.py::test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blur
+5.13s call     Tests/UI/test_settings_speech_tts_panel.py::test_speech_disclosures_and_actions_remain_reachable[terminal_size0]
+4.97s call     Tests/UI/test_settings_speech_tts_panel.py::test_speech_disclosures_and_actions_remain_reachable[terminal_size1]
+4.77s call     Tests/UI/test_settings_speech_tts_panel.py::test_dirty_speech_category_cancel_preserves_owner_draft_and_focus
+3.41s call     Tests/UI/test_settings_speech_tts_panel.py::test_details_and_scope_start_collapsed_on_every_mount
+2.83s call     Tests/UI/test_settings_speech_tts_panel.py::test_panel_tracks_dirty_state_and_revert_restores_the_saved_snapshot
+2.73s call     Tests/UI/test_settings_speech_tts_panel.py::test_production_bundle_applies_speech_disclosure_styles
+2.65s call     Tests/UI/test_settings_speech_tts_panel.py::test_custom_entry_modal_sets_voice_id
+2.65s call     Tests/UI/test_settings_speech_tts_panel.py::test_dirty_provider_switch_discard_removes_hidden_draft
+2.53s call     Tests/UI/test_settings_speech_tts_panel.py::test_invalid_global_default_renders_an_adjacent_field_error
+2.46s call     Tests/UI/test_settings_speech_tts_panel.py::test_dirty_provider_switch_cancel_preserves_visible_owner_and_draft
+2.39s call     Tests/UI/test_settings_speech_tts_panel.py::test_local_provider_forms_surface_dependency_and_model_guidance
+
+(12 durations < 1s hidden.)
+13 passed, 118 deselected in 50.68s

@@ -1,0 +1,40 @@
+{
+  "baseline": "53cad29c5e5ff38dab665cbb3d36c017e8cece2d",
+  "files": [
+    {
+      "file": "Tests/UI/test_settings_speech_tts_panel.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 6,
+      "inherited_format_hunks": 6
+    },
+    {
+      "file": "Tests/UI/test_settings_speech_tts_model.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 1,
+      "inherited_format_hunks": 2
+    },
+    {
+      "file": "Tests/UI/test_settings_speech_keyboard_journeys.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    },
+    {
+      "file": "Docs/superpowers/qa/2026-09-17-settings-speech/native_check.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 11,
+      "inherited_format_hunks": 9
+    }
+  ]
+}

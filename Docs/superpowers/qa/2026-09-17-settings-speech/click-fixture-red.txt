@@ -1,0 +1,294 @@
+............F.....                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_speech_save_and_revert_clicks_work_while_a_field_is_focused _______
+
+self = <Coroutine test_speech_save_and_revert_clicks_work_while_a_field_is_focused>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_speech_save_and_revert_clicks_work_while_a_field_is_focused>>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1202/test_speech_save_and_revert_cl0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _______ test_speech_save_and_revert_clicks_work_while_a_field_is_focused _______
+E
+E           request = <FixtureRequest for <Coroutine test_speech_save_and_revert_clicks_work_while_a_field_is_focused>>
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused(request) -> None:
+E                   host = DestinationHarness(_build_test_app(), "settings")
+E                   # Tall enough that the actions row is genuinely on-screen: this test
+E                   # exercises the real hit-tested mouse path from a focused field, so the
+E                   # buttons must be clickable, not pressed programmatically. (The panel
+E                   # mounts ~115 rows; at the usual (190, 55) the actions sit below nested
+E                   # folds and scroll_visible cannot reach them.)
+E                   async with host.run_test(size=(190, 130)) as pilot:
+E                       screen = await _open_speech_tts(host, pilot)
+E                       panel = screen.query_one(
+E                           "#settings-speech-tts-panel",
+E                           SpeechTTSSettingsPanel,
+E                       )
+E                       request_save = Mock()
+E                       revert_to_saved = AsyncMock()
+E                       panel.request_save = request_save
+E                       panel.revert_to_saved = revert_to_saved
+E                       configure = screen.query_one("#settings-speech-configure-provider", Select)
+E                       configure.value = "openai"
+E                       await _wait_for_selector(
+E                           screen,
+E                           pilot,
+E                           "#settings-speech-openai-base-url",
+E                           timeout=4.0,
+E                       )
+E                       panel = screen.query_one(
+E                           "#settings-speech-tts-panel",
+E                           SpeechTTSSettingsPanel,
+E                       )
+E                       panel.request_save = request_save
+E                       panel.revert_to_saved = revert_to_saved
+E                       # Let the provider-change rebuild's focus restoration finish (it
+E                       # re-asserts the pre-change focus after the card swap) before the
+E                       # endpoint takes focus, so the clicks below really start focused.
+E                       await pilot.pause(0.5)
+E                       endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
+E
+E                       endpoint.focus()
+E                       await pilot.pause()
+E                       assert pilot.app.focused is endpoint
+E           >           await pilot.click("#settings-speech-save")
+E
+E           Tests/UI/test_settings_speech_tts_panel.py:3510:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           .venv/lib/python3.12/site-packages/textual/pilot.py:249: in click
+E               raise error from None
+E           .venv/lib/python3.12/site-packages/textual/pilot.py:238: in click
+E               return await self._post_mouse_events(
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = <Pilot app=DestinationHarness(title='DestinationHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'})>
+E           events = [<class 'textual.events.MouseDown'>, <class 'textual.events.MouseUp'>, <class 'textual.events.Click'>]
+E           widget = '#settings-speech-save', offset = Offset(x=37, y=205), button = 1
+E           shift = False, meta = False, control = False, times = 1
+E
+E               async def _post_mouse_events(
+E                   self,
+E                   events: list[type[MouseEvent]],
+E                   widget: Widget | type[Widget] | str | None | None = None,
+E                   offset: tuple[int, int] = (0, 0),
+E                   button: int = 0,
+E                   shift: bool = False,
+E                   meta: bool = False,
+E                   control: bool = False,
+E                   times: int = 1,
+E               ) -> bool:
+E                   """Simulate a series of mouse events to be fired at a given position.
+E
+E                   The final position for the events is computed based on the selector provided and
+E                   the offset specified and it must be within the visible area of the screen.
+E
+E                   This function abstracts away the commonalities of the other mouse event-related
+E                   functions that the pilot exposes.
+E
+E                   Args:
+E                       widget: A widget or selector used as the origin
+E                           for the event's offset. If this is not specified, the offset is interpreted
+E                           relative to the screen. You can use this parameter to try to target a
+E                           specific widget. However, if the widget is currently hidden or obscured by
+E                           another widget, the events may not land on the widget you specified.
+E                       offset: The offset for the events. The offset is relative to the widget / selector
+E                           provided or to the screen, if no selector is provided.
+E                       shift: Simulate the events with the shift key held down.
+E                       meta: Simulate the events with the meta key held down.
+E                       control: Simulate the events with the control key held down.
+E                       times: The number of times to click. 2 will double-click, 3 will triple-click, etc.
+E                   Raises:
+E                       OutOfBounds: If the position for the events is outside of the (visible) screen.
+E
+E                   Returns:
+E                       True if no selector was specified or if the *final* event landed on the
+E                           selected widget, False otherwise.
+E                   """
+E                   app = self.app
+E                   screen = app.screen
+E                   target_widget: Widget
+E                   if widget is None:
+E                       target_widget = screen
+E                   elif isinstance(widget, Widget):
+E                       target_widget = widget
+E                   else:
+E                       target_widget = screen.query_one(widget)
+E
+E                   message_arguments = _get_mouse_message_arguments(
+E                       target_widget,
+E                       offset,
+E                       button=button,
+E                       shift=shift,
+E                       meta=meta,
+E                       control=control,
+E                   )
+E
+E                   offset = Offset(message_arguments["x"], message_arguments["y"])
+E                   if offset not in screen.size.region:
+E           >           raise OutOfBounds(
+E                           "Target offset is outside of currently-visible screen region."
+E                       )
+E           E           textual.pilot.OutOfBounds: Target offset is outside of currently-visible screen region.
+E
+E           .venv/lib/python3.12/site-packages/textual/pilot.py:442: OutOfBounds
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 13:38:23.395 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 13:38:23.402 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 13:38:23.402 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 13:38:23.402 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 13:38:23.484 | INFO     | tldw_chatbook.app:__init__:7995 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 13:38:23.507 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 13:38:23.508 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 13:38:23.508 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 13:38:23.508 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 13:38:23.585 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1202/test_speech_save_and_revert_cl0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:38:23.648 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv91ezda/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:38:23.812 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv91ezda/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:38:23.826 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:38:23.826 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv91ezda/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:38:23.827 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv91ezda/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:38:23.948 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 13:38:23.984 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 13:38:24.027 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 13:38:24.068 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 13:38:24.108 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 13:38:24.149 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 13:38:24.150 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv91ezda/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 13:38:24.196 | DEBUG    | tldw_chatbook.app:__init__:8175 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 13:38:24.196 | DEBUG    | tldw_chatbook.app:__init__:8178 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 13:38:24.205 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 13:38:24.275 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 13:38:24.276 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1202/test_speech_save_and_revert_cl0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 13:38:24.276 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 13:38:24.347 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 13:38:24.347 | INFO     | tldw_chatbook.app:_init_worker_handlers:11998 - Worker handler registry initialized with all handlers
+E           2026-09-17 13:38:24.348 | INFO     | tldw_chatbook.app:__init__:8356 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 13:38:24.348 | INFO     | tldw_chatbook.app:__init__:8357 - Total initialization time: 0.935 seconds
+E           2026-09-17 13:38:24.348 | INFO     | tldw_chatbook.app:__init__:8363 -   basic_init: 0.093s (10.0%)
+E           2026-09-17 13:38:24.348 | INFO     | tldw_chatbook.app:__init__:8363 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 13:38:24.349 | INFO     | tldw_chatbook.app:__init__:8363 -   parallel_init: 0.002s (0.2%)
+E           2026-09-17 13:38:24.349 | INFO     | tldw_chatbook.app:__init__:8376 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 13:38:24.350 | INFO     | tldw_chatbook.app:__init__:8376 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-09-17 13:38:24.350 | INFO     | tldw_chatbook.app:__init__:8376 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 13:38:24.350 | INFO     | tldw_chatbook.app:__init__:8376 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 13:38:24.350 | INFO     | tldw_chatbook.app:__init__:8380 - ==============================
+E           2026-09-17 13:38:24.400 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 13:38:24.474 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 13:38:26.642 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8129 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8233 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           3.24s call     Tests/UI/test_settings_speech_tts_panel.py::test_speech_save_and_revert_clicks_work_while_a_field_is_focused
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_speech_tts_panel.py::test_speech_save_and_revert_clicks_work_while_a_field_is_focused
+E           1 failed in 5.06s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+6.26s call     Tests/UI/test_settings_speech_tts_panel.py::test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blur
+6.01s call     Tests/UI/test_settings_speech_tts_panel.py::test_speech_save_and_revert_clicks_work_while_a_field_is_focused
+5.53s call     Tests/UI/test_settings_speech_tts_panel.py::test_speech_disclosures_and_actions_remain_reachable[terminal_size0]
+5.36s call     Tests/UI/test_settings_speech_tts_panel.py::test_speech_disclosures_and_actions_remain_reachable[terminal_size1]
+5.24s call     Tests/UI/test_settings_speech_tts_panel.py::test_dirty_speech_category_cancel_preserves_owner_draft_and_focus
+3.96s call     Tests/UI/test_settings_speech_tts_panel.py::test_details_and_scope_start_collapsed_on_every_mount
+3.30s call     Tests/UI/test_settings_speech_tts_panel.py::test_production_bundle_applies_speech_disclosure_styles
+3.11s call     Tests/UI/test_settings_speech_tts_panel.py::test_dirty_provider_switch_discard_removes_hidden_draft
+3.07s call     Tests/UI/test_settings_speech_tts_panel.py::test_panel_tracks_dirty_state_and_revert_restores_the_saved_snapshot
+3.05s call     Tests/UI/test_settings_speech_tts_panel.py::test_custom_entry_modal_sets_voice_id
+2.94s call     Tests/UI/test_settings_speech_tts_panel.py::test_invalid_global_default_renders_an_adjacent_field_error
+2.87s call     Tests/UI/test_settings_speech_tts_panel.py::test_dirty_provider_switch_cancel_preserves_visible_owner_and_draft
+2.73s call     Tests/UI/test_settings_speech_tts_panel.py::test_local_provider_forms_surface_dependency_and_model_guidance
+
+(12 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_speech_tts_panel.py::test_speech_save_and_revert_clicks_work_while_a_field_is_focused
+1 failed, 17 passed, 215 deselected in 56.40s

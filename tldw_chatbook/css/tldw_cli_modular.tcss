@@ -10078,6 +10078,16 @@ WorktreeRecoveryDialog {
     width: $ds-width-full;
 }
 
+#global-speech-tts-leave-modal .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+
+#global-speech-tts-leave-modal .settings-action-row Button {
+    width: $ds-width-full;
+    margin-right: $ds-space-0;
+}
+
 .settings-speech-stacked .settings-speech-input-row .settings-input-label,
 .settings-speech-stacked .settings-speech-input-row .settings-speech-control-stack,
 .settings-speech-stacked .settings-speech-input-row > Input,

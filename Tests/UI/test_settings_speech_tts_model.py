@@ -6,6 +6,7 @@ from copy import deepcopy
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
 from tldw_chatbook.TTS.openai_compatible_config import (
@@ -1079,7 +1080,11 @@ def test_correcting_invalid_endpoint_deletes_rejected_persisted_confirmation() -
     assert proposal.delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
 
 
-def test_cross_provider_save_owns_only_selected_fields_and_global_cleanup() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_cross_provider_save_owns_only_selected_fields_and_global_cleanup(
+    request,
+) -> None:
     confirmed = normalize_openai_compatible_endpoint(
         "http://voice.example.test:8765/v1/audio/speech"
     )
@@ -1227,7 +1232,11 @@ def test_legacy_credential_aliases_remain_readable_without_projecting_secrets(
     assert "legacy-" not in repr(state)
 
 
-def test_ordinary_save_excludes_credentials_and_targets_only_changed_provider() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_ordinary_save_excludes_credentials_and_targets_only_changed_provider(
+    request,
+) -> None:
     original = load_global_speech_tts_state(_settings(), environment={})
     draft = deepcopy(original)
     draft.providers["audio_cpp"]["synthesis_timeout_seconds"] = 321.0
@@ -1250,7 +1259,9 @@ def test_ordinary_save_excludes_credentials_and_targets_only_changed_provider() 
     assert "elevenlabs_api_key" not in proposal.settings
 
 
-def test_selection_only_save_has_no_adapter_affecting_payload() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_selection_only_save_has_no_adapter_affecting_payload(request) -> None:
     original = load_global_speech_tts_state(_settings(), environment={})
     draft = deepcopy(original)
     draft.defaults.provider_id = "openai"
@@ -1272,7 +1283,9 @@ def test_selection_only_save_has_no_adapter_affecting_payload() -> None:
 
 
 @pytest.mark.parametrize("speed", (0.24, 4.01, float("inf")))
-def test_global_default_speed_enforces_the_visible_range(speed: float) -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_global_default_speed_enforces_the_visible_range(request, speed: float) -> None:
     original = load_global_speech_tts_state({}, environment={})
     draft = deepcopy(original)
     draft.defaults.speed = speed
@@ -1296,7 +1309,10 @@ def test_global_default_speed_enforces_the_visible_range(speed: float) -> None:
         ("response_format", "executable", "response_format"),
     ),
 )
+@pytest.mark.asyncio
+@private_profile_test
 def test_global_default_choices_are_bounded(
+    request,
     field: str,
     value: str,
     expected_field: str,
@@ -1324,7 +1340,10 @@ def test_global_default_choices_are_bounded(
         ("speed", 2.0, "default_speed"),
     ),
 )
+@pytest.mark.asyncio
+@private_profile_test
 def test_audio_cpp_default_constraints_report_the_responsible_field(
+    request,
     field: str,
     value: object,
     expected_field: str,
@@ -1353,7 +1372,10 @@ def test_audio_cpp_default_constraints_report_the_responsible_field(
         ("voice_id", "v" * 513, "default_voice"),
     ),
 )
+@pytest.mark.asyncio
+@private_profile_test
 def test_exact_global_identifiers_are_bounded_safe_and_non_echoing(
+    request,
     field: str,
     value: str,
     expected_field: str,
@@ -1517,7 +1539,9 @@ def test_existing_mps_device_values_round_trip(provider_id: str) -> None:
     assert proposal.settings == {}
 
 
-def test_restore_non_secret_defaults_never_changes_credential_state() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_restore_non_secret_defaults_never_changes_credential_state(request) -> None:
     state = load_global_speech_tts_state(_settings(), environment={})
     credentials = state.credentials
 
@@ -1530,7 +1554,11 @@ def test_restore_non_secret_defaults_never_changes_credential_state() -> None:
     assert restored.providers["openai"]["organization_id"] == ""
 
 
-def test_restore_non_secret_defaults_preserves_a_set_default_profile_id() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_restore_non_secret_defaults_preserves_a_set_default_profile_id(
+    request,
+) -> None:
     settings = _settings()
     settings["COMPREHENSIVE_CONFIG_RAW"]["app_tts"][  # type: ignore[index]
         "default_profile_id"
@@ -1551,9 +1579,11 @@ def test_restore_non_secret_defaults_preserves_a_set_default_profile_id() -> Non
     assert restored.defaults.voice_mode == "exact"
 
 
-def test_credential_mutations_require_explicit_intent_and_never_accept_placeholders() -> (
-    None
-):
+@pytest.mark.asyncio
+@private_profile_test
+def test_credential_mutations_require_explicit_intent_and_never_accept_placeholders(
+    request,
+) -> None:
     state = load_global_speech_tts_state(_settings(), environment={})
 
     mutation = build_credential_mutation(

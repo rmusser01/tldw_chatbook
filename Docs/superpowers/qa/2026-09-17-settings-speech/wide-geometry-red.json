@@ -1,0 +1,230 @@
+[
+  {
+    "field": "voice-value",
+    "geometry": "(Region(x=65, y=26, width=79, height=3), Region(x=65, y=26, width=78, height=3))",
+    "ancestors": [
+      {
+        "node": "Select(id='settings-speech-voice-value', classes='settings-compact-select -textual-compact settings-speech-draft-field')",
+        "region": "Region(x=65, y=26, width=79, height=3)",
+        "width": "1fr",
+        "min_width": "0"
+      },
+      {
+        "node": "Horizontal(classes='settings-speech-voice-picker settings-action-row')",
+        "region": "Region(x=65, y=26, width=102, height=3)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "Vertical(classes='settings-speech-control-stack')",
+        "region": "Region(x=65, y=26, width=102, height=3)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "Horizontal(classes='settings-input-row settings-speech-input-row settings-select-row')",
+        "region": "Region(x=41, y=26, width=102, height=3)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "_SpeechSettingsCard(id='settings-speech-global-defaults', classes='settings-focus-card')",
+        "region": "Region(x=39, y=7, width=106, height=28)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "SpeechTTSSettingsPanel(id='settings-speech-tts-panel')",
+        "region": "Region(x=39, y=-1, width=106, height=128)",
+        "width": "1fr",
+        "min_width": "None"
+      },
+      {
+        "node": "VerticalScroll(id='settings-detail-pane-body', classes='h-fill')",
+        "region": "Region(x=39, y=8, width=107, height=43)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "SettingsRegion(id='settings-detail-pane', classes='destination-workbench-pane h-full')",
+        "region": "Region(x=37, y=5, width=111, height=48)",
+        "width": "6fr",
+        "min_width": "0"
+      },
+      {
+        "node": "Horizontal(id='settings-workbench', classes='ds-panel destination-workbench')",
+        "region": "Region(x=0, y=5, width=190, height=48)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "Vertical(id='settings-shell')",
+        "region": "Region(x=0, y=3, width=190, height=51)",
+        "width": "1fr",
+        "min_width": "None"
+      },
+      {
+        "node": "Container(id='screen-content')",
+        "region": "Region(x=0, y=3, width=190, height=51)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "SettingsScreen(classes='shell-header-normal')",
+        "region": "Region(x=0, y=0, width=190, height=55)",
+        "width": "None",
+        "min_width": "None"
+      }
+    ]
+  },
+  {
+    "field": "browse-voices",
+    "geometry": "None",
+    "ancestors": [
+      {
+        "node": "Button(id='settings-speech-browse-voices', classes='-style-default -textual-compact')",
+        "region": "Region(x=144, y=26, width=22, height=1)",
+        "width": "auto",
+        "min_width": "16"
+      },
+      {
+        "node": "Horizontal(classes='settings-speech-voice-picker settings-action-row')",
+        "region": "Region(x=65, y=26, width=102, height=3)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "Vertical(classes='settings-speech-control-stack')",
+        "region": "Region(x=65, y=26, width=102, height=3)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "Horizontal(classes='settings-input-row settings-speech-input-row settings-select-row')",
+        "region": "Region(x=41, y=26, width=102, height=3)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "_SpeechSettingsCard(id='settings-speech-global-defaults', classes='settings-focus-card')",
+        "region": "Region(x=39, y=7, width=106, height=28)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "SpeechTTSSettingsPanel(id='settings-speech-tts-panel')",
+        "region": "Region(x=39, y=-1, width=106, height=128)",
+        "width": "1fr",
+        "min_width": "None"
+      },
+      {
+        "node": "VerticalScroll(id='settings-detail-pane-body', classes='h-fill')",
+        "region": "Region(x=39, y=8, width=107, height=43)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "SettingsRegion(id='settings-detail-pane', classes='destination-workbench-pane h-full')",
+        "region": "Region(x=37, y=5, width=111, height=48)",
+        "width": "6fr",
+        "min_width": "0"
+      },
+      {
+        "node": "Horizontal(id='settings-workbench', classes='ds-panel destination-workbench')",
+        "region": "Region(x=0, y=5, width=190, height=48)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "Vertical(id='settings-shell')",
+        "region": "Region(x=0, y=3, width=190, height=51)",
+        "width": "1fr",
+        "min_width": "None"
+      },
+      {
+        "node": "Container(id='screen-content')",
+        "region": "Region(x=0, y=3, width=190, height=51)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "SettingsScreen(classes='shell-header-normal')",
+        "region": "Region(x=0, y=0, width=190, height=55)",
+        "width": "None",
+        "min_width": "None"
+      }
+    ]
+  },
+  {
+    "field": "speed",
+    "geometry": "(Region(x=65, y=28, width=102, height=1), Region(x=65, y=28, width=78, height=1))",
+    "ancestors": [
+      {
+        "node": "Input(id='settings-speech-speed', classes='settings-compact-input settings-speech-draft-field -valid')",
+        "region": "Region(x=65, y=28, width=102, height=1)",
+        "width": "1fr",
+        "min_width": "None"
+      },
+      {
+        "node": "Vertical(classes='settings-speech-control-stack')",
+        "region": "Region(x=65, y=28, width=102, height=1)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "Horizontal(classes='settings-input-row settings-speech-input-row')",
+        "region": "Region(x=41, y=28, width=102, height=1)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "_SpeechSettingsCard(id='settings-speech-global-defaults', classes='settings-focus-card')",
+        "region": "Region(x=39, y=3, width=106, height=28)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "SpeechTTSSettingsPanel(id='settings-speech-tts-panel')",
+        "region": "Region(x=39, y=-5, width=106, height=128)",
+        "width": "1fr",
+        "min_width": "None"
+      },
+      {
+        "node": "VerticalScroll(id='settings-detail-pane-body', classes='h-fill')",
+        "region": "Region(x=39, y=8, width=107, height=43)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "SettingsRegion(id='settings-detail-pane', classes='destination-workbench-pane h-full')",
+        "region": "Region(x=37, y=5, width=111, height=48)",
+        "width": "6fr",
+        "min_width": "0"
+      },
+      {
+        "node": "Horizontal(id='settings-workbench', classes='ds-panel destination-workbench')",
+        "region": "Region(x=0, y=5, width=190, height=48)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "Vertical(id='settings-shell')",
+        "region": "Region(x=0, y=3, width=190, height=51)",
+        "width": "1fr",
+        "min_width": "None"
+      },
+      {
+        "node": "Container(id='screen-content')",
+        "region": "Region(x=0, y=3, width=190, height=51)",
+        "width": "100w",
+        "min_width": "None"
+      },
+      {
+        "node": "SettingsScreen(classes='shell-header-normal')",
+        "region": "Region(x=0, y=0, width=190, height=55)",
+        "width": "None",
+        "min_width": "None"
+      }
+    ]
+  }
+]

@@ -425,6 +425,9 @@ its tooltip and the result line name exactly what resets — global defaults
 and the selected provider, with saved credentials and environment-owned
 values untouched), **Open Speech Lab**.
 
+The Voice value dropdown shares a row with **Browse in Speech Lab** when
+there is room; narrow forms stack them. Both remain reachable with Tab.
+
 **This is the one draft category that will not let you walk away silently.**
 Leaving Speech & TTS with unsaved edits raises "Unsaved global Speech & TTS
 settings — Save these application-wide changes before continuing, or discard

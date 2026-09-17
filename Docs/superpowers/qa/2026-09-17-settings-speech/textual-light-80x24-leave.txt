@@ -1,0 +1,24 @@
+
+ ‹  ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Speech & TTS
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Unsaved changes | Save (s) or   │
+│  Core   █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█TTS      │
+│     Over█                                                          █iscard   │
+│     Prov█  Unsaved global Speech & TTS settings                    █         │
+│     Web █   Save these application-wide changes before             █      │  │
+│   > Spee█   continuing, or discard them?                           █      │  │
+│  Interfa█                          Cancel                          █      │▇ │
+│     Appe█                   Discard and continue                   █────┐ │▇ │
+│     Them█                    Save and continue                     █  ▼ │ │  │
+│     Spla█                                                          █────┘ │  │
+│     Cons█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█      │  │
+│  Data & Privacy              │  │  │ │ Speed (0.25-4.0)                   │  │
+│     Storage                  │  │  │ │ │ 2.0                              │  │
+│     Workspaces               │  │  │ │                                    │  │
+│     Tool Profiles            │  │  │ │                                    │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | F1 · F6 · Ctrl+P · Ctrl+Q

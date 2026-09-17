@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+68.11s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_speech_keyboard_actions_validation_and_draft_recovery[size1-textual-dark]
+63.13s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_speech_keyboard_actions_validation_and_draft_recovery[size1-textual-light]
+56.43s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_speech_keyboard_actions_validation_and_draft_recovery[size0-textual-light]
+52.46s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_speech_keyboard_actions_validation_and_draft_recovery[size0-textual-dark]
+10.94s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light]
+10.17s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark]
+
+(12 durations < 1s hidden.)
+6 passed in 263.70s (0:04:23)

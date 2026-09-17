@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Speech & TTS
+┌────█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█────┐
+│  Fi█                                                                    █    │
+│    █  Set a custom voice ID                                             █    │
+│    █   Enter the exact identifier your provider expects. Known          █    │
+│    █   choices are already offered in the dropdown; this is for IDs     █ │  │
+│    █   the list does not carry (for example a voice discovered in       █ │  │
+│    █   Speech Lab).                                                     █ │  │
+│    █  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  █ │  │
+│  Tr█  ▊  review-textual-light-80x24                                  ▎  █ │  │
+│    █  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  █ │  │
+│    █       Cancel        Use this ID                                    █ │  │
+│    █                                                                    █ │  │
+│  Ex█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ │  │
+│     Internal Prompts         │  │  │ │ Output format                      │  │
+│     Advanced Config          │  │  │ │                                    │  │
+│   Domain Defaults ▸ (11)     │  │  │ │ ┌────────────────────────────────┐ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Known voices for this provider; pick Custom… to enter an exact ID
+  Esc, s save category | F1 · F6 · Ctrl+P · Ctrl+Q

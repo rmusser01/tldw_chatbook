@@ -2516,7 +2516,7 @@ class SpeechTTSSettingsPanel(Vertical):
                             "preview voices before committing one here"
                         ),
                     ),
-                    classes="settings-action-row",
+                    classes="settings-action-row settings-speech-voice-picker",
                 ),
                 classes="settings-select-row",
                 error=self._default_error(

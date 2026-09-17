@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## Exercise both sides of a form's actual responsive threshold
+
+**TASK-32756, 2026-09-17.** Speech's 170-column Settings shell already used
+stacked fields because its rail and inspector consumed the remaining width.
+Dark/light checks at 170 and 80 columns therefore missed the horizontal form.
+A review-requested Browse activation at 190 columns exposed the action outside
+the compositor. Reserving space within its row was insufficient: native Speed
+validation showed that the parent field stack itself requested the entire
+102-column row beside a 24-column label, leaving only 78 visible columns.
+The repair lets horizontal stacks consume the remaining width and keeps the
+existing full-width stacked override. Measure the actual form width and verify
+both layout states, walking every ancestor when a child still clips.
+
 ## An auto-height card can still clip a fractional-height child
 
 **TASK-32753, 2026-09-17.** Overview's outer card already used `height: auto`,

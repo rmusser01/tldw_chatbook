@@ -688,6 +688,16 @@ Button.settings-category-group-toggle:focus {
     background: $ds-surface-panel;
 }
 
+#global-speech-tts-leave-modal .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+
+#global-speech-tts-leave-modal .settings-action-row Button {
+    width: $ds-width-full;
+    margin-right: $ds-space-0;
+}
+
 .settings-speech-credential-modal {
     width: $ds-size-70;
     max-width: $ds-percent-90;
@@ -1071,6 +1081,12 @@ Button.settings-category-group-toggle:focus {
     align: left top;
 }
 
+/* Leave room for the sibling label in horizontal forms. */
+.settings-speech-input-row > .settings-speech-control-stack {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+
 .settings-speech-input-row.settings-select-row {
     min-height: $ds-size-3;
 }
@@ -1127,6 +1143,27 @@ Button.settings-category-group-toggle:focus {
 }
 
 .settings-speech-stacked #settings-speech-actions Button {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin-right: $ds-space-0;
+}
+
+/* This row includes a Select, so it cannot use an action row's single line. */
+.settings-speech-voice-picker {
+    height: auto;
+}
+
+.settings-speech-voice-picker > Select {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+
+.settings-speech-stacked .settings-speech-voice-picker {
+    layout: vertical;
+}
+
+.settings-speech-stacked .settings-speech-voice-picker > Select,
+.settings-speech-stacked .settings-speech-voice-picker > Button {
     width: $ds-width-full;
     min-width: $ds-size-0;
     margin-right: $ds-space-0;

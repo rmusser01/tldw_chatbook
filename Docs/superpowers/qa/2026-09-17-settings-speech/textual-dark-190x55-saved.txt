@@ -1,0 +1,55 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Speech & TTS
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Application-wide defaults; Studio preferences remain separate.                │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │                                   │
+│  category search             │  │  │ │ Model                   │ gpt-realtime                                                                 │  │  │  │ Selected category: Speech & TTS   │
+│                              │  │  │ │ Voice (optional)        │ Provider default                                                             │  │  │  │ No unsaved changes                │
+│  Core                        │  │  │ │ Idle timeout (minutes)  │ 5                                                                            │  │  │  │  Guided edits: change a field     │
+│     Overview (view)          │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  first.                           │
+│     Providers & Models       │  │  │ │ Turn detection          │ Semantic (model decides when you finished)                               ▼ │ │  │  │  │  Save (s) — no changes            │
+│     Web Search               │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  Revert (r) — no changes          │
+│   > Speech & TTS             │  │  │ │  Semantic turn detection ends your turn from what you said, not from how long you paused. Server VAD   │  │  │  │ Local-only: saves write your      │
+│  Interface                   │  │  │ │  is silence-gated: in a room with keyboard clatter or background noise it can end a turn               │  │  │  │ config file.                      │
+│     Appearance               │  │  │ │  mid-sentence, and the fragments transcribe as words you never said. Pick server VAD only if you want  │  │  │  │ Impact and boundaries             │
+│     Theme                    │  │  │ │  the two numbers below.                                                                                │  │  │  │ Application-wide speech, TTS,     │
+│     Splash Screen            │  │  │ │ VAD threshold (0-1,     │ Provider default                                                             │  │  │  │ voice, audio.cpp, OpenAI,         │
+│     Console Behavior         │  │  │ │ End-of-turn silence (ms,│ Provider default                                                             │  │  │  │ ElevenLabs, Kokoro, Chatterbox,   │
+│  Data & Privacy              │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ Higgs, and AllTalk defaults and   │
+│     Storage                  │  │  │ │ Hands-free engine       │ Auto (realtime when enabled)                                             ▼ │ │  │  │  │ setup.                            │
+│     Workspaces               │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  Runtime owner: Settings          │
+│     Tool Profiles            │  │  │ │ Send delay (seconds,    │ 1.5                                                                          │  │  │  │  persisted global defaults;       │
+│     Privacy & Security       │  │  │ │ Acoustic barge-in       ▊▔▔▔▔▔▔▔▔▎                                                                     │  │  │  │  Speech Lab runtime operations    │
+│     Network                  │  │  │ │                         ▊        ▎                                                                     │  │  │  │                                   │
+│     My Profile               │  │  │ │                         ▊▁▁▁▁▁▁▁▁▎                                                                     │  │  │  │  Writes allowed: Yes              │
+│  Troubleshooting             │  │  │ │  Acoustic barge-in lets your voice interrupt a speaking reply. There is no echo cancellation: on       │  │  │  │                                   │
+│     Diagnostics (view)       │  │  │ │  speakers the recognizer hears the reply itself -- use headphones.                                     │  │  │  │  Owns: app_tts global defaults    │
+│     About (view)             │  │  │ │  Spoken commands do not work inside realtime mode -- there is no client-side speech-to-text running,   │  │  │  │  app_tts provider connection and  │
+│     Agents                   │  │  │ │  so phrases like "Console, stop." are never heard. Exit with Esc, the mic button, or Ctrl+Shift+H.     │  │  │  │  initialization                   │
+│  Expert                      │  │  │ │  Privacy: while a realtime session is live, microphone audio streams continuously to the provider for  │  │  │  │  API OpenAI and ElevenLabs        │
+│     Internal Prompts         │  │  │ │  the whole session (subject to barge-in gating) -- not just after a pause, as the pipeline engine      │  │  │  │  credentials                      │
+│     Advanced Config          │  │  │ │  does.                                                                                                 │  │  │  │  HiggsSettings initialization     │
+│   Domain Defaults ▸ (11)     │  │  │ │  Cost: realtime sessions are billed by the provider per connected minute. The idle timeout above ends  │  │  │  │                                   │
+│                              │  │  │ │  an unattended session automatically (never while a reply is being spoken); an unexpected connection   │▃ │  │  │  Affected config:                 │
+│                              │  │  │ │  drop is retried once.                                                                                 │  │  │  │  application-wide Speech & TTS    │
+│                              │  │  │ └────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │  defaults and selected provider   │
+│                              │  │  │                                                                                                             │  │  │  setup                            │
+│                              │  │  │                                                                                                             │  │  │                                   │
+│                              │  │  │                                                                                                             │  │  │  Recovery: revert the local       │
+│                              │  │  │  ▶ Configuration details                                                                                    │  │  │  draft or open Speech Lab for     │
+│                              │  │  │                                                                                                             │  │  │  explicit runtime checks          │
+│                              │  │  │                                                                                                             │  │  │                                   │
+│                              │  │  │                                                                                                             │  │  │  Boundary: Studio preferences     │
+│                              │  │  │  ▶ Scope inspector                                                                                          │  │  │  and runtime test, discovery,     │
+│                              │  │  │                                                                                                             │  │  │  generation, and playback stay    │
+│                              │  │  │       Save            Revert       Restore Non-secret Defaults   Open Speech Lab                            │  │  │  in Speech Lab                    │
+│                              │  │  │  Saved locally. Runtime reconfiguration: no provider adapter recreation needed. Open Speech Lab (below)     │  │  │                                   │
+│                              │  │  │  to hear it.                                                                                                │  │  │                                   │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
