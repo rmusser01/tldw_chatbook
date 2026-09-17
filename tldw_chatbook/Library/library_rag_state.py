@@ -1336,12 +1336,10 @@ class LibraryRagQueryState:
                 next_action = "Add the provider credential, then run again"
                 recovery_action = credential_recovery
             else:
-                disabled_reason = (
-                    "Select a provider/model before asking for a RAG answer."
-                )
+                disabled_reason = LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
                 owner = "LLM provider"
                 next_action = "Select a provider and model before running a RAG answer"
-                recovery_action = "Console controls"
+                recovery_action = "Settings ▸ Providers & Models"
 
         enabled = not disabled_reason
         recovery_copy = ""

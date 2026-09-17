@@ -9109,6 +9109,20 @@ class LibraryScreen(BaseAppScreen):
         if source_failure is None or source_failure.severity != "error":
             self._refresh_local_source_snapshot()
         if (
+            self._library_visit_entered
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        ):
+            # Settings can change provider readiness without changing any
+            # source counts. A retained panel still needs fresh Run/recovery
+            # state on return; keep its results and history mounted.
+            self.run_worker(
+                self._refresh_search_rag_panel_state_widgets(
+                    include_results_and_history=False
+                ),
+                exclusive=True,
+                group="library_rag_resume_refresh",
+            )
+        if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
@@ -14271,10 +14285,9 @@ class LibraryScreen(BaseAppScreen):
             # from_values` as `bool((provider_name or "").strip())` -- see
             # its docstring. A Library with no default LLM endpoint
             # configured (`resolve_library_rag_answer_provider()` returns
-            # `(None, None)`) sees the pre-existing "Select a provider/model
-            # before asking for a RAG answer." copy -- while a provider that
-            # IS configured but cannot authenticate gets the credential
-            # remedy instead, carried by `provider_credential_recovery`
+            # `(None, None)`) sees the same Settings recovery action as a
+            # configured provider that cannot authenticate. The credential
+            # remedy remains distinct in `provider_credential_recovery`
             # below (finding I1). Once one is configured AND the gate
             # confirms its credentials actually resolve (PR-T2 Task 7 -- an endpoint
             # NAME alone used to be treated as ready, which is how the

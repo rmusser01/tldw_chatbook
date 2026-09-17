@@ -23,6 +23,8 @@ TASK-32718 retains Re-chunk progress and receipts through those changes and
 wraps completion notes at compact width.
 TASK-32719 extends Re-chunk continuity through Library and main-destination
 navigation with an app-session run owner (ADR-164).
+TASK-32720 repairs missing-provider recovery, restored query mirroring and stale
+provider readiness on retained-screen return from Settings.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -1096,3 +1098,27 @@ the app-session limit. Semantic indexing was disabled and the receipt discloses
 that skip; actual semantic reindexing and process-exit resumption remain unqualified.
 Next bounded review: Search/RAG recovery links and return navigation. No full suite,
 push or merge was performed.
+
+
+## Search/RAG recovery navigation — TASK-32720
+
+Both missing-provider cases now offer the existing Providers & Models Settings
+link. Reopening a restored query synchronizes both visible inputs; resuming a
+retained Library screen refreshes provider readiness independently of source
+counts while keeping results and history mounted. These are routine fixes under
+ADR-003/031/150/161; no new ADR is required.
+
+The final targeted selection passes **324 tests**, including 21 new cases.
+The new tests exercise keyboard Import and provider links, draft/mode/scope
+retention, blocked/ready return, no unintended dispatch and retained result/history
+identity. The real native app completed twelve round trips across dark/light at
+170×48 and 80×24 with no retrieval, answer or import calls. Provider changes were
+in-memory fixtures; actual Settings editing and credential validation were outside
+this pass. Eight captures were inspected; private data/defaults and normal exit
+were verified. Full counts, initial red evidence, harness corrections, the stale
+technical-copy assertion, static checks and review are recorded in the
+[QA evidence](../qa/2026-09-17-rag-recovery-navigation/README.md).
+
+Next bounded review: Providers & Models keyboard editing, save/cancel and return
+feedback. This closes the recovery-navigation slice, not the whole Settings
+surface or application review.

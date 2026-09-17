@@ -323,17 +323,22 @@ from "your notes were never searched."
 **Needs its own provider.** Separately from the embeddings support
 retrieval itself needs, RAG Answer mode needs an LLM provider *with a
 working credential* configured — an endpoint name alone is no longer
-enough to unblock Run. The block names whichever of the two is actually
-missing:
+enough to unblock Run. If no provider is selected, or the selected provider
+has no usable credential, the panel says **"No analysis provider is configured ·
+Set one in Settings ▸ Providers & Models."** and offers **"Open Settings ▸
+Providers"**. Tab to the button and press Enter to open that Settings category.
+The credential-specific environment/config remedy remains in the log.
 
-- **No provider chosen at all** — **"Select a provider/model before
-  asking for a RAG answer."**
-- **A provider chosen, but no credential for it** — **"No analysis
-  provider is configured · Set one in Settings ▸ Providers & Models."**,
-  with an **"Open Settings ▸ Providers"** button beside it that takes you
-  straight there. This is the same sentence the Media reader's analysis
-  gate uses, so one missing key never produces two different remedies; the
-  env-var / `[api_settings.<provider>]` detail is written to the log.
+Return to Library with **Ctrl+3** and reopen **Search / RAG** if the Library
+landing page is shown. Your query, mode and source choices are retained; both
+query fields show the same draft. Run and the recovery action refresh to reflect
+current provider readiness, without repeating a search or generating an answer.
+
+An empty Library instead offers **"Open Import media"**. It opens the existing
+Import form without starting a job. At compact width, use the **Nav** handle to
+reopen Library navigation, then choose **Search / RAG** to return to your draft.
+Deselecting every existing source does not offer Import as the remedy; select a
+source again.
 
 A key set either the modern way (`[api_settings.<provider>] api_key = …`)
 or the legacy way (`[API] <provider>_api_key = …`) satisfies it — the same

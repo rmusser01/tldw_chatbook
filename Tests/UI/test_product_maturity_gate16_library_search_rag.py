@@ -524,7 +524,7 @@ def test_query_quiet_line_omits_the_paid_notice_when_run_is_blocked() -> None:
     )
     assert str(quiet_line.renderable) == ""
     assert blocked_no_provider.query_state.run_action.disabled_reason == (
-        "Select a provider/model before asking for a RAG answer."
+        "No analysis provider is configured · Set one in Settings ▸ Providers & Models."
     )
 
 

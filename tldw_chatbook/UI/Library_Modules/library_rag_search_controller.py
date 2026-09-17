@@ -863,16 +863,13 @@ class LibraryRagSearchController:
                 current text.
         """
         event.stop()
+        # A restored query can already match state while the retained rail
+        # still shows its off-canvas empty value. Repair that sibling even
+        # for the panel's mount echo, without resetting settled results.
+        self._patch_sibling_library_search_input("#library-search-input", event.value)
         if event.value == self._library_rag_query:
             return
         self._library_rag_query = event.value
-        # task-4023 AC#6 (RC-08): one query truth at the WIDGET level too.
-        # The STATE was already single-source, but the rail box only
-        # re-seeds on recompose, so typing here left the mounted rail
-        # widget visibly holding the older string (proven live: canvas
-        # "terminals render" beside rail "terminals"). Patch the sibling
-        # in place; its own Changed handler no-ops (value == state).
-        self._patch_sibling_library_search_input("#library-search-input", event.value)
         self._reset_library_rag_in_flight_status()
         await self._refresh_search_rag_panel_state_widgets(
             include_results_and_history=False

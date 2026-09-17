@@ -14562,3 +14562,16 @@ operation and its feedback needed an app-session owner, with mounted panels only
 subscribing to updates (ADR-164). Test return both before and after completion,
 using the real navigation boundary; toggling mode never removes the panel.
 Evidence: `Docs/superpowers/qa/2026-09-17-rag-rechunk-navigation/`.
+
+
+## Test retained navigation as well as fresh-screen restoration (TASK-32720)
+
+Search/RAG recovery tests reconstructed Library from `save_state`/`restore_state`
+and passed after fixing the query mirror. The real Settings round trip reused
+Library's live screen instead, leaving Run blocked after provider readiness
+changed because unchanged source counts skipped reconciliation. Four push/pop
+probes reproduced it; a repeat-visit gate refresh fixed it while preserving result
+and history DOM identity. Match the real route lifetime, and assert current
+containers are the saved objects before checking their children: a detached old
+container can still hold the expected children. Evidence:
+`Docs/superpowers/qa/2026-09-17-rag-recovery-navigation/`.

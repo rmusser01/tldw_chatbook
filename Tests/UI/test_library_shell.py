@@ -8231,7 +8231,7 @@ async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider
         await pilot.pause()
         await pilot.pause()
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        assert "Select a provider/model" in _visible_text(screen)
+        assert "No analysis provider is configured" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -8301,18 +8301,16 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         # that (the pre-Task-7 bug), Run would be enabled here. It must
         # stay blocked because no credential resolves for that provider.
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        # ...and the copy must name the CREDENTIAL, not the provider (PR-T2
-        # review round 3, finding I1). This assertion previously read
-        # `"Select a provider/model" in ...` -- which was the regression:
-        # Task 7 widened this branch to cover "endpoint named, credential
-        # missing", making it the only way a user with a configured
-        # provider reaches the block, and the inherited copy then told them
-        # to select the provider they had already selected and pointed at
-        # Console controls instead of at a key.
+        # TASK-32236 moved the technical credential remedy to the recovery
+        # record/log. The painted surface names the Settings destination.
         visible = _visible_text(screen)
-        assert "Select a provider/model" not in visible
-        assert "OPENAI_API_KEY" in visible
-        assert "api_settings.openai" in visible
+        assert "No analysis provider is configured" in visible
+        assert "OPENAI_API_KEY" not in visible
+        assert "api_settings.openai" not in visible
+        assert screen.query_one("#library-rag-open-provider-settings", Button)
+        recovery = screen._library_rag_panel_state().query_state.recovery_copy
+        assert "OPENAI_API_KEY" in recovery
+        assert "api_settings.openai" in recovery
 
 
 @pytest.mark.asyncio
