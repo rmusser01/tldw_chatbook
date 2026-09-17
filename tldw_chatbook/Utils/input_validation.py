@@ -17,6 +17,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    TypeAdapter,
     ValidationInfo,
     field_validator,
 )
@@ -26,6 +27,25 @@ from pydantic import (
 
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .reasoning_config import REASONING_HISTORY_MODES
+
+_BATCH_TRANSCRIPTION_PROVIDER = TypeAdapter(
+    Literal["default", "faster-whisper", "parakeet-onnx", "transcribe-cpp"]
+)
+
+
+def validate_batch_transcription_provider(value: object) -> str:
+    """Validate a Library transcription provider without coercion.
+
+    Args:
+        value: Provider restored from settings or supplied by an option event.
+
+    Returns:
+        The exact supported provider identifier.
+
+    Raises:
+        ValueError: The value is not a supported provider identifier.
+    """
+    return _BATCH_TRANSCRIPTION_PROVIDER.validate_python(value, strict=True)
 
 PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000

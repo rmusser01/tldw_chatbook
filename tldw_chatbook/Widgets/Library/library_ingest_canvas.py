@@ -1359,6 +1359,15 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 select_value = value if value in field.options else field.default
                 if select_value not in field.options and field.options:
                     select_value = field.options[0]
+                error_message = (
+                    "" if disabled else validate_ingest_option_value(field, value)
+                )
+                if error_message:
+                    # Show a repairable choice instead of silently painting Auto
+                    # while the persisted provider remains invalid. Selecting
+                    # Auto must emit a real change that corrects the form.
+                    select_value = "__invalid_saved_option__"
+                    select_options.insert(0, ("Choose a supported provider", select_value))
                 self._reported_option_values[(group, field.name)] = select_value
                 # (task-2043) Selects missed task-2012's labeling pass: a
                 # bare "pymupdf4llm" carries no meaning on its own.
@@ -1385,6 +1394,15 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                         allow_blank=False,
                     )
                 )
+                if error_message:
+                    children.append(
+                        Static(
+                            error_message,
+                            id=f"{widget_id}-error",
+                            classes="type-group-field-error",
+                            markup=False,
+                        )
+                    )
                 if group == "web" and field.name == "scrape_method":
                     # (task-3303 AC5) Local single-page honesty, right under
                     # the control that promises otherwise: the local article
@@ -2038,12 +2056,11 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         )
 
     @on(Button.Pressed, ".ingest-preflight-copy-command")
-    def _copy_preflight_install_command(self, event: Button.Pressed) -> None:
+    async def _copy_preflight_install_command(self, event: Button.Pressed) -> None:
         """Copy one warning's install command from the summary (MI-17).
 
-        Mirrors the guardrail modal's copy button (same seam, same
-        notifications) so the modal is no longer the only place the
-        command can be recovered from.
+        Confirm native delivery where possible and reveal the literal
+        command when clipboard delivery cannot be confirmed.
         """
         event.stop()
         button_id = event.button.id or ""
@@ -2062,15 +2079,14 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 command = self.state.warning_commands[index]
             except (ValueError, IndexError):
                 return
-        copy_fn = getattr(self.app, "copy_to_clipboard", None)
-        if callable(copy_fn):
-            try:
-                copy_fn(command)
-                self.notify("Install command copied to clipboard")
-            except Exception:
-                self.notify("Failed to copy command", severity="error")
-        else:
-            self.notify("Clipboard not available", severity="warning")
+        from tldw_chatbook.Utils.install_clipboard import copy_install_command
+
+        if not await copy_install_command(self, command):
+            # Keep the literal command visible when terminal delivery is
+            # unavailable or unacknowledged; the collapsed fold hid recovery.
+            for detail in self.query(f"#{INGEST_TOOLING_FOLD_ID}"):
+                if isinstance(detail, Collapsible):
+                    detail.collapsed = False
 
     @on(Checkbox.Changed)
     @on(Select.Changed)

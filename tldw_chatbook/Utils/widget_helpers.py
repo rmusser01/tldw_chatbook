@@ -98,24 +98,26 @@ class FeatureNotAvailableDialog(Container):
             yield Static(
                 "To install the missing dependencies, run:", classes="dialog-message"
             )
-            yield Static(self.install_command, classes="install-command")
+            yield Static(self.install_command, classes="install-command", markup=False)
 
             if self.additional_info:
-                yield Static(self.additional_info, classes="dialog-message")
+                yield Static(self.additional_info, classes="dialog-message", markup=False)
 
             with Horizontal(classes="button-container"):
                 yield Button("Copy Command", variant="primary", id="copy-command")
                 yield Button("OK", variant="default", id="dismiss")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "copy-command":
-            try:
-                import pyperclip
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Copy the install command or dismiss the missing-feature dialog.
 
-                pyperclip.copy(self.install_command)
-                self.notify("Command copied to clipboard!", severity="information")
-            except Exception:
-                self.notify("Could not copy to clipboard", severity="warning")
+        Args:
+            event: Button press identifying the requested dialog action.
+        """
+        if event.button.id == "copy-command":
+            from .install_clipboard import copy_install_command
+
+            event.stop()
+            await copy_install_command(self, self.install_command)
         elif event.button.id == "dismiss":
             self.post_message(self.Dismissed())
             self.remove()
@@ -151,7 +153,7 @@ def show_feature_alert(
         missing_deps = [extra_name]
 
     # Standard install command
-    install_command = f"pip install tldw_chatbook[{extra_name}]"
+    install_command = f'pip install "tldw_chatbook[{extra_name}]"'
 
     # For development installs
     if additional_info is None and extra_name in [
@@ -161,7 +163,7 @@ def show_feature_alert(
         "ebook",
     ]:
         additional_info = (
-            'For development installations, use: pip install -e ".[{extra_name}]"'
+            f'For development installations, use: pip install -e ".[{extra_name}]"'
         )
 
     dialog = FeatureNotAvailableDialog(
