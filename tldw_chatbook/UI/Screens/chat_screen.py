@@ -2933,7 +2933,7 @@ class ChatScreen(BaseAppScreen):
             intent = build_console_default_intent(
                 generation=generation,
                 action=submission.action,
-                provider_config_key=provider_config_key(
+                provider_config_key=provider_identity_key(
                     submission.draft.settings.provider
                 ),
                 literal_model_id=str(submission.draft.settings.model or ""),
@@ -3001,7 +3001,7 @@ class ChatScreen(BaseAppScreen):
             intent = build_console_default_intent(
                 generation=generation,
                 action=submission.action,
-                provider_config_key=provider_config_key(
+                provider_config_key=provider_identity_key(
                     submission.draft.settings.provider
                 ),
                 literal_model_id=str(submission.draft.settings.model or ""),
@@ -3211,6 +3211,8 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     async def _test_console_connection(
         identity: ProviderDraftIdentity,
+        *,
+        app_config: Mapping[str, object] | None = None,
     ) -> ProviderProbeResult:
         """Run the existing bounded model-catalog probe for one exact draft."""
         from .settings_endpoint_probe import (
@@ -3219,10 +3221,32 @@ class ChatScreen(BaseAppScreen):
             provider_probe_result_from_settings_outcome,
         )
 
+        probe_kwargs = {}
+        if identity.custom_endpoint_id is not None:
+            from tldw_chatbook.Chat.custom_endpoint_registry import (
+                entry_for,
+                family_execution_key,
+                resolve_entry_credential,
+            )
+            from tldw_chatbook.Chat.provider_endpoint_contract import (
+                canonical_connection_identity,
+            )
+
+            entry = entry_for(app_config or {}, identity.custom_endpoint_id)
+            if (
+                entry is None
+                or canonical_connection_identity(
+                    family_execution_key(entry.family), entry.base_url
+                )
+                != identity.connection_identity
+            ):
+                return ProviderProbeResult("unreachable", (), "connection_error")
+            probe_kwargs["api_key"] = resolve_entry_credential(entry)[0]
         outcome = await probe_settings_endpoint(
             identity.connection_identity[1],
             provider=identity.provider_key,
             purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+            **probe_kwargs,
         )
         return provider_probe_result_from_settings_outcome(outcome)
 
@@ -3380,6 +3404,9 @@ class ChatScreen(BaseAppScreen):
             app_config=self._provider_readiness_app_config(),
             providers_models=providers_models,
             context_estimate=context_estimate,
+            context_window_resolver=lambda settings: (
+                self._ensure_console_provider_gateway().resolve_context_window(settings)
+            ),
             context_state=context_state,
             can_save=(
                 controller.run_state_for(session_id).is_send_allowed and not active_run
@@ -3401,7 +3428,9 @@ class ChatScreen(BaseAppScreen):
             default_durability_state=self._console_default_durability_state(),
             default_recovery_handler=self._handle_console_default_recovery,
             suspended_draft=suspended_draft,
-            connection_tester=self._test_console_connection,
+            connection_tester=lambda identity: self._test_console_connection(
+                identity, app_config=self._provider_readiness_app_config()
+            ),
             generation_tester=lambda request: self._test_console_generation(
                 session_id, request
             ),
@@ -4137,6 +4166,7 @@ class ChatScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             snapshot.settings.provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
         recovery_copy = ""
         if (
@@ -5498,6 +5528,7 @@ class ChatScreen(BaseAppScreen):
                 initial_draft=initial_draft,
                 providers_models=providers_models,
                 context_state=context_state,
+                context_window_resolver=lambda settings: self._ensure_console_provider_gateway().resolve_context_window(settings),
                 scope_copy="Applies to this conversation",
                 durability_copy=(
                     "Temporary until this chat is promoted"
@@ -7390,6 +7421,8 @@ class ChatScreen(BaseAppScreen):
         # collapse state IS persisted, via `_set_console_rail_preference`).
         self._console_environment_expanded: set[str] = set()
         self._console_environment_poll_timer: Any | None = None
+        self._console_credential_poll_timer: Any | None = None
+        self._console_credential_snapshot: tuple[int, str | None] | None = None
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -8385,6 +8418,7 @@ class ChatScreen(BaseAppScreen):
             # no extra DB round trip. The actual send may shrink this after
             # its authority check.
             staged_text=console_prompted_evidence_text(pending_launch),
+            context_window=self._ensure_console_provider_gateway().cached_context_window(settings),
         )
 
     def _active_console_context_control_state(
@@ -11929,6 +11963,34 @@ class ChatScreen(BaseAppScreen):
             self._record_ui_timer_stopped("console-environment-poll")
             self._console_environment_poll_timer = None
 
+    def _poll_console_credential_readiness(self) -> None:
+        """Refresh send controls as background credentials complete or expire."""
+        from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+            subscription_readiness_revision,
+        )
+
+        if (
+            not self._console_attach_reconciled
+            or not self.is_attached
+            or not self.is_current
+        ):
+            return
+        _settings, readiness = self._active_console_settings_readiness()
+        snapshot = (subscription_readiness_revision(), readiness.subscription_status)
+        if snapshot == self._console_credential_snapshot:
+            return
+        self._console_credential_snapshot = snapshot
+        self._sync_console_settings_summary()
+        self._sync_console_control_bar()
+
+    def _stop_console_credential_poll_timer(self) -> None:
+        """Stop completion polling when the mounted Console view goes away."""
+        timer = getattr(self, "_console_credential_poll_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._console_credential_poll_timer = None
+            self._record_ui_timer_stopped("console-credential-poll")
+
     def _build_console_staged_context_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -15045,6 +15107,10 @@ class ChatScreen(BaseAppScreen):
         if readiness.recovery_action == "select_model":
             return "Choose a model in Console Settings before sending."
         if readiness.recovery_action == "configure_credential":
+            if readiness.subscription_status == "pending":
+                return "Checking Claude subscription credential."
+            if readiness.subscription_status in {"missing", "expired"}:
+                return "Log in with Claude Code to refresh the subscription credential."
             return "Add API key in Settings > Providers & Models before sending."
         if readiness.recovery_action == "save_endpoint":
             return "Save provider endpoint in Conversation settings before sending."
@@ -15074,7 +15140,7 @@ class ChatScreen(BaseAppScreen):
             return ("Open Settings", "hidden", "Open provider settings")
         presentation = build_console_readiness_presentation(readiness)
         label = presentation.action_label
-        if readiness.recovery_action == "configure_credential":
+        if readiness.recovery_action == "configure_credential" and readiness.subscription_status is None:
             label = CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         return label, presentation.action_target, presentation.action_tooltip
 
@@ -16736,6 +16802,10 @@ class ChatScreen(BaseAppScreen):
             CONSOLE_ENVIRONMENT_POLL_SECONDS, self._poll_console_environment
         )
         self._record_ui_timer_created("console-environment-poll")
+        self._console_credential_poll_timer = self.set_interval(
+            0.25, self._poll_console_credential_readiness
+        )
+        self._record_ui_timer_created("console-credential-poll")
         # task-15475: claim this visit's refreshes; the ScreenResume Textual
         # posts for this very mount consumes the token and skips its own copy.
         self._console_mount_visit_refreshed = True
@@ -16921,6 +16991,7 @@ class ChatScreen(BaseAppScreen):
         self._fleet._stop_console_fleet_survivor_tick()
         self._stop_console_cost_ttl_timer()
         self._stop_console_environment_poll_timer()
+        self._stop_console_credential_poll_timer()
         self._console_draft_spend_refresh.stop()
         await self._teardown_console_roleplay_persistence()
         # The pipeline hands-free loop's own two-statement abandon teardown
@@ -18799,6 +18870,10 @@ class ChatScreen(BaseAppScreen):
             # while the turn is preparing and admits Queue after acceptance;
             # only actual provider setup gaps belong in this gate.
             if readiness.recovery_action == "configure_credential":
+                if readiness.subscription_status == "pending":
+                    return "Checking Claude subscription credential. Your draft is preserved."
+                if readiness.subscription_status in {"missing", "expired"}:
+                    return "Console send blocked: Log in with Claude Code to refresh the subscription credential."
                 provider = readiness.provider_display_name or "this provider"
                 return (
                     f"Console send blocked: Add an API key for {provider} before "

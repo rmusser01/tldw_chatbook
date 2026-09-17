@@ -2890,6 +2890,11 @@ class SettingsScreen(BaseAppScreen):
         self._local_model_review_busy = False
         self._local_model_review_prompt_open = False
         self._provider_credential_revision = 0
+        self._subscription_readiness_timer = None
+        self._subscription_readiness_observation: tuple[str, str, str | None] | None = (
+            None
+        )
+        self._provider_subscription_test: tuple[str, int] | None = None
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
@@ -3865,6 +3870,9 @@ class SettingsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
+        self._subscription_readiness_timer = self.set_interval(
+            0.25, self._poll_subscription_readiness
+        )
         self._register_footer_shortcuts()
         self._sync_responsive_workbench()
         # task-15475: claim this visit's sync-rows refresh -- but only if one
@@ -3888,8 +3896,12 @@ class SettingsScreen(BaseAppScreen):
             self.call_after_refresh(self._focus_provider_return_continuation)
 
     def on_unmount(self) -> None:
-        """Fence any late Model Library review before this screen is replaced."""
+        """Fence late credential and Model Library results before replacement."""
 
+        if self._subscription_readiness_timer is not None:
+            self._subscription_readiness_timer.stop()
+            self._subscription_readiness_timer = None
+        self._provider_subscription_test = None
         self._discard_openai_reconnect_review()
         self._discard_local_model_review()
         self._rollback_vllm_default_intent()
@@ -3912,6 +3924,57 @@ class SettingsScreen(BaseAppScreen):
             self._retry_audio_cpp_result_cleanup(force_overlap=True)
         except BaseException:
             pass
+
+    def _poll_subscription_readiness(self) -> None:
+        """Refresh only the current mounted projection after completion or expiry."""
+        if not self.is_attached or not self.is_current:
+            return
+        category = self._active_category_id()
+        if category not in {
+            SettingsCategoryId.OVERVIEW,
+            SettingsCategoryId.PROVIDERS_MODELS,
+        }:
+            self._subscription_readiness_observation = None
+            return
+        provider = (
+            str(self._resolve_provider_model_for_settings().provider or "")
+            if category is SettingsCategoryId.OVERVIEW
+            else self._provider_widget_value()
+        )
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_readiness_app_config(),
+            background_credentials=True,
+        )
+        observation = (category.value, provider, readiness.subscription_status)
+        if observation == self._subscription_readiness_observation:
+            return
+        self._subscription_readiness_observation = observation
+        if category is SettingsCategoryId.OVERVIEW:
+            presentation = self._settings_overview_presentation()
+            for row in presentation.primary_rows:
+                if row.key == "configuration":
+                    self._set_static_text(
+                        "#settings-overview-configuration",
+                        f"{row.label}: {_fold_long_tokens(row.value)}",
+                    )
+            return
+        self._set_static_text(
+            "#settings-provider-key-status", self._provider_key_status(provider)
+        )
+        self._set_static_text(
+            "#settings-provider-credential-status",
+            self._provider_credential_status(provider),
+        )
+        tested_draft = self._provider_subscription_test
+        if tested_draft is None:
+            return
+        if tested_draft != (provider, self._provider_draft_generation):
+            self._provider_subscription_test = None
+            return
+        detail, _summary, _passed = self._provider_readiness_test_report()
+        self._provider_test_result = detail
+        self._update_provider_test_result()
 
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
@@ -10929,6 +10992,7 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
         if not readiness.ready:
             return f"Not ready: {readiness.reason}"
@@ -12458,6 +12522,7 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_test_staged_config(provider),
+            background_credentials=True,
         )
         source = readiness.api_key_source or ""
         if source.startswith("env:"):
@@ -12594,6 +12659,7 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
         return bool(
             readiness.api_key_source and readiness.api_key_source.startswith("config:")
@@ -12606,7 +12672,10 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return "Claude subscription selected; API key is not used"
         if not readiness.requires_api_key:
             return "No credential required"
         if self._provider_saved_api_key_present(provider):
@@ -12617,7 +12686,10 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
             return "Provider settings invalid; repair in Advanced Config or config.toml"
         if self._provider_saved_api_key_present(provider):
@@ -12639,12 +12711,25 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return "Claude Code owns the subscription credential"
         if not readiness.requires_api_key:
             return "No credential required"
         if readiness.env_var:
             return readiness.env_var
         return f"{provider_key.upper()}_API_KEY"
+
+    @staticmethod
+    def _subscription_credential_copy(status: str) -> str:
+        """Return fixed credential copy without implying API-key recovery."""
+        return {
+            "pending": "Checking Claude subscription credential…",
+            "ready": "Credential source: Claude subscription (not verified)",
+            "expired": "Claude subscription credential expired; log in with Claude Code",
+            "missing": "Claude subscription credential missing; log in with Claude Code",
+        }[status]
 
     def _provider_catalog_entries(self) -> tuple[ConsoleProviderCatalogEntry, ...]:
         return supported_console_provider_catalog(
@@ -13470,7 +13555,10 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
             return "Provider settings invalid; repair in Advanced Config or config.toml"
         if readiness.api_key_source:
@@ -14083,7 +14171,14 @@ class SettingsScreen(BaseAppScreen):
             draft.dirty_keys if draft is not None else set()
         )  # dirty_keys is a @property
         readiness = get_provider_readiness(
-            provider, self._provider_test_staged_config(provider)
+            provider,
+            self._provider_test_staged_config(provider),
+            background_credentials=True,
+        )
+        self._provider_subscription_test = (
+            (provider, getattr(self, "_provider_draft_generation", 0))
+            if readiness.subscription_status is not None
+            else None
         )
         detail, summary, passed = self._build_provider_readiness_findings(
             provider, model, readiness, draft_endpoint=draft_endpoint, dirty=dirty
@@ -14459,6 +14554,7 @@ class SettingsScreen(BaseAppScreen):
         prompt. A no-op when nothing has run yet or it is already marked stale, so
         it never clobbers the not-run sentinel or thrashes on every keystroke.
         """
+        self._provider_subscription_test = None
         if self._provider_test_result in (
             self._PROVIDER_TEST_NOT_RUN_COPY,
             self._PROVIDER_TEST_STALE_COPY,

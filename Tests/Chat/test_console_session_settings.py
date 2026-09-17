@@ -1,9 +1,8 @@
 import asyncio
 import builtins
 import copy
-from dataclasses import FrozenInstanceError
 import inspect
-from types import SimpleNamespace
+from dataclasses import FrozenInstanceError
 
 import pytest
 from textual.app import App
@@ -11,38 +10,39 @@ from textual.containers import Vertical
 from textual.widgets import Button, Select, Static
 
 import tldw_chatbook.Chat.console_session_settings as session_settings
-from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
-    ConsoleSettingsContextEstimate,
     ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
     ConsoleSettingsSummaryState,
     _estimate_tokens_locally,
     build_console_context_estimate,
-    build_console_settings_summary_state,
-    build_console_settings_readiness,
-    build_default_console_session_settings,
     build_console_model_options,
     build_console_provider_options,
+    build_console_settings_readiness,
+    build_console_settings_summary_state,
+    build_default_console_session_settings,
     console_session_endpoint_survives_restart,
     console_settings_warnings,
     reasoning_effort_hint_for_model,
     resolve_effective_chat_configuration,
     validate_console_session_settings,
 )
-from tldw_chatbook.Chat.provider_test_evidence import (
-    ProviderDraftIdentity,
-    ProviderTestEvidence,
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    custom_endpoint_provider_settings,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     canonical_connection_identity,
 )
-from tldw_chatbook.Chat.custom_endpoint_registry import (
-    custom_endpoint_provider_settings,
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderTestEvidence,
 )
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.Widgets.Console.console_context_controls import (
@@ -57,17 +57,23 @@ def test_console_settings_exclude_presentation_while_session_owns_identity() -> 
 
     assert "user_profile_label" not in settings_fields
     assert "persona_label" not in settings_fields
-    assert {"assistant_kind", "assistant_name", "assistant_id"}.isdisjoint(
-        settings_fields
-    )
-    assert "assistant_name" not in session_fields
+    assert {
+        "assistant_kind",
+        "assistant_name",
+        "assistant_id",
+        "persona_system_template",
+        "character_system_template",
+    }.isdisjoint(settings_fields)
     assert {
         "runtime_backend",
         "assistant_kind",
+        "assistant_name",
         "assistant_id",
         "assistant_authority_id",
+        "persona_system_template",
         "character_id",
         "character_name",
+        "character_system_template",
     } <= session_fields
 
 
@@ -1889,7 +1895,7 @@ def test_context_estimate_counts_messages_and_staged_sources() -> None:
     assert estimate.used_tokens is not None
     assert estimate.used_tokens > 0
     assert estimate.used_tokens > without_staged.used_tokens
-    assert estimate.token_limit == 4096
+    assert estimate.token_limit == 16385
     assert estimate.token_limit_verified is True
     assert estimate.token_limit_source == "model catalog"
     assert "tokens" in estimate.label
@@ -1898,7 +1904,7 @@ def test_context_estimate_counts_messages_and_staged_sources() -> None:
     assert estimate.staged_context_summary == "2 staged sources"
 
 
-def test_unknown_model_uses_8001_unverified_console_fallback() -> None:
+def test_unknown_openai_model_uses_shared_unverified_api_fallback() -> None:
     """Keep an unknown model usable without presenting fallback as verified."""
     estimate = build_console_context_estimate(
         messages=[{"role": "user", "content": "hello"}],
@@ -1906,7 +1912,7 @@ def test_unknown_model_uses_8001_unverified_console_fallback() -> None:
         model="unlisted-model",
     )
 
-    assert estimate.token_limit == 8001
+    assert estimate.token_limit == 4096
     assert estimate.token_limit_verified is False
     assert estimate.token_limit_source == "provider fallback"
     assert "estimated; model unverified" in estimate.label
@@ -3037,31 +3043,92 @@ async def test_settings_close_anyway_queued_presses_commit_one_notice_and_cancel
 
 
 @pytest.mark.asyncio
-async def test_settings_active_compaction_close_anyway_keeps_provider_work_running_and_reopens_fresh() -> (
-    None
-):
-    app = _SettingsCloseHarness()
+@private_profile_test
+async def test_settings_active_compaction_close_anyway_keeps_provider_work_running_and_reopens_fresh(
+    request,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from Tests.Chat.test_console_context_compaction import _insert_real_prefix_memory
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _persisted_console_app,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_context_compaction import prefix_digest
+
+    app_instance = _persisted_console_app()
+    app = _ConsoleFlowHarness(app_instance)
     entered = asyncio.Event()
     release = asyncio.Event()
     finished = asyncio.Event()
     provider_cancelled = False
+    notices: list[str] = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, **_kwargs: notices.append(message)
+    )
 
-    async def compact_now() -> tuple[bool, str]:
-        nonlocal provider_cancelled
-        entered.set()
-        try:
-            await release.wait()
-            return True, "Compaction complete."
-        except asyncio.CancelledError:
-            provider_cancelled = True
-            raise
-        finally:
-            finished.set()
-
-    modal = _settings_close_modal(compact_now=compact_now)
     try:
-        async with app.run_test(size=(120, 42)) as pilot:
-            await app.push_screen(modal, callback=app.capture)
+        async with app.run_test(size=(160, 48)) as pilot:
+            console = app.screen
+            await _wait_for_selector(console, pilot, "#console-settings-summary")
+            controller = console._ensure_console_chat_controller()
+            store = console._ensure_console_chat_store()
+            session = store.ensure_session()
+            conversation_id = store.persist_session_if_needed(session.id)
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="An older question",
+                persist=True,
+            )
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="An older answer",
+                persist=True,
+            )
+            snapshots = controller._durable_context_snapshots(session.id)
+            assert snapshots is not None and len(snapshots) == 2
+
+            def publish_memory(memory_id: str) -> None:
+                # Use durable records with the real active-lineage digest so
+                # reopening exercises the controller's memory-selection boundary.
+                _insert_real_prefix_memory(
+                    controller._context_repository,
+                    conversation_id=conversation_id,
+                    memory_id=memory_id,
+                    selection_id=f"selection-{memory_id}",
+                    boundary_message_id=snapshots[0].message_id,
+                    activation_message_id=snapshots[-1].message_id,
+                    summarized_prefix_digest=prefix_digest(snapshots[:1]),
+                    created_at="2026-09-17T00:00:00Z",
+                )
+
+            publish_memory("original-memory")
+
+            async def compact_now(session_id: str) -> tuple[bool, str]:
+                nonlocal provider_cancelled
+                assert session_id == session.id
+                entered.set()
+                try:
+                    await release.wait()
+                    publish_memory("fresh-memory")
+                    return True, "Compaction complete."
+                except asyncio.CancelledError:
+                    provider_cancelled = True
+                    raise
+                finally:
+                    finished.set()
+
+            monkeypatch.setattr(controller, "compact_context_now", compact_now)
+            assert await console._open_console_settings(focus_context=True)
+            await pilot.pause()
+            modal = app.screen
+            assert isinstance(modal, ConsoleSettingsModal)
+            assert "Summary for original-memory." in str(
+                modal.query_one("#console-settings-memory-review", Static).renderable
+            )
             modal.query_one("#console-context-compact-now", Button).press()
             await pilot.pause()
             await asyncio.wait_for(entered.wait(), timeout=1)
@@ -3069,109 +3136,31 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             await pilot.click("#console-settings-close-anyway")
             await pilot.pause()
 
-            assert app.results == [None]
+            assert app.screen is console
             assert modal._compaction_wait_worker is None
             assert not provider_cancelled
             assert not finished.is_set()
-            assert app.notices == [
-                "Provider work may continue and may still be billed."
-            ]
-            assert all("cancel" not in notice.lower() for notice in app.notices)
+            assert notices == ["Provider work may continue and may still be billed."]
+            assert all("cancel" not in notice.lower() for notice in notices)
 
             release.set()
             await asyncio.wait_for(finished.wait(), timeout=1)
             assert not provider_cancelled
-
-            from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-            fresh_memory = _settings_close_memory(
-                "Fresh durable memory after compaction"
+            _overrides, _global, effective_memory = controller.context_control_inputs(
+                session.id
             )
-            settings = ConsoleSessionSettings(
-                provider="llama_cpp",
-                model="model-a",
-                max_tokens=4_000,
-            )
-            estimate = ConsoleSettingsContextEstimate(
-                used_tokens=24_000,
-                token_limit=100_000,
-                label="24,000 / 100,000 tokens",
-            )
-            session = ConsoleChatSession(
-                id="session-1",
-                settings=settings,
-            )
-            store = SimpleNamespace(
-                active_session_id=session.id,
-                ensure_session=lambda: session,
-                session_settings_revision=lambda _session_id: 0,
-                switch_session=lambda _session_id: session,
-            )
-
-            async def providers_models(
-                _provider: str,
-                *,
-                current_model: str,
-            ) -> dict[str, list[str]]:
-                return {"llama_cpp": [current_model]}
-
-            async def compact_fresh(_session_id: str) -> tuple[bool, str]:
-                return True, "Compaction complete."
-
-            controller = SimpleNamespace(
-                run_state=SimpleNamespace(is_send_allowed=True),
-                effective_thinking_history_policy_for_session=(
-                    lambda _session_id: _resolved_thinking_policy()
-                ),
-                reset_active_context_memory=lambda _session_id: ("memory-1", 3),
-                undo_context_memory_reset=lambda _memory_id, _revision: True,
-                reset_all_context_memories=lambda _session_id: 1,
-                compact_context_now=compact_fresh,
-            )
-
-            async def _resolved_thinking_policy() -> str:
-                return "auto"
-
-            production_opener = SimpleNamespace(
-                app=app,
-                _session=SimpleNamespace(
-                    _ensure_active_console_session_settings=lambda: settings
-                ),
-                _ensure_console_chat_controller=lambda: controller,
-                _ensure_console_chat_store=lambda: store,
-                _console_run_active=lambda: False,
-                _test_console_connection=lambda _request: None,
-                _test_console_generation=lambda _session_id, _request: None,
-                _active_console_settings_context_estimate=lambda: estimate,
-                _active_console_context_control_state=lambda *, estimate, **_kwargs: (
-                    build_console_context_control_state(
-                        settings=settings,
-                        estimate=estimate,
-                        active_memory=fresh_memory,
-                    )
-                ),
-                _global_chat_display_name=lambda: "User",
-                _provider_readiness_app_config=lambda: {
-                    "api_settings": {"llama_cpp": {}}
-                },
-                _providers_models_for_console_settings=providers_models,
-                _apply_console_settings_result=lambda *_args, **_kwargs: None,
-            )
-            await ChatScreen._open_console_settings(  # type: ignore[arg-type]
-                production_opener,
-                focus_context=True,
-            )
+            assert effective_memory.memory.memory_id == "fresh-memory"
+            assert await console._open_console_settings(focus_context=True)
             await pilot.pause()
             reopened = app.screen
 
             assert isinstance(reopened, ConsoleSettingsModal)
             assert reopened is not modal
             assert reopened._memory_reset_token is None
-            assert (
-                reopened.query_one("#console-context-compact-now", Button).disabled
-                is False
-            )
-            assert "Fresh durable memory after compaction" in str(
+            assert not reopened.query_one(
+                "#console-context-compact-now", Button
+            ).disabled
+            assert "Summary for fresh-memory." in str(
                 reopened.query_one("#console-settings-memory-review", Static).renderable
             )
             assert "Compacting" not in str(
@@ -3179,6 +3168,7 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             )
     finally:
         release.set()
+        app_instance.chachanotes_db.close_connection()
 
 
 class TestReasoningEffortHints:
@@ -3208,7 +3198,7 @@ class TestReasoningEffortHints:
 
 class TestConsoleSettingsWarnings:
     def _settings(self, **overrides):
-        base = dict(provider="llama_cpp", model="Qwen3.8-27B")
+        base = {"provider": "llama_cpp", "model": "Qwen3.8-27B"}
         base.update(overrides)
         return ConsoleSessionSettings(**base)
 
@@ -3327,8 +3317,8 @@ def _build_console_settings_summary_state_for_test():
     from tldw_chatbook.Chat.console_session_settings import (
         ConsoleSessionSettings,
         ConsoleSettingsContextEstimate,
-        build_console_settings_summary_state,
         build_console_settings_readiness,
+        build_console_settings_summary_state,
     )
 
     settings = ConsoleSessionSettings(
@@ -3415,9 +3405,7 @@ def test_custom_endpoint_declared_resolving_key_names_credential_provenance():
 
 def test_custom_endpoint_undeclared_key_keeps_family_keyless_copy():
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(
-            provider="custom-ep:gpu", model="m", base_url=None
-        ),
+        ConsoleSessionSettings(provider="custom-ep:gpu", model="m", base_url=None),
         app_config=_registry_config(),
         environ={},
     )

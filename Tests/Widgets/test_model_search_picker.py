@@ -763,3 +763,26 @@ async def test_provenance_model_ids_render_as_literal_text() -> None:
             "vendor/[bold]literal[/bold]",
         ]
         assert results.get_option_at_index(1).id is not None
+
+
+@pytest.mark.asyncio
+async def test_superseded_catalog_refresh_does_not_leak_unawaited_coroutine():
+    import gc
+    import warnings
+
+    app = PickerTestApp(
+        {"OpenRouter": ["old-model"], "OpenAI": ["current-model"]},
+        (),
+    )
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always", RuntimeWarning)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            picker = app.query_one(ModelSearchPicker)
+            picker.refresh_provider("OpenRouter", current_model="old-model", force=True)
+            picker.refresh_provider("OpenAI", current_model="current-model", force=True)
+            await pilot.pause()
+            assert picker._provider == "OpenAI"
+            assert picker.value == "current-model"
+        gc.collect()
+    assert not [warning for warning in recorded if "was never awaited" in str(warning.message)]

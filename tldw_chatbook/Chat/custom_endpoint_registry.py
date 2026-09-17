@@ -12,6 +12,7 @@ both invoked by callers off-thread, never here.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
@@ -461,6 +462,32 @@ def family_execution_key(family: str) -> str:
         OpenAI-compatible path).
     """
     return "custom" if family == "openai_compatible" else family
+
+
+def resolve_entry_credential(
+    entry: CustomEndpointEntry,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve entry credentials with environment then stored-key precedence.
+
+    Args:
+        entry: Registry entry whose credential should resolve.
+        environ: Optional environment mapping; defaults to the process environment.
+
+    Returns:
+        Credential and a secret-free source label, or two None values.
+    """
+    from tldw_chatbook.config import resolve_provider_api_key
+
+    env = environ if environ is not None else os.environ
+    if entry.api_key_env:
+        env_key = resolve_provider_api_key(env.get(entry.api_key_env, ""))
+        if env_key is not None:
+            return env_key, f"env:{entry.api_key_env}"
+    stored_key = resolve_provider_api_key(entry.api_key)
+    if stored_key is not None:
+        return stored_key, f"config:custom_endpoints.{entry.slug}.api_key"
+    return None, None
 
 
 def custom_endpoint_provider_settings(

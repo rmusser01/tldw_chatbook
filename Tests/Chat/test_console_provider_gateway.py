@@ -2704,6 +2704,7 @@ async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_
     assert seen_urls == [
         "http://127.0.0.1:9099/v1/models",
         "http://127.0.0.1:9099/props",
+        "http://127.0.0.1:9099/props?model=server-model&autoload=false",
     ]
 
 

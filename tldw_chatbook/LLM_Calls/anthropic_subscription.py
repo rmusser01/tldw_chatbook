@@ -27,9 +27,11 @@ import json
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from threading import Lock, Thread
+from typing import Any, Literal
 
 #: Claude Code's credential file. Chatbook only ever reads it.
 DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
@@ -44,9 +46,10 @@ KEYCHAIN_SERVICE = "Claude Code-credentials"
 #: Short TTL for the Keychain read memo. Readiness runs on UI redraw paths and
 #: would otherwise spawn `security` on every evaluation (and stall up to the
 #: subprocess timeout if the Keychain is locked). The memo caches success AND a
-#: None result so a locked/denied Keychain stalls at most once per window.
+#: None result. The lock also coalesces concurrent send/background reads.
 _KEYCHAIN_TTL_S = 5.0
-_KEYCHAIN_CACHE: Optional[tuple[float, Optional[str]]] = None
+_KEYCHAIN_CACHE: tuple[float, str | None] | None = None
+_KEYCHAIN_LOCK = Lock()
 
 #: The subscription OAuth token is gated to the Claude Code identity: Anthropic
 #: rejects (as a misleading 429) any request whose ``system`` does not lead with
@@ -62,14 +65,14 @@ AUTH_SOURCE_SUBSCRIPTION = "claude_subscription"
 STALE_CREDENTIAL_MESSAGE = (
     "The Claude subscription credential is expired. Chatbook only reads it — "
     "refresh it in the tool that owns it (run Claude Code and log in again), "
-    "or set [api_settings.anthropic] auth_source back to \"api_key\"."
+    'or set [api_settings.anthropic] auth_source back to "api_key".'
 )
 MISSING_CREDENTIAL_MESSAGE = (
-    "auth_source is \"claude_subscription\" but no Claude Code credential was "
+    'auth_source is "claude_subscription" but no Claude Code credential was '
     "found (checked ~/.claude/.credentials.json and, on macOS, the login "
-    "Keychain item \"Claude Code-credentials\"). Log in with Claude Code first "
+    'Keychain item "Claude Code-credentials"). Log in with Claude Code first '
     "(and unlock your Keychain if prompted), or set [api_settings.anthropic] "
-    "auth_source back to \"api_key\"."
+    'auth_source back to "api_key".'
 )
 
 
@@ -100,9 +103,103 @@ class SubscriptionCredential:
     __str__ = __repr__
 
 
+SubscriptionStatus = Literal["pending", "ready", "expired", "missing"]
+
+
+class _SubscriptionReadinessCache:
+    """One bounded, secret-free snapshot and at most one credential reader.
+
+    UI callers never join a worker or acquire the Keychain lock. Synchronous
+    send callers continue to read the actual credential independently.
+    """
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._worker: Thread | None = None
+        self._refreshing = False
+        self._path: Path | None = None
+        self._completed_at: float | None = None
+        self._present = False
+        self._expires_at_ms = 0
+        self.revision = 0
+
+    def status(self) -> SubscriptionStatus:
+        with self._lock:
+            if (
+                self._path == DEFAULT_CREDENTIALS_PATH
+                and self._completed_at is not None
+                and time.monotonic() - self._completed_at < _KEYCHAIN_TTL_S
+            ):
+                if not self._present:
+                    return "missing"
+                return (
+                    "expired"
+                    if self._expires_at_ms > 0
+                    and time.time() * 1000 >= self._expires_at_ms
+                    else "ready"
+                )
+            if not self._refreshing:
+                self._refreshing = True
+                self._worker = Thread(
+                    target=self._refresh,
+                    args=(DEFAULT_CREDENTIALS_PATH,),
+                    name="claude-credential-readiness",
+                    daemon=True,
+                )
+                self._worker.start()
+            return "pending"
+
+    def _refresh(self, path: Path) -> None:
+        present = False
+        expires_at_ms = 0
+        try:
+            credential = read_claude_code_credential()
+            if credential is not None:
+                present = True
+                expires_at_ms = credential.expires_at_ms
+        except Exception:  # noqa: BLE001 - credential errors must remain secret-free
+            # Never publish exception text, file content, paths, or tokens.
+            # A failed background read gets the same bounded TTL as a miss.
+            present = False
+        with self._lock:
+            self._path = path
+            self._present = present
+            self._expires_at_ms = expires_at_ms
+            self._completed_at = time.monotonic()
+            self._refreshing = False
+            self.revision += 1
+
+
+_SUBSCRIPTION_READINESS_CACHE = _SubscriptionReadinessCache()
+
+
+def subscription_credential_status(*, background: bool = False) -> SubscriptionStatus:
+    """Resolve credential presence without exposing its token to readiness.
+
+    Args:
+        background: Return a cached UI snapshot immediately, starting one
+            background read when stale. The default resolves synchronously for
+            send-time checks and never mistakes unfinished UI work for absence.
+
+    Returns:
+        A bounded state; ``pending`` occurs only for a background lookup.
+    """
+    if background:
+        return _SUBSCRIPTION_READINESS_CACHE.status()
+    credential = read_claude_code_credential()
+    if credential is None:
+        return "missing"
+    return "expired" if credential.expired else "ready"
+
+
+def subscription_readiness_revision() -> int:
+    """Return the completion revision for mounted UI refresh polling, without I/O."""
+    return _SUBSCRIPTION_READINESS_CACHE.revision
+
+
 def read_claude_code_credential(
     path: Path | str | None = None,
-) -> Optional[SubscriptionCredential]:
+) -> SubscriptionCredential | None:
     """Read Claude Code's credential file. Read-only; never raises outward.
 
     Args:
@@ -145,7 +242,7 @@ def read_claude_code_credential(
 
 def _parse_oauth_json(
     raw_text: str, *, source_label: str
-) -> Optional[SubscriptionCredential]:
+) -> SubscriptionCredential | None:
     """Parse a Claude Code credential JSON blob into a credential.
 
     Args:
@@ -164,13 +261,14 @@ def _parse_oauth_json(
     oauth = raw.get("claudeAiOauth") if isinstance(raw, dict) else None
     if not isinstance(oauth, dict):
         return None
-    token = str(oauth.get("accessToken") or "").strip()
-    if not token:
+    token = oauth.get("accessToken")
+    if not isinstance(token, str) or not token.strip():
         return None
+    token = token.strip()
     try:
         expires_at_ms = int(oauth.get("expiresAt") or 0)
-    except (TypeError, ValueError):
-        expires_at_ms = 0
+    except (TypeError, ValueError, OverflowError):
+        return None
     return SubscriptionCredential(
         access_token=token,
         expires_at_ms=expires_at_ms,
@@ -179,7 +277,7 @@ def _parse_oauth_json(
     )
 
 
-def _keychain_credential_raw() -> Optional[str]:
+def _keychain_credential_raw() -> str | None:
     """Return Claude Code's Keychain credential JSON on macOS, else ``None``.
 
     Read-only: shells out to ``security find-generic-password -w``. Any failure
@@ -192,32 +290,32 @@ def _keychain_credential_raw() -> Optional[str]:
     global _KEYCHAIN_CACHE
     if sys.platform != "darwin":
         return None
-    now = time.time()
-    cached = _KEYCHAIN_CACHE
-    if cached is not None and now - cached[0] < _KEYCHAIN_TTL_S:
-        return cached[1]
-    result: Optional[str] = None
-    try:
-        proc = subprocess.run(  # noqa: S603 - fixed constant command, no user input
-            [
-                "/usr/bin/security",
-                "find-generic-password",
-                "-s",
-                KEYCHAIN_SERVICE,
-                "-w",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, ValueError, subprocess.SubprocessError):
-        # ValueError covers a non-decodable stdout under text=True.
-        proc = None
-    if proc is not None and proc.returncode == 0:
-        result = (proc.stdout or "").strip() or None
-    _KEYCHAIN_CACHE = (now, result)
-    return result
+    with _KEYCHAIN_LOCK:
+        cached = _KEYCHAIN_CACHE
+        if cached is not None and time.monotonic() - cached[0] < _KEYCHAIN_TTL_S:
+            return cached[1]
+        result: str | None = None
+        try:
+            proc = subprocess.run(
+                [
+                    "/usr/bin/security",
+                    "find-generic-password",
+                    "-s",
+                    KEYCHAIN_SERVICE,
+                    "-w",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, ValueError, subprocess.SubprocessError):
+            # ValueError covers a non-decodable stdout under text=True.
+            proc = None
+        if proc is not None and proc.returncode == 0:
+            result = (proc.stdout or "").strip() or None
+        _KEYCHAIN_CACHE = (time.monotonic(), result)
+        return result
 
 
 def anthropic_auth_source(anthropic_config: Mapping[str, Any] | None) -> str:
@@ -295,9 +393,8 @@ def with_claude_code_identity(system: Any) -> list[dict[str, Any]]:
     if isinstance(system, list):
         blocks = list(system)
         first = blocks[0] if blocks else None
-        if (
-            isinstance(first, dict)
-            and str(first.get("text", "")).startswith(CLAUDE_CODE_IDENTITY)
+        if isinstance(first, dict) and str(first.get("text", "")).startswith(
+            CLAUDE_CODE_IDENTITY
         ):
             return blocks
         return [identity, *blocks]
