@@ -787,6 +787,8 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH,
     LIBRARY_HUB_RECENT_LABEL_WIDTH,
     LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS,
+    LIBRARY_CONVERSATION_HANDOFF_EXCERPT_CHARS,
+    LIBRARY_CONVERSATION_HANDOFF_SENDER_CHARS,
     LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS,
     LIBRARY_NOTES_COMPACT_BREAKPOINT,
     LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT,
@@ -13278,19 +13280,44 @@ class LibraryScreen(BaseAppScreen):
     def _conversation_updated_label(cls, record: Mapping[str, Any]) -> str:
         return LibraryConversationsController._conversation_updated_label(record)
 
-
     def _selected_conversation_handoff_payload(self) -> ChatHandoffPayload | None:
         selected = self._selected_conversation_record()
         if selected is None:
             return None
         index, record = selected
         conversation_id = self._conversation_record_id(record, index)
+        reader = self._conversations_state.reader_state
+        if not reader.loaded_actions_eligible or reader.loaded_id != conversation_id:
+            return None
+        # Read only the settled transcript already shown by this reader. Slice
+        # each part before joining so large histories never allocate a full copy.
+        remaining = LIBRARY_CONVERSATION_HANDOFF_EXCERPT_CHARS
+        parts: list[str] = []
+        body_truncated = False
+        sender_truncated = False
+        for index, message in enumerate(reader.messages):
+            sender = message.sender
+            if len(sender) > LIBRARY_CONVERSATION_HANDOFF_SENDER_CHARS:
+                sender = sender[: LIBRARY_CONVERSATION_HANDOFF_SENDER_CHARS - 1] + "…"
+                sender_truncated = True
+            for part in ("\n\n" if index else "", sender, ": ", message.text):
+                parts.append(part[:remaining])
+                if len(part) > remaining:
+                    body_truncated = True
+                    break
+                remaining -= len(part)
+            if body_truncated:
+                break
+        excerpt = "".join(parts) if reader.messages else "No stored messages."
         title = self._source_title("conversations", record)
         message_count = self._conversation_message_count_label(record)
         workspace_label = self._conversation_workspace_label(record)
         updated_label = self._conversation_updated_label(record)
         body = "\n".join(
             (
+                "Conversation excerpt:",
+                excerpt,
+                "",
                 f"Conversation: {title}",
                 f"Conversation ID: {conversation_id}",
                 message_count,
@@ -13304,6 +13331,7 @@ class LibraryScreen(BaseAppScreen):
             item_type="conversation",
             title=title,
             body=body,
+            body_truncated=body_truncated or sender_truncated,
             source_id=conversation_id,
             display_summary=f"Conversation staged: {title}",
             suggested_prompt="Use this conversation as source context for my next question.",
@@ -13321,8 +13349,6 @@ class LibraryScreen(BaseAppScreen):
                 "source_authority": "local",
             },
         )
-
-
 
     def _library_conversation_workspace_block(self) -> tuple[str, bool, str]:
         """Return the reader's inline workspace refusal (task-32056).

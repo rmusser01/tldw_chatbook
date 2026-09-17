@@ -17413,7 +17413,14 @@ class ChatScreen(BaseAppScreen):
 
         # Handoff bodies can reach 80k characters; cap and sanitize at this
         # boundary before any of it lands in the staged payload.
-        snippet = _safe_text(payload.display_summary or payload.body, max_length=4_000)
+        # Source handoffs carry content in the body; their display summary is
+        # only a staging label. Other kinds retain their existing summary policy.
+        source_text = (
+            payload.body or payload.display_summary
+            if payload.item_type in {"media", "conversation"}
+            else payload.display_summary or payload.body
+        )
+        snippet = _safe_text(source_text, max_length=4_000)
         title = _safe_text(payload.title) or "Untitled"
         launch_payload: dict[str, Any] = {
             "target_id": _safe_text(payload.content_ref or payload.source_id or title),

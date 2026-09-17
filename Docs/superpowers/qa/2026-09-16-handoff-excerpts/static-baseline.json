@@ -1,0 +1,29 @@
+{
+  "comparison": "code, message (shifted F811 source line normalized), source line; diagnostic multiplicity preserved",
+  "results": [
+    {
+      "file": "tldw_chatbook/UI/Screens/library_screen.py",
+      "before": 205,
+      "after": 205,
+      "added": []
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "before": 212,
+      "after": 212,
+      "added": []
+    },
+    {
+      "file": "tldw_chatbook/UI/Library_Modules/library_media_controller.py",
+      "before": 17,
+      "after": 17,
+      "added": []
+    },
+    {
+      "file": "tldw_chatbook/UI/Library_Modules/screen_constants.py",
+      "before": 1,
+      "after": 1,
+      "added": []
+    }
+  ]
+}

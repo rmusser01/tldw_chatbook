@@ -2912,7 +2912,8 @@ def _conversation_handoff_payload() -> ChatHandoffPayload:
         item_type="conversation",
         title="Prior planning chat",
         body=(
-            "Conversation: Prior planning chat\n"
+            "Conversation excerpt:\nuser: Schedule the review for Friday.\n\n"
+            "assistant: Bring the draft proposal.\n\nConversation: Prior planning chat\n"
             "Conversation ID: conv-9\n"
             "Messages: 12\n"
             "Workspace: unassigned\n"
@@ -2966,7 +2967,8 @@ async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(build_payload)
 
 
 @pytest.mark.asyncio
-async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged():
+@pytest.mark.parametrize("summary", [None, "Retrieved exact passage."])
+async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged(summary):
     """Pin: dropping the `"rag" in source` gate so every handoff builds a
     bundle must not change the bundle a RAG-labeled handoff already built.
     The expected shape below is hand-derived from the branch's own formula
@@ -2977,6 +2979,7 @@ async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged():
         item_type="rag-result",
         title="Transformer notes",
         body="Attention is all you need.",
+        display_summary=summary,
         source_id="media-77",
         content_ref="media-77#c1",
         suggested_prompt="Use this retrieved result as context.",
@@ -2992,7 +2995,7 @@ async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged():
                 source_id="media-77",
                 source_type="rag-result",
                 title="Transformer notes",
-                snippet="Attention is all you need.",
+                snippet=summary or "Attention is all you need.",
                 authority_label="local",
                 content_ref="media-77#c1",
             ),
@@ -3067,20 +3070,7 @@ class _ExistingChaChaDBDouble:
 
 @pytest.mark.asyncio
 async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():
-    """The exact launch a media handoff stages must let
-    `capture_console_staged_evidence_for_chat` return REAL context, not the
-    `LocalRagContextResult(None, None)` it always returned before this fix
-    (the handoff carried no `evidence_bundle` key at all).
-
-    The pre-existing (byte-unchanged) snippet formula in
-    `_stage_handoff_as_console_live_work` is `payload.display_summary or
-    payload.body` -- and `library_screen.py`'s real media/conversation
-    handoffs set `display_summary` to a short "Media staged: <title>" label
-    rather than the body excerpt, so that label -- not the raw body -- is
-    what reaches the model here. This test asserts the actual production
-    formula's output, not the excerpt; see the report for this as a
-    separate, pre-existing content-fidelity note out of this task's scope.
-    """
+    """The send-time capture contains media text, not its display label."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -3099,7 +3089,8 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():
 
     assert isinstance(result, LocalRagContextResult)
     assert result.context is not None
-    assert "Media staged: Transformer notes" in result.context
+    assert "Attention is all you need. " * 4 in result.context
+    assert "Media staged:" not in result.context
 
 
 @pytest.mark.asyncio
@@ -3159,11 +3150,9 @@ async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_cont
     # labeled "CHAT HISTORY" in the formatted context (`_SOURCE_LABELS` in
     # `RAG_Search/local_citation_capture.py`).
     assert "CHAT HISTORY" in result.context
-    # Same pre-existing `display_summary`-over-`body` snippet formula as the
-    # media case (see the report): the conversation handoff also sets a
-    # generic `display_summary`, so that -- not the multi-line body -- is
-    # what reaches the model here.
-    assert "Conversation staged: Prior planning chat" in result.context
+    assert "user: Schedule the review for Friday." in result.context
+    assert "assistant: Bring the draft proposal." in result.context
+    assert "Conversation staged:" not in result.context
 
 
 @pytest.mark.asyncio
@@ -3196,3 +3185,31 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b
         assert isinstance(launch.payload.get("evidence_bundle"), dict)
         assert chat_screen_module._source_mentions_rag(launch.source) is False
         assert screen._console_send_blocked_reason() == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["media", "conversation"])
+async def test_source_body_is_capped_and_sanitized_before_evidence_staging(kind):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(
+            ChatHandoffPayload(
+                source="library",
+                item_type=kind,
+                title="Bounded source",
+                body="Keep [this] café\x00\x01\n" + "x" * 8000 + "OUTSIDE LIMIT",
+                display_summary="Generic label",
+                source_id="bounded-source",
+            )
+        )
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+        snippet = launch.payload["evidence_bundle"]["references"][0]["snippet"]
+        assert snippet.startswith("Keep [this] café\n")
+        assert "OUTSIDE LIMIT" not in snippet
+        assert "\x00" not in snippet and "\x01" not in snippet
+        assert len(snippet) <= 4000
+        assert launch.payload["snippet"] == snippet

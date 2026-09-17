@@ -3,7 +3,8 @@
 Current checkpoint (2026-09-16): the initial findings and subsequent bounded
 reviews have progressed through Prompts, Skills, Collections, Import and
 Conversations reading, Archive, Restore, Export, exact Resume and source staging.
-Source staging still has the known TASK-2376 missing-transcript-excerpt defect.
+TASK-2376 now closes the source-staging excerpt gap: media and conversation
+text reaches the evidence capture, with draft and saved records preserved.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -737,3 +738,24 @@ Search/RAG, Settings and other application destinations remain governed by the
 original review sequence; a completed slice
 does not qualify every action in its destination. Full-suite verification has
 not been requested.
+
+
+## Source excerpt fidelity — 2026-09-16 (TASK-2376)
+
+[Evidence and reproduction](../qa/2026-09-16-handoff-excerpts/README.md) close the
+missing-content limitation recorded above. Media and conversation staging now
+uses actual bounded source bodies. Conversations reads only the matching complete
+reader and limits speaker labels independently; Notes and RAG retain their
+existing behavior. The reviewer-discovered long-speaker edge case has a red/green
+regression and a clear follow-up review.
+
+Final verification: 207 targeted tests plus seven legacy media handoff checks.
+All four native dark/light and 170×48/80×24 cells deliver actual text through the
+real send-time capture helper. The current draft, session identity, source
+records, and unrelated link remain unchanged; ten private databases pass
+integrity checks. Normal exit and process absence are verified. This does not
+claim a completed provider send, remote-source qualification, or a full suite.
+No CSS changed and no new lint diagnostics were introduced.
+
+Next bounded review: Library Search/RAG journeys, then the remaining feature and
+component surfaces. Integration into current dev remains separate.

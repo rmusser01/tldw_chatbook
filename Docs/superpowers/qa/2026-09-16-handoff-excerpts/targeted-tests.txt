@@ -1,0 +1,57 @@
+.............................................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+... [ 34%]
+...--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..................................................................... [ 69%]
+...............................................................          [100%]
+============================= slowest 25 durations =============================
+4.68s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[False]
+4.46s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[True]
+3.53s call     Tests/UI/test_console_live_work_handoffs.py::test_console_wc_live_work_action_button_routes_run_details
+3.49s call     Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback
+3.26s call     Tests/UI/test_console_live_work_handoffs.py::test_locked_console_shows_staged_evidence_receipt_task_2852
+3.24s call     Tests/UI/test_console_live_work_handoffs.py::test_console_renders_pending_launch_context
+3.24s call     Tests/UI/test_console_live_work_handoffs.py::test_configured_console_staged_strip_unaffected_by_receipt_task_2852
+3.22s call     Tests/UI/test_console_live_work_handoffs.py::test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it
+2.95s call     Tests/UI/test_library_media_reader_flow.py::test_thirty_step_traversal_settles_at_most_one_progress_write
+2.22s call     Tests/UI/test_library_media_reader_flow.py::test_delete_selects_following_row_then_previous_then_empty
+2.22s call     Tests/UI/test_library_media_reader_flow.py::test_find_prev_next_are_disabled_and_marked_with_no_matches
+2.12s call     Tests/UI/test_library_media_reader_flow.py::test_canvas_sync_failure_fallback_restores_media_focus[size0]
+2.08s call     Tests/UI/test_library_media_reader_flow.py::test_find_input_keeps_focus_through_a_reader_recompose[size0]
+2.07s call     Tests/UI/test_library_media_reader_flow.py::test_gating_a_focused_next_hands_focus_to_the_search_box
+2.03s call     Tests/UI/test_library_media_reader_flow.py::test_zero_result_filter_repaints_the_mounted_reader_placeholder
+2.01s call     Tests/UI/test_library_media_reader_flow.py::test_find_counter_reads_match_n_of_m_without_the_trailing_noun
+2.00s call     Tests/UI/test_library_media_reader_flow.py::test_reader_recompose_returns_focus_to_the_content_not_a_grip[size0]
+1.99s call     Tests/UI/test_console_live_work_handoffs.py::test_console_restored_launch_does_not_touch_an_empty_handoff_channel
+1.95s call     Tests/UI/test_library_media_reader_flow.py::test_background_whole_screen_recompose_keeps_row_focus[size0]
+1.95s call     Tests/UI/test_library_media_reader_flow.py::test_background_whole_screen_recompose_keeps_reader_content_focus[size0]
+1.92s call     Tests/UI/test_library_media_reader_flow.py::test_explicit_target_still_wins_over_the_screen_level_restore[size0]
+1.89s call     Tests/UI/test_library_media_reader_flow.py::test_filter_uses_authoritative_search_and_restores_page_three_anchor
+1.89s call     Tests/UI/test_library_media_reader_flow.py::test_media_global_f6_reaches_content_scroller
+1.84s call     Tests/UI/test_library_media_reader_flow.py::test_opening_find_costs_no_extra_focus_move[size0]
+1.79s call     Tests/UI/test_library_media_reader_flow.py::test_escape_from_reader_focuses_loaded_row_and_down_advances
+207 passed in 243.27s (0:04:03)

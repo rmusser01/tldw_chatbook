@@ -1,0 +1,40 @@
+{
+  "payload": {
+    "target_id": "2",
+    "item_type": "media",
+    "source_id": "2",
+    "snippet": "Content excerpt:\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], \n\nMedia: Excerpt media DarkCompact\nMedia ID: 2\nType: document\nKeywords: excerpt-audit\nSource authority: local",
+    "suggested_prompt": "Use this media as source context for my next question.",
+    "runtime_backend": "local",
+    "source_selector_state": "local",
+    "metadata": {
+      "media_id": "2",
+      "media_title": "Excerpt media DarkCompact",
+      "media_type": "document",
+      "source_authority": "local"
+    },
+    "evidence_bundle": {
+      "bundle_id": "2",
+      "query": "Use this media as source context for my next question.",
+      "source": "library",
+      "status": "available",
+      "metadata": {},
+      "references": [
+        {
+          "evidence_id": "S1",
+          "source_id": "2",
+          "source_type": "media",
+          "title": "Excerpt media DarkCompact",
+          "snippet": "Content excerpt:\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], \n\nMedia: Excerpt media DarkCompact\nMedia ID: 2\nType: document\nKeywords: excerpt-audit\nSource authority: local",
+          "authority_label": "local",
+          "source_owner": "local",
+          "status": "available",
+          "metadata": {},
+          "snippet_truncated": false,
+          "original_snippet_char_count": 626
+        }
+      ]
+    }
+  },
+  "context": "[S1] MEDIA \u2014 Excerpt media DarkCompact\nContent excerpt:\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], caf\u00e9.\nDarkCompact stored media: exact [text], \n\nMedia: Excerpt media DarkCompact\nMedia ID: 2\nType: document\nKeywords: excerpt-audit\nSource authority: local"
+}

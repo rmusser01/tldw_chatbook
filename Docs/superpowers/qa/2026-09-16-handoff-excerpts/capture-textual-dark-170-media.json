@@ -1,0 +1,40 @@
+{
+  "payload": {
+    "target_id": "1",
+    "item_type": "media",
+    "source_id": "1",
+    "snippet": "Content excerpt:\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exac\n\nMedia: Excerpt media DarkWide\nMedia ID: 1\nType: document\nKeywords: excerpt-audit\nSource authority: local",
+    "suggested_prompt": "Use this media as source context for my next question.",
+    "runtime_backend": "local",
+    "source_selector_state": "local",
+    "metadata": {
+      "media_id": "1",
+      "media_title": "Excerpt media DarkWide",
+      "media_type": "document",
+      "source_authority": "local"
+    },
+    "evidence_bundle": {
+      "bundle_id": "1",
+      "query": "Use this media as source context for my next question.",
+      "source": "library",
+      "status": "available",
+      "metadata": {},
+      "references": [
+        {
+          "evidence_id": "S1",
+          "source_id": "1",
+          "source_type": "media",
+          "title": "Excerpt media DarkWide",
+          "snippet": "Content excerpt:\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exac\n\nMedia: Excerpt media DarkWide\nMedia ID: 1\nType: document\nKeywords: excerpt-audit\nSource authority: local",
+          "authority_label": "local",
+          "source_owner": "local",
+          "status": "available",
+          "metadata": {},
+          "snippet_truncated": false,
+          "original_snippet_char_count": 623
+        }
+      ]
+    }
+  },
+  "context": "[S1] MEDIA \u2014 Excerpt media DarkWide\nContent excerpt:\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exact [text], caf\u00e9.\nDarkWide stored media: exac\n\nMedia: Excerpt media DarkWide\nMedia ID: 1\nType: document\nKeywords: excerpt-audit\nSource authority: local"
+}

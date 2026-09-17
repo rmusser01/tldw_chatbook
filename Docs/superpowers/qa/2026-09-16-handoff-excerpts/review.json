@@ -1,0 +1,10 @@
+{
+  "reviewer": "conversation_source_review",
+  "base_commit": "f09a7786d4",
+  "initial_finding": "Unbounded sender label could consume all 3000 characters before message text.",
+  "resolution": "Cap labels at 80 characters including an ellipsis; preserve later messages; expose truncation.",
+  "regression": "test_long_speaker_name_cannot_displace_the_actual_message_text failed before the repair and passed after it.",
+  "follow_up": "No new concrete production findings.",
+  "native_claim_review": "Assertions support native staging and direct send-time capture-helper qualification, not a completed send or provider generation.",
+  "review_execution": "Read-only diff and runner review; reviewer did not execute tests or launch app."
+}

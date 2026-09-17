@@ -254,6 +254,8 @@ LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
 LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH = 11
 LIBRARY_HUB_RECENT_LABEL_WIDTH = 32
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
+LIBRARY_CONVERSATION_HANDOFF_EXCERPT_CHARS = 3_000
+LIBRARY_CONVERSATION_HANDOFF_SENDER_CHARS = 80
 # `_refresh_library_rag_results_widgets` tears down every direct child of
 # `#library-rag-results` NOT in this set, then remounts fresh ones from
 # `library_rag_results_body_children` -- the same function `compose()`

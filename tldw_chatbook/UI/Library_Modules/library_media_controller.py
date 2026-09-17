@@ -1844,7 +1844,15 @@ class LibraryMediaController:
         content = viewer.content
         excerpt = content[:LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS]
         body_truncated = len(content) > LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS
-        body_lines = [f"Media: {title}", f"Media ID: {media_id}"]
+        # Evidence is capped again in Console; keep stored text ahead of
+        # potentially long titles/keywords so metadata cannot consume its budget.
+        body_lines = [
+            "Content excerpt:",
+            excerpt if excerpt else "No stored content.",
+            "",
+            f"Media: {title}",
+            f"Media ID: {media_id}",
+        ]
         body_lines.extend(
             line
             for line in viewer.metadata_lines
@@ -1853,9 +1861,6 @@ class LibraryMediaController:
         body_lines.append(
             f"Source authority: {'server' if external_detail else 'local'}"
         )
-        body_lines.append("")
-        body_lines.append("Content excerpt:")
-        body_lines.append(excerpt if excerpt else "No stored content.")
         body = "\n".join(body_lines)
         return ChatHandoffPayload(
             source="library",
