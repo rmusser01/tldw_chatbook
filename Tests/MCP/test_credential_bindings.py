@@ -537,3 +537,206 @@ def test_old_schema_never_imports_credential_authority(tmp_path, version):
     with pytest.raises(LocalMCPStoreLoadError):
         LocalMCPStore(path).load()
     assert path.read_text() == original
+
+
+@pytest.fixture
+def schema2_store_payload(tmp_path):
+    """Genuine public-store output, with only the schema-3 additions removed."""
+    import json
+
+    from tldw_chatbook.MCP.local_store import (
+        LocalApprovalRequest,
+        LocalExternalMCPProfile,
+        LocalGovernanceRule,
+        LocalMCPStore,
+    )
+
+    producer = LocalMCPStore(tmp_path / "producer.json")
+    producer.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="kept",
+            command="python",
+            args=("-m", "demo"),
+            env_placeholders={"API_KEY": "${API_KEY}"},
+        )
+    )
+    producer.save_governance_rule(
+        LocalGovernanceRule(rule_id="deny", capability_id="tool:write", decision="deny")
+    )
+    producer.save_approval_request(
+        LocalApprovalRequest(
+            request_id="request",
+            action_name="tool:write",
+            resolved_action_id="write",
+            payload={"path": "/reviewed/path"},
+            payload_fingerprint="reviewed-fingerprint",
+        )
+    )
+    producer.record_runtime_activity(
+        {
+            "activity_id": "activity",
+            "action_name": "tool:write",
+            "target": "kept",
+            "ok": False,
+            "blocked": True,
+        }
+    )
+    producer.save_discovery_snapshot(
+        "kept",
+        {
+            "tools": [{"name": "write", "inputSchema": {"type": "object"}}],
+            "resources": [],
+            "prompts": [],
+        },
+    )
+    producer.save_profile_runtime_state(
+        "kept",
+        {
+            "last_action": "connect",
+            "ok": False,
+            "last_error": "review-required",
+            "last_ok_at": None,
+        },
+    )
+    payload = json.loads(producer.path.read_text())
+    payload["schema_version"] = 2
+    for profile in payload["profiles"]:
+        profile.pop("credential_reference")
+        profile.pop("credential_generation")
+    return payload
+
+
+def test_schema2_complete_public_store_migrates_and_reopens_without_record_loss(
+    tmp_path, schema2_store_payload
+):
+    import json
+
+    from tldw_chatbook.MCP.local_store import LocalMCPStore
+
+    path = tmp_path / "complete.json"
+    path.write_text(json.dumps(schema2_store_payload))
+    migrated = LocalMCPStore(path).load()
+    assert migrated.profiles[0].profile_id == "kept"
+    assert migrated.profiles[0].credential_reference is None
+    assert migrated.profiles[0].credential_generation is None
+    assert migrated.governance_rules[0].decision == "deny"
+    assert migrated.approval_requests[0].payload == {"path": "/reviewed/path"}
+    assert migrated.runtime_activity[0].blocked is True
+    assert migrated.discovery_snapshots == schema2_store_payload["discovery_snapshots"]
+    assert (
+        migrated.profile_runtime_state == schema2_store_payload["profile_runtime_state"]
+    )
+    stored = path.read_bytes()
+    expected = dict(schema2_store_payload)
+    expected["schema_version"] = 3
+    expected["profiles"][0].update(
+        credential_reference=None, credential_generation=None
+    )
+    expected["updated_at"] = json.loads(stored)["updated_at"]
+    assert json.loads(stored) == expected
+    assert LocalMCPStore(path).load() == migrated
+    assert path.read_bytes() == stored
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize(
+    "collection,malformed",
+    [
+        ("profiles", 42),
+        ("profiles", None),
+        ("profiles", []),
+        ("profiles", {}),
+        ("profiles", {"profile_id": "missing-command"}),
+        ("governance_rules", 42),
+        ("governance_rules", None),
+        ("governance_rules", []),
+        ("governance_rules", {}),
+        ("governance_rules", {"rule_id": "lost-deny", "capability_id": "tool:write"}),
+        ("approval_requests", 42),
+        ("approval_requests", None),
+        ("approval_requests", []),
+        ("approval_requests", {}),
+        (
+            "approval_requests",
+            {"request_id": "lost-request", "action_name": "tool:write"},
+        ),
+        ("runtime_activity", 42),
+        ("runtime_activity", None),
+        ("runtime_activity", []),
+        ("runtime_activity", {}),
+        ("runtime_activity", {"activity_id": "lost-activity"}),
+    ],
+)
+def test_migration_refuses_filtered_list_records_without_touching_source(
+    tmp_path, schema2_store_payload, version, collection, malformed
+):
+    import json
+
+    from tldw_chatbook.MCP.local_store import LocalMCPStore, LocalMCPStoreLoadError
+
+    payload = schema2_store_payload
+    payload["schema_version"] = version
+    payload[collection].append(malformed)
+    path = tmp_path / "invalid.json"
+    original = (json.dumps(payload, indent=3) + "\n").encode()
+    path.write_bytes(original)
+    with pytest.raises(LocalMCPStoreLoadError, match="mcp_store_invalid"):
+        LocalMCPStore(path).load()
+    assert path.read_bytes() == original
+    assert not path.with_suffix(".json.tmp").exists()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("collection", ["discovery_snapshots", "profile_runtime_state"])
+@pytest.mark.parametrize(
+    "name,value",
+    [("invalid", 42), ("invalid", None), ("invalid", []), ("", {}), ("  ", {})],
+)
+def test_migration_refuses_filtered_dictionary_records_without_touching_source(
+    tmp_path, schema2_store_payload, version, collection, name, value
+):
+    import json
+
+    from tldw_chatbook.MCP.local_store import LocalMCPStore, LocalMCPStoreLoadError
+
+    payload = schema2_store_payload
+    payload["schema_version"] = version
+    payload[collection][name] = value
+    path = tmp_path / "invalid.json"
+    original = (json.dumps(payload, indent=3) + "\n").encode()
+    path.write_bytes(original)
+    with pytest.raises(LocalMCPStoreLoadError, match="mcp_store_invalid"):
+        LocalMCPStore(path).load()
+    assert path.read_bytes() == original
+    assert not path.with_suffix(".json.tmp").exists()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("reserved_id", ["__local__", "__virtual_cli__"])
+def test_migration_preserves_explicit_reserved_id_quarantine(
+    tmp_path, schema2_store_payload, version, reserved_id
+):
+    import json
+
+    from tldw_chatbook.MCP.local_store import LocalMCPStore
+
+    payload = schema2_store_payload
+    payload["schema_version"] = version
+    payload["profiles"].append({"profile_id": reserved_id, "command": "spoof"})
+    payload["discovery_snapshots"][reserved_id] = {"tools": [{"name": "spoof"}]}
+    payload["profile_runtime_state"][reserved_id] = {"ok": True}
+    path = tmp_path / "quarantined.json"
+    path.write_text(json.dumps(payload))
+    state = LocalMCPStore(path).load()
+    assert [profile.profile_id for profile in state.profiles] == ["kept"]
+    assert set(state.discovery_snapshots) == {"kept"}
+    assert set(state.profile_runtime_state) == {"kept"}
+    assert (
+        len(state.governance_rules)
+        == len(state.approval_requests)
+        == len(state.runtime_activity)
+        == 1
+    )
+    stored = path.read_bytes()
+    assert LocalMCPStore(path).load() == state
+    assert path.read_bytes() == stored

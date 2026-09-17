@@ -900,9 +900,10 @@ class LocalMCPStore:
             raise LocalMCPStoreLoadError(
                 self.path, ValueError("mcp_store_invalid")
             ) from exc
-        if version == 1 and self.path.exists():
-            # Only recognized legacy records migrate; never rewrite malformed state.
-            if any(
+        if version < 3 and self.path.exists():
+            # Migration rewrites every collection. Refuse source records that the
+            # tolerant reader would discard, except the reserved-ID quarantine.
+            if version == 1 and any(
                 not isinstance(item, Mapping)
                 or not item.get("profile_id")
                 or not item.get("command")
@@ -917,29 +918,34 @@ class LocalMCPStore:
                 ("runtime_activity", state.runtime_activity),
             ):
                 source = payload.get(key, [])
+                if any(not isinstance(item, Mapping) for item in source):
+                    raise LocalMCPStoreLoadError(
+                        self.path, ValueError("mcp_store_invalid")
+                    )
                 if key == "profiles":
-                    # Preserve the existing reserved-ID quarantine during migration.
                     source = [
                         item
                         for item in source
-                        if item.get("profile_id") not in _RESERVED_EXTERNAL_PROFILE_IDS
+                        if _text(item.get("profile_id"))
+                        not in _RESERVED_EXTERNAL_PROFILE_IDS
                     ]
                 if len(source) != len(records):
                     raise LocalMCPStoreLoadError(
                         self.path, ValueError("mcp_store_invalid")
                     )
-            migrated = {**payload, **state.to_dict()}
-            self._write_payload(migrated)
-        if version == 2 and self.path.exists():
-            if len(state.profiles) != len(
-                [
-                    item
-                    for item in payload.get("profiles", [])
-                    if isinstance(item, Mapping)
-                    and item.get("profile_id") not in _RESERVED_EXTERNAL_PROFILE_IDS
-                ]
+            for key, records in (
+                ("discovery_snapshots", state.discovery_snapshots),
+                ("profile_runtime_state", state.profile_runtime_state),
             ):
-                raise LocalMCPStoreLoadError(self.path, ValueError("mcp_store_invalid"))
+                source = {
+                    name: record
+                    for name, record in payload.get(key, {}).items()
+                    if _text(name) not in _RESERVED_EXTERNAL_PROFILE_IDS
+                }
+                if source != records:
+                    raise LocalMCPStoreLoadError(
+                        self.path, ValueError("mcp_store_invalid")
+                    )
             self._write_payload({**payload, **state.to_dict()})
         return state
 
