@@ -1,11 +1,11 @@
 ---
 id: TASK-32747
 title: Validate portable MCP headers and URL delimiters
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-17 18:24'
-updated_date: '2026-09-17 18:26'
+updated_date: '2026-09-17 18:37'
 labels:
   - plugins
   - compatibility
@@ -31,11 +31,11 @@ Implements the accepted portable-core contract in backlog/decisions/162-managed-
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Inspection marks a remote MCP entry invalid for case-insensitive duplicate header names, forbidden ASCII controls or DEL in values, and leading/trailing SP or HTAB. Empty values and visible-bounded values with interior SP/HTAB stay valid and retain their exact text.
-- [ ] #2 Remote URLs containing userinfo or fragment delimiters are invalid even when those components are empty. Valid URLs with literal `@` in the path or an encoded `#` in a path/query remain valid when they satisfy existing host policy.
-- [ ] #3 Each invalid entry leaves a valid remote sibling and a valid portable skill inspectable. The repair preserves fixed discovery locations, unknown-field behavior, dependency guards and existing package safety boundaries.
-- [ ] #4 Authoring/qualification documentation cites the versioned portable contract and distinguishes stricter acquisition/HTTP-loopback policies, optional legacy SSE, and unqualified runtime/Unicode-to-wire behavior from parser evidence. The repair does not silently trim, expand or re-encode headers.
-- [ ] #5 Actual package-inspection RED/control tests and targeted native-inspection and package-file regressions pass, with changed-file static checks and an independent review. No full-suite or live external-server qualification is inferred.
+- [x] #1 Inspection marks a remote MCP entry invalid for case-insensitive duplicate header names, forbidden ASCII controls or DEL in values, and leading/trailing SP or HTAB. Empty values and visible-bounded values with interior SP/HTAB stay valid and retain their exact text.
+- [x] #2 Remote URLs containing userinfo or fragment delimiters are invalid even when those components are empty. Valid URLs with literal `@` in the path or an encoded `#` in a path/query remain valid when they satisfy existing host policy.
+- [x] #3 Each invalid entry leaves a valid remote sibling and a valid portable skill inspectable. The repair preserves fixed discovery locations, unknown-field behavior, dependency guards and existing package safety boundaries.
+- [x] #4 Authoring/qualification documentation cites the versioned portable contract and distinguishes stricter acquisition/HTTP-loopback policies, optional legacy SSE, and unqualified runtime/Unicode-to-wire behavior from parser evidence. The repair does not silently trim, expand or re-encode headers.
+- [x] #5 Actual package-inspection RED/control tests and targeted native-inspection and package-file regressions pass, with changed-file static checks and an independent review. No full-suite or live external-server qualification is inferred.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,3 +52,13 @@ Reason: Direct correction of the accepted portable-core parser contract, with no
 5. Format before final qualification. Run exactly Tests/Plugins/test_native_inspection.py and Tests/Plugins/test_package_files.py using the worktree interpreter/private profile, repository bootstrap, null keyring and network refusal. Capture exact interpreter/source/data provenance, actual RED/GREEN commands/output, before/after/current source/test/doc hashes, syntax/Ruff/Black baseline parity and whitespace. No full sweep, fixture refetch, external server or clean-resource claim inferred from warning absence.
 6. Self-review and report to task-26-report.md with changed paths, exact commands/results, compatibility limits and M2/M3/M4 handoff. Controller verifies, commits exact paths, obtains independent spec/quality review, resolves findings, then uses CLI to check all ACs, add notes and mark Done. Do not mutate Git or Backlog yourself; no helper/reviewer subagents.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Corrected remote MCP inspection under the accepted Agent Plugins 1.0.0 contract (ADR162). Headers now reject case-insensitive duplicates, prohibited ASCII controls/DEL and edge SP/HTAB while preserving valid strings. URLs reject userinfo and fragment delimiters even when empty; valid path @ and encoded # remain allowed. Each invalid entry leaves valid remote servers and skills inspectable. Existing authoring documentation states the stricter HTTP/acquisition policy, legacy-SSE distinction and runtime qualification limits.
+
+Changed Plugins/schemas.py, Tests/Plugins/test_native_inspection.py and Plugins/README.md. The delivery plan records this bounded follow-up between H5 and M1. Actual inspect_package RED reproduced11invalid cases with2passing controls; final targeted native-inspection/package-file run92passed in2.92s. Syntax, Ruff, Black(py312) and whitespace pass. Three final changed hashes,11unchanged qualification paths,14exactBASEsnapshots and private-runner/output hashes were verified; a later README wording clarification changed no runtime/test bytes. No full suite or external service execution.
+
+Independent review approved spec and quality with no findings. Its unchanged-code evidence boundary is covered by the retained baseline hashes and existing regression cases. No new ADR was required; ADR162 remains governing. Arbitrary JSON Unicode header encoding and real transport behavior remain M2/M3/M4 qualification work. Implementation commit d1632600ab7068f625c06a88e1287f5fb60442fa. No new generalizable incident required a lessons entry.
+<!-- SECTION:NOTES:END -->
