@@ -13724,3 +13724,28 @@ real durable submit/cache hydration path and the real repository guard. A helper
 that appends already-hydrated rows or accepts a fabricated compaction result
 cannot expose this boundary. Preserve the refusal and successful control rather
 than changing the fixture to bypass authoritative ancestry checks.
+
+
+## A Future timeout does not prove the service has not published its audit
+
+**TASK-32681 / M1 review I1, 2026-09-17.** The controlled stdio/client/service/
+provider run passed399 targeted tests, but a focused review probe delayed the
+service immediately after its real audit append and before cross-thread Future
+publication. One new tool invocation grew the log from one control row to three:
+`blocked`, `success`, `success`. The first two rows described the same call.
+The provider correctly returned uncertain completion, yet its fallback assumed
+the timeout meant the service had not audited and wrote a contradictory row.
+
+The repaired owner shares one per-invocation publication claim before audit I/O.
+Actual-path tests in `Tests/MCP/test_typed_tool_results.py` stall both sides of
+publication, exercise bridge-first and service-first orderings, and cover write/
+thread-start failure and bounded fallback saturation. Test-owned writers are
+released and joined before profile teardown. Final targeted coverage passed266
+tests; the original and final counts overlap. R59 preserves best-effort audit
+semantics: claiming publication is not proof that a row reached disk.
+
+When a synchronous caller times out while an async owner is completing, test
+the publication window itself. Future cancellation acknowledges the bridge
+handle; it does not prove the operation, cleanup or audit never happened.
+Coordinate publication before I/O, preserve uncertainty, and keep slow logging
+out of caller waits without adding unbounded background work.

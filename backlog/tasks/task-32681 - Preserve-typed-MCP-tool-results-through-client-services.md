@@ -1,11 +1,11 @@
 ---
 id: TASK-32681
 title: Preserve typed MCP tool results through client services
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:26'
-updated_date: '2026-09-17 19:48'
+updated_date: '2026-09-17 20:00'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Stdio/client/service tool results retain content, structuredContent, isError and metadata before any display projection, with separate transport-failure identity.
-- [ ] #2 Malformed error flags, serialization overflow and tool errors cannot turn into successful hook effects.
-- [ ] #3 Existing non-hook consumers retain compatible presentation through an explicit projection while typed consumers receive the complete result.
-- [ ] #4 Production client and service tests cover structured-only, text-only, mirrored, error-bearing and oversized results without executing third-party plugins.
+- [x] #1 Stdio/client/service tool results retain content, structuredContent, isError and metadata before any display projection, with separate transport-failure identity.
+- [x] #2 Malformed error flags, serialization overflow and tool errors cannot turn into successful hook effects.
+- [x] #3 Existing non-hook consumers retain compatible presentation through an explicit projection while typed consumers receive the complete result.
+- [x] #4 Production client and service tests cover structured-only, text-only, mirrored, error-bearing and oversized results without executing third-party plugins.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,4 +60,18 @@ Verification handoff from H2 review F3: any child bootstrap/network/profile fixt
 12. Apply controller R59 from m1-audit-publication-ruling.md before Fix1 runtime edits. Keep one atomic per-invocation audit publication claim and cap existing unified-service bridge fallback at one in-flight nonqueued metadata-only background append; do not join or hold locks across I/O. Best-effort saturation/start/write failures never change execution authority, duplicate audit publication, fabricate blocked certainty or trigger replay. Preserve actual service/direct/legacy contracts and failed-submit coverage. Qualify both audit-publication races, stalled/failing fallback, saturation and capacity reuse in the already authorized typed-result tests, with owned thread cleanup. Root records the contract in the existing specs/ADR163 before code; no additional source or schema paths.
 
 13. Fix1 covering run exposed the prior expectation in Tests/MCP/test_control_plane_tool_execute.py::test_agent_bridge_outer_timeout_has_one_bridge_owned_audit_row: it reads the best-effort append synchronously and labels an already dispatched uncertain call blocked. Under recorded R59, authorize only this scenario to capture and join its actual owned fallback writer before reading the log, preserve the existing builtin/service/provider timeout path and one-row/initiator/decision assertions, and assert ToolResult uncertainty plus truthful error/completion_uncertain audit metadata. No scenario removal or fixture-wide rewriting. This path is already in the 18-file Fix1 BASE/freeze; include its changed-file static parity. Preserve failed covering/static output, correct the three new broad best-effort exception handlers with justified diagnostics policy, refreeze and rerun the same five covering files.
+
+14. After accepted independent Fix1 review, append the factual I1 Future-publication race incident to backlog/docs/lessons-testing-evidence.md, with the actual duplicate-row probe, committed controls and best-effort limitation. This evidence-only documentation closeout adds no runtime/test behavior. Complete all four ACs and Implementation Notes after preserving the five downstream qualification boundaries and deferred bootstrap-noise observation; controller verifies and commits only the task and lesson metadata.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Preserved complete typed MCP results through the existing dependency-free stdio/client/local/unified/provider path, with strict raw JSON decoding, bounded exact original result bytes, private host dispatch provenance and explicit legacy display projection. Tool/transport errors remain separate from successful structured effects. R58 extends the existing owner; R59 coordinates bridge/service audit publication once and bounds fallback logging to one nonqueued metadata writer per service. A stalled writer may persist and best-effort rows may be lost; uncertainty never authorizes replay.
+
+Validation: initial six-file coverage399 passed15.28s; final Fix1 five-file coverage266 passed14.06s, exit0, no skips. Counts overlap. Eighteen final hashes/BASE snapshots and unchanged runner verified; eight Python static comparisons show no added Ruff/Black issues, new module/test clean. Independent initial review found I1 audit race; fresh scoped Fix1 review accepted I1 with zero new Critical, Important or Minor findings. Initial implementation4f3a170674, Fix19de0ab3ef2.
+
+ADR162/163 apply; R58/R59 contracts are recorded in both specs and ADR163. Optional mcp_unified.gateway legacy-server node remains unqualified because its dependency is absent. HTTP/authentication, H6 effect acceptance, real H3/MCP combined integration and other-platform qualification remain the explicit later-task gates. Bootstrap output noise remains final-review triage.
+
+The factual race/test-qualification incident is recorded in backlog/docs/lessons-testing-evidence.md. No runtime or test edits followed the final freeze/review.
+<!-- SECTION:NOTES:END -->
