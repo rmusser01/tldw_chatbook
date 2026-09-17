@@ -4020,6 +4020,23 @@ events or barriers in a bounded child process, and enforce one documented
 global lock order. Focused green runs alone do not exercise the conflicting
 owners under representative load.
 
+
+**TASK-32679 / H4 Fix1, 2026-09-16.** The first bounded race probe acquired
+the runtime's nonreentrant map lock, then called the real getter that acquired
+that lock again. On the unfixed code, the intended earlier inversion timed out
+first and masked this fixture defect. Once production lock ordering was fixed,
+two exploratory test processes self-deadlocked and were explicitly aborted to
+preserve their thread stacks. Neither run counts as passing qualification.
+Wrapping the actual lock once, leaving the getter unchanged, corrected the
+probe. Running that corrected probe with the exact pre-fix seal method still
+produced the intended **1 failed, 1 passed** without hanging; the fixed method
+produced **2 passed**, and the final seven-file run passed **295 tests**.
+
+A bounded probe must bound the actual acquisition rather than recursively
+acquire a nonreentrant lock around an already-locking method. Validate the
+instrumented successful path too, and prove both the old-code failure and
+fixed-code success terminate. Keep diagnostic aborts separate from final test
+evidence even when provisional output filenames contain "green".
 ## A completed Textual product contract can still be cancelled by test-loop teardown
 
 **TASK-20009, 2026-08-21.** The real-provider three-turn Console benchmark
