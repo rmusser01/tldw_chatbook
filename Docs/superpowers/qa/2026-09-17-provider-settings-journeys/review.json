@@ -1,0 +1,23 @@
+{
+  "reviewer": "/root/rag_heading_review",
+  "base": "cb263af0d5",
+  "findings": [
+    {
+      "finding": "Directly focusing Model and modal choices did not prove keyboard reachability.",
+      "resolution": "Both test and native runner now reach these controls with Tab, asserting actual focus and compositor visibility."
+    },
+    {
+      "finding": "Mutation checks omitted delete_keys.",
+      "resolution": "Test now asserts complete section values and allowed deletions. Empty deletion map was rejected because the existing credential-source contract intentionally removes inactive credential keys. Native runner checks full parsed config equality against the intended mutation."
+    },
+    {
+      "finding": "Native runner assumed seed values without a clear preflight.",
+      "resolution": "Explicit seed provider/model/endpoint validation before app construction."
+    },
+    {
+      "finding": "Re-entry should not be presented as restart verification.",
+      "resolution": "Documentation qualifies same-process navigation; disk persistence is directly read but process restart is not tested."
+    }
+  ],
+  "production_findings": []
+}

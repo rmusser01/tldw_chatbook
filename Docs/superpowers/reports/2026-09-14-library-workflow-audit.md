@@ -1122,3 +1122,27 @@ technical-copy assertion, static checks and review are recorded in the
 Next bounded review: Providers & Models keyboard editing, save/cancel and return
 feedback. This closes the recovery-navigation slice, not the whole Settings
 surface or application review.
+
+## Provider editing, Revert and Save — TASK-32724
+
+The existing Providers & Models staged form passes the
+[bounded keyboard review](../qa/2026-09-17-provider-settings-journeys/README.md).
+No production repair was required. Four new production-CSS cases cover Tab
+access, typing, Revert cancellation and confirmation, Save and same-process
+return. Independent review tightened the traversal and exact mutation/deletion
+assertions. The targeted selection passed 228 tests; the four strengthened cases
+were rechecked successfully afterward (overlapping coverage).
+
+Four private native journeys across dark/light at 170×48 and 80×24 wrote real
+configuration and compared the complete parsed file with the intended provider
+mutation. Drafts survived Console visits; discarded edits restored saved values;
+saved fields returned cleanly. Eight captures were inspected. Endpoint testing
+was never invoked; live connectivity and restart reload remain outside scope.
+Eleven private databases, default-file fingerprints and normal shutdown passed
+the lifecycle checks.
+
+The review began as 32721; closeout caught a concurrent 32721–32723 allocation
+and moved only this uncommitted workstream to 32724. Native scratch paths retain
+their original numbers. Existing ADR-012/033/031/150/161 govern this test/doc-only
+change. Next bounded review: provider switching and saved-default selection,
+including the existing TASK-214 report. No full suite, push or merge ran.

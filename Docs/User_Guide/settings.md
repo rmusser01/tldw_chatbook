@@ -202,6 +202,13 @@ reports "reachable", "reachable (N models)", or a named failure ("timeout",
 "connection refused", "HTTP \<status\>"). A successful **Save** deliberately
 clears the previous verdict — run **Test Provider** again afterwards.
 
+Model and Endpoint edits stay as a draft when you visit another destination and
+return to Settings. Use **Tab** to move between fields. While typing, press
+**Esc**, then **s** to save or **r** to revert. Revert asks first: **Keep editing**
+retains the draft; **Discard changes** restores the saved values. Saving writes
+the provider settings locally and clears the unsaved marker; it does not test
+the endpoint. Reopening this page shows the saved model and endpoint.
+
 #### QwenCloud
 
 Choose **QwenCloud** to reveal its provider-scoped **API mode** field. The two
