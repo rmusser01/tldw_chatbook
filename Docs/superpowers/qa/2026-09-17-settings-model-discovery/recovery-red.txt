@@ -1,0 +1,34 @@
+..FFF                                                                    [100%]
+=================================== FAILURES ===================================
+_______ test_discovery_operations_report_failure_and_allow_retry[clear] ________
+Tests/UI/test_settings_model_discovery_journeys.py:215: in test_discovery_operations_report_failure_and_allow_retry
+    assert "OSError" in _status(screen)
+E   AssertionError: assert 'OSError' in 'Discovered model cache cleared.'
+E    +  where 'Discovered model cache cleared.' = _status(SettingsScreen(classes='shell-header-compact'))
+____________ test_late_clear_cannot_overwrite_a_changed_form[False] ____________
+Tests/UI/test_settings_model_discovery_journeys.py:254: in test_late_clear_cannot_overwrite_a_changed_form
+    assert _status(screen) == expected_status
+E   AssertionError: assert 'Discovered m...ache cleared.' == 'Discover mod...ured endpoint'
+E
+E     - Discover models from configured endpoint
+E     + Discovered model cache cleared.
+____________ test_late_clear_cannot_overwrite_a_changed_form[True] _____________
+Tests/UI/test_settings_model_discovery_journeys.py:254: in test_late_clear_cannot_overwrite_a_changed_form
+    assert _status(screen) == expected_status
+E   AssertionError: assert 'Discovered m...ache cleared.' == 'Discover mod...ured endpoint'
+E
+E     - Discover models from configured endpoint
+E     + Discovered model cache cleared.
+============================= slowest 25 durations =============================
+1.94s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_operations_report_failure_and_allow_retry[discover]
+1.90s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_clear_cannot_overwrite_a_changed_form[False]
+1.76s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_clear_cannot_overwrite_a_changed_form[True]
+1.64s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_operations_report_failure_and_allow_retry[save]
+1.56s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_operations_report_failure_and_allow_retry[clear]
+
+(10 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_operations_report_failure_and_allow_retry[clear]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_clear_cannot_overwrite_a_changed_form[False]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_clear_cannot_overwrite_a_changed_form[True]
+3 failed, 2 passed, 12 deselected in 11.15s

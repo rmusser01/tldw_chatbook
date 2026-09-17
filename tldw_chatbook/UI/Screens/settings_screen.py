@@ -2875,6 +2875,7 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
+        self._model_discovery_revision = 0
         # ADR-146 task-7 custom endpoints panel: the entry slug (if any)
         # whose inline Rename/Edit form is open, the slug whose delete is
         # blocked awaiting the Detach-references confirmation, and the
@@ -13641,10 +13642,13 @@ class SettingsScreen(BaseAppScreen):
         self,
         status: str = MODEL_DISCOVERY_IDLE_COPY,
     ) -> None:
+        # A monotonic revision rejects late work even after an A -> B -> A edit.
+        self._model_discovery_revision += 1
         self._model_discovery_status = status
         self._model_discovery_models = ()
         self._model_discovery_selected_model_ids = set()
         self._refresh_model_discovery_widgets()
+        self._refresh_model_field_suggester()
 
     def _discovery_status_from_error(self, result: object) -> str:
         error = getattr(result, "error", None)
@@ -13703,8 +13707,9 @@ class SettingsScreen(BaseAppScreen):
             discovered_list = self.query_one(
                 "#settings-discovered-models-list", SelectionList
             )
-            discovered_list.clear_options()
-            discovered_list.add_options(self._model_discovery_selection_options())
+            with discovered_list.prevent(SelectionList.SelectedChanged):
+                discovered_list.clear_options()
+                discovered_list.add_options(self._model_discovery_selection_options())
             discovered_list.disabled = not self._model_discovery_models
         except QueryError:
             pass
@@ -13741,19 +13746,14 @@ class SettingsScreen(BaseAppScreen):
             self.app_instance, "llm_provider_catalog_scope_service", None
         )
         if not provider_key or scope_service is None:
-            self._model_discovery_status = (
+            self._reset_provider_model_discovery_state(
                 "Provider is required before discovering models."
             )
-            self._model_discovery_models = ()
-            self._model_discovery_selected_model_ids = set()
-            self._refresh_model_discovery_widgets()
             return
 
         staged_settings = self._provider_discovery_staged_settings(provider)
-        self._model_discovery_status = "Model discovery: running"
-        self._model_discovery_models = ()
-        self._model_discovery_selected_model_ids = set()
-        self._refresh_model_discovery_widgets()
+        self._reset_provider_model_discovery_state("Model discovery: running")
+        revision = self._model_discovery_revision
         try:
             result = await scope_service.discover_models(
                 mode="local",
@@ -13761,6 +13761,8 @@ class SettingsScreen(BaseAppScreen):
                 staged_settings=staged_settings,
             )
         except Exception as exc:
+            if revision != self._model_discovery_revision:
+                return
             # Type name ONLY -- no traceback (the log file sink runs with
             # diagnose=True, which would dump frame locals: api_key, headers)
             # and no message text either: an httpx error's str() can embed
@@ -13769,15 +13771,12 @@ class SettingsScreen(BaseAppScreen):
             # message would write raw credentials into the on-disk log
             # (TASK-23108 review round; sink-level redaction is the tracked
             # follow-up).
-            logger.warning(
-                f"Provider model discovery failed: {type(exc).__name__}"
-            )
+            logger.warning(f"Provider model discovery failed: {type(exc).__name__}")
             self._model_discovery_status = failure_status_text(
                 "Model discovery failed",
                 exc,
                 next_step=(
-                    "Check the provider endpoint and API key, then run "
-                    "Discover again."
+                    "Check the provider endpoint and API key, then run Discover again."
                 ),
             )
             self._model_discovery_models = ()
@@ -13785,6 +13784,8 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_model_discovery_widgets()
             return
 
+        if revision != self._model_discovery_revision:
+            return
         if str(getattr(result, "status", "")) == "success":
             models = tuple(getattr(result, "models", ()) or ())
             provider_list_key = str(
@@ -13902,6 +13903,8 @@ class SettingsScreen(BaseAppScreen):
             return
 
         self._model_discovery_selected_model_ids = set(selected_model_ids)
+        self._model_discovery_revision += 1
+        revision = self._model_discovery_revision
         self._model_discovery_status = "Saving selected discovered models..."
         self._refresh_model_discovery_widgets()
         try:
@@ -13911,12 +13914,13 @@ class SettingsScreen(BaseAppScreen):
                 model_ids=selected_model_ids,
             )
         except Exception as exc:
+            if revision != self._model_discovery_revision:
+                return
             # Type name only -- logger.exception's traceback tail would print
             # the raw exception message (and diagnose=True would dump frame
             # locals); see the discovery-run branch above (TASK-23108 review).
             logger.warning(
-                "Provider model discovery persistence failed: "
-                f"{type(exc).__name__}"
+                f"Provider model discovery persistence failed: {type(exc).__name__}"
             )
             self._model_discovery_status = failure_status_text(
                 "Could not save the discovered models",
@@ -13939,6 +13943,9 @@ class SettingsScreen(BaseAppScreen):
         if status == "saved":
             provider_list_key = getattr(result, "provider_list_key", None)
             self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+            # The save belongs to its original provider even if the form moved.
+            if revision != self._model_discovery_revision:
+                return
             # TASK-369: recognition over recall — offer the saved model for
             # activation instead of leaving an empty Model field the user must
             # retype from memory of a name the cleared discovery list no longer
@@ -13952,6 +13959,8 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify("Discovered models saved.", severity="information")
             return
 
+        if revision != self._model_discovery_revision:
+            return
         if status == "ambiguous_provider_key":
             self._model_discovery_status = MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
         else:
@@ -13971,14 +13980,30 @@ class SettingsScreen(BaseAppScreen):
         scope_service = getattr(
             self.app_instance, "llm_provider_catalog_scope_service", None
         )
+        self._model_discovery_revision += 1
+        revision = self._model_discovery_revision
         if provider_key and scope_service is not None:
             try:
                 await scope_service.clear_discovered_models(
                     mode="local",
                     provider=provider_key,
                 )
-            except Exception:
-                logger.exception("Provider discovered model cache clear failed")
+            except Exception as exc:  # noqa: BLE001 - recover without logging secrets
+                if revision != self._model_discovery_revision:
+                    return
+                logger.warning(
+                    "Provider discovered model cache clear failed: "
+                    f"{type(exc).__name__}"
+                )
+                self._model_discovery_status = failure_status_text(
+                    "Could not clear discovered models",
+                    exc,
+                    next_step="Try Clear again; your discovered models are still shown.",
+                )
+                self._refresh_model_discovery_widgets()
+                return
+        if revision != self._model_discovery_revision:
+            return
         self._reset_provider_model_discovery_state("Discovered model cache cleared.")
 
     def _persist_model_catalog_settings(self) -> None:
@@ -26630,6 +26655,13 @@ class SettingsScreen(BaseAppScreen):
             == self._provider_endpoint_value(self._navigation_provider)
         ):
             return
+        if (
+            event.value.strip()
+            == str(
+                self._provider_setting_values_mapping().get("endpoint") or ""
+            ).strip()
+        ):
+            return
         self._stage_provider_value("endpoint", event.value.strip())
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
@@ -26713,6 +26745,13 @@ class SettingsScreen(BaseAppScreen):
             == self._provider_credential_env_var(self._navigation_provider)
         ):
             return
+        if (
+            event.value.strip()
+            == str(
+                self._provider_setting_values_mapping().get("credential_env_var") or ""
+            ).strip()
+        ):
+            return
         self._stage_provider_value("credential_env_var", event.value.strip())
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
@@ -26732,6 +26771,11 @@ class SettingsScreen(BaseAppScreen):
         if queue and event.value == queue[0]:
             queue.pop(0)
             self._update_provider_dynamic_widgets()
+            return
+        if (
+            event.value.strip()
+            == str(self._provider_setting_values_mapping().get("api_key") or "").strip()
+        ):
             return
         self._stage_provider_value("api_key", event.value.strip())
         self._reset_provider_model_discovery_state()
@@ -27143,6 +27187,23 @@ class SettingsScreen(BaseAppScreen):
         if self._vllm_default_actions_fenced():
             return
         self._save_selected_discovered_provider_models_worker()
+
+    @on(SelectionList.SelectedChanged, "#settings-discovered-models-list")
+    def handle_discovered_model_selection_changed(
+        self, event: SelectionList.SelectedChanged
+    ) -> None:
+        event.stop()
+        try:
+            current_list = self.query_one(
+                "#settings-discovered-models-list", SelectionList
+            )
+        except QueryError:
+            return
+        # A replaced pane may still have queued selection messages.
+        if event.selection_list is current_list:
+            self._model_discovery_selected_model_ids = {
+                str(model_id) for model_id in current_list.selected
+            }
 
     @on(Button.Pressed, "#settings-clear-discovered-provider-models")
     def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:

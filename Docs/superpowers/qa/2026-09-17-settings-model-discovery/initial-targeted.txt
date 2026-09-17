@@ -1,0 +1,40 @@
+............................FF..                                         [100%]
+=================================== FAILURES ===================================
+__ test_model_discovery_crash_status_is_plain_language_without_raw_exception ___
+Tests/UI/test_settings_configuration_hub.py:10308: in test_model_discovery_crash_status_is_plain_language_without_raw_exception
+    assert "Logs (F8)" in status
+E   AssertionError: assert 'Logs (F8)' in 'Model discovery failed (RuntimeError). Check the provider endpoint and API key, then run Discover again. Details are in Logs (F3).'
+__________ test_discovered_model_save_crash_status_is_plain_language ___________
+Tests/UI/test_settings_configuration_hub.py:10328: in test_discovered_model_save_crash_status_is_plain_language
+    assert "Logs (F8)" in status
+E   AssertionError: assert 'Logs (F8)' in 'Could not save the discovered models (OSError). Try Save again; if it keeps failing, check that your config file is writable. Details are in Logs (F3).'
+============================= slowest 25 durations =============================
+20.25s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-light]
+20.01s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-dark]
+18.84s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-dark]
+18.83s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-light]
+1.93s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_saves_selected_runtime_models
+1.91s call     Tests/UI/test_settings_model_discovery_journeys.py::test_rebuild_keeps_selection_with_connection_drafts
+1.68s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_a_changed_form[endpoint_roundtrip-True]
+1.67s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_a_changed_form[provider-True]
+1.65s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_a_changed_form[endpoint_roundtrip-False]
+1.64s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-api_key]
+1.64s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_shows_ambiguous_provider_recovery
+1.64s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint_roundtrip]
+1.63s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_a_changed_form[provider-False]
+1.61s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_clear_cannot_overwrite_a_changed_form[False]
+1.61s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_clear_cannot_overwrite_a_changed_form[True]
+1.60s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-provider]
+1.59s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-credential_env]
+1.57s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint]
+1.57s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-credential_env]
+1.57s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-api_key]
+1.55s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint_roundtrip]
+1.49s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-provider]
+1.43s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint]
+1.34s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_operations_report_failure_and_allow_retry[save]
+1.33s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_operations_report_failure_and_allow_retry[clear]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_configuration_hub.py::test_model_discovery_crash_status_is_plain_language_without_raw_exception
+FAILED Tests/UI/test_settings_configuration_hub.py::test_discovered_model_save_crash_status_is_plain_language
+2 failed, 30 passed, 487 deselected in 123.97s (0:02:03)

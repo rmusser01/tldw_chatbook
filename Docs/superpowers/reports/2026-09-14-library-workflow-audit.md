@@ -1179,3 +1179,31 @@ The guide, original July residual and testing lesson now describe the verified
 behavior. Existing ADR-006/012/033/031/150/161 govern this routine repair; no new
 ADR is required. Next bounded review: model discovery, selection, Save selected
 and failure/retry feedback. No full suite, push or merge ran.
+
+
+## Model discovery selection and result ownership — TASK-32739
+
+The [bounded review](../qa/2026-09-17-settings-model-discovery/README.md) repairs
+checked rows lost on pane rebuild, unchanged connection-field echoes that reset
+results, late completions affecting a changed provider/endpoint, and Clear's
+false success after errors. Settings retains exact checked IDs and rejects stale
+presentation using a monotonic revision. Durable saves still update their
+original provider's catalog. Clear failure keeps selections available for retry;
+successful clearing also removes stale typeahead suggestions.
+
+All **176 distinct targeted checks** pass, including 24 new production-CSS cases.
+Two obsolete F8 expectations reproduced against the old method bodies were
+corrected to the existing F3 Logs shortcut. Lint debt did not increase, and the
+independent review found no remaining actionable issue in the bounded change.
+
+Four final private native dark/light wide/compact journeys pass with real HTTP
+503 recovery, exact-ID config saves, category-return selection and cache clearing.
+Eight captures were inspected. Eleven databases passed integrity checks, default
+files stayed unchanged and the app/server exited normally. Six model-listing GETs
+and zero generation requests occurred; external availability and generation are
+not qualified. Earlier fixture failures and their clean shutdowns are documented.
+
+The accumulated workstream was first pushed as draft PR #2704 against dev, then
+this review continued. The PR has integration conflicts; no merge or full suite
+ran. Existing ADR-002/020/031/150/161 apply. Next bounded review: automatic
+model-refresh controls and their persistence/failure feedback.

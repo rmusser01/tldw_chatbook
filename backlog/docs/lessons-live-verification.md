@@ -171,6 +171,13 @@ waiting only for completion misreported a ten-minute operation timeout. Wait for
 the control to accept keyboard input and separately bound operation admission;
 do not infer that a server request exists just because the harness sent a key.
 
+**TASK-32739, 2026-09-17.** The Settings discovery audit repeated this trap:
+its loopback 503 returned while Discover still had `-active`, and an immediate
+Enter retry sent no request. The corrected runner waits for that class to clear
+before retrying. A separate fixture mistake added `llama_cpp` beside the existing
+`Llama_cpp` list, correctly triggering ambiguous-provider recovery. Reuse the
+exact saved catalog key when qualifying persistence rather than adding an alias.
+
 ---
 
 ## Opaque-origin module-worker policy must be proven in the target browser

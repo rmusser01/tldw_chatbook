@@ -1,0 +1,12 @@
+import ast
+import subprocess
+
+
+def pytest_configure():
+    import tldw_chatbook.UI.Screens.settings_screen as module
+    source = subprocess.check_output(['git', 'show', 'HEAD:tldw_chatbook/UI/Screens/settings_screen.py'], text=True)
+    owner = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef) and n.name == 'SettingsScreen')
+    for name in ('_discover_provider_models', '_save_selected_discovered_provider_models'):
+        node = next(n for n in owner.body if isinstance(n, ast.AsyncFunctionDef) and n.name == name)
+        exec(compile(ast.Module(body=[node], type_ignores=[]), '<HEAD-baseline>', 'exec'), module.__dict__)
+        setattr(module.SettingsScreen, name, module.__dict__[name])

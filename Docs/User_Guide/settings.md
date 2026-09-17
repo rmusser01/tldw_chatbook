@@ -195,6 +195,16 @@ The biggest page, and where to start.
 | **Automatic refresh** | **Auto-refresh model lists on startup**, **Refresh after (hours):**, and per-provider **auto-refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
 | **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text; fields a provider doesn't support are hidden, not greyed. Global fallbacks live under Console Behavior. |
 
+Use **Tab** to reach the discovered-model list, arrow keys to move, and
+**Space** to check a model. Checked rows survive leaving this category and
+returning within Settings. **Save selected** immediately appends those exact
+model IDs to that provider’s saved list. If Model is empty, the first newly
+saved ID fills it as an unsaved draft; an existing Model value is kept.
+**Clear** removes discovered results and their typeahead suggestions, while
+keeping the saved list. A failed save or clear keeps the checked rows for retry.
+Changing provider, endpoint or credentials clears the old results; a delayed
+operation cannot replace the new form’s results or Model value.
+
 **Test Provider** checks your current draft before saving. URL-based local
 providers also get a short endpoint or model-listing probe. The result separates
 configuration readiness, endpoint/model-listing evidence, and whether generation

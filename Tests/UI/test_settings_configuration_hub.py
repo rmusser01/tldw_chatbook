@@ -10305,7 +10305,7 @@ async def test_model_discovery_crash_status_is_plain_language_without_raw_except
     assert "sk-super-secret" not in status
     assert status.startswith("Model discovery failed (RuntimeError).")
     assert "run Discover again" in status
-    assert "Logs (F8)" in status
+    assert "Logs (F3)" in status
 
 
 @pytest.mark.asyncio
@@ -10325,7 +10325,7 @@ async def test_discovered_model_save_crash_status_is_plain_language():
     assert "disk sadness" not in status
     assert status.startswith("Could not save the discovered models (OSError).")
     assert "Try Save again" in status
-    assert "Logs (F8)" in status
+    assert "Logs (F3)" in status
 
 
 def test_failure_status_text_never_carries_raw_exception_text():

@@ -1,0 +1,8 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+1.90s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_saves_selected_runtime_models
+1.55s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_shows_ambiguous_provider_recovery
+1.20s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_controls_render_for_eligible_provider
+
+(15 durations < 1s hidden.)
+6 passed, 413 deselected in 7.87s
