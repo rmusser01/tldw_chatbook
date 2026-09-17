@@ -36,6 +36,7 @@ from tldw_chatbook.Library.ingest_capabilities import (
     generic_option_default,
     get_capabilities,
     list_type_groups,
+    selected_stt_warnings,
 )
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
@@ -2875,6 +2876,16 @@ def build_library_ingest_state(
     """
     resolved_now = now if now is not None else time.monotonic()
     active_preflight = preflight if preflight is not None else form.preflight
+    if active_preflight is not None and "audio_video" in active_preflight.type_groups:
+        provider = form.type_options.get("audio_video", {}).get(
+            "transcription_provider", "default"
+        )
+        # Project once before BOTH display and forecast/consent computation.
+        # Preserve the original inventory for subsequent provider changes.
+        active_preflight = replace(
+            active_preflight,
+            warnings=selected_stt_warnings(active_preflight.warnings, provider),
+        )
     active_preflight_checking = (
         form.preflight_checking if preflight_checking is None else preflight_checking
     )

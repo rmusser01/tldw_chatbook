@@ -526,7 +526,7 @@ async def test_submit_brings_the_queue_heading_into_view(monkeypatch):
 # --- MI-17: install command recoverable at the warning -------------------------
 
 
-_LONG_COMMAND = 'pip install -e ".[transcription_lightning_whisper]"'
+_LONG_COMMAND = 'pip install -e ".[transcription_faster_whisper]"'
 
 
 def _warning_state():
@@ -538,8 +538,8 @@ def _warning_state():
             {"audio_video": ["/tmp/talk.mp3"]},
             warnings=[
                 {
-                    "feature": "lightning_whisper_mlx",
-                    "label": "Lightning Whisper MLX",
+                    "feature": "faster_whisper",
+                    "label": "Faster Whisper",
                     "hint": "audio transcription",
                     "command": _LONG_COMMAND,
                 }
@@ -572,7 +572,7 @@ async def test_warning_command_paints_unclipped_in_the_summary():
         )
         # The command's tail must survive paint; pre-fix it clipped at the
         # canvas edge mid-token ("...[transcription_lig").
-        assert "transcription_lightning_whisper" in painted.replace(" ", ""), (
+        assert "transcription_faster_whisper" in painted.replace(" ", ""), (
             f"command tail not painted; warning rows: {painted!r}"
         )
 

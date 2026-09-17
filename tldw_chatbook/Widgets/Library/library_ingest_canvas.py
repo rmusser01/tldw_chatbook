@@ -2038,12 +2038,11 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         )
 
     @on(Button.Pressed, ".ingest-preflight-copy-command")
-    def _copy_preflight_install_command(self, event: Button.Pressed) -> None:
+    async def _copy_preflight_install_command(self, event: Button.Pressed) -> None:
         """Copy one warning's install command from the summary (MI-17).
 
-        Mirrors the guardrail modal's copy button (same seam, same
-        notifications) so the modal is no longer the only place the
-        command can be recovered from.
+        Confirm native delivery where possible and reveal the literal
+        command when clipboard delivery cannot be confirmed.
         """
         event.stop()
         button_id = event.button.id or ""
@@ -2062,15 +2061,14 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 command = self.state.warning_commands[index]
             except (ValueError, IndexError):
                 return
-        copy_fn = getattr(self.app, "copy_to_clipboard", None)
-        if callable(copy_fn):
-            try:
-                copy_fn(command)
-                self.notify("Install command copied to clipboard")
-            except Exception:
-                self.notify("Failed to copy command", severity="error")
-        else:
-            self.notify("Clipboard not available", severity="warning")
+        from tldw_chatbook.Utils.install_clipboard import copy_install_command
+
+        if not await copy_install_command(self, command):
+            # Keep the literal command visible when terminal delivery is
+            # unavailable or unacknowledged; the collapsed fold hid recovery.
+            for detail in self.query(f"#{INGEST_TOOLING_FOLD_ID}"):
+                if isinstance(detail, Collapsible):
+                    detail.collapsed = False
 
     @on(Checkbox.Changed)
     @on(Select.Changed)
