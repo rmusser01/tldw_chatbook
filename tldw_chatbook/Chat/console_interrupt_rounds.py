@@ -202,9 +202,26 @@ class InterruptRoundHost:
 
     POLL_SECONDS = 1.0
 
+    def notify_hook_interrupt(self, cancellation, lifecycle, turn_id: str) -> bool:
+        """Publish once after the host's irreversible per-turn cancel seal.
+
+        H2 owns notification deadlines and real process cleanup; no UI card,
+        permission prompt or process wait runs under this host's registry lock.
+        """
+        if not cancellation.is_set():
+            return False
+        with self.lock:
+            if cancellation in self._hook_interrupts:
+                return False
+            self._hook_interrupts.add(cancellation)
+        return lifecycle.engine.notify_teardown(
+            lifecycle.event("Interrupt", turn_id=turn_id, initiator="manual")
+        )
+
     def __init__(self, seams: Any) -> None:
         self._seams = seams
         self.lock = threading.Lock()
+        self._hook_interrupts: set[object] = set()
         self.registries: dict[str, dict[str, dict[str, Any]]] = {
             kind: {} for kind in KIND_SETTER_ATTRS
         }

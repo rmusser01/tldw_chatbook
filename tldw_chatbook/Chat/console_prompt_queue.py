@@ -1058,6 +1058,7 @@ class ConsolePromptQueueRegistry:
         *,
         entry_id: str,
         preparation_id: str,
+        retain_reservation: bool = False,
     ) -> PromptQueueMutationResult:
         """Settle an exact committed claim even after its live chain vanished."""
 
@@ -1098,7 +1099,9 @@ class ConsolePromptQueueRegistry:
             self._active_entry_ids.discard(entry_id)
             state.claimed = None
             state.claimed_preparation_id = None
-            if state.waiting:
+            if retain_reservation and state.reservation is PromptQueueReservation.HELD:
+                pass  # Exact live coordinator claim retains its existing slot/epoch.
+            elif state.waiting:
                 state.mode = PromptQueueMode.PAUSED
                 state.pause_reason = PromptQueuePauseReason.FAILED
                 state.reservation = PromptQueueReservation.RELEASED

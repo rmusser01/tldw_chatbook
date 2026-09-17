@@ -755,7 +755,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 73  # Note links are persisted, not scanned for.
+    _CURRENT_SCHEMA_VERSION = 74  # Durable Stop continuation admission receipts.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8299,6 +8299,32 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v73_to_v74(self, conn: sqlite3.Connection) -> None:
+        """Retain machine continuation dedup independently of checkpoints."""
+        self._require_migration_entry_version(conn, 73, "V73→V74")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v73_to_v74_hook_continuation_receipts.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V73→V74"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 74 WHERE schema_name = ? AND version = 73",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V73→V74 version update failed")
+            if self._get_db_version(conn) != 74:
+                raise SchemaError("V73→V74 version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V73→V74 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -8544,6 +8570,7 @@ UPDATE db_schema_version
                     70: self._migrate_from_v70_to_v71,
                     71: self._migrate_from_v71_to_v72,
                     72: self._migrate_from_v72_to_v73,
+                    73: self._migrate_from_v73_to_v74,
                 }
 
                 if current_db_version == 0:
