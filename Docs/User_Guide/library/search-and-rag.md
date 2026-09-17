@@ -497,6 +497,8 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 |---|---|
 | Enter (in the query box) | Run the search |
 | Tab | Move focus through the panel, including each evidence card in turn |
+| Shift+Tab | Move back through the panel controls to the query box |
+| `/` (outside a text field) | Focus the Library rail search; Enter there runs keyword Search |
 | Page Up / Page Down (with an evidence card focused) | Scroll the panel to read the generated answer, citation feedback and evidence |
 | Enter (on a focused evidence card) | Select that evidence — the same as clicking its select action |
 | `o` (on a focused evidence card) | Open that item in its own Library surface |
@@ -505,15 +507,20 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 From the query box, Tab visits Run, each enabled source toggle, then the
 evidence cards. The number of stops depends on which sources are available.
-The card you are on draws a solid block down its left edge — a shape, not just a colour — so it stays
-visible in a monochrome terminal and next to a card that is merely
-selected.
+The card you are on draws a solid block down its left edge — a shape, not
+just a colour — so it stays visible in a monochrome terminal and next to a
+card that is merely selected.
 
 The text-only Answer region is above the evidence cards. After tabbing to a
 card, use **Page Up** to read the answer and its citation warning or note;
 use **Page Down** to return through the answer to the evidence. Focus stays
 on the card while the panel scrolls. Scrolling preserves your question and
 source choices and does not run another search or provider call.
+
+To edit the next RAG question, use **Shift+Tab** from the evidence card or
+its actions, back through the enabled source controls and Run to the query
+box. This keeps RAG Answer mode selected. The rail search shares the query
+text, but submitting there chooses keyword Search mode.
 
 The footer's **enter** hint names what Enter does on the control you are
 actually on: "run search" in the query box and on **Run**, "toggle
@@ -871,3 +878,11 @@ short/long replies and all three citation states in both themes at 170×48
 and 80×24; 12 native long-answer cases use real local keyword retrieval and
 controlled replies. This verifies reading/navigation, not real-provider output
 or factual grounding. [Evidence](../../superpowers/qa/2026-09-17-rag-answer-navigation/README.md).*
+
+*Query return and resize focus verified on `feat/component-pattern-library`
+from `71f7b33658` — 2026-09-17 UTC (TASK-32715): query/evidence focus now
+survives compact/wide resizing. Twelve new mounted regressions pass within
+a 98-test targeted run; four private native journeys pass sixteen resize
+transitions in both themes using local keyword retrieval and controlled
+replies. Shift+Tab returns through the panel to an editable RAG query without
+resubmitting. [Evidence](../../superpowers/qa/2026-09-17-rag-query-return/README.md).*

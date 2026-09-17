@@ -7846,6 +7846,7 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_ROW_BROWSE_PROMPTS,
             LIBRARY_ROW_CREATE_PROMPT,
             LIBRARY_ROW_INGEST_MEDIA,
+            LIBRARY_ROW_BROWSE_SEARCH,
         }:
             # These retained work controls have no Notes semantic role. Restoring
             # that tuple falls back to the rail and steals their live focus.

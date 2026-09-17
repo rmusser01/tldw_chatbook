@@ -96,3 +96,9 @@ stored file; SVG normalization only removes trailing whitespace.
 check covered 310 refs and 27 worktrees; only this worktree owns TASK-32714.
 No full suite, push or merge was performed. The next bounded review is query
 return and resize transitions, whose setup assumptions were not qualified here.
+
+
+Subsequent diagnosis: the [query-return repair](../2026-09-17-rag-query-return/README.md)
+reproduces an actual focus jump to the rail on compact resize, with the query
+widget still current. That explains the second attempt's return-to-query failure;
+the answer-reading claims above remain bounded to their independent setup.

@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+6.93s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-False]
+6.52s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size1-False]
+5.68s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-True]
+5.55s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size1-True]
+
+(8 durations < 1s hidden.)
+4 passed, 8 deselected in 26.24s

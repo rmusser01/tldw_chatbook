@@ -88,6 +88,19 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         self.state = state
         self.refresh(recompose=True)
 
+    def on_resize(self) -> None:
+        """Keep the current keyboard control visible after text reflows."""
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def _reveal_focused_control(self) -> None:
+        """Reveal live panel focus without restoring an older focus choice."""
+        if not self.is_attached:
+            return
+        focused = self.screen.focused
+        if focused is not None and self in focused.ancestors:
+            self.scroll_to(y=self.scroll_y, animate=False, immediate=True)
+            focused.scroll_visible(animate=False, immediate=True)
+
     def on_show(self) -> None:
         """Fetch the legacy-chunk report once the canvas is actually visible.
 

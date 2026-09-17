@@ -13,6 +13,8 @@ clears it on retry without hiding provider disclosure.
 TASK-32713 extends that visible recovery to answer-generation failures.
 TASK-32714 verifies and documents keyboard reading of generated answers and
 citation feedback without changing the existing UI.
+TASK-32715 repairs focus loss during RAG resize and verifies keyboard return
+to an editable query without additional retrieval or answer calls.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -953,3 +955,32 @@ provider behavior, semantic retrieval or factual grounding.
 
 Next bounded review: query return and resize transitions, then the remaining
 feature/component surfaces. No full suite, push or merge was performed.
+
+## RAG query return and resize focus — 2026-09-17 UTC (TASK-32715)
+
+[Evidence](../qa/2026-09-17-rag-query-return/README.md) resolves the prior native
+return ambiguity as a real resize defect: Notes semantic restoration moved
+RAG focus to the rail despite the original control remaining mounted. Search/RAG
+now joins the retained-control exemption, and its panel reveals current focus
+after layout changes. Deferred callbacks respect a newer focus choice. Existing
+ADR-031/ADR-150 apply; no bindings, styles, tokens or service contracts change.
+
+The final targeted gate passes 98 tests, including twelve new resize/return and
+delayed-callback regressions. The initial probe reproduced two failures; expanded
+regressions established the defect before the repair. A callback test initially
+held unrelated framework scrolling and was corrected to defer only the resize
+reveal. Static checks add no diagnostics; independent review has no outstanding
+findings.
+
+Four native query/evidence journeys in both themes pass sixteen width/height
+transitions with real local keyword retrieval and controlled provider replies.
+All eight captures were inspected. Query selection, scope and answer survive,
+reverse Tab reaches an editable query, and navigation adds no service calls.
+The source/default files remain unchanged, ten private databases are healthy,
+and normal shutdown/PID absence are verified. The guide distinguishes this RAG
+return route from the rail search, whose submission selects keyword Search.
+
+Next bounded review: Recent searches and replaying queries, followed by the
+remaining feature/component surfaces. Real provider behavior, semantic retrieval,
+factual grounding and the very narrow single-pane layout remain outside this
+qualification. No full suite, push or merge was performed.

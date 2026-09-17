@@ -14532,3 +14532,14 @@ false no-churn probe: the outer snapshot equality guard returned before reaching
 this cache. Direct repeated sync calls, retained recovery-child identity, and a
 wrapped scheduling spy verify the actual gate. The spy matters for ready scopes,
 where an unnecessary mirror removes/mounts nothing and identity alone still passes.
+
+## Defer the callback under test, not every focus-scroll callback (TASK-32715, 2026-09-17)
+
+The RAG resize race test initially replaced the panel's entire
+`call_after_refresh` queue. After a newer Shift+Tab reached the query, its
+ordinary Textual focus-scroll callback was also held, so the assertion saw the
+correct input above the viewport. That was test interference, not a failed
+resize repair. Gate only the panel's `_reveal_focused_control` callback and
+forward other callbacks to the original scheduler. The four delayed-reveal
+cases then pass with newer focus both inside and outside the panel; the eight
+resize journeys separately verify retention and paint without the gate.

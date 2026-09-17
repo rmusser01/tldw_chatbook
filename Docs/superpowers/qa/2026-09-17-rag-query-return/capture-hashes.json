@@ -1,0 +1,37 @@
+{
+  "normalization": "Trim trailing whitespace per SVG source line only.",
+  "captures": {
+    "textual-dark-evidence-compact.svg": {
+      "raw_sha256": "7015ed96623013d7e517e531dc9753f4142e6318c274e8409d692b14c9ec148d",
+      "stored_sha256": "b2a77a82f4be5cadfe42eb95400d10d550139d4344ae19448fca9c64c0339102"
+    },
+    "textual-dark-evidence-query-edited.svg": {
+      "raw_sha256": "cda07ab603a0cd4644ab9abd5c46ebd0d34230144a747439f4581bc27a357af0",
+      "stored_sha256": "4233ae040b4ce1c16bccc0e948b7eb9cd20b076ae5c00b1fcbcd3915cd7b923d"
+    },
+    "textual-dark-query-compact.svg": {
+      "raw_sha256": "2dc72c212959aafdc80b43c5dc9a1854cd5a2e7cf3ddd74afd556a49247dd700",
+      "stored_sha256": "da7f0637ddd05e5246d476eb4ccdf18dca12c169229898086a86c8d590c3e7c0"
+    },
+    "textual-dark-query-query-edited.svg": {
+      "raw_sha256": "27ee7f2b9d22f5ac46615c51fec60ddf4b95056268c13b279d0007a8d82f1c63",
+      "stored_sha256": "1c06ce8dcc40075c74eae700b53b8b5388695c8ecea641d6ef80c4db47d9c8f7"
+    },
+    "textual-light-evidence-compact.svg": {
+      "raw_sha256": "3d86f402b712ad20601419f0d783a5dd92bd5a0191f8d05a2e9fd452c2b1f557",
+      "stored_sha256": "2be3e0169fb68535ece2327c5e5802f1c7884bb1ebd4894c03c2d8c9ce79aea4"
+    },
+    "textual-light-evidence-query-edited.svg": {
+      "raw_sha256": "6fa601ceb415397eec8fbc7dc6f01fa12bf2dcde7ac03f253c8be6b7c0eacfb2",
+      "stored_sha256": "07a53a0e5480cc20437cbb0351ebc2b9f076d91e0d5c8b0fe77b67e8366969f9"
+    },
+    "textual-light-query-compact.svg": {
+      "raw_sha256": "64c249c2823930da91507d878ec6dde39c2c0dfa20df002a6488733a716a2440",
+      "stored_sha256": "046c7f689dfd1372bdd3a4b249d3d5a405e5cb90fa75290a61d05951f43be984"
+    },
+    "textual-light-query-query-edited.svg": {
+      "raw_sha256": "6fa601ceb415397eec8fbc7dc6f01fa12bf2dcde7ac03f253c8be6b7c0eacfb2",
+      "stored_sha256": "07a53a0e5480cc20437cbb0351ebc2b9f076d91e0d5c8b0fe77b67e8366969f9"
+    }
+  }
+}
