@@ -78,6 +78,21 @@ class PluginCoordinator:
 
     async def _drain_inventory(self, installation_id: str) -> tuple[str, ...]:
         self._require_worker()
+        ownership = getattr(self.mcp_mapping_owner, "connection_ownership", None)
+        if ownership is not None:
+            with self.fences.live_lock:
+                revisions = {
+                    ticket.revision_digest
+                    for ticket in self.fences.drains.values()
+                    if ticket.installation_id == installation_id
+                    and ticket.phase == "waiting"
+                }
+            for revision in revisions:
+                await asyncio.wrap_future(
+                    ownership._schedule(
+                        ownership.close_idle_revision(installation_id, revision)
+                    )
+                )
         return self.owner.unsettled_tokens(installation_id)
 
     def _require_worker(self) -> None:
@@ -168,6 +183,7 @@ class PluginCoordinator:
             "rollback": review.rollback,
             "retired_revisions": list(review.retired_revisions),
             "retirement_json": review.retirement_json,
+            "mappings_json": getattr(review, "mappings_json", "[]"),
             "live": live,
         }
         result = {
@@ -317,7 +333,7 @@ class PluginCoordinator:
             async def apply():
                 while True:
                     # Storage may block; never hold the admission/cancellation lock.
-                    unsettled = self.owner.unsettled_tokens(review.installation_id)
+                    unsettled = await self._drain_inventory(review.installation_id)
                     self.revision_drain.record_inventory(ticket.token, unsettled)
                     with self.fences.live_lock:
                         if ticket.phase == "cancelled":
@@ -397,6 +413,7 @@ class PluginCoordinator:
         live_operation=None,
         retired_revisions: tuple[str, ...] = (),
         retirement_json: str | None = None,
+        mappings_json: str = "[]",
     ) -> PluginReview:
         from .recovery import retained_inspections
 
@@ -435,10 +452,67 @@ class PluginCoordinator:
             alias=installed.get("alias"),
             retired_revisions=retired_revisions,
             retirement_json=retirement_json,
+            mappings_json=mappings_json,
         )
         review = self._issue_review(review, live_operation=live_operation)
         self._reviews[review.token] = review
         return review
+
+    def review_configuration(
+        self,
+        installation_id: str,
+        *,
+        connections: dict[str, str],
+        tools: dict[str, tuple[str, ...]] | None = None,
+    ) -> PluginReview:
+        """Review complete current owner references; never accept caller-made grants."""
+        from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+
+        from .recovery import retained_inspections
+
+        self._require_worker()
+        owner = self.mcp_mapping_owner
+        if not isinstance(owner, LocalMCPControlService):
+            raise PermissionError("plugin_mapping_owner_unavailable")
+        snapshot = self.published_snapshot()
+        installed = next(
+            row
+            for row in snapshot["installations"]
+            if row["installation_id"] == installation_id
+        )
+        inspection = retained_inspections(snapshot)[
+            (installation_id, installed["revision_digest"])
+        ]
+        selection = {
+            row["component_id"]
+            for row in snapshot["selections"]
+            if row["installation_id"] == installation_id
+            and row["revision_digest"] == installed["revision_digest"]
+            and row["selected"]
+        }
+        if (
+            not connections
+            or len(connections) > 512
+            or set(tools or {}) - connections.keys()
+        ):
+            raise ValueError("plugin_mapping_invalid")
+        mappings = []
+        for component_id, profile_id in sorted(connections.items()):
+            if component_id not in selection:
+                raise PermissionError("plugin_component_not_selected")
+            mapping = owner.capture_connection_mapping(
+                installation_id=installation_id,
+                mapping_id=component_id,
+                inspection=inspection,
+                component_id=component_id,
+                profile_id=profile_id,
+            )
+            mappings.append(mapping)
+            for name in sorted(set((tools or {}).get(component_id, ()))):
+                mappings.append(owner.capture_tool_mapping(mapping, inspection, name))
+        return self._review_existing(
+            installation_id, kind="configure", mappings_json=canonical_json(mappings)
+        )
 
     async def retain_revisions(self, installation_id: str) -> OperationReceipt:
         """Compact references and reconcile retained authenticated cleanup custody."""
@@ -529,6 +603,28 @@ class PluginCoordinator:
                     "DELETE FROM receipts WHERE receipt_id=?",
                     ("revision:" + review.installation_id + ":" + digest,),
                 )
+            return
+        if review.kind == "configure":
+            mappings = json.loads(review.mappings_json)
+            for mapping in mappings:
+                self.mcp_mapping_owner.validate_connection_mapping(mapping, retained)
+            cursor.execute(
+                "DELETE FROM mappings WHERE installation_id=?",
+                (review.installation_id,),
+            )
+            for mapping in mappings:
+                cursor.execute(
+                    "INSERT INTO mappings VALUES (?, ?, ?)",
+                    (
+                        review.installation_id,
+                        mapping["mapping_id"],
+                        canonical_json(mapping),
+                    ),
+                )
+            cursor.execute(
+                "INSERT INTO authority_generations VALUES (?, 'installation', '', 1, 0) ON CONFLICT(installation_id, scope_kind, workspace_id) DO UPDATE SET generation=generation+1",
+                (review.installation_id,),
+            )
             return
         if review.kind == "install":
             self.registry.insert_installation(

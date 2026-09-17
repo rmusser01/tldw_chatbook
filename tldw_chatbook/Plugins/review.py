@@ -25,7 +25,14 @@ class PluginReview:
     operation_id: str = ""
     alias: str | None = None
     kind: Literal[
-        "install", "trust", "activate", "revoke", "uninstall", "update", "retain"
+        "install",
+        "trust",
+        "activate",
+        "revoke",
+        "uninstall",
+        "update",
+        "retain",
+        "configure",
     ] = "install"
     intent: Literal["inherit", "enabled", "disabled"] | None = None
     previous_revision: str | None = None
@@ -34,6 +41,7 @@ class PluginReview:
     data_compatibility: str = "unknown"
     retired_revisions: tuple[str, ...] = ()
     retirement_json: str | None = None
+    mappings_json: str = "[]"
 
 
 @dataclass(frozen=True)

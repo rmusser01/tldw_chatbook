@@ -1001,7 +1001,9 @@ class MCPClient:
 
         logger.info("MCP Client '{}' initialized", name)
 
-    async def connect_profile(self, profile: TransportProfile) -> bool:
+    async def connect_profile(
+        self, profile: TransportProfile, *, observe_connection=None
+    ) -> bool:
         """Connect a validated direct transport through the existing readiness owner."""
         if not isinstance(profile, TransportProfile):
             raise ValueError("mcp_profile_invalid")  # noqa: TRY004
@@ -1011,6 +1013,7 @@ class MCPClient:
             list(profile.args),
             dict(profile.env) if profile.env is not None else None,
             _profile=profile,
+            _observe_connection=observe_connection,
         )
 
     async def connect_to_server(
@@ -1021,6 +1024,7 @@ class MCPClient:
         env: Optional[Dict[str, str]] = None,
         *,
         _profile: TransportProfile | None = None,
+        _observe_connection=None,
     ) -> bool:
         """Connect to an MCP server via stdio.
 
@@ -1075,6 +1079,7 @@ class MCPClient:
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         env=env,
+                        cwd=_profile.cwd if _profile is not None else None,
                         limit=MAX_OUTPUT_LINE_BYTES,
                     ),
                     timeout=spawn_timeout,
@@ -1135,6 +1140,10 @@ class MCPClient:
                     session._allow_negotiation = True
             session._qualified_profile = _profile is not None
             pending.session = session
+            if _observe_connection is not None:
+                # Host custody observes the exact retained transport, including
+                # failed initialization. Remote messages never supply this object.
+                _observe_connection(session)
             session._on_transport_failure = cleanup_failed_transport
             initialize_timeout = _remaining(
                 deadline, "MCP connection deadline exceeded"

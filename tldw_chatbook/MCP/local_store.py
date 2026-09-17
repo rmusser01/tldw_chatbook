@@ -328,6 +328,8 @@ class TransportProfile:
     command: str = ""
     args: tuple[str, ...] = ()
     env: Mapping[str, str] | None = None
+    cwd: str | None = None
+    package_headers: Mapping[str, str] = field(default_factory=dict, repr=False)
     url: str = ""
     development_loopback: bool = False
     credential_reference: str | None = None
@@ -337,6 +339,10 @@ class TransportProfile:
         from .protocol_profiles import protocol_profile
 
         _validate_credential_reference(vars(self))
+        _validate_package_headers(self.package_headers)
+        object.__setattr__(
+            self, "package_headers", MappingProxyType(dict(self.package_headers))
+        )
         _validate_profile_id(self.profile_id)
         protocol_profile(self.protocol_version)
         object.__setattr__(self, "args", tuple(self.args))
@@ -346,12 +352,19 @@ class TransportProfile:
             raise ValueError("mcp_transport_unsupported")
         if type(self.development_loopback) is not bool:
             raise ValueError("mcp_origin_invalid")
+        if self.cwd is not None and (
+            not isinstance(self.cwd, str)
+            or not Path(self.cwd).is_absolute()
+            or "\0" in self.cwd
+        ):
+            raise ValueError("mcp_cwd_invalid")
         if self.transport == "stdio":
             if (
                 not isinstance(self.command, str)
                 or not self.command
                 or self.url
                 or self.development_loopback
+                or self.package_headers
             ):
                 raise ValueError("mcp_profile_invalid")
             if any(not isinstance(arg, str) or "\0" in arg for arg in self.args):
@@ -362,7 +375,12 @@ class TransportProfile:
             ):
                 raise ValueError("mcp_profile_invalid")
         else:
-            if self.command or self.args or self.env is not None:
+            if (
+                self.command
+                or self.args
+                or self.env is not None
+                or self.cwd is not None
+            ):
                 raise ValueError("mcp_profile_invalid")
             parsed = urlsplit(self.url)
             try:
@@ -403,6 +421,20 @@ def _validate_credential_reference(data: Mapping[str, Any]) -> None:
 def _validate_profile_transport_fields(data: Mapping[str, Any]) -> None:
     """Reject unsupported HTTP fields before legacy stdio coercion drops them."""
     _validate_credential_reference(data)
+    if data.get("plugin_owner") is not None:
+        args = data.get("args", ())
+        if not isinstance(args, (list, tuple)) or any(
+            not isinstance(arg, str) or "\0" in arg for arg in args
+        ):
+            raise ValueError("mcp_owned_profile_invalid")
+        command = data.get("command", "")
+        if not isinstance(command, str) or "\0" in command:
+            raise ValueError("mcp_owned_profile_invalid")
+        cwd = data.get("cwd")
+        if cwd is not None and (
+            not isinstance(cwd, str) or not Path(cwd).is_absolute() or "\0" in cwd
+        ):
+            raise ValueError("mcp_cwd_invalid")
     if any(key in data for key in ("headers", "auth", "credentials")):
         raise ValueError("mcp_authentication_unsupported")
     if data.get("transport", "stdio") != "streamable_http":
@@ -413,6 +445,71 @@ def _validate_profile_transport_fields(data: Mapping[str, Any]) -> None:
             raise ValueError("mcp_authentication_unsupported")
     if data.get("command") not in (None, "") or data.get("args") not in (None, [], ()):
         raise ValueError("mcp_profile_invalid")
+
+
+def _validate_package_headers(headers):
+    if not isinstance(headers, Mapping) or any(
+        not isinstance(key, str) for key in headers
+    ):
+        raise ValueError("mcp_package_headers_invalid")
+    if len({key.lower() for key in headers}) != len(headers):
+        raise ValueError("mcp_package_headers_invalid")
+    for key, value in headers.items():
+        if (
+            not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", key)
+            or not isinstance(value, str)
+            or value != value.strip(" \t")
+            or any(
+                (ord(char) < 32 and char != "\t") or ord(char) == 127 for char in value
+            )
+        ):
+            raise ValueError("mcp_package_headers_invalid")
+
+
+def _validate_owned_profile(owner):
+    if owner is None:
+        return
+    if not isinstance(owner, dict) or set(owner) != {
+        "installation_id",
+        "revision_digest",
+        "component_id",
+        "definition_digest",
+        "environment",
+        "data_root",
+        "session_isolation",
+        "literal_headers",
+    }:
+        raise ValueError("mcp_owned_profile_invalid")
+    if any(
+        not isinstance(owner[key], str) or not owner[key]
+        for key in (
+            "installation_id",
+            "revision_digest",
+            "component_id",
+            "definition_digest",
+        )
+    ):
+        raise ValueError("mcp_owned_profile_invalid")
+    _validate_package_headers(owner["literal_headers"])
+    if owner["session_isolation"] not in {"separate", "request_independent"}:
+        raise ValueError("mcp_isolation_invalid")
+    if not isinstance(owner["environment"], dict) or any(
+        not isinstance(k, str) or not isinstance(v, str) or "\0" in k + v
+        for k, v in owner["environment"].items()
+    ):
+        raise ValueError("mcp_owned_profile_invalid")
+    root = owner["data_root"]
+    if root is not None and (
+        not isinstance(root, dict)
+        or set(root) != {"installation_id", "root_id", "generation", "path"}
+        or type(root["generation"]) is not int
+        or root["generation"] < 0
+        or any(
+            not isinstance(root[k], str) or not root[k]
+            for k in ("installation_id", "root_id", "path")
+        )
+    ):
+        raise ValueError("mcp_owned_profile_invalid")
 
 
 @dataclass(frozen=True)
@@ -431,13 +528,22 @@ class LocalExternalMCPProfile:
     development_loopback: bool = False
     credential_reference: str | None = None
     credential_generation: int | None = None
+    cwd: str | None = None
+    plugin_owner: dict[str, Any] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         _validate_profile_transport_fields(vars(self))
+        _validate_owned_profile(self.plugin_owner)
         object.__setattr__(self, "profile_id", _text(self.profile_id))
         object.__setattr__(self, "command", _text(self.command))
         object.__setattr__(
-            self, "args", tuple(_text(item) for item in self.args if _text(item))
+            self,
+            "args",
+            (
+                tuple(self.args)
+                if self.plugin_owner is not None
+                else tuple(_text(item) for item in self.args if _text(item))
+            ),
         )
         env_placeholders = _sanitize_env_placeholders(self.env_placeholders)
         env_literals = _sanitize_env_literals(self.env_literals)
@@ -465,6 +571,16 @@ class LocalExternalMCPProfile:
     def to_dict(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id,
+            "cwd": self.cwd,
+            "plugin_owner": (
+                {
+                    key: value
+                    for key, value in self.plugin_owner.items()
+                    if key != "literal_headers"
+                }
+                if self.plugin_owner is not None
+                else None
+            ),
             "transport": self.transport,
             "protocol_version": self.protocol_version,
             "url": self.url,
@@ -484,6 +600,8 @@ class LocalExternalMCPProfile:
     def to_storage_dict(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id,
+            "cwd": self.cwd,
+            "plugin_owner": self.plugin_owner,
             "transport": self.transport,
             "protocol_version": self.protocol_version,
             "url": self.url,
@@ -502,6 +620,8 @@ class LocalExternalMCPProfile:
     def to_input_dict(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id,
+            "cwd": self.cwd,
+            "plugin_owner": self.plugin_owner,
             "transport": self.transport,
             "protocol_version": self.protocol_version,
             "url": self.url,
@@ -523,12 +643,18 @@ class LocalExternalMCPProfile:
         _validate_profile_transport_fields(data)
         raw_args = data.get("args")
         args = (
-            tuple(str(item).strip() for item in raw_args)
-            if isinstance(raw_args, list)
-            else ()
+            tuple(raw_args or ())
+            if data.get("plugin_owner") is not None
+            else (
+                tuple(str(item).strip() for item in raw_args)
+                if isinstance(raw_args, list)
+                else ()
+            )
         )
         return cls(
             profile_id=_text(data.get("profile_id")),
+            cwd=data.get("cwd"),
+            plugin_owner=data.get("plugin_owner"),
             transport=data.get("transport", "stdio"),
             protocol_version=data.get("protocol_version", "2025-03-26"),
             url=data.get("url", ""),
@@ -550,9 +676,13 @@ class LocalExternalMCPProfile:
         _validate_profile_transport_fields(data)
         raw_args = data.get("args")
         args = (
-            tuple(str(item).strip() for item in raw_args)
-            if isinstance(raw_args, list)
-            else ()
+            tuple(raw_args or ())
+            if data.get("plugin_owner") is not None
+            else (
+                tuple(str(item).strip() for item in raw_args)
+                if isinstance(raw_args, list)
+                else ()
+            )
         )
         raw_env_placeholders = _coerce_mapping(data.get("env_placeholders"))
         raw_env_literals = _coerce_mapping(data.get("env_literals"))
@@ -566,6 +696,8 @@ class LocalExternalMCPProfile:
                 raw_legacy_env_literals.setdefault(key, value)
         return cls(
             profile_id=_text(data.get("profile_id")),
+            cwd=data.get("cwd"),
+            plugin_owner=data.get("plugin_owner"),
             transport=data.get("transport", "stdio"),
             protocol_version=data.get("protocol_version", "2025-03-26"),
             url=data.get("url", ""),
@@ -765,7 +897,7 @@ class LocalMCPStoreState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": 3,
+            "schema_version": 4,
             "profiles": [profile.to_storage_dict() for profile in self.profiles],
             "discovery_snapshots": {
                 server_id: dict(snapshot)
@@ -869,7 +1001,7 @@ class LocalMCPStore:
         if not isinstance(payload, Mapping):
             raise LocalMCPStoreLoadError(self.path, ValueError("mcp_store_invalid"))
         version = payload.get("schema_version", 1)
-        if type(version) is not int or version not in (1, 2, 3):
+        if type(version) is not int or version not in (1, 2, 3, 4):
             raise LocalMCPStoreLoadError(
                 self.path, ValueError("mcp_store_schema_unsupported")
             )
@@ -900,7 +1032,13 @@ class LocalMCPStore:
             raise LocalMCPStoreLoadError(
                 self.path, ValueError("mcp_store_invalid")
             ) from exc
-        if version < 3 and self.path.exists():
+        if version < 4 and any(
+            isinstance(item, Mapping)
+            and (item.get("plugin_owner") is not None or item.get("cwd") is not None)
+            for item in payload.get("profiles", [])
+        ):
+            raise LocalMCPStoreLoadError(self.path, ValueError("mcp_store_invalid"))
+        if version < 4 and self.path.exists():
             # Migration rewrites every collection. Refuse source records that the
             # tolerant reader would discard, except the reserved-ID quarantine.
             if version == 1 and any(
@@ -1005,6 +1143,7 @@ class LocalMCPStore:
             command = _require_non_empty_field(command, "command", "Local MCP profile")
         TransportProfile(
             profile_id=profile_id,
+            cwd=canonical_profile.cwd,
             transport=canonical_profile.transport,
             protocol_version=canonical_profile.protocol_version,
             command=command,
@@ -1043,6 +1182,8 @@ class LocalMCPStore:
         )
         saved_profile = LocalExternalMCPProfile(
             profile_id=profile_id,
+            cwd=canonical_profile.cwd,
+            plugin_owner=canonical_profile.plugin_owner,
             transport=canonical_profile.transport,
             protocol_version=canonical_profile.protocol_version,
             url=canonical_profile.url,
@@ -1500,6 +1641,8 @@ class LocalMCPStore:
         tuple[tuple[str, str], ...],
     ]:
         return (
+            profile.cwd,
+            json.dumps(profile.plugin_owner, sort_keys=True),
             profile.transport,
             profile.protocol_version,
             profile.url,
