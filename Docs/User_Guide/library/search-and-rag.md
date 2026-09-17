@@ -435,10 +435,17 @@ actually scored also keep their original score band rather than claiming
 
 ### Recent searches
 
-The "Recent searches" fold keeps your last 10 queries and persists them
-across restarts. "Select an entry to run it again." — each entry re-runs
-that exact query; **"Clear history"** empties the list. The fold closes
-itself when results land and opens itself when a search comes back empty.
+The "Recent searches" fold keeps your last 10 submitted queries across
+restarts, storing up to 200 characters per entry. Selecting an entry runs
+its stored text immediately using the current mode and Sources selections;
+previous mode/source settings are not saved with it. Re-running a query
+moves it to the top of the list.
+
+Tab to the heading and press Enter to expand it, then Tab to an entry and
+press Enter to run it. **Clear history** empties the saved list while
+keeping the current query, evidence and answer; keyboard focus returns to
+the heading. The fold closes when results land and opens when a search
+comes back empty.
 
 ### Sending evidence to Console
 
@@ -483,8 +490,12 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 4. **Send evidence to Console** — press **Select evidence** on the best
    row, then the inline **Use in Console** (or press `u`). Console opens
    with "Review evidence in Console" staged.
-5. **Re-run a recent search** — expand "Recent searches" and click the
-   entry ("Select an entry to run it again.").
+5. **Re-run a recent search** — Tab to **Recent searches** and press Enter
+   to expand it, then Tab to an entry and press Enter (or click it).
+   This runs immediately using the **current mode and Sources selections**;
+   history remembers query text, not earlier settings. Both query boxes
+   show the selected text. **Clear history** removes the saved entries and
+   leaves the current query, evidence and answer in place.
 6. **Ask a question and get an answer** — click **"mode: Search ▸"** so it
    reads "mode: RAG Answer ▸", then run; the panel shows a generated,
    cited answer above the evidence rows — or an honest "Nothing in your
@@ -886,3 +897,11 @@ a 98-test targeted run; four private native journeys pass sixteen resize
 transitions in both themes using local keyword retrieval and controlled
 replies. Shift+Tab returns through the panel to an editable RAG query without
 resubmitting. [Evidence](../../superpowers/qa/2026-09-17-rag-query-return/README.md).*
+
+*Recent-search replay and clearing verified on `feat/component-pattern-library`
+from `cfa89372b5` — 2026-09-17 UTC (TASK-32716): replay synchronizes both query
+fields and answer arrival keeps current focus visible. Eighteen new mounted
+cases pass within 148 targeted checks. Eight private native journeys cover
+both themes, sizes and modes using real keyword retrieval and controlled
+answers; clearing retains query/results/answer and persists an empty history.
+[Evidence](../../superpowers/qa/2026-09-17-rag-history-replay/README.md).*

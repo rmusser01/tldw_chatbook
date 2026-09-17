@@ -1,0 +1,164 @@
+{
+  "pid": 69468,
+  "runner_sha256": "426d49e426274de08e5d38b770f9ce40e24f56de5e904eb95dc67b9cc33edc70",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "mode": "search",
+      "scope": [
+        "media"
+      ],
+      "replay_focus": "CollapsibleTitle",
+      "synchronized_inputs": true,
+      "replay_calls": 1,
+      "answer_calls": 0,
+      "clear_preserves_query_results_answer": true,
+      "clear_focus": "CollapsibleTitle",
+      "empty_notice_painted": true,
+      "clear_persisted": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "mode": "rag",
+      "scope": [
+        "media"
+      ],
+      "replay_focus": "CollapsibleTitle",
+      "synchronized_inputs": true,
+      "replay_calls": 1,
+      "answer_calls": 1,
+      "clear_preserves_query_results_answer": true,
+      "clear_focus": "CollapsibleTitle",
+      "empty_notice_painted": true,
+      "clear_persisted": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "mode": "search",
+      "scope": [
+        "media"
+      ],
+      "replay_focus": "CollapsibleTitle",
+      "synchronized_inputs": true,
+      "replay_calls": 1,
+      "answer_calls": 0,
+      "clear_preserves_query_results_answer": true,
+      "clear_focus": "CollapsibleTitle",
+      "empty_notice_painted": true,
+      "clear_persisted": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "mode": "rag",
+      "scope": [
+        "media"
+      ],
+      "replay_focus": "CollapsibleTitle",
+      "synchronized_inputs": true,
+      "replay_calls": 1,
+      "answer_calls": 1,
+      "clear_preserves_query_results_answer": true,
+      "clear_focus": "CollapsibleTitle",
+      "empty_notice_painted": true,
+      "clear_persisted": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "mode": "search",
+      "scope": [
+        "media"
+      ],
+      "replay_focus": "CollapsibleTitle",
+      "synchronized_inputs": true,
+      "replay_calls": 1,
+      "answer_calls": 0,
+      "clear_preserves_query_results_answer": true,
+      "clear_focus": "CollapsibleTitle",
+      "empty_notice_painted": true,
+      "clear_persisted": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "mode": "rag",
+      "scope": [
+        "media"
+      ],
+      "replay_focus": "CollapsibleTitle",
+      "synchronized_inputs": true,
+      "replay_calls": 1,
+      "answer_calls": 1,
+      "clear_preserves_query_results_answer": true,
+      "clear_focus": "CollapsibleTitle",
+      "empty_notice_painted": true,
+      "clear_persisted": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "mode": "search",
+      "scope": [
+        "media"
+      ],
+      "replay_focus": "CollapsibleTitle",
+      "synchronized_inputs": true,
+      "replay_calls": 1,
+      "answer_calls": 0,
+      "clear_preserves_query_results_answer": true,
+      "clear_focus": "CollapsibleTitle",
+      "empty_notice_painted": true,
+      "clear_persisted": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "mode": "rag",
+      "scope": [
+        "media"
+      ],
+      "replay_focus": "CollapsibleTitle",
+      "synchronized_inputs": true,
+      "replay_calls": 1,
+      "answer_calls": 1,
+      "clear_preserves_query_results_answer": true,
+      "clear_focus": "CollapsibleTitle",
+      "empty_notice_painted": true,
+      "clear_persisted": true
+    }
+  ],
+  "waiting_for": "cleared history persisted",
+  "real_keyword_searches": 24,
+  "controlled_provider_calls": 4,
+  "source_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

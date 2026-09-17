@@ -1035,6 +1035,8 @@ class LibraryRagSearchController:
             self.query_one("#library-rag-query-input", Input).value = query
         except (NoMatches, QueryError):
             pass
+        # The equal-value Changed guard above also skips sibling synchronization.
+        self._patch_sibling_library_search_input("#library-search-input", query)
         await self._start_library_rag_query()
 
     async def _start_library_rag_query(self) -> None:
@@ -1501,6 +1503,10 @@ class LibraryRagSearchController:
         await self._refresh_search_rag_panel_state_widgets(
             include_results_and_history=False
         )
+        # Answer growth can move focused history below the viewport. Reveal
+        # live focus after layout without restoring a superseded focus choice.
+        for panel in self.query(LibrarySearchRagPanel):
+            self.call_after_refresh(panel._reveal_focused_control)
 
     def _sync_library_rag_scope_toggle_and_run_gate_widgets(self) -> None:
         """Refresh the scope-toggle counts and the Run gate in place, with

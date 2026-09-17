@@ -1,0 +1,11 @@
+.............                                                            [100%]
+============================= slowest 25 durations =============================
+1.79s call     Tests/UI/test_library_shell.py::test_library_shell_search_history_row_survives_bracketed_query
+1.58s call     Tests/UI/test_library_shell.py::test_library_shell_search_history_records_submitted_queries
+1.35s call     Tests/UI/test_library_shell.py::test_library_shell_search_history_row_reruns_query
+1.29s call     Tests/UI/test_library_shell.py::test_library_shell_history_manual_expand_survives_unrelated_refresh
+1.27s call     Tests/UI/test_library_shell.py::test_library_shell_history_manual_expand_survives_scope_toggle_recompose
+1.04s call     Tests/UI/test_library_shell.py::test_library_shell_history_clear_button_empties_history
+
+(19 durations < 1s hidden.)
+13 passed in 13.11s

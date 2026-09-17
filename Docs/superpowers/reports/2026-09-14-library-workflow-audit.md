@@ -15,6 +15,8 @@ TASK-32714 verifies and documents keyboard reading of generated answers and
 citation feedback without changing the existing UI.
 TASK-32715 repairs focus loss during RAG resize and verifies keyboard return
 to an editable query without additional retrieval or answer calls.
+TASK-32716 synchronizes both query fields on history replay and keeps the focused
+history control visible when an answer expands above it.
 Real local Import
 success/restart recovery and the caught Console sidebar startup error are now
 qualified and closed. The historical sections below retain their original scope
@@ -983,4 +985,29 @@ return route from the rail search, whose submission selects keyword Search.
 Next bounded review: Recent searches and replaying queries, followed by the
 remaining feature/component surfaces. Real provider behavior, semantic retrieval,
 factual grounding and the very narrow single-pane layout remain outside this
+qualification. No full suite, push or merge was performed.
+
+## Recent-search replay and clearing — 2026-09-17 UTC (TASK-32716)
+
+[Evidence](../qa/2026-09-17-rag-history-replay/README.md) closes two defects in the
+keyboard replay journey: the rail input retained the previous query, and answer
+arrival could push the focused Recent searches heading below the viewport. The
+controller now explicitly patches the sibling input and schedules the panel's
+existing current-focus reveal after answer layout. History clearing already
+retained its disclosure focus and needed no repair. Existing ADR-031/ADR-150 apply.
+
+All 148 targeted checks pass, including eighteen new production-styled cases for
+both modes, sizes and themes plus delayed reveal after newer focus. Eight native
+journeys pass with 24 real keyword searches and four controlled answers; all
+sixteen captures were inspected. Replay uses current mode/source selections,
+updates both fields and deduplicates history; clearing preserves the current
+query, evidence and answer without calls. The source/default files are unchanged,
+ten private databases are healthy, cleared history remains persisted after normal
+shutdown, and PID absence is verified. Static checks add no diagnostics and
+independent code/test review found no actionable issue.
+
+The guide now documents keyboard access, current-setting semantics and the
+existing ten-entry/200-character storage limits. Next bounded review: Search/RAG
+mode and source-scope changes. Real-provider behavior, semantic retrieval,
+factual grounding and very narrow single-pane layouts remain outside this
 qualification. No full suite, push or merge was performed.
