@@ -173,3 +173,94 @@ async def test_record_failure_does_not_mask_original_error(tmp_path):
     )
     with pytest.raises(RuntimeError, match="spawn failed"):
         await service.connect_local_profile("docs")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", [None, "rpc_error", "hang"])
+async def test_actual_http_profile_uses_existing_service_audit_owner(
+    tmp_path, monkeypatch, fault
+):
+    from Tests.MCP.test_streamable_http import peer
+    from tldw_chatbook.MCP.client import MCPClient
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+    from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile
+
+    async with peer(monkeypatch, fault=fault) as (url, _messages, calls):
+        store = LocalMCPStore(tmp_path / "http-store.json")
+        store.save_profile(
+            LocalExternalMCPProfile(
+                profile_id="owned",
+                transport="streamable_http",
+                protocol_version="2026-07-28",
+                url=url,
+                development_loopback=True,
+            )
+        )
+        client = MCPClient()
+        local = LocalMCPControlService(
+            store=store, client=client, manifest_provider=dict
+        )
+        service = UnifiedMCPControlPlaneService(
+            local_service=local,
+            server_service=None,
+            target_store=None,
+            context_store=None,
+        )
+        try:
+            snapshot = await local.connect_profile("owned")
+            assert snapshot["tools"][0]["name"] == "echo"
+            result = await service.execute_hub_tool_result(
+                "local:owned",
+                "echo",
+                {},
+                timeout_seconds=0.05 if fault == "hang" else 2,
+            )
+            assert calls["count"] == 1
+            assert result.dispatch_state == (
+                "uncertain" if fault == "hang" else "settled"
+            )
+            if fault is None:
+                assert result.structured_content == {"pass": True}
+                assert result.duplicate_keys_checked
+            else:
+                assert result.transport_error
+                assert "private sentinel" not in str(result)
+            rows = service.execution_log.read_recent()
+            assert len(rows) == 1
+            assert rows[0]["status"] == (
+                "success"
+                if fault is None
+                else "timeout" if fault == "hang" else "error"
+            )
+        finally:
+            await client.disconnect_all()
+
+
+@pytest.mark.asyncio
+async def test_actual_http_auth_challenge_has_explicit_service_diagnostic(
+    tmp_path, monkeypatch
+):
+    from Tests.MCP.test_streamable_http import peer
+    from tldw_chatbook.MCP.client import MCPClient
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+    from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile
+
+    async with peer(monkeypatch, fault="auth") as (url, _messages, calls):
+        store = LocalMCPStore(tmp_path / "store.json")
+        store.save_profile(
+            LocalExternalMCPProfile(
+                profile_id="owned",
+                transport="streamable_http",
+                url=url,
+                protocol_version="2026-07-28",
+                development_loopback=True,
+            )
+        )
+        client = MCPClient()
+        service = LocalMCPControlService(
+            store=store, client=client, manifest_provider=dict
+        )
+        with pytest.raises(RuntimeError, match="^mcp_authentication_unsupported$"):
+            await service.connect_profile("owned")
+        assert not client.sessions and not client._pending_connections
+        assert calls["count"] == 0

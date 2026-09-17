@@ -10,6 +10,26 @@
 
 **Spec:** [Plugin spec](../specs/2026-09-15-managed-plugins-design.md) and [hook spec](../specs/2026-09-15-expanded-hook-runtime-design.md). Read both; this plan covers its assigned subsystem within the complete [delivery plan](2026-09-15-managed-plugins-delivery.md).
 
+## Transport ownership reconciliation (R4)
+
+[ADR-162](../../../backlog/decisions/162-managed-agent-plugins.md) partially
+supersedes [ADR-111](../../../backlog/decisions/111-mcp-remote-transport-and-client-dependency.md)
+only for direct generic Streamable HTTP transport. The reciprocal amendments
+place the connection under existing `MCPClient`/`httpx` and retain the existing
+permission, registry and audit owners. M2 qualifies the three named protocol
+profiles; M3 separately resolves supported credential bindings. No server-package
+publication prerequisite, deprecated HTTP+SSE fallback or generic OAuth
+qualification is implied.
+
+R60 resolves the cross-era version-offer ambiguity: recognized modern errors
+remain in the modern era; with no different qualified modern revision, surface
+unsupported version. Explicit legacy profiles may counteroffer only the two
+qualified legacy revisions. Qualify these cases through actual transport tests,
+including rejected/same-version offers and successful legacy counteroffers.
+Some dual-era servers may require explicit legacy profile selection; no automatic
+initialize, retry loop or uncertain invocation replay is permitted. See ADR162
+and the plugin specification for the binding contract.
+
 ## Global Constraints
 
 - Python >=3.12; current checkout pins Textual 8.2.8, Pydantic >=2.4,<3 and portalocker 3.2.0. Preserve these pins; use the existing SQLite/httpx/crypto/keyring seams.
@@ -346,3 +366,65 @@ These exact approved limits apply wherever this plan handles the corresponding r
 | Listing page | 50 rows | Paginate; search remains over cached metadata. |
 | Display metadata | 256 characters/name; 2,000/summary; 64 KiB README preview | Sanitize and mark display truncation; preserve immutable source for explicit file review. |
 | Operation receipts | 1,000 terminal receipts or 30 days | Drop oldest eligible terminal receipts; never delete recovery authority. |
+
+### M2 implementation boundary (TASK-32682)
+
+The resolved `MCP.local_store.TransportProfile` is a frozen discriminated
+`stdio`/`streamable_http` record consumed by `MCPClient.connect_profile`.
+It preserves literal argv and an owned, read-only environment mapping. Existing
+manual `LocalExternalMCPProfile` records retain their historical argv/env
+normalization. Recognized legacy JSON stores migrate atomically to schema 2
+with explicit stdio/version fields; later opens do not rewrite the file.
+Unknown versions and malformed authoritative sections refuse migration without
+replacing their bytes. Reserved profile IDs retain the existing quarantine.
+Changing transport, endpoint or protocol invalidates persisted discovery.
+
+`StreamableHTTPConnection` uses core httpx below the existing client cleanup,
+discovery and typed-result methods. It neither creates a federation manager nor
+owns tool permissions or audit. `LocalMCPControlService` resolves only stdio
+launch environments and delegates both transports to the client. Explicit
+profiles discover advertised catalogs only; unavailable optional catalogs and
+invalid modern header annotations have fixed diagnostics. The legacy
+`connect_to_server` entry retains its exact-version compatibility contract.
+
+Wire qualification uses original, repository-owned stdio peers and loopback
+HTTP peers: the three explicit versions each exercise actual stdio plus HTTP
+JSON and SSE, with full M1 raw-result/dispatch provenance. These are controlled
+interoperability fixtures, not an external certification suite. The optional
+mcp-unified server remains unqualified when its extra is unavailable.
+
+Transport policy: HTTPS with normal certificate verification, or an explicitly
+selected numeric loopback HTTP development endpoint; URL userinfo and fragments
+are refused. Literal queries are preserved without host credential insertion or
+expansion (R61). No automatic redirects or environment proxy inheritance. Request `Accept-Encoding: identity` and reject other content
+encodings before raw byte iteration. Wire body budget is 1,048,576 bytes per
+exchange including resumed streams, 1,024 SSE events per stream, at most three
+GET resumptions, and the existing result/depth/catalog bounds. Legacy resumptions
+respect `retry` within the caller's deadline and retain the same request ID;
+they never repost the invocation. A session 404 or malformed/lost transport
+retires readiness; reconnect performs fresh discovery without replay.
+
+Modern request metadata and routing headers use the selected profile, including
+UTF-8 Base64 sentinel encoding and properties-only `x-mcp-header` extraction.
+Only the declared primitive types and safe-range integers are mirrored; invalid
+tool annotations exclude that tool. HTTP literal credential/custom-header
+mapping, Unicode-to-octet policy for those arbitrary headers, credential
+refresh, and OAuth remain M3/M4 work. Auth challenges are explicitly unsupported
+at this boundary; profile input cannot silently discard configured auth fields.
+Legacy server requests support ping and method-not-supported replies, with no
+advertised sampling/elicitation/roots capability. Modern input-required/MRTR
+results are unsupported. Standalone legacy push listeners and modern
+subscriptions are not activated; observed list-change notifications invalidate
+readiness until reconnect. This is distinct from request-scoped SSE and legacy
+GET response resumption, which are supported.
+
+### Literal MCP endpoint queries (R61)
+
+Preserve literal routing query parameters in an MCP endpoint URL, including
+duplicates and empty values. They are visible configuration, not credential
+references, and changing the full endpoint invalidates its discovery. Do not
+expand placeholders/environment values or insert host credentials into URLs.
+Host authorization uses its selected-origin credential service. Existing
+HTTPS/explicit-loopback, userinfo/fragment and redirect restrictions still apply.
+This follows the [Agent Plugins endpoint contract](https://agent-plugins.org/specification)
+without adding a blanket query-string restriction.

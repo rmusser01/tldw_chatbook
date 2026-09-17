@@ -23,6 +23,9 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+from .protocol_profiles import protocol_profile
+from .local_store import TransportProfile
+
 from .tool_results import (
     MAX_JSON_DEPTH,
     MAX_OUTPUT_LINE_BYTES,
@@ -327,6 +330,10 @@ class _JSONRPCError(RuntimeError):
 
 
 class _StdioJSONRPCConnection:
+    profile = protocol_profile(_MCP_PROTOCOL_VERSION)
+    client_name = "tldw_chatbook_client"
+    _allow_negotiation = False
+
     def __init__(
         self,
         process: asyncio.subprocess.Process,
@@ -344,6 +351,7 @@ class _StdioJSONRPCConnection:
         self.server_info: Dict[str, Any] = {}
         self.server_capabilities: Dict[str, Any] = {}
         self.protocol_version = ""
+        self.profile = protocol_profile(_MCP_PROTOCOL_VERSION)
 
         self._request_ids = count(1)
         self._pending_requests: Dict[int, asyncio.Future[Dict[str, Any]]] = {}
@@ -367,32 +375,56 @@ class _StdioJSONRPCConnection:
         )
 
     async def initialize(self) -> Dict[str, Any]:
-        result = await self.request(
-            "initialize",
-            {
-                "protocolVersion": _MCP_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {
-                    "name": self.client_name,
-                    "version": "1.0.0",
+        if self.profile.modern:
+            try:
+                result = await self.request("server/discover", {})
+            except _JSONRPCError as exc:
+                if exc.error.get("code") == -32022:
+                    raise MCPClientError("mcp_protocol_unsupported") from None
+                raise
+            supported = result.get("supportedVersions")
+            if not isinstance(supported, list) or self.profile.version not in supported:
+                raise MCPClientError("mcp_protocol_unsupported")
+        else:
+            result = await self.request(
+                "initialize",
+                {
+                    "protocolVersion": self.profile.version,
+                    "capabilities": {},
+                    "clientInfo": {"name": self.client_name, "version": "1.0.0"},
                 },
-            },
-        )
-        protocol_version = result.get("protocolVersion")
-        if protocol_version != _MCP_PROTOCOL_VERSION:
-            raise MCPClientError("Unexpected MCP protocol version")
-        self.protocol_version = protocol_version
+            )
+            offered = result.get("protocolVersion")
+            try:
+                selected = protocol_profile(offered)
+            except (TypeError, ValueError):
+                raise MCPClientError(
+                    "mcp_protocol_unsupported"
+                    if self._allow_negotiation
+                    else "Unexpected MCP protocol version"
+                ) from None
+            if selected.modern or (
+                not self._allow_negotiation and offered != self.profile.version
+            ):
+                raise MCPClientError(
+                    "mcp_protocol_unsupported"
+                    if self._allow_negotiation
+                    else "Unexpected MCP protocol version"
+                )
+            self.profile = selected
+        self.protocol_version = self.profile.version
         self.server_capabilities = _bounded_json_copy(
             result.get("capabilities"),
             message="Invalid MCP initialization metadata",
             mapping=True,
         )
         self.server_info = _bounded_json_copy(
-            result.get("serverInfo"),
+            result.get("serverInfo", {}),
             message="Invalid MCP initialization metadata",
             mapping=True,
         )
-        await self.notify("notifications/initialized")
+        if not self.profile.modern:
+            await self.notify("notifications/initialized")
         return result
 
     async def list_tools(self) -> SimpleNamespace:
@@ -437,7 +469,9 @@ class _StdioJSONRPCConnection:
 
             cursor = result.get("nextCursor")
             if cursor is not None:
-                if not isinstance(cursor, str) or not cursor:
+                if not isinstance(cursor, str) or (
+                    not cursor and not self.profile.modern
+                ):
                     raise MCPClientError("Invalid MCP catalog cursor")
                 if cursor in seen_cursors:
                     raise MCPClientError("Repeated MCP catalog cursor")
@@ -470,6 +504,8 @@ class _StdioJSONRPCConnection:
                 {"name": tool_name, "arguments": arguments},
                 _dispatch=observation,
             )
+            if self.profile.modern and raw.get("resultType", "complete") != "complete":
+                raise ValueError("mcp_capability_unsupported")
             result = parse_tool_result(raw)
         except _JSONRPCError:
             observation.state = "settled"
@@ -529,16 +565,18 @@ class _StdioJSONRPCConnection:
         future: asyncio.Future[Dict[str, Any]] = loop.create_future()
         self._pending_requests[request_id] = future
 
+        sent = False
         try:
             await self._send_message(
                 {
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "method": method,
-                    "params": params or {},
+                    "params": self.profile.params(params or {}, self.client_name),
                 },
                 **({"_dispatch": _dispatch} if _dispatch is not None else {}),
             )
+            sent = True
             return await asyncio.wait_for(
                 future,
                 timeout=(
@@ -547,10 +585,18 @@ class _StdioJSONRPCConnection:
                     else timeout_seconds
                 ),
             )
-        except asyncio.TimeoutError as exc:
-            raise TimeoutError(
-                f"Timed out waiting for MCP response to '{method}'"
-            ) from exc
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            if sent and method != "initialize" and (self.process.stdin is not None):
+                try:
+                    await asyncio.wait_for(
+                        self.notify(
+                            "notifications/cancelled", {"requestId": request_id}
+                        ),
+                        timeout=1.0,
+                    )
+                except Exception:  # noqa: BLE001 -- cancellation cleanup boundary
+                    logger.debug("MCP cancellation notification could not be sent")
+            raise
         finally:
             self._pending_requests.pop(request_id, None)
             if not future.done():
@@ -760,6 +806,8 @@ class _StdioJSONRPCConnection:
 
     async def _handle_incoming_payload(self, payload: Any) -> None:
         if isinstance(payload, list):
+            if not self.profile.batches or not payload:
+                raise MCPClientError("mcp_protocol_invalid")
             for item in payload:
                 await self._handle_incoming_payload(item)
             return
@@ -936,6 +984,7 @@ class MCPClient:
         self.name = name
         self.sessions: Dict[str, _StdioJSONRPCConnection] = {}
         self.servers: Dict[str, Dict[str, Any]] = {}
+        self.connection_diagnostics: dict[str, str] = {}
         self._pending_connections: Dict[str, _PendingConnection] = {}
         self._connect_reservations: Dict[str, object] = {}
         # TASK-26029: set by the app to enable server-initiated sampling/
@@ -951,12 +1000,26 @@ class MCPClient:
 
         logger.info("MCP Client '{}' initialized", name)
 
+    async def connect_profile(self, profile: TransportProfile) -> bool:
+        """Connect a validated direct transport through the existing readiness owner."""
+        if not isinstance(profile, TransportProfile):
+            raise ValueError("mcp_profile_invalid")  # noqa: TRY004
+        return await self.connect_to_server(
+            profile.profile_id,
+            profile.command,
+            list(profile.args),
+            dict(profile.env) if profile.env is not None else None,
+            _profile=profile,
+        )
+
     async def connect_to_server(
         self,
         server_id: str,
         command: str,
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
+        *,
+        _profile: TransportProfile | None = None,
     ) -> bool:
         """Connect to an MCP server via stdio.
 
@@ -973,7 +1036,8 @@ class MCPClient:
         # disk to a dangerous shape cannot bypass the save-time check.
         from tldw_chatbook.MCP.spawn_guard import screen_spawn_command  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
 
-        spawn_verdict = screen_spawn_command(command, args)
+        is_http = _profile is not None and _profile.transport == "streamable_http"
+        spawn_verdict = None if is_http else screen_spawn_command(command, args)
         if spawn_verdict is not None:
             logger.error(
                 "MCP spawn refused for '{}': {} (rule: {})",
@@ -999,18 +1063,21 @@ class MCPClient:
                     return False
 
             spawn_timeout = _remaining(deadline, "MCP connection deadline exceeded")
-            process = await asyncio.wait_for(
-                asyncio.create_subprocess_exec(
-                    command,
-                    *(args or []),
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env=env,
-                    limit=MAX_OUTPUT_LINE_BYTES,
-                ),
-                timeout=spawn_timeout,
-            )
+            if is_http:
+                process = None
+            else:
+                process = await asyncio.wait_for(
+                    asyncio.create_subprocess_exec(
+                        command,
+                        *(args or []),
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=env,
+                        limit=MAX_OUTPUT_LINE_BYTES,
+                    ),
+                    timeout=spawn_timeout,
+                )
             pending = _PendingConnection(process)
             if (
                 self._connect_reservations.get(server_id) is not reservation
@@ -1048,11 +1115,20 @@ class MCPClient:
                     per_server = None
                 if per_server is not None:
                     connection_dispatcher = per_server.handle
-            session = _StdioJSONRPCConnection(
-                process,
-                client_name=self.name,
-                server_request_dispatcher=connection_dispatcher,
-            )
+            if is_http:
+                from .streamable_http import StreamableHTTPConnection
+
+                session = StreamableHTTPConnection(_profile, client_name=self.name)
+            else:
+                session = _StdioJSONRPCConnection(
+                    process,
+                    client_name=self.name,
+                    server_request_dispatcher=connection_dispatcher,
+                )
+                if _profile is not None:
+                    session.profile = protocol_profile(_profile.protocol_version)
+                    session._allow_negotiation = True
+            session._qualified_profile = _profile is not None
             pending.session = session
             session._on_transport_failure = cleanup_failed_transport
             initialize_timeout = _remaining(
@@ -1062,6 +1138,7 @@ class MCPClient:
 
             pending.server = {
                 "command": command,
+                "transport": "streamable_http" if is_http else "stdio",
                 "args": list(args or []),
                 "connected_at": datetime.now().isoformat(),
                 "tools": [],
@@ -1091,6 +1168,7 @@ class MCPClient:
                 or server_id in self.sessions
             ):
                 raise MCPClientError("MCP connection ownership changed")
+            self.connection_diagnostics.pop(server_id, None)
             self.sessions[server_id] = session
             self.servers[server_id] = pending.server
             self._pending_connections.pop(server_id, None)
@@ -1106,7 +1184,12 @@ class MCPClient:
             except MCPClientError:
                 logger.warning("MCP connection cleanup incomplete after cancellation")
             raise
-        except Exception:
+        except Exception as exc:
+            self.connection_diagnostics[server_id] = (
+                str(exc)
+                if str(exc).startswith("mcp_") and len(str(exc)) < 80
+                else "mcp_connection_failed"
+            )
             try:
                 await self._bounded_teardown_connection(
                     server_id, session=session, pending=pending
@@ -1159,14 +1242,24 @@ class MCPClient:
         if session is None or server is None:
             raise RuntimeError(f"Server session not found for {server_id}")
 
-        tools_response = await session.list_tools()
-        server["tools"] = tools_response.tools
-
-        resources_response = await session.list_resources()
-        server["resources"] = resources_response.resources
-
-        prompts_response = await session.list_prompts()
-        server["prompts"] = prompts_response.prompts
+        diagnostics = []
+        for capability, method in (
+            ("tools", session.list_tools),
+            ("resources", session.list_resources),
+            ("prompts", session.list_prompts),
+        ):
+            if (
+                getattr(session, "_qualified_profile", False)
+                and capability not in session.server_capabilities
+            ):
+                server[capability] = []
+                diagnostics.append("mcp_optional_" + capability + "_unavailable")
+                continue
+            response = await method()
+            server[capability] = getattr(response, capability)
+        server["diagnostics"] = sorted(
+            set(diagnostics) | getattr(session, "diagnostics", set())
+        )
 
         logger.info(
             "Discovered MCP capabilities: {} tools, {} resources, {} prompts",
@@ -1422,6 +1515,7 @@ class MCPClient:
             "command": info.get("command"),
             "args": list(info.get("args") or []),
             "connected_at": info.get("connected_at"),
+            "diagnostics": list(self.servers.get(server_id, {}).get("diagnostics", [])),
             "tools": self.get_server_tools(server_id),
             "resources": self.get_server_resources(server_id),
             "prompts": self.get_server_prompts(server_id),
