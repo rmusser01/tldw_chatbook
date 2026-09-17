@@ -503,14 +503,20 @@ def build_first_run_provider_commit(
     if credential.source == "none":
         from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 
-        readiness = get_provider_readiness(effective_draft.provider, config)
+        readiness = get_provider_readiness(
+            effective_draft.provider, config, background_credentials=True
+        )
         if str(readiness.api_key_source or "").startswith("config:"):
             source = "stored"
         elif str(readiness.api_key_source or "").startswith("env:"):
             source = "environment"
         else:
             source = "none"
-        mutation = build_provider_setup_mutation(shared_draft(source), config)
+        mutation = build_provider_setup_mutation(
+            shared_draft(source),
+            config,
+            preserve_credentials=readiness.subscription_status is not None,
+        )
     elif credential.source == "draft" and not credential_value:
         mutation = build_provider_setup_mutation(shared_draft("none"), config)
     else:

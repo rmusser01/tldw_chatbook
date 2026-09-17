@@ -7,7 +7,7 @@ TASK-2376 now closes the source-staging excerpt gap: media and conversation
 text reaches the evidence capture, with draft and saved records preserved.
 TASK-2530 now keeps Search/RAG Run and its provider disclosure coherent across
 snapshot races, with the recipient visible at compact width. TASK-2377 repairs
-recovery after panel rebuilds; TASK-32707 keeps live keyboard focus visible when
+recovery after panel rebuilds; TASK-32751 keeps live keyboard focus visible when
 search results arrive. TASK-32712 keeps retrieval failure/recovery beside Run and
 clears it on retry without hiding provider disclosure.
 TASK-32713 extends that visible recovery to answer-generation failures.
@@ -263,7 +263,7 @@ Next in the feature review: remaining Prompt actions and recovery paths, then
 Skills, Collections, ingestion and other destinations. Integration into `dev`
 remains pending.
 
-## Prompt More actions and deletion recovery — TASK-32628
+## Prompt More actions and deletion recovery — TASK-32750
 
 The [action and recovery evidence](../qa/2026-09-15-prompt-actions/README.md)
 records three repairs: deletion failures reveal their existing error status;
@@ -863,13 +863,13 @@ Import media actions; ten databases are healthy, sources/default profile files
 are unchanged, and shutdown/PID absence are verified. Counts are injected for
 timing; this does not qualify source-snapshot producers or provider generation.
 
-Next bounded review is TASK-32707: native result arrival reveals Evidence while
+Next bounded review is TASK-32751: native result arrival reveals Evidence while
 the query retains focus outside the viewport (y=-19 at 80×24 in both themes).
 Recovery focus/copy is readable when reached; the separate result-arrival focus
 issue remains open. No full suite, push or merge was performed.
 
 
-## Search/RAG result-arrival focus — 2026-09-17 UTC (TASK-32707)
+## Search/RAG result-arrival focus — 2026-09-17 UTC (TASK-32751)
 
 [Evidence](../qa/2026-09-17-rag-result-focus/README.md) closes the invisible-focus
 finding from TASK-2377. The existing reveal callback now keeps the currently

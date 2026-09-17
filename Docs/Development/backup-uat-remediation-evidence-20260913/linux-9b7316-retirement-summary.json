@@ -1,0 +1,21 @@
+{
+  "commit": "9b7316d2f423fe43ffff9c046b1a76c4f4defe06",
+  "product": {
+    "junit": {
+      "collected": 74,
+      "failed": [],
+      "parse_error": null,
+      "skipped": []
+    },
+    "pytest_returncode": 0,
+    "tests": [
+      "Tests/Backup_Recovery/test_runtime_cache_revisit.py",
+      "Tests/Backup_Recovery/test_caller_cache_retirement.py",
+      "Tests/Backup_Recovery/test_mounted_console_backup.py",
+      "Tests/Backup_Recovery/test_first_note_backup.py",
+      "Tests/Backup_Recovery/test_bound_config_companions.py",
+      "Tests/Backup_Recovery/test_config_sibling_capture.py",
+      "Tests/Backup_Recovery/test_config_binding_writes.py"
+    ]
+  }
+}

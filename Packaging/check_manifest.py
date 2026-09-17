@@ -183,6 +183,8 @@ REQUIRED_SDIST_PATHS = (
         "requirements.txt",
         "tldw_chatbook/__init__.py",
         "tldw_chatbook/app.py",
+        "tldw_chatbook/Backup_Recovery/age_worker.py",
+        "tldw_chatbook/Backup_Recovery/native_qualification.json",
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/css/components/stats_screen.css",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
@@ -205,6 +207,8 @@ REQUIRED_WHEEL_PATHS = (
     {
         "tldw_chatbook/__init__.py",
         "tldw_chatbook/app.py",
+        "tldw_chatbook/Backup_Recovery/age_worker.py",
+        "tldw_chatbook/Backup_Recovery/native_qualification.json",
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
         "tldw_chatbook/Evals/config/eval_config.yaml",
@@ -475,6 +479,12 @@ def _common_forbidden_reason(name: str) -> str | None:
         return "compiled Python cache"
     if ".DS_Store" in parts:
         return "OS metadata"
+    if name.startswith("Packaging/backup_age/"):
+        return "retired Go backup helper source"
+    if name == "tldw_chatbook/Backup_Recovery/helper_manifest.json":
+        return "retired Go backup helper manifest"
+    if name.startswith("tldw_chatbook/Backup_Recovery/_age/backup-age"):
+        return "retired Go backup helper executable"
     return None
 
 
@@ -640,6 +650,26 @@ def _validate_metadata(
     return errors
 
 
+def _validate_python_application_wheel(wheel: Path, members: set[str]) -> list[str]:
+    """Require the application wheel to remain universal and pure Python."""
+
+    errors: list[str] = []
+    if not wheel.name.endswith("-py3-none-any.whl"):
+        errors.append("wheel: expected the application tag py3-none-any")
+    wheel_metadata_name = next(
+        (name for name in members if name.endswith(".dist-info/WHEEL")), None
+    )
+    if wheel_metadata_name is None:
+        return errors
+    with zipfile.ZipFile(wheel) as archive:
+        wheel_metadata = Parser().parsestr(
+            archive.read(wheel_metadata_name).decode("utf-8")
+        )
+    if wheel_metadata["Root-Is-Purelib"] != "true":
+        errors.append("wheel: expected Root-Is-Purelib true")
+    return errors
+
+
 def check_distribution(dist_dir: Path = Path("dist")) -> bool:
     """Return whether exactly one sdist and wheel satisfy the release contract."""
 
@@ -721,6 +751,7 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
             wheel_members,
         )
     )
+    errors.extend(_validate_python_application_wheel(wheel, wheel_members))
 
     if errors:
         for error in errors:

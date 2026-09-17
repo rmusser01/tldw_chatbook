@@ -1,0 +1,37 @@
+[
+  {
+    "cell": null,
+    "code": "F632",
+    "end_location": {
+      "column": 20,
+      "row": 680
+    },
+    "filename": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/UI/test_library_screen.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "!=",
+          "end_location": {
+            "column": 15,
+            "row": 680
+          },
+          "location": {
+            "column": 9,
+            "row": 680
+          }
+        }
+      ],
+      "message": "Replace `is not` with `!=`"
+    },
+    "location": {
+      "column": 26,
+      "row": 675
+    },
+    "message": "Use `!=` to compare constant literals",
+    "name": "is-literal",
+    "noqa_row": 675,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/is-literal"
+  }
+]

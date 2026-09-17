@@ -1,0 +1,18 @@
+{
+  "operation_id": "3e762a1e778343b6bd4b74db0cdaf733",
+  "events": [
+    "candidate_staged",
+    "prepared"
+  ],
+  "database_sha256": "2832b3ef24db9d1494a015c0be56c7e3a3de32e519fcea4d5593e583780d62ef",
+  "notes": [
+    [
+      "15ea0d57-199a-41cd-b929-8be5e875ead6",
+      "Before replacement acceptance note 336",
+      "Restore this original note on rollback. REPLACE-IQJA-336-20260913."
+    ]
+  ],
+  "original_note_and_database_unchanged": true,
+  "result": "INCONCLUSIVE: test opened live SQLite in mode=ro after prepared, which can change SHM; exact recovery proof refused changed sidecar. Do not count as a product Abort failure.",
+  "test_interference": "SQLite opened by UAT verification between prepared and Abort"
+}

@@ -16,9 +16,27 @@ import pytest
 from tldw_chatbook.Library import library_browse_location as module
 from tldw_chatbook.Library.library_browse_location import (
     claim_browse_directory,
+    picker_recent_context,
     remember_browse_directory,
     validated_browse_directory,
 )
+
+
+def _capture_writes(monkeypatch, saved: list, *, succeeds: bool = True):
+    """Patch the ONE config-write seam this module uses.
+
+    task-32643 folded the recent-roots list into the same write as the start
+    directory, so the seam is now ``save_settings_to_cli_config`` (one dict of
+    sections) rather than ``save_setting_to_cli_config`` (one key). These pins
+    follow the rename: a stale patch would leave the real writer running and
+    assert against a list nothing ever appended to.
+    """
+
+    def _write(settings):
+        saved.append(settings)
+        return succeeds
+
+    monkeypatch.setattr(module, "save_settings_to_cli_config", _write)
 
 
 def test_a_real_directory_comes_back_normalized(tmp_path):
@@ -55,12 +73,8 @@ def test_a_superseded_selection_cannot_overwrite_a_newer_one(tmp_path, monkeypat
     newer = tmp_path / "newer"
     older.mkdir()
     newer.mkdir()
-    saved: list[tuple] = []
-    monkeypatch.setattr(
-        module,
-        "save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    saved: list[dict] = []
+    _capture_writes(monkeypatch, saved)
 
     first = claim_browse_directory("library.test_32174", "last_directory")
     second = claim_browse_directory("library.test_32174", "last_directory")
@@ -68,18 +82,14 @@ def test_a_superseded_selection_cannot_overwrite_a_newer_one(tmp_path, monkeypat
     remember_browse_directory("library.test_32174", "last_directory", newer, second)
     remember_browse_directory("library.test_32174", "last_directory", older, first)
 
-    assert saved == [("library.test_32174", "last_directory", str(newer))]
+    assert saved == [{"library.test_32174": {"last_directory": str(newer)}}]
 
 
 def test_a_picked_file_remembers_its_parent_directory(tmp_path, monkeypatch):
     picked = tmp_path / "note.md"
     picked.write_text("# hi", encoding="utf-8")
-    saved: list[tuple] = []
-    monkeypatch.setattr(
-        module,
-        "save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    saved: list[dict] = []
+    _capture_writes(monkeypatch, saved)
 
     generation = claim_browse_directory("library.test_32174_parent", "last_directory")
     remember_browse_directory(
@@ -87,16 +97,14 @@ def test_a_picked_file_remembers_its_parent_directory(tmp_path, monkeypatch):
     )
 
     assert saved == [
-        ("library.test_32174_parent", "last_directory", str(tmp_path))
+        {"library.test_32174_parent": {"last_directory": str(tmp_path)}}
     ]
 
 
 def test_a_refused_config_write_is_reported_not_swallowed(tmp_path, monkeypatch, caplog):
     """A failed save used to leave no trace at all -- the picker just
     silently reopened somewhere else next time."""
-    monkeypatch.setattr(
-        module, "save_setting_to_cli_config", lambda *args, **kwargs: False
-    )
+    _capture_writes(monkeypatch, [], succeeds=False)
     logged: list[str] = []
     sink_id = module.logger.add(lambda message: logged.append(str(message)), level="ERROR")
     try:
@@ -116,7 +124,7 @@ def test_a_raising_config_write_is_reported_not_swallowed(tmp_path, monkeypatch)
     def _boom(*args, **kwargs):
         raise RuntimeError("config is on fire")
 
-    monkeypatch.setattr(module, "save_setting_to_cli_config", _boom)
+    monkeypatch.setattr(module, "save_settings_to_cli_config", _boom)
     logged: list[str] = []
     sink_id = module.logger.add(lambda message: logged.append(str(message)), level="ERROR")
     try:
@@ -190,3 +198,99 @@ def test_an_unusable_configured_notes_folder_is_skipped(monkeypatch):
         lambda section, key=None, default=None: "~/definitely/not/here/32251",
     )
     assert browse_start_directory(None) == Path.home()
+
+
+def test_a_notes_door_also_records_the_root_it_returned(tmp_path, monkeypatch):
+    """task-32643 AC#3: the recents list rides the write that already happens.
+
+    One config write per selection, carrying both facts -- the start directory
+    this picker reopens at, and the roots it offers on ctrl+r. Asserted on the
+    single settings dict so a second rewrite per pick would fail here.
+    """
+    chosen = tmp_path / "vault"
+    chosen.mkdir()
+    saved: list[dict] = []
+    _capture_writes(monkeypatch, saved)
+
+    context = picker_recent_context("library.test_32643")
+    generation = claim_browse_directory("library.test_32643", "last_directory")
+    remember_browse_directory(
+        "library.test_32643",
+        "last_directory",
+        chosen,
+        generation,
+        recent_context=context,
+    )
+
+    assert len(saved) == 1, "one selection must not rewrite config.toml twice"
+    settings = saved[0]
+    assert settings["library.test_32643"] == {"last_directory": str(chosen)}
+    recent = settings["filepicker"][f"recent_{context}"]
+    assert [entry["path"] for entry in recent] == [str(chosen.resolve())]
+    assert recent[0]["type"] == "directory"
+
+
+def test_picking_a_FILE_records_where_to_reopen_but_offers_no_new_root(
+    tmp_path, monkeypatch
+):
+    """Review round 1, finding 2: the two facts are not the same fact.
+
+    Import once can return a file, and the start directory rightly takes that
+    file's PARENT -- that is where to reopen. The recents list must not: its
+    rows are offered as answers (`base_dialog._on_recent_selected` dismisses
+    with the row), so a folder the user only browsed THROUGH on the way to a
+    file would come back as a one-keystroke whole-folder adoption of a folder
+    they never chose.
+    """
+    folder = tmp_path / "browsed-through"
+    folder.mkdir()
+    picked_file = folder / "one-note.md"
+    picked_file.write_text("x", encoding="utf-8")
+    saved: list[dict] = []
+    _capture_writes(monkeypatch, saved)
+
+    context = picker_recent_context("library.notes_import")
+    generation = claim_browse_directory("library.notes_import", "last_directory")
+    remember_browse_directory(
+        "library.notes_import",
+        "last_directory",
+        picked_file,
+        generation,
+        recent_context=context,
+    )
+
+    assert len(saved) == 1
+    settings = saved[0]
+    # Still reopens where the user was...
+    assert settings["library.notes_import"] == {"last_directory": str(folder)}
+    # ...and still offers nothing new to adopt wholesale.
+    assert "filepicker" not in settings, (
+        "a picked FILE must not add its parent to the roots ctrl+r offers as "
+        f"answers; it wrote {settings.get('filepicker')!r}"
+    )
+
+
+def test_a_picker_that_offers_no_recents_records_none(tmp_path, monkeypatch):
+    """Negative control: a blank ``recent_context`` writes no recents key.
+
+    The Library ingest browser calls this function too and never shows a
+    recents list; accumulating a key nothing reads would be config litter.
+    """
+    chosen = tmp_path / "somewhere"
+    chosen.mkdir()
+    saved: list[dict] = []
+    _capture_writes(monkeypatch, saved)
+
+    generation = claim_browse_directory("library.test_32643_none", "last_directory")
+    remember_browse_directory(
+        "library.test_32643_none", "last_directory", chosen, generation
+    )
+
+    assert saved == [{"library.test_32643_none": {"last_directory": str(chosen)}}]
+
+
+def test_the_recents_context_is_derived_from_the_config_section():
+    """One string decides both ends, so a caller cannot read one context and
+    persist under another (task-32643 AC#3)."""
+    assert picker_recent_context("library.notes_sync") == "library_notes_sync"
+    assert picker_recent_context("file_notes") == "file_notes"

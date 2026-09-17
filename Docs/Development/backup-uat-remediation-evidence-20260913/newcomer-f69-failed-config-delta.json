@@ -1,0 +1,26 @@
+{
+  "profile_id": "26c4691935a647c38237112490d51540",
+  "before_sha256": "51ef9dfd4c921d15b735754046fba01513aa9b46448a622372cdb0cda7989876",
+  "registered_fingerprint": "51ef9dfd4c921d15b735754046fba01513aa9b46448a622372cdb0cda7989876",
+  "after_sha256": "5ae1763b7892104e525ee0be729d4fc463bbc118124b20d95c3cd1daca8f704b",
+  "only_semantic_change": "console.rail_state added",
+  "added_default_rail_state": {
+    "console_rail_state:global:shared-layout-v1": {
+      "left_open": true,
+      "workspace_open": false,
+      "conversations_open": true,
+      "model_open": false,
+      "details_open": false,
+      "agent_open": false,
+      "inspector_more_open": false,
+      "environment_open": true,
+      "tasks_open": true
+    }
+  },
+  "opened_receipts": 0,
+  "actual_child_mounted": true,
+  "ordinary_ctrlq_sent": true,
+  "parent_result": "backup_operation_failed",
+  "profile_status": "recovery_required",
+  "terminal_eval_warning": "storage_scope_not_enrolled (not established as terminal cause)"
+}

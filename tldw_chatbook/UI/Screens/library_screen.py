@@ -100,6 +100,7 @@ from ...Library.collections_capture_models import (
 from ...Library.library_browse_location import (
     browse_start_directory,
     claim_browse_directory,
+    picker_recent_context,
     remember_browse_directory,
 )
 from ...Library.library_content_evidence import (
@@ -553,6 +554,11 @@ from ..destination_recovery import (
     sync_load_failure_callout,
 )
 from .model_browser_state import install_failure_message
+from .skills_screen import (
+    SkillRecoveryReviewModal,
+    SkillTrustBootstrapModal,
+    SkillTrustPassphraseModal,
+)
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
@@ -736,6 +742,7 @@ _TRASH_RESTORE_FAILURE_COPY = "Could not restore this media item."
 # 5 tests deterministically. See Library_Modules/screen_helpers.py's module
 # docstring and this task's report for the full trace.
 from ..Library_Modules.screen_constants import (
+    LIBRARY_NOTES_FULL_CANVAS_VIEWS,
     _ANALYZE_ORIGIN_IMPORT,
     _ANALYZE_ORIGIN_MEDIA,
     _MEDIA_VIEW_LIST,
@@ -1019,6 +1026,17 @@ class LibraryScreen(BaseAppScreen):
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
         ("ctrl+n", "library_notes_new", "New note"),
         ("/", "library_notes_focus_filter", "Find notes"),
+        # task-32607 AC#5 (critique #4 idea 10): two keys the list footer can
+        # honestly advertise beside "n" (which already fires -- see the bare
+        # accelerator branch in ``on_key``). Both are gated in
+        # ``check_action`` to the Notes navigator with a non-text control
+        # focused: a focused Input swallows a printable key before any screen
+        # binding sees it, so they still type normally in the filter and in
+        # the rail's search box.
+        Binding("g", "library_notes_focus_folders", "Go to folder", show=False),
+        Binding(
+            "e", "library_notes_export_selected", "Export selected", show=False
+        ),
         ("escape", "library_notes_escape", "Back"),
         # task-424: skill-editor accelerators. ``check_action`` gates both
         # to the open skill editor, so the keys pass through untouched
@@ -1511,14 +1529,28 @@ class LibraryScreen(BaseAppScreen):
     #: running) now advertises NOTHING instead of a dead "Esc Locked"
     #: entry -- the footer falls back to the global cluster, matching the
     #: honest-footer contract everywhere else on this screen.
+    #: task-32607 AC#5 (critique #4 idea 10): the list footer's map is the
+    #: screen's only keyboard story, so it is made TRUE first and extended
+    #: second. ``n`` replaces ``ctrl+n`` as the advertised spelling because
+    #: it is the key that is live in exactly the states this tier is shown
+    #: in (``on_key``'s accelerator branch shares ``library_notes_new``'s
+    #: gate since task-32138); ``ctrl+n`` still fires and additionally works
+    #: from inside the filter box, where every chip here is suppressed.
+    #: ``g`` and ``e`` are new (``action_library_notes_focus_folders`` /
+    #: ``action_library_notes_export_selected``); ``e`` lives on the
+    #: select-mode tier below, since that is the only state its button is
+    #: on screen in. Every chip in this tier is dropped while a text field
+    #: holds focus (task-32609) -- there they are literal characters.
     LIBRARY_NOTES_NAVIGATOR_SHORTCUTS = (
-        ("ctrl+n", "new note"),
+        ("n", "new note"),
         ("/", "find note"),
+        ("g", "go to folder"),
         ("esc", "focus rail"),
     )
     LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT = (
-        ("ctrl+n", "new"),
+        ("n", "new"),
         ("/", "find"),
+        ("g", "folder"),
         ("esc", "rail"),
     )
     # task-32247 AC#2: the document-end key is advertised beside the other
@@ -1733,6 +1765,7 @@ class LibraryScreen(BaseAppScreen):
     #library-notes-status-row,
     #library-note-heading,
     #library-note-title-row,
+    #library-note-keywords-row,
     #library-note-context-keywords-row,
     #library-notes-create-heading {
         layout: vertical;
@@ -1769,9 +1802,13 @@ class LibraryScreen(BaseAppScreen):
         border: solid $surface-lighten-1;
     }
 
+    /* task-32613 AC#1: heavy, not solid -- the only shape change these two
+       scroll owners get on focus (see the app-sheet block for the
+       measurement). Same one-cell geometry. */
     #library-note-preview-region:focus,
     #library-note-context-region:focus {
-        border: solid $accent;
+        border: heavy $accent;
+        outline: none;
         background: $boost;
     }
 
@@ -1969,7 +2006,8 @@ class LibraryScreen(BaseAppScreen):
         overflow-y: hidden;
     }
 
-    #library-shell-grid.library-notes-compact #library-note-title-row {
+    #library-shell-grid.library-notes-compact #library-note-title-row,
+    #library-shell-grid.library-notes-compact #library-note-keywords-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1978,6 +2016,7 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-note-title-label,
+    #library-shell-grid.library-notes-compact #library-note-keywords-label,
     #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
         width: 10;
         height: 1;
@@ -1985,6 +2024,7 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-note-title,
+    #library-shell-grid.library-notes-compact #library-note-keywords,
     #library-shell-grid.library-notes-compact #library-note-context-keywords {
         width: 1fr;
         height: 1;
@@ -2039,9 +2079,19 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
-    #library-shell-grid.library-notes-compact #library-note-context-meta,
     #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
         height: 1;
+        min-height: 1;
+        margin: 0;
+    }
+
+    /* task-32642 AC#2: Info's properties are one row each here too, unpadded --
+       the joined sentence they replaced ran to ~85 characters against this
+       `height: 1`, so the compact pane truncated the values it was stating.
+       `auto` is the smallest change that lets the rows exist; the zero margin
+       this Static shares with its compact siblings is kept. */
+    #library-shell-grid.library-notes-compact #library-note-context-meta {
+        height: auto;
         min-height: 1;
         margin: 0;
     }
@@ -3900,6 +3950,12 @@ class LibraryScreen(BaseAppScreen):
             notes_service=getattr(app_instance, "notes_service", None),
             user_id=getattr(app_instance, "notes_user_id", None) or "default_user",
             clock=lambda: datetime.now(timezone.utc),
+            # task-32604: the note side's change producer for lasting sync.
+            # Read late, like every other app-owned service here -- the
+            # runtime is built during a detached startup step.
+            notes_sync_runtime=lambda: getattr(
+                app_instance, "notes_sync_runtime_owner", None
+            ),
         )
         self._library_note_session = DatabaseNoteSessionCoordinator(
             note_session_port,
@@ -4512,6 +4568,12 @@ class LibraryScreen(BaseAppScreen):
         """
         if focused is None:
             focused = self.focused
+        # task-32607 AC#1: Info's backlink rows are the one Notes stop with
+        # no DOM id at all -- ``_backlink_buttons`` identifies them by a
+        # ``note_id`` attribute and a class, so an id lookup could never
+        # name them and the tier fell back to its literal "run action".
+        if focused is not None and focused.has_class("library-note-backlink"):
+            return "open linked note"
         widget_id = str(getattr(focused, "id", "") or "")
         if not widget_id:
             return ""
@@ -8224,24 +8286,59 @@ class LibraryScreen(BaseAppScreen):
             )
         region = self._library_notes_focus_region()
         if region == "navigator":
+            typing = isinstance(self.focused, (Input, TextArea))
             if self._notes_state.select_mode:
+                # task-32607 AC#5: "e export selected" belongs here, not on
+                # the plain tier -- Export selected is composed only by the
+                # select strip, and only fires with a non-empty selection
+                # (``check_action``), so the chip appears exactly with the
+                # live key.
+                export = (
+                    (("e", "export selected"),)
+                    if self.check_action("library_notes_export_selected", ())
+                    else ()
+                )
+                export_compact = (
+                    () if not export else (("e", "export"),)
+                )
                 return self._notes_footer_tier(
-                    (("enter", "select note"), ("esc", "done")),
-                    (("enter", "select"), ("esc", "done")),
+                    (("enter", "select note"),) + export + (("esc", "done"),),
+                    (("enter", "select"),) + export_compact + (("esc", "done"),),
                 )
             if self._notes_state.sort_choices_visible:
                 return self._notes_footer_tier(
                     (("enter", "choose sort"), ("esc", "cancel")),
                     (("enter", "choose sort"), ("esc", "cancel")),
                 )
+            tier = self._notes_footer_tier(
+                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
+                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT,
+            )
+            # task-32609 AC#2 / task-32607 AC#5: every printable key in this
+            # tier is SWALLOWED by a focused text field -- Textual's ``Input``
+            # stops a printable keypress before the screen's bindings run, and
+            # ``library_notes_focus_filter``'s own ``check_action`` says so
+            # explicitly. The tier is shown from the whole navigator REGION,
+            # which includes focus parked in the filter box or (after Escape)
+            # the rail's own search box, so the footer read "/ find note"
+            # while "/" was landing as a literal character and "abc" was
+            # going into "Search Library…". Same transform the shared
+            # Library tier applies (see ``_library_footer_shortcuts_for_
+            # current_state``), scoped to the keys this tier owns.
+            if typing:
+                tier = tuple(
+                    pair
+                    for pair in tier
+                    if not (len(pair[0]) == 1 and pair[0].isprintable())
+                )
+            elif not self.check_action("library_notes_focus_folders", ()):
+                # No folder tree rendered (a flat list, or a list still
+                # loading): "g" would move nothing, so it is not advertised.
+                # The key's OWN gate decides, not a second copy of it.
+                tier = tuple(pair for pair in tier if pair[0] != "g")
             # task-32539 AC#1: after a confirmed delete focus parks on the
             # receipt's Undo, which this tier never named.
-            return self._with_library_notes_focus_chip(
-                self._notes_footer_tier(
-                    self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
-                    self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT,
-                )
-            )
+            return self._with_library_notes_focus_chip(tier)
         if region == "preview":
             # task-32537 AC#1: Tab moves across the mode buttons in Preview
             # exactly as it does in Edit, and a blind Enter there fires Use
@@ -8254,9 +8351,26 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
         if region == "context":
-            return self._notes_footer_tier(
+            # task-32607 AC#1: this was the ONE Notes tier still rendering
+            # its literal "enter run action" on every stop -- eleven Tabs
+            # through Info produced the identical chip for '‹ Notes', Copy,
+            # Export and Delete, so a blind Enter was a coin toss between
+            # "copy to clipboard" and "delete this note". Replaced IN PLACE
+            # (the ``lasting_add`` rule) rather than appended, because this
+            # tier already spends the narrow budget on "enter"; and DROPPED
+            # where the focused control owns no Enter (the keywords field,
+            # which has no ``Input.Submitted`` handler), because a generic
+            # label there is the same lie one control smaller.
+            tier = self._notes_footer_tier(
                 self.LIBRARY_NOTES_CONTEXT_SHORTCUTS,
                 self.LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT,
+            )
+            enter_label = self._library_focus_enter_label()
+            if not enter_label:
+                return tuple(pair for pair in tier if pair[0] != "enter")
+            return tuple(
+                (key, enter_label if key == "enter" else label)
+                for key, label in tier
             )
         if region == "editor":
             # task-32246 AC#2: Tab out of the body lands on a toolbar Button,
@@ -8265,12 +8379,22 @@ class LibraryScreen(BaseAppScreen):
             # editor the way the create canvas and delete prompt apply it.
             # (The append-don't-prepend reasoning now lives on the shared
             # helper, which the Preview and Notes-list tiers also use.)
-            return self._with_library_notes_focus_chip(
-                self._notes_footer_tier(
-                    self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
-                    self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
-                )
+            tier = self._notes_footer_tier(
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
             )
+            # task-32623: `ctrl+end` (task-32247) is a `TextArea`-class
+            # binding -- live only while the note body itself is the
+            # focused widget, per Textual's focus-chain binding lookup.
+            # Tab out of the body onto a toolbar Button (the same move the
+            # comment above already accounts for with the "enter" chip)
+            # and the key reaches nothing, yet the static tier kept
+            # advertising it regardless of which control actually holds
+            # focus. Same id-off-`self.focused` idiom
+            # `_library_focus_enter_label` already uses, not a fresh query.
+            if str(getattr(self.focused, "id", "") or "") != "library-note-body":
+                tier = tuple(pair for pair in tier if pair[0] != "ctrl+end")
+            return self._with_library_notes_focus_chip(tier)
         if region == "create":
             if self._notes_state.create_running:
                 return ()
@@ -8484,6 +8608,59 @@ class LibraryScreen(BaseAppScreen):
 
     def action_library_notes_focus_filter(self) -> None:
         return self._notes_controller.action_library_notes_focus_filter()
+
+    def _library_notes_folder_rows(self) -> list[Widget]:
+        """The notes list's folder rows, without walking the whole screen.
+
+        FIX ROUND 1: ``check_action`` runs for every binding on every
+        bindings refresh, and ``_library_notes_footer_shortcuts`` calls it a
+        second time per render, so the ``g`` gate must not cost a full-screen
+        ``query``. Scoping to ``#library-notes-list`` -- the container
+        ``_compose_tree_rows`` builds the rows inside -- keeps the gate exact
+        while Textual caches id-selector ``query_one`` lookups against
+        ``_nodes._updates``, so the container costs nothing between DOM
+        changes and only the list's own subtree is walked.
+        """
+        if not self.is_mounted:
+            return []
+        container = self.query_one_optional("#library-notes-list")
+        if container is None:
+            return []
+        return list(container.query(".library-notes-folder-row"))
+
+    def action_library_notes_focus_folders(self) -> None:
+        """``g``: jump to the folder tree beside the notes list.
+
+        task-32607 AC#5. The tree's own rows are the navigation surface --
+        a folder row expands on Enter -- but reaching one from the toolbar
+        cost a Tab per intervening control. Focus lands on the SELECTED
+        placement when there is one, so the key resumes where the reader
+        left the tree rather than snapping to the top.
+        """
+        rows = self._library_notes_folder_rows()
+        if not rows:
+            return
+        target = next(
+            (row for row in rows if row.has_class("is-selected")),
+            rows[0],
+        )
+        self._mark_library_notes_user_interaction()
+        target.focus()
+
+    def action_library_notes_export_selected(self) -> None:
+        """``e``: the select strip's Export selected, from the keyboard.
+
+        task-32607 AC#5. Presses the composed button rather than calling
+        the export seam directly, so the mutation fence and the empty-
+        selection guard in ``handle_library_notes_export_selected`` stay
+        the single authority (and a disabled button presses to nothing).
+        """
+        try:
+            button = self.query_one("#library-notes-export-selected", Button)
+        except (NoMatches, QueryError):
+            return
+        self._mark_library_notes_user_interaction()
+        button.press()
 
     def _show_library_note_shortcut_refusal(self, message: str) -> None:
         return self._notes_controller._show_library_note_shortcut_refusal(message)
@@ -8835,7 +9012,20 @@ class LibraryScreen(BaseAppScreen):
     #: "Search Library…" box, marking none of Change selection / Clear /
     #: Check selection -- both assessors clicked all three. F6 and Escape
     #: remain the ways out of the pane, as the guide says.
-    _LIBRARY_WORK_PANE_TAB_VIEWS = ("editor", "import")
+    #: task-32608 AC#1: and the lasting-sync canvas, which is mounted in the
+    #: SAME ``#library-note-work-pane`` (``LibraryNotesCanvas.compose``
+    #: yields ``LibraryNotesAddFromFilesCanvas`` for these two modes) and was
+    #: the only full-pane Notes task left out of the closed cycle. Without
+    #: it, Tab ran past the review pane's terminal action -- "Activate
+    #: reviewed root" -- into the rail, where Enter navigates the app to
+    #: Conversations and the root was never activated (assessor B, cap 33 /
+    #: K17; assessor A reports the same shape for the import review). Escape
+    #: and F6 remain the ways out of the pane, as they are for the editor.
+    #: ponytail: derived, so a new full-pane canvas joins the Tab cycle by
+    #: existing rather than by being remembered here as well.
+    _LIBRARY_WORK_PANE_TAB_VIEWS = frozenset(
+        {"editor"} | LIBRARY_NOTES_FULL_CANVAS_VIEWS
+    )
 
     def _library_note_work_pane_owns_tab(self, focused: Widget | None) -> bool:
         """Whether Tab should cycle inside the open Notes work pane."""
@@ -8849,6 +9039,73 @@ class LibraryScreen(BaseAppScreen):
             for node in focused.ancestors_with_self
         )
 
+    #: task-32613 AC#3: the reading panes' scroll owners, and where a
+    #: forward Tab out of one goes.
+    #:
+    #: Textual orders the focus chain by SCREEN POSITION, not compose order
+    #: (``Widget._focus_sort_key``), so the heading's "‹ Notes" is the first
+    #: stop of the work pane however the canvas is composed, and the reading
+    #: region -- the bottom of the pane -- is the last. One Tab therefore
+    #: wrapped the cycle from the document straight onto the exit, and the
+    #: obvious blind Enter closed the note, returning the pane to "Select a
+    #: note to edit it here" with no warning (assessor B, cap 15/K10;
+    #: reproduced headlessly -- Tab from ``#library-note-preview-region``
+    #: focused ``#library-note-back``). The wrap now hands over to the mode
+    #: strip, which is what a reader leaving the body is reaching for.
+    #:
+    #: ponytail: Back is consequently reached by Shift+Tab (one press from
+    #: Edit) or Escape rather than by wrapping forward -- Textual has no
+    #: tab-index, so cutting the ring anywhere else would need a per-control
+    #: override table. Add one if forward-only Tab reachability of Back is
+    #: ever asked for.
+    #:
+    #: FIX ROUND 1: the redirect has to be conditional on the region really
+    #: being the stop that WRAPS onto the exit. Info's context region is stop
+    #: 7 of 12, not 7 of 7, and an unconditional redirect jumped over
+    #: Keywords, Copy, Export Markdown, Export text, Delete and Back --
+    #: leaving Info's footer naming an Enter action on controls forward Tab
+    #: could no longer reach, which is the defect task-32607 exists to
+    #: remove. The override now fires only when the natural next stop is one
+    #: of the panes' Back buttons.
+    _LIBRARY_READING_REGION_IDS = frozenset(
+        {"library-note-preview-region", "library-note-context-region"}
+    )
+    _LIBRARY_READING_REGION_WRAP_IDS = frozenset(
+        {"library-note-back", "library-note-context-back"}
+    )
+    _LIBRARY_READING_REGION_TAB_TARGET = "#library-note-edit"
+
+    def _library_reading_region_tab_target(
+        self, focused: Widget | None
+    ) -> Widget | None:
+        """The forward-Tab stop for a focused reading region, if any.
+
+        ``None`` -- meaning "let Textual cycle normally" -- unless the region
+        is the pane stop whose forward Tab wraps onto the pane's Back button.
+        """
+        if focused is None or focused.id not in self._LIBRARY_READING_REGION_IDS:
+            return None
+        chain = [
+            widget
+            for widget in self.focus_chain
+            if self._library_note_work_pane_owns_tab(widget)
+        ]
+        index = next(
+            (i for i, widget in enumerate(chain) if widget is focused), None
+        )
+        if index is None:
+            return None
+        natural = chain[(index + 1) % len(chain)]
+        if natural.id not in self._LIBRARY_READING_REGION_WRAP_IDS:
+            return None
+        try:
+            target = self.query_one(
+                self._LIBRARY_READING_REGION_TAB_TARGET, Button
+            )
+        except (NoMatches, QueryError):
+            return None
+        return target if target in self.focus_chain else None
+
     def _move_library_screen_focus(self, direction: int) -> Widget | None:
         """Cycle focus within the Library content, or app-wide from chrome.
 
@@ -8860,6 +9117,10 @@ class LibraryScreen(BaseAppScreen):
         if self._library_note_work_pane_owns_tab(focused):
             selector = self._LIBRARY_NOTE_WORK_PANE_TAB_REGION
             if direction >= 0:
+                redirect = self._library_reading_region_tab_target(focused)
+                if redirect is not None:
+                    redirect.focus()
+                    return redirect
                 return self.focus_next(selector)
             return self.focus_previous(selector)
         inside = focused is not None and any(
@@ -9390,6 +9651,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sync_controller.invalidate_for_remount()
         # A local thread read may outlive this screen. Revoke apply authority
         # before any awaited shutdown work can yield back to its completion.
+        self._supersede_library_notes_navigation()
         self._library_onboarding_generation += 1
         self._conversations_state.request_generation += 1
         self._invalidate_library_prompts_browse()
@@ -12716,10 +12978,12 @@ class LibraryScreen(BaseAppScreen):
                 )
             return result
 
-        if isolate_in_worker:
-            return await asyncio.to_thread(invoke_service_in_worker)
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 
-        result = await asyncio.to_thread(lambda: callable_obj(*args, **kwargs))
+        if isolate_in_worker:
+            return await asyncio.to_thread(run_finite_local_worker, invoke_service_in_worker)
+
+        result = await asyncio.to_thread(run_finite_local_worker, callable_obj, *args, **kwargs)
         if inspect.isawaitable(result):
             return await result
         return result
@@ -16809,6 +17073,12 @@ class LibraryScreen(BaseAppScreen):
             ),
             delete_receipt=self._notes_state.delete_receipt,
         )
+        # task-32616 AC#3: set here rather than threaded through
+        # ``build_library_notes_list_state`` -- whether a note is OPEN is a
+        # fact about the screen beside the list, not about the rows.
+        state = dataclasses.replace(
+            state, note_open=bool(self._notes_state.selected_note_id)
+        )
         if self._notes_state.select_mode:
             projection = self._build_library_notes_tree_projection()
             if projection is None:
@@ -18720,7 +18990,9 @@ class LibraryScreen(BaseAppScreen):
         to remove and the editor owns unsaved live fields.
         """
         service = getattr(self.app_instance, "local_skill_trust_service", None)
-        posture_fn = getattr(service, "trust_posture", None)
+        posture_fn = getattr(service, "recovery_posture", None)
+        if not callable(posture_fn):
+            posture_fn = getattr(service, "trust_posture", None)
         if not callable(posture_fn):
             should_repaint = (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
@@ -19598,8 +19870,100 @@ class LibraryScreen(BaseAppScreen):
         return LibraryExportController._build_library_export_payload(name=name, description=description, selections=selections, destination=destination, media_quality=media_quality)
 
     @staticmethod
-    def _run_library_export_via_service(service: Any, payload: dict[str, Any], *, name: str, description: str, progress_callback=None, cancel_check=None) -> dict[str, Any]:
-        return LibraryExportController._run_library_export_via_service(service, payload, name=name, description=description, progress_callback=progress_callback, cancel_check=cancel_check)
+    def _run_library_export_via_service(
+        service: Any,
+        payload: dict[str, Any],
+        *,
+        name: str,
+        description: str,
+        progress_callback=None,
+        cancel_check=None,
+    ) -> dict[str, Any]:
+        """Execute one export through ``service``, synchronously: zip first, registry only on success.
+
+        Runs both of ``service``'s async-signature/sync-body methods
+        through ``asyncio.run`` -- they never touch the app's own event
+        loop, so this is only ever safe to call from a genuine OS thread
+        (never the UI thread, which already owns a running loop). Exposed
+        as its own (non-``@work``) static method so tests can call it
+        directly with a fake ``service`` and assert call ordering /
+        the include_media invariant without booting a real thread.
+
+        ``create_chatbook`` (the registry record) is attempted ONLY when
+        ``export_chatbook`` reports ``success`` -- the F4 plan's Global
+        Constraints' "zip first, registry record only on success". A
+        registry-recording failure AFTER a successful zip does not flip
+        the overall outcome to failure (the artifact genuinely exists on
+        disk; only the bookkeeping failed) -- ``registry_recorded``
+        reports that separately for callers/tests that care.
+
+        Returns a plain dict: ``success``, ``message``, ``path``,
+        ``dependency_info``, ``registry_recorded``.
+        """
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
+            operation,
+            run_async,
+        )
+
+        paths = (getattr(service, "registry_path", None), payload.get("output_path"))
+        with operation(paths):
+            try:
+                export_result = run_async(
+                    service.export_chatbook(
+                        payload,
+                        progress_callback=progress_callback,
+                        cancel_check=cancel_check,
+                    )
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning("Library export service call failed.")
+                return {
+                    "success": False,
+                    "message": f"Export failed: {exc}",
+                    "path": "",
+                    "dependency_info": {},
+                    "registry_recorded": False,
+                    "cancelled": False,
+                }
+
+            if not export_result.get("success"):
+                return {
+                    "success": False,
+                    "message": str(export_result.get("message") or "Export failed."),
+                    "path": export_result.get("path") or payload.get("output_path", ""),
+                    "dependency_info": export_result.get("dependency_info") or {},
+                    "registry_recorded": False,
+                    "cancelled": bool(export_result.get("cancelled", False)),
+                }
+
+            output_path = export_result.get("path") or payload.get("output_path", "")
+            dependency_info = export_result.get("dependency_info") or {}
+            registry_recorded = False
+            try:
+                run_async(
+                    service.create_chatbook(
+                        name=name,
+                        description=description,
+                        file_path=output_path,
+                        tags=["library-export"],
+                    )
+                )
+                registry_recorded = True
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Library export succeeded but registry recording failed for {output_path!r}."
+                )
+
+            return {
+                "success": True,
+                "message": export_result.get("message") or "",
+                "path": output_path,
+                "dependency_info": dependency_info,
+                "registry_recorded": registry_recorded,
+                "cancelled": False,
+                "item_count": export_result.get("item_count"),
+                "size_bytes": export_result.get("size_bytes"),
+            }
 
     @work(thread=True, exclusive=True, group="library_export")
     def _run_library_export_worker(
@@ -19617,80 +19981,92 @@ class LibraryScreen(BaseAppScreen):
         preresolved_selections: dict[ContentType, list[str]] | None,
         cancel_event: threading.Event | None,
     ) -> None:
-        if preresolved_selections is not None:
-            selections = preresolved_selections
-        else:
-            try:
-                selections = resolve_export_selections(
-                    scope, media_db, chachanotes_db, prompts_db
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Library export selection resolution failed "
-                    "scope_kind={} category={}",
-                    scope.kind,
-                    type(exc).__name__,
-                )
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
+            operation,
+            worker_databases,
+        )
+
+        databases = (
+            media_db if scope.kind in ('everything', 'media') else None,
+            chachanotes_db if scope.kind in ('everything', 'conversations', 'notes') else None,
+            prompts_db if scope.kind in ('everything', 'prompts') else None,
+        )
+        paths = tuple(getattr(db, "db_path", None) for db in databases) + (destination,)
+        with operation(paths), worker_databases(databases):
+            if preresolved_selections is not None:
+                selections = preresolved_selections
+            else:
+                try:
+                    selections = resolve_export_selections(
+                        scope, media_db, chachanotes_db, prompts_db
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Library export selection resolution failed "
+                        "scope_kind={} category={}",
+                        scope.kind,
+                        type(exc).__name__,
+                    )
+                    self._marshal_library_export_failure(
+                        run_id, "Unable to resolve export selections."
+                    )
+                    return
+
+            service = getattr(self.app_instance, "local_chatbook_service", None)
+            if service is None:
                 self._marshal_library_export_failure(
-                    run_id, "Unable to resolve export selections."
+                    run_id, "Bundle export service unavailable."
                 )
                 return
 
-        service = getattr(self.app_instance, "local_chatbook_service", None)
-        if service is None:
-            self._marshal_library_export_failure(
-                run_id, "Bundle export service unavailable."
+            payload = self._build_library_export_payload(
+                name=name,
+                description=description,
+                selections=selections,
+                destination=destination,
+                media_quality=media_quality,
             )
-            return
+            throttle = ExportProgressThrottle()
 
-        payload = self._build_library_export_payload(
-            name=name,
-            description=description,
-            selections=selections,
-            destination=destination,
-            media_quality=media_quality,
-        )
-        throttle = ExportProgressThrottle()
+            def _progress_cb(evt) -> None:
+                try:
+                    if not throttle.should_emit(
+                        evt.phase, evt.current, evt.total, time.monotonic()
+                    ):
+                        return
+                    self.app.call_from_thread(
+                        self._apply_library_export_progress,
+                        run_id,
+                        evt.phase,
+                        evt.current,
+                        evt.total,
+                    )
+                except Exception:
+                    # NoApp/shutdown mid-marshal must not crash the worker.
+                    pass
 
-        def _progress_cb(evt) -> None:
-            try:
-                if not throttle.should_emit(
-                    evt.phase, evt.current, evt.total, time.monotonic()
-                ):
-                    return
-                self.app.call_from_thread(
-                    self._apply_library_export_progress,
+            outcome = self._run_library_export_via_service(
+                service,
+                payload,
+                name=name,
+                description=description,
+                progress_callback=_progress_cb,
+                cancel_check=(cancel_event.is_set if cancel_event is not None else None),
+            )
+            if outcome.get("cancelled"):
+                self._marshal_library_export_cancelled(run_id)
+            elif outcome["success"]:
+                self._marshal_library_export_success(
                     run_id,
-                    evt.phase,
-                    evt.current,
-                    evt.total,
+                    outcome["path"],
+                    outcome["dependency_info"],
+                    bool(outcome["registry_recorded"]),
+                    outcome["message"],
+                    item_count=outcome.get("item_count"),
+                    size_bytes=outcome.get("size_bytes"),
                 )
-            except Exception:
-                # NoApp/shutdown mid-marshal must not crash the worker.
-                pass
-
-        outcome = self._run_library_export_via_service(
-            service,
-            payload,
-            name=name,
-            description=description,
-            progress_callback=_progress_cb,
-            cancel_check=(cancel_event.is_set if cancel_event is not None else None),
-        )
-        if outcome.get("cancelled"):
-            self._marshal_library_export_cancelled(run_id)
-        elif outcome["success"]:
-            self._marshal_library_export_success(
-                run_id,
-                outcome["path"],
-                outcome["dependency_info"],
-                bool(outcome["registry_recorded"]),
-                outcome["message"],
-                item_count=outcome.get("item_count"),
-                size_bytes=outcome.get("size_bytes"),
-            )
-        else:
-            self._marshal_library_export_failure(run_id, outcome["message"])
+            else:
+                self._marshal_library_export_failure(run_id, outcome["message"])
 
     def _marshal_library_export_success(self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool, message: str='', *, item_count: int | None=None, size_bytes: int | None=None) -> None:
         return self._export_controller._marshal_library_export_success(run_id, path, dependency_info, registry_recorded, message, item_count=item_count, size_bytes=size_bytes)
@@ -20344,7 +20720,7 @@ class LibraryScreen(BaseAppScreen):
     def _update_library_note_meta_static(self, *, content: str) -> None:
         return self._notes_controller._update_library_note_meta_static(content=content)
 
-    def _patch_library_note_list_from_session(self) -> None:
+    def _patch_library_note_list_from_session(self) -> bool:
         """Patch list caches from the payload the coordinator actually saved.
 
         (P0) The baseline title is the DRAFT's title; the save port
@@ -20353,10 +20729,16 @@ class LibraryScreen(BaseAppScreen):
         named an emptied-out note ``""`` while the persisted row said
         "Untitled". Both sides now run the payload through
         :func:`library_note_persisted_title`.
+
+        Returns:
+            Whether this save changed the title the list caches were
+            rendering -- the one case the rows on screen are now stale
+            (task-32616). A body-only autosave returns ``False`` and costs
+            the Items pane nothing.
         """
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
-            return
+            return False
         baseline = snapshot.baseline
         persisted_title = library_note_persisted_title(baseline.title)
         # Capture the title the list caches currently show BEFORE patching, so
@@ -20420,6 +20802,7 @@ class LibraryScreen(BaseAppScreen):
                 getattr(self._notes_state, "filter_generation", 0) + 1
             )
             self._notes_state.tree_filter_state = None
+        return title_changed
 
     @staticmethod
     def _placement_note_id(placement: Any) -> str:
@@ -24827,6 +25210,8 @@ class LibraryScreen(BaseAppScreen):
         if action in {
             "library_notes_new",
             "library_notes_focus_filter",
+            "library_notes_focus_folders",
+            "library_notes_export_selected",
             "library_notes_save",
             "library_notes_escape",
         }:
@@ -24856,6 +25241,24 @@ class LibraryScreen(BaseAppScreen):
                 return bool(
                     visible_notes
                     and region == "navigator"
+                    and not isinstance(self.focused, (Input, TextArea))
+                )
+            # task-32607 AC#5: same navigator-and-not-typing shape as the
+            # filter key above, plus each key's own "there is something to
+            # act on" test, so neither is ever a dimmed-but-advertised chip.
+            if action == "library_notes_focus_folders":
+                return bool(
+                    visible_notes
+                    and region == "navigator"
+                    and not isinstance(self.focused, (Input, TextArea))
+                    and self._library_notes_folder_rows()
+                )
+            if action == "library_notes_export_selected":
+                return bool(
+                    visible_notes
+                    and region == "navigator"
+                    and self._notes_state.select_mode
+                    and self._notes_state.row_selection.count
                     and not isinstance(self.focused, (Input, TextArea))
                 )
             if action == "library_notes_save":
@@ -25637,7 +26040,13 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         action = getattr(event.button, "trust_action", "")
-        if action in ("setup", "resetup"):
+        if action == "recovery_review":
+            self.run_worker(
+                self._review_restored_skill_trust(),
+                exclusive=True,
+                group="library_skill_trust",
+            )
+        elif action in ("setup", "resetup"):
             self._begin_library_skill_trust_setup()
         elif action == "unlock":
             self.run_worker(
@@ -25649,6 +26058,45 @@ class LibraryScreen(BaseAppScreen):
             self._refresh_library_skills_trust_posture()
         elif action == "review":
             self._open_first_blocked_skill()
+
+    async def _review_restored_skill_trust(self) -> None:
+        """Review exact restored bundles before the existing fresh-passphrase flow."""
+        service = getattr(self.app_instance, "local_skill_trust_service", None)
+        if service is None:
+            return
+        route = self._library_entry_route_key()
+        paths = (service.skills_dir, service.trust_store.store_dir)
+
+        def current() -> bool:
+            return (
+                self.is_mounted
+                and getattr(self.app_instance, "local_skill_trust_service", None) is service
+                and self._library_entry_route_key() == route
+                and (service.skills_dir, service.trust_store.store_dir) == paths
+            )
+
+        review, ok = await self._call_library_skill_trust_service("capture_recovery_review")
+        if not ok or not current():
+            return
+        confirmed = await self.app.push_screen_wait(
+            SkillRecoveryReviewModal(review, paths[1], current)
+        )
+        if confirmed is not True or not current():
+            return
+        passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
+        if passphrase is None or not current():
+            return
+        _, ok = await self._call_library_skill_trust_service(
+            "trust_reviewed_recovery", review, passphrase,
+            failure_copy={
+                "skills_recovery_review_changed": "Skills changed after review. Capture a fresh review before setting up trust.",
+                "skills_recovery_root_changed": "The selected trust root changed. Reopen the profile and review again.",
+                "skills_recovery_binding_changed": "The local trust binding cannot be verified. The retained trust files were not reset.",
+            },
+        )
+        if ok and current():
+            self._refresh_library_skills_trust_posture()
+            self._refresh_local_source_snapshot()
 
     def _begin_library_skill_trust_setup(self) -> None:
         return self._skills_controller._begin_library_skill_trust_setup()
@@ -26996,24 +27444,73 @@ class LibraryScreen(BaseAppScreen):
         async def import_callback(selected_path: Path | None) -> None:
             if selected_path is None:
                 return
-            self._persist_library_note_import_location(selected_path)
-            try:
-                self._library_note_import_controller.accept_selected_path(
-                    selected_path,
-                    is_folder=selected_path.is_dir(),
-                    replace=replace,
-                )
-            except (OSError, TypeError, ValueError):
-                self._notify_library_note_import_failure()
+            self._accept_library_note_import_path(selected_path, replace=replace)
 
         self.app.push_screen(
             FileOpen(
                 title="Import once (files or one folder)",
                 offer_select_folder=True,
                 location=self._library_note_import_browse_location(),
+                notes_context=picker_recent_context("library.notes_import"),
             ),
             import_callback,
         )
+
+    def _accept_library_note_import_path(
+        self, selected_path: Path, *, replace: bool
+    ) -> None:
+        """Admit one picked source and recognise it (task-32641).
+
+        A named method rather than the picker callback's body: everything
+        here happens AFTER the dialog closes, so this is the whole of what
+        picking a source does, and a test can walk it without a modal.
+        """
+        self._persist_library_note_import_location(selected_path)
+        try:
+            is_folder = selected_path.is_dir()
+            self._library_note_import_controller.accept_selected_path(
+                selected_path,
+                is_folder=is_folder,
+                replace=replace,
+            )
+        except (OSError, TypeError, ValueError):
+            self._notify_library_note_import_failure()
+            return
+        if not is_folder:
+            return
+        # task-32641: recognise the folder now, on the confirmation line,
+        # instead of leaving the reader to discover what it is inside the
+        # review. Its own worker: the scan is bounded but not instant, and
+        # the selection must paint immediately.
+        self.run_worker(
+            self._library_note_import_controller.recognise_selected_folder(
+                already_synced=self._library_folder_is_sync_root(selected_path)
+            ),
+            exclusive=True,
+            group="library_note_import_recognition",
+        )
+
+    def _library_folder_is_sync_root(self, folder: Path) -> bool:
+        """Does lasting sync already cover this folder (task-32641)?
+
+        The import side cannot see the sync runtime and should not learn to:
+        this screen owns both, so it asks here and hands the import
+        controller the answer. A runtime that is absent or has not started
+        answers False -- the recognition line then simply omits the clause,
+        which is what "we do not know of a root here" means.
+        """
+        runtime = getattr(self.app_instance, "notes_sync_runtime_owner", None)
+        probe = getattr(runtime, "folder_is_sync_root", None)
+        if not callable(probe):
+            return False
+        try:
+            return bool(probe(folder))
+        except Exception as error:  # noqa: BLE001 - one advisory clause
+            logger.debug(
+                "library_folder_sync_root_probe_failed",
+                error_type=type(error).__name__,
+            )
+            return False
 
     def _library_note_import_browse_location(self) -> str:
         """Return where Import once's picker should open (task-32174 AC#1).
@@ -27038,7 +27535,11 @@ class LibraryScreen(BaseAppScreen):
         generation = claim_browse_directory("library.notes_import", "last_directory")
         self.run_worker(
             lambda: remember_browse_directory(
-                "library.notes_import", "last_directory", selected_path, generation
+                "library.notes_import",
+                "last_directory",
+                selected_path,
+                generation,
+                recent_context=picker_recent_context("library.notes_import"),
             ),
             thread=True,
         )
@@ -27258,6 +27759,10 @@ class LibraryScreen(BaseAppScreen):
             exclusive=True,
             group="library_note_import_execute",
         )
+
+    @on(LibraryNoteImportCanvas.ViewImportedNotesRequested)
+    def handle_library_note_import_view_notes(self, event: LibraryNoteImportCanvas.ViewImportedNotesRequested) -> None:
+        return self._notes_controller.handle_library_note_import_view_notes(event)
 
     @on(LibraryNoteImportCanvas.RetryRequested)
     def handle_library_note_import_retry(self, event: LibraryNoteImportCanvas.RetryRequested) -> None:

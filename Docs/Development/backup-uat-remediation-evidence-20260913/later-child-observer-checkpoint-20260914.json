@@ -1,0 +1,140 @@
+{
+  "scope": "Test-only observation after successful later rollback; original assertions, operations, deadlines and error identity retained.",
+  "base_revision": "4244ce3e7af4c14018a2c1f615d255c88964767e",
+  "product_revision": "4a50a22cffd5ae0ca029dad4c1e10eada8a2c3a5",
+  "product_tree": "1152efce49b3e1335aab350428e121b7beadb89a",
+  "source_sha256": {
+    "Tests/Backup_Recovery/test_later_rollback_credential_ui.py": "509dda9317fd8a3c93ae73cb038737de9285d55a249ea46be7693e9d071f8b9d",
+    "Tests/Backup_Recovery/test_later_failure_diagnostics.py": "1208aa7dd31a53e6a39da7a15e85e2032dda9690b7b5ef982775f3437b179fce"
+  },
+  "verification": {
+    "red": "5 failed / 6 passed: missing attached observers and bounded phase output",
+    "focused": {
+      "passed": 71,
+      "seconds": 3.66
+    },
+    "independent": {
+      "passed": 11,
+      "seconds": 1.01,
+      "additional_setup_and_cancellation_probes": 2
+    },
+    "native_default_replacement_and_later_workflow": {
+      "passed": 1,
+      "call_seconds": 365.41,
+      "total_seconds": 377.25,
+      "fixture": "/private/tmp/uat-later-observers-native-final"
+    },
+    "ruff": "pass",
+    "bandit": {
+      "baseline": {
+        "B101": 16,
+        "B404": 1,
+        "B603": 1
+      },
+      "current": {
+        "B101": 21,
+        "B404": 1,
+        "B603": 1
+      },
+      "new_nonassert_findings": 0
+    }
+  },
+  "installed": {
+    "python_sources_verified": 2474,
+    "installed_files": 2866,
+    "wheel_sha256": "f69e657befcd8c21606321a87331bbaa89253804e3e7f65c26735d1383af01b8"
+  },
+  "native_later_phases": [
+    {
+      "checkpoint": "later_child_begin",
+      "elapsed_seconds": 0.0
+    },
+    {
+      "checkpoint": "verified_copy_listed",
+      "elapsed_seconds": 0.55
+    },
+    {
+      "checkpoint": "stale_native_preview_discarded",
+      "elapsed_seconds": 15.32
+    },
+    {
+      "checkpoint": "later_rollback_reviewed",
+      "elapsed_seconds": 29.862
+    },
+    {
+      "checkpoint": "later_rollback_terminal",
+      "elapsed_seconds": 70.618
+    },
+    {
+      "checkpoint": "later_omissions_visible_unchecked",
+      "elapsed_seconds": 70.744
+    },
+    {
+      "checkpoint": "later_aborted_untouched",
+      "elapsed_seconds": 73.404
+    },
+    {
+      "checkpoint": "omissions_reviewed",
+      "elapsed_seconds": 88.462
+    },
+    {
+      "checkpoint": "changed_acknowledgement_reviewed_again",
+      "elapsed_seconds": 103.095
+    },
+    {
+      "checkpoint": "later_rollback_complete",
+      "elapsed_seconds": 187.956
+    },
+    {
+      "checkpoint": "later_copy_catalog_begin",
+      "elapsed_seconds": 187.957
+    },
+    {
+      "checkpoint": "later_copy_catalog_complete",
+      "elapsed_seconds": 188.844
+    },
+    {
+      "checkpoint": "next_copy_selection_begin",
+      "elapsed_seconds": 188.877
+    },
+    {
+      "checkpoint": "next_copy_selection_complete",
+      "elapsed_seconds": 189.157
+    },
+    {
+      "checkpoint": "new_safety_copy_inspection_begin",
+      "elapsed_seconds": 189.158
+    },
+    {
+      "checkpoint": "new_safety_copy_inspection_complete",
+      "elapsed_seconds": 190.262
+    },
+    {
+      "checkpoint": "later_body_complete",
+      "elapsed_seconds": 190.289
+    },
+    {
+      "checkpoint": "later_app_closed",
+      "elapsed_seconds": 190.302
+    },
+    {
+      "checkpoint": "later_loop_closed",
+      "elapsed_seconds": 190.303
+    }
+  ],
+  "prior_windows_default_workflow": {
+    "run": 34841087737,
+    "revision": "0811768fa4c4685613dddc194dfa7900d4089dd1",
+    "last_child_checkpoint": "later_rollback_complete",
+    "rollback_state": "succeeded",
+    "restoration_validated": true,
+    "parent_error": "TimeoutExpired",
+    "test_result": "failed; remaining post-rollback workflow did not finish"
+  },
+  "review_note": "Final test-file hash differs from independent review only by one blank import separator required by Ruff.",
+  "limitations": [
+    "Native Windows run with the added later-child observers is pending.",
+    "Instrumentation timings are diagnostic evidence, not uninstrumented performance.",
+    "No final cross-platform or keyboard acceptance."
+  ]
+}

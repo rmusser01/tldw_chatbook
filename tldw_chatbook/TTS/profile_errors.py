@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+from tldw_chatbook.Utils.platform_files import os
 from typing import Protocol
 
 
@@ -212,7 +212,9 @@ class _MigrationCleanupGroup:
 class _ProfileMigrationValidationOwner:
     """One exclusive view and its pins; retries only settle native teardown."""
 
-    def __init__(self, file_fd: int, parent_fd: int = -1) -> None:
+    def __init__(self, file_fd: int, parent_fd: int = -1, *, native=None) -> None:
+        self.native = native
+        self.reader_outcome = None
         self.connection = None
         self.file_fd = file_fd
         self.parent_fd = parent_fd
@@ -224,7 +226,10 @@ class _ProfileMigrationValidationOwner:
         if self.connection is not None:
             close_error = None
             try:
-                self.connection.close()
+                if self.native is not None and self.reader_outcome is not None:
+                    self.native.retry_close_reader(self.connection, self.reader_outcome)
+                else:
+                    self.connection.close()
             except BaseException as error:  # noqa: BLE001 - preserve native ownership and control flow
                 close_error = error
             if close_error is not None:
@@ -239,9 +244,16 @@ class _ProfileMigrationValidationOwner:
                 # A raw close may consume the descriptor even when it errors.
                 setattr(self, attribute, -1)
                 try:
-                    os.close(descriptor)
+                    if self.native is not None:
+                        self.native.close(os.close, descriptor)
+                    else:
+                        os.close(descriptor)
                 except BaseException as error:  # noqa: BLE001 - retain remaining teardown authority
                     _raise_migration_cleanup_failure(self, error)
+        if self.native is not None:
+            self.native.finish()
+            if self.native.active:
+                _raise_migration_cleanup_failure(self, *self.native.errors)
 
 
 class ProfileServiceError(_ProfileError, RuntimeError):

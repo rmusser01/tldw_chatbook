@@ -1,0 +1,17 @@
+# Default-profile keyboard replacement — failure preserved
+
+TASK-32562. Replacement did not pass on immutable tree `fe62a5aa319969ae2f21403ab3ca61059a8e3707`, wheel SHA-256 `65d8a15d2d60b6df3513a057c67130ae330f735629b9627f56e9cb414719cef1`. The installed artifact and fresh target are under `/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4`. All 5,347 installed file hashes and the retained wheel hash still match after this attempt.
+
+The actual installed app started in a fresh HOME. Keyboard actions used the ordinary wizard Skip confirmation, disabled update checking, saved a note, and opened Backup & Restore. A saved/closed Library pane falsely refused recovery handoff; returning through F4 Settings allowed the actual CLI restart into recovery mode. The Library refusal has a separate reviewed correction and is not counted as a handoff pass from Library on this artifact.
+
+The incoming verified archive was `/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/replacement/archive/novice-complete.tldw-backup.zip`, SHA-256 `5662ed8c027c5bda5a36ba5ce283ddd3f616fe882dd913b765bfdff3afbd4643`. It contains 136 files and 26,848,312 payload bytes. The target was this fresh HOME's existing default profile, with an independent private folder for files needing setup.
+
+Initial review correctly required preserved files for the safety copy. Actual keyboard activation of **Select required safety-copy files**, followed by a new review, produced **Availability: available**. Confirmation reached **Running: staging**, then **Failed: replacing** with `backup_operation_failed`. No recovery journal or safety archive was created. The inert setup directory acquired a publication namespace before the later refusal; this attempt therefore must not be described as having no metadata effects.
+
+Read-only reconstruction of the exact installed publication guard proved `replacement_destination_parent_required`: the archive's `ui.state` maps to `config.toml`'s parent, but the current profile has never created `ui_state.toml`. Its existing exact file namespaces do not cover that absent file. Attempting to cover the parent would overlap the fixed bootstrap, recovery control, candidate and acquired archive, so the existing guard refuses. The diagnosis executes read-only projections with registration prohibited; it does not retry replacement or modify the target.
+
+The original saved note and database SHA-256 match the pre-handoff receipt. Configuration differs from that earlier receipt following normal app shutdown, but matches the exact prepublication binding fingerprint. This is not evidence of replacement publication. No files or control records were manually removed to make the test proceed.
+
+Navigation helper attempts that exhausted their keyboard bound are retained in the full evidence but are not product passes. Escape returned to the minimal recovery app, and the next keyboard action selected its normal Exit. No Abort or later rollback occurred in this attempt. Later verification must use a corrected artifact and explicitly exercise those outcomes.
+
+The adjacent provenance index records six selected terminal/metadata artifacts. Full ANSI frames and action records remain local; passwords and action logs are not included in this curated set. The independently passing native default replacement/later rollback fixture did not contain this missing-file shape and does not supersede this failure.

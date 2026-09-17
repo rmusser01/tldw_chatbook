@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## Profile-lifetime failures need process isolation, including the parent fixture
+
+**TASK-32749, 2026-09-17.** The incoming recovery/config lifetime made old UI
+fixtures fail with `raw_source_selection_changed` before their tested behavior;
+the same failure reproduced on exact dev. Decorating affected cases with the
+existing `private_profile_test` helper was insufficient until the UI autouse
+fixture stopped importing the app in the parent launcher. The child still runs
+the original offline fixture with its source selected before collection. Eight
+governance negative cases also needed to call the original assertion via
+`.__wrapped__`, because invoking the newly async wrapper without awaiting it
+otherwise made their expected failures disappear. Preserve the production guard,
+prove the baseline, and exercise negative controls after harness changes.
+
 ## Range comparisons do not prove finite input
 
 **TASK-32748, 2026-09-17.** Existing out-of-range generation-profile tests passed,
@@ -267,6 +280,130 @@ preserve quoted strings and original whitespace boundaries, and compare parsed
 selector structure. The regression now covers all source modules as well as
 compound/descendant selector examples.
 
+
+## Observe completed callbacks before reading their files (TASK-32628, 2026-09-16)
+
+**Incident.** Windows backup run 35109868161 passed 95/96 product cases, but the
+installed F9 journey read config after the consent modal disappeared and before
+the real consent-save callback finished. The polling reader received a Windows
+sharing violation. Modal dismissal did not establish persistence completion.
+
+The fixture now wraps and awaits the original async callback, then signals an
+event. It waits for that event before asserting both persisted consent values.
+Keep the real writer and saved-value assertions; do not hide file-access errors
+or replace persistence with a test-only write.
+
+---
+
+## Windows test homes need USERPROFILE isolation (TASK-32562, 2026-09-13)
+
+**Incident.** Backup native-close run 34745966265 reported lease-lock error 33
+after all 18 child leases retired and their holder thread exited. The test helper
+changed HOME but inherited USERPROFILE, which Windows Path.home uses. Its child
+therefore shared the parent's bootstrap authority and contended with the parent's
+startup lease. A controlled native reproduction failed with shared authority and
+passed with an isolated home while the same parent lease remained alive.
+
+Select both HOME and USERPROFILE before importing a Windows test child, then
+verify its actual home and bootstrap scope. Empty child ownership alone does not
+prove that an external lock belongs to the child. Keep the held/released native
+probes; do not weaken production locking to accommodate a shared test profile.
+
+---
+
+## Private test parents must be private too (TASK-32560/TASK-32561, 2026-09-12)
+
+**Incident.** The Linux Python backup run failed all 116 cases during setup:
+the remote umask left the harness run root and timestamp parent at 0775, although
+case/temp directories were 0700. The application's parent-path guard correctly
+refused them. Explicitly creating the harness parents at 0700 made all 116 cases
+pass; application checks stayed intact. Both attempts are recorded in
+`Docs/Development/backup-python-verification-2026-09-12.md`.
+
+Check every harness-owned ancestor when diagnosing private-path refusal. Setting
+the leaf directory's mode does not make its parents private.
+
+---
+
+## Process-lived config bindings require coherent isolated imports (TASK-31993)
+
+**Incident.** Phase9 bound the actual installed config module to its selected profile.
+Three shared tests changed native support or profile selectors after a lazy import
+had already bound config; a later covering run passed228 but failed the theme/app
+case because actual RAG bootstrap consumed that old source. These were fixture
+lifetime violations, not reasons to demote a production binding. Selecting the
+profile and importing a fresh actual config module before the affected consumers
+made the12 shared correction cases and83 theme/private/runtime checks pass.
+
+Keep test-held config references and lazy app consumers consistent with the selected
+module. Apply fresh-module isolation only to affected fixtures; do not clear live
+participant registries or blanket-reload modules. If consumers already captured
+from-import references and cannot be kept coherent, use a fresh isolated process.
+
+## SQLite trace callbacks can hide a new admission refusal (TASK-31993)
+
+**Incident.** Core transaction enrollment made two existing Prompts WAL-race tests
+stop observing a version/snapshot conflict. Their trace callback synchronously
+writes through a second real Prompts instance. The first implementation treated
+that nested instance as an unauthorized descendant of the outer transaction;
+SQLite swallowed the callback exception, so the winning write never happened and
+the outer API appeared successful. The tests failed with DID NOT RAISE ConflictError,
+not with the actual admission refusal. Controller ruling55 preserves that ordinary
+behavior with independently admitted nested operations while gates are open; a
+pause still refuses a new different-participant scope.
+
+**What to do.** When a trace-callback-driven race disappears, inspect the callback's
+actual domain effects and exception boundary before blaming the outer transaction.
+Keep real competing-writer outcomes, nested failure restoration and paused-admission
+checks; an observer callback returning control does not prove its write succeeded.
+
+---
+
+## SQLite closed-handle evidence must run on the creating thread (TASK-31993)
+
+**Incident.** The first Event/Sync maintenance lifetime fixture checked a worker's
+retired SQLite connection from the coordinator thread. SQLite raised its thread
+identity error before checking whether the handle was closed, so the assertion
+incorrectly rejected successful native retirement. Moving the closed-database
+assertion into the same worker after transaction exit proved retirement; a separate
+coordinator assertion still proved that cross-thread access was refused.
+
+**What to do.** Observe native retirement on the owner thread. A thread-affinity
+error is evidence of confinement, not evidence that a native connection remains open
+or has closed. Retain independent native lease observations for exclusion claims.
+
+---
+
+## Reading a selector can change atime without changing its contents (TASK-31988)
+
+**Incident.** The first recovery binding fingerprint compared whole `fstat` results
+before and after reading a real temporary config. After the SQLite enrollment test
+waited for two connection retirements, a subsequent bind intermittently reported
+`selector_unverified`: the read itself had advanced access time. Comparing device,
+inode, size, mtime and ctime preserved the intended concurrent-change check while
+excluding this reader-owned side effect. The lifetime regression then passed.
+
+**What to do.** A read-stability predicate must name the content/identity fields it
+protects; whole-stat equality also measures access-time updates caused by the probe.
+
+---
+
+## Packaging build copies can become duplicate source owners (TASK-31985, 2026-09-07)
+
+**Incident.** The packaging baseline left an untracked `build/lib` tree inside the
+checkout. The architecture guard
+`test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners`
+recursively scanned Python files from the whole repository root and found the same
+tracked source again under `build/lib`. It therefore counted a second
+`DEFAULT_RUNTIME_POLICY_PATH` owner and failed, although the generated copy was
+byte-identical. Moving `build` outside the checkout made the sole failing guard pass.
+
+**What to do.** Build wheels, sdists, editable copies, and test source trees in a
+private directory outside the entire checkout. A hidden or ignored directory is not
+safe: whole-root guards can traverse `.superpowers` and any other nested scratch tree.
+Keep only final distribution artifacts in the checkout after validation.
+
+---
 
 ## Retaining a disclosure does not prove its streaming body stays mounted
 
@@ -4977,6 +5114,17 @@ must use events or instrumented locks to force both cancel-wins and commit-wins
 orders, including cancellation after commit but before metadata append; a sleep and
 an assertion that “nothing happened yet” are not evidence of ordering.
 
+**TASK-31993 phase7 supplement, 2026-09-08.** Shielding the awaiter was still
+insufficient when the executor's own asyncio wrapper future was independently
+cancelled while its actual PromptHistory callback was writing. A private subprocess
+regression released the real native gate after 0.1 seconds, but the shield loop kept
+observing an already-cancelled future and spun until the parent reaped the child at
+six seconds. A separate result signal from the actual worker completed the same
+case, with persisted bytes and cache delivered before cancellation. Queued work uses
+a synchronized transition that prevents all source entry; the worker never waits
+for an event-loop acknowledgement. Test caller cancellation, queued executor
+cancellation, and independently cancelled running executor wrappers separately.
+
 ## Returning from a Textual handler does not make its detached child cancellation-safe
 
 **TASK-3402, 2026-08-11.** An H3 image edit originally awaited its whole operation
@@ -7181,6 +7329,263 @@ small is exactly what makes a per-item check unreadable. Note the exit code
 alone was also insufficient here: the script printed `::error::` and still
 exited 0 under the shell pipeline used.
 
+## Pydantic strict mode does not make `Literal[1]` reject JSON `true`
+
+**TASK-31984, 2026-09-07.** The recovery helper's package metadata used
+`ConfigDict(strict=True, extra="forbid")` with `protocol: Literal[1]`.
+A real metadata mutation from integer `1` to JSON `true` still reported the
+helper available. The focused test failed on `(True, "available")` before
+switching the field to `int = Field(strict=True, ge=1, le=1)`.
+
+**What to do.** At serialized integer-version boundaries, test boolean values
+explicitly. Use a strict integer field with the allowed range/value constraint;
+Python's `True == 1` equality can defeat the expected literal-type distinction.
+
+## Idempotent registration can still block a disjoint storage owner (TASK-31989)
+
+**Incident.** The core recovery process probe held maintenance for one bound store
+and `bootstrap.unbound`, then asked a second process to write a different bound
+store through `connect_private_sqlite`. The write timed out even though direct
+Admission disjoint-namespace tests passed. `acquire_storage` called
+`admission_authority`, whose apparently idempotent `register` took an exclusive
+registry lock before noticing that the namespace already existed. Maintenance
+held that registry shared lock throughout capture. Opening established authority
+without creation and verifying its exact unbound marker/registry identity under a
+shared lock let the disjoint write complete during capture; the separate unbound
+same-source process still waited until release.
+
+**What to do.** Prove independence through the real owner-open route in another
+process. A low-level disjoint-lock test does not cover constructor/registration
+work preceding admission. Distinguish initial registration from read-only reuse;
+lost/corrupt/replaced authority must refuse rather than be reconstructed to make
+the fast path work.
+
+## SQLite operation contexts do not retire native file handles (TASK-31990)
+
+During domain-recovery qualification on 2026-09-08, the writing round-trip preserved
+all SQL records but intermittently changed the source main-file header between its
+pre-capture and post-capture byte checks (byte 27 changed from 1 to 2). Both local
+research and writing opened a fresh SQLite connection per operation and used
+`with connection:`. That context committed or rolled back without closing; their
+service `close()` retired only the persistent memory connection. Deferred garbage
+collection could therefore checkpoint an old file connection later.
+
+The fix gives file operations a context-exit that commits/rolls back and then
+closes the actual native handle, retaining normal private-SQLite admission and
+leaving memory lifetime unchanged. Focused tests prove escaped file connections
+are unusable after success and exceptions, and retained committed-WAL observers
+prove both source main/WAL bytes and main mtime survive recovery capture unchanged.
+When proving a storage drain, check native handle lifetime explicitly; a transaction
+context or a service method named `close` is not evidence by itself.
+
+## Fault injection must stay in the intended native owner (TASK-31990 review)
+
+On 2026-09-08, the affected private-path guards reproduced three failures at the
+unchanged Task 7 review base: tests injecting `private_paths.os.unlink`, `.write`
+and `.stat` also changed the shared Python `os` module used by ordinary admission.
+The zero-byte-write test timed out inside admission-record creation, while the
+postcondition/entry-stat tests refused admission before reaching their intended
+path operation. These were fault-target collisions, not evidence about the path
+cleanup under test.
+
+The three tests now replace only `private_paths.os` with a local namespace copy
+before applying their original injection. Actual ordinary admission runs normally;
+the original private-path assertions pass unchanged. Keep simulated native faults
+local to the owner being qualified, and verify the trace reaches that boundary
+before interpreting a failure as lifecycle evidence.
+
+## SQLite context-manager exit is not native connection retirement (TASK-31991)
+
+**Incident.** Task8 operational recovery initially preserved all SQLite rows but
+failed source-byte assertions for EventStateRepository and SyncStateRepository.
+Their file-backed `_get_connection` handles were used with SQLite context managers,
+which commit/rollback without closing; the native cycles later finalized during
+fixture authority setup, checkpointing WAL into the source main file. Explicit
+fixture `gc.collect()` before namespace enrollment made the source-byte comparison
+stable. This is fixture setup, not evidence of production maintenance drain: these
+owners' `.close()` only closes their retained memory connection. The coordinated
+runtime drain remains task10's responsibility.
+
+**What to do.** Prove actual native connection retirement before claiming that a
+writer has drained. A `with connection` block, a successful transaction, and delayed
+fixture garbage collection establish different properties. Keep writer exclusion
+and deliberately drained snapshot setup as separate behavioral tests.
+
+## A consumed fixed-name sidecar is not owned by the previous writer (TASK-31993)
+
+**Incident.** Raw service lifetime integration added finally-cleanup around the
+Feedback/Grammar fixed `.tmp` publication file. A real second process started a
+new service write immediately after the first rename, while the first call had
+not yet reached finally. The first cleanup unlinked the second process's open
+sidecar, so its later rename failed. The regression used both actual services and
+native files; a one-process path lock could not reproduce this ownership transfer.
+
+**What to do.** Record the inode of exclusively created temporary bytes and consume
+that ownership when publication succeeds. Cleanup may act only on an operation's
+still-owned inode. A successful rename permits the next process to create a new
+same-name file immediately; the filename alone is never cleanup authority.
+
+## Explicit native retention exposes fixture-owned SQLite leaks (TASK-31993)
+
+During phase5 operational lifetime qualification, 167 affected domain tests passed
+but Tests isolation reported 371 additional file descriptors. AgentRunsDB's shared
+fixture returned without close, direct Workspace/Agent/Notification constructors
+relied on GC, and connection-reuse worker tests left thread-affine caches alive.
+The new strong registry correctly retained those actual native handles; removing
+registry entries or closing them from a foreign thread would falsify maintenance
+evidence. Explicit owning-thread fixture finalizers and worker finally.close calls
+preserved the native assertions; the affected 97-case cleanup rerun passed without
+that threshold warning. This is not a zero-descriptor-growth measurement, and it
+does not qualify production worker-pool retirement. Keep source job lifecycle gaps
+separate from missing test-fixture cleanup, and retire actual handles in both.
+
+## Lexical scope indentation can change SQLite's exact stored schema (TASK-31993)
+
+**Incident.** Phase6 wrapped SubscriptionsDB schema/read operations in lexical
+maintenance scopes. CRUD tests passed, but four exact recovery checks failed:
+actual-constructor catalog equality, subscription history capture, SiteConfigManager
+hybrid capture and complete-audio dependency validation. Indenting Python triple
+quoted SQL had changed the literal bytes SQLite retained in sqlite_schema, despite
+unchanged SQL meaning. Restoring every affected original plain and joined-string
+payload made all four checks pass without changing a schema catalog or migration.
+
+**What to do.** For lexical scope edits around multiline SQL, compare actual string
+payloads and native schema bytes as well as whitespace-insensitive code diffs.
+An AST comparison that normalizes string whitespace cannot certify preservation
+of an exact schema contract; this incident also used exact payload/control-flow
+comparison and the original capture validators.
+
+## A closed flag after a failed close is not positive retirement (TASK-31993)
+
+Phase8's runtime reader originally checked `stream.closed` in a `finally` block
+after `with stream`. A fault wrapper closed the real Python stream and then raised;
+the flag was true, so the code retired its separately owned native descriptor and
+released maintenance exclusion despite the ambiguous close result. The paired
+before/after-close subprocess test exposed this (one passed, one failed). Explicit
+close-success tracking now retains stream/descriptor evidence on either exception,
+and an independent native maintainer remains blocked until the child exits. Test
+both outcomes; neither a closed flag nor a completed context manager body proves
+successful resource retirement.
+
+## Fault injection can change native capability identity (TASK-31993)
+
+**Incident.** Phase11's first eight MCP native-close fault cases patched
+`os.rename` to observe history publication. Raw qualification checks that the actual
+callable is a member of `os.supports_dir_fd`; replacing it made the installed
+source correctly refuse as `raw_source_selection_changed` before any close fault.
+The eight failures were fixture/provenance failures, not evidence of unsafe
+retirement. Hooking the actual private `_native_close`/source stream boundary
+instead kept the real platform callable identity; all eight before/after native
+cases then exercised their intended failures and independent maintenance exclusion.
+
+Inject at a source-owned boundary when capability checks identify native functions.
+Do not modify capability sets to make a fault wrapper look qualified. Confirm the
+stack reaches the intended real IO/close and distinguish an earlier safety refusal
+from the behavioral regression being tested.
+
+## Public callback composition can reveal a missed lock inversion (TASK-31993)
+
+**Incident.** Phase12's installed Persona Visual call-site search found only the
+UI publication guard. A supported ordinary public guard reading the actual bound
+Persona service nevertheless deadlocked against UI save: public publication held
+the new visual mutex and waited for Persona; UI held Persona and waited for visual.
+A bounded private-process schedule reached both barriers and timed out. Removing
+that new mutex only from authenticated immutable publication made the same actual
+schedule complete; concurrent publication still had one optimistic winner and an
+explicit loser with owned cleanup. Other visual source locks were preserved.
+
+When adding a lock around a public callback, test its supported source composition
+against actual competing callers. Searching installed callback sites alone cannot
+prove the public API preserves its previous lock ordering.
+
+## Anchor source-read fault injection to the actual descriptor (TASK-31993)
+
+**Incident.** Phase13 added native admission before Shared Visual asset reads.
+Two existing tests intercepted every `os.read`: their size counter and symlink
+swap then reacted to admission-control reads before reaching the image FD. Those
+failures described the fixture's changed trigger, not image bounds or confinement.
+Matching the intended image's captured device/inode before injecting the fault
+restored the original behavioral test without changing production safety checks.
+The final focused asset/publication checks retained the original failure categories.
+
+When a new owner introduces earlier native reads, prove the injected operation is
+the intended resource. Keep process-wide admission reads outside a resource-specific
+counter or mutation barrier; do not loosen native capability or confinement checks
+to make an accidentally triggered fixture pass.
+
+## Probe independent native admission after uncertain aggregate lease close (TASK-31993)
+
+**Incident.** Phase14e's outer backup retained its uncertain operation after a real
+allocation lease closed and its wrapper raised, but cleanup continued releasing the
+independent outer hold. The local pause correctly refused while an independent
+native maintainer entered. Stopping lease retirement at that first uncertainty kept
+the independent native hold and made the exact observer refuse. The controller then
+found the same loop shape in standalone candidate cleanup; its exact native probe
+also entered despite the retained uncertain job.
+
+A retained Python job and local pause refusal do not prove native exclusion. After
+an uncertain subordinate lease retirement, test an independent maintainer against
+the actual authority and scope. Retire only known private test startup fixtures to
+isolate that observation; never clear the uncertain owner to make a probe pass.
+
+## Optional native failure needs a distinct allocation attempt (TASK-31993 phase14f)
+
+A real current-profile WAL open allocated a native descriptor before its substituted
+provider raised FileNotFoundError. The optional-sidecar loop then opened SHM and
+cleared a shared `descriptor` pending flag. A separate maintainer entered after the
+repository retired, despite the leaked WAL descriptor. A unique pending token for
+each allocation keeps that unknown attempt after later success or ordinary absence.
+The regression failed at independent native admission, then passed after the token
+change; exception type and later native success were not evidence of prior absence.
+
+
+## Descriptor readers and migration observers need their actual native route (TASK-31993 phase14g, 2026-09-08)
+
+Four real historical TTS open/restore tests showed native maintenance entering after
+descriptor-reader close failure. The verified-descriptor SQLite route bypassed the
+ordinary path-backed admission decorator, contrary to the initial ownership assumption.
+Observe that route's actual duplicated FD and native SQLite return before wrapper or
+finally failures; a similarly named path reader is not evidence for descriptor ownership.
+
+During the same phase, a diagnostic `mode=ro` query of a paused publishing source
+created WAL/SHM entries and made recovery appear broken. Immutable reads of the already
+closed exact fixture preserved its namespace and exposed the real durable recovery
+behavior. Count reached native failures separately from fixture timestamp errors,
+observer-created sidecars, or broad monkeypatches that interrupt earlier optional opens.
+Historical fixtures must run real MIGRATIONS: a genuine v3 reference BLOB exposed a
+current-only restore validator that restamped current DDL would have hidden.
+
+## Shared native fault hooks need a selected-resource assertion (TASK-31993 phase14h)
+
+The first materializer preparation test patched the first global private-path
+close and observed lost native exclusion. Subsequent integration showed it had
+hit storage admission's bootstrap traversal before the intended runtime helper.
+Matching the close FD's device/inode to the precreated runtime directory, then
+disabling only that helper's observers, reached the intended failure; all17
+corrected traversal/allocation cases passed with observers restored. Assert the
+selected native resource at the fault seam; a reached shared callable alone does
+not identify which owner failed. Preserve the withdrawn result and corrected
+counterfactual provenance rather than relabeling either as a BASE test.
+
+## Pure source binding must not replay custom descriptors (TASK-31993 phase14i)
+
+The bundle source checks first captured a cached profile service's current
+`consumer_mutation_fence`. Two actual lazy app-factory fixtures then failed:
+a custom proxy property was evaluated again during binding, and an instance's
+custom fence was treated as a configured relationship before being rejected.
+This broke ordinary custom construction while calling a supposedly pure check.
+
+The correction stores original class/function references in the existing defining
+module, reads only the already-loaded module and static class/instance state, and
+compares the already-passed bound method. Custom routes remain unqualified without
+accessor replay. Eagerly importing that module from a shared source helper would
+have changed default materializer laziness; original lazy factory tests are part
+of the evidence. A source check's successful return is not proof that it was pure:
+count custom accessor calls and assert ordinary custom behavior explicitly.
+
+## A swallowed hook mismatch can imitate the intended rejection (TASK-31993 phase14j)
+
+The original sample-replacement test wrapped `_read_bounded_regular_file` without accepting keywords. Adding private native-outcome plumbing supplied `_native`; best-effort evidence swallowed the hook's TypeError and still produced the test's expected empty cache. That assertion alone no longer proved replacement-after-read protection. The targeted test now forwards the original keyword arguments and asserts one actual successful bounded read before replacing the selected file, then checks the original rejection. When a production API intentionally maps collaborator errors to an empty result, count the intended native/body edge before accepting a negative assertion.
 ## A contract whose enforcer list lives only in a docstring cannot notice a second implementation (TASK-19551, 2026-08-21)
 
 `Utils/sensitive_paths.py` is the denylist that keeps agent file tools out of
@@ -12062,6 +12467,15 @@ attribute failures; here, a partially-run suite was used to deny them.
   in the loop that is independent of the implementer's own scoping mistake.
 - If the gate is expensive, that is an argument for naming it precisely in the plan,
   not for approximating it with a glob.
+- **A grep census needs its MATCH SEMANTICS stated, not only its scope**
+  (task-32558, 2026-09-14). The wave-4 guide sweep published a four-probe
+  matrix labelled by scope and by literal-vs-raw — and a reviewer
+  re-deriving the same cells got **21 / 4** where the matrix said **373 /
+  13**, because the script matched containment (`grep -F`) and the reviewer
+  matched exact equality. Neither run was wrong and neither was fabricated;
+  the label was simply incomplete, so the figure was not reproducible. Say
+  substring or whole-value, case sensitivity, and what a "file" or a "hit"
+  is, in the same breath as the number.
 
 ---
 
@@ -14256,6 +14670,68 @@ layout, but it is evidence about the widget only. Corollary from the same
 task: `git grep` the exact old string across `tldw_chatbook/` after the edit —
 two call sites producing the same line is the normal case, not the odd one.
 
+**Wave-4 census, added by task-32558 and kept HERE rather than in a section
+of its own, because a lesson separated from its evidence stops being read.**
+The rule above was written from one instance. By the end of wave 4 there were
+**six**, in six different groups, and three were caught by the implementer or
+reviewer rather than by anything failing:
+
+1. **task-32545** — the entry above; the receipt line fixed at one producer
+   and missed at the other.
+2. **task-32534** — `test_sync_copy_uses_no_engineering_terms` supplied its
+   own `receipt_line` and never rendered the phases holding four of its six
+   forbidden terms. Vacuous, caught in review, never red.
+3. **task-32534, fix round** — the implementer's own first overlay-clearing
+   pin PASSED WITHOUT THE FIX, because the stub's resume refuses; driving a
+   real accepted resume then exposed an inverse defect nobody had named.
+4. **task-32534, third dead pin** —
+   `test_receipt_keeps_durable_status_and_back_visible` fed the canvas
+   "1 applied · durable receipt recorded" and asserted "durable receipt"
+   back: a string with no producer left in the tree. Green forever, evidence
+   about nothing.
+5. **task-32557** — a layout pin poked the canvas's `pane_width` directly,
+   where the value is 0 and the fallback works, so it never entered the
+   defective state and passed with the fix disabled.
+6. **task-32535** — the configure form's Obsidian checkbox pin was green
+   while the checkbox never appeared in the running app, because the canvas
+   patches that form in place instead of recomposing it.
+
+**The test for whether you have one:** take the fix out and run the pin. If
+it still passes, the pin is not about the fix. Do that before you claim RED —
+"I wrote a test and it passes" is the shape all six of these had.
+
+## Delete the fix before you call a pin RED; deleting the only assertion of a property is not a repair (task-32540, 2026-09-14)
+
+**task-32540 review, 2026-09-14.** Shortening the Session Git back cue to
+`‹ Files` moved the panel's stacking threshold from 40 columns to between 32
+and 34. The implementer removed `_assert_visible_panel_buttons_fit` at the
+stacked width, and the removal was locally justified — the 31-cell bulk
+toggle is hidden in the untrusted state that assertion ran in, so the line
+could not fail there any more. The reviewer then checked what else asserted
+the property and found the answer was nothing: `-stack-actions` is asserted
+only in that test, and with the shorter cue
+`test_focused_controls_keep_complete_labels_and_fit[(40,20)]` no longer
+stacks in either render. So after a change that made stacking MORE likely, no
+test anywhere asserted that buttons fit while stacked.
+
+**What to do.**
+
+1. **Before deleting an assertion, grep for the property, not the test.** The
+   question is never "is this line still meaningful here" but "does anything
+   else assert this at all". `git grep -n -- '-stack-actions' Tests/` took
+   seconds and answered it.
+2. **Prove a restored assertion has teeth by breaking production, not by
+   reading it.** The implementer restored the line and then proved it bites
+   by removing `#file-notes-git-header` from the `.-stack-actions` vertical
+   rule, so the header kept horizontal layout while still carrying the class:
+   the test then failed ON THAT LINE with `assert 22 <= 14`. Its first
+   attempt — lengthening a label — fired on the neighbouring threshold
+   assertion instead and would have proved the wrong thing.
+3. **Do the probe out of tree.** The reviewer reproduced the same proof with
+   a pytest plugin that patched `DEFAULT_CSS` in memory, leaving
+   `git status --porcelain` empty. Patching production to prove a test works
+   is how a probe gets committed.
+
 ## A duplicate dict key is a silent overwrite, and only the SOURCE can show it (task-32534, 2026-09-14)
 
 **task-32534 fix round 1, 2026-09-14.** Three reason codes were added to
@@ -14598,3 +15074,478 @@ being taken from the newly saved provider. Also test an unchanged return: a raw
 manual provider name compared with its canonical key caused needless rebuilds
 and discarded test verdicts. Evidence:
 `Docs/superpowers/qa/2026-09-17-settings-saved-provider/`.
+
+## Derive your test set from the strings you CHANGED, not the files you remember touching (wave 4, 2026-09-14)
+
+**Wave 4, four separate incidents, 2026-09-14.** Every group ran "its own"
+test files plus the sibling pins its brief named, compared FAILED-name sets
+against a detached `origin/dev` worktree, and was green. Four reds were still
+hiding, and all four were in files the group's own list did not contain:
+
+1. **task-32543.** Commit `58e5ed6bde` changed the Folder-files authority
+   line from "N change" to "N session change".
+   `test_configured_root_authority_state_table_is_two_line_and_bounded` — a
+   1,080-case `product()` table in a file the group never substantively
+   touched — asserted `f"{git_count} change"`, which "N session change" does
+   not contain. It was the only branch-red-green-on-dev name in the tree, and
+   invisible to anyone running just the new pins.
+2. **task-32534.** `test_import_back_retains_canvas_and_shows_truthful_lasting_availability`
+   asserted a loose `"unavailable"` substring in a file no commit of that
+   group touched. Found by grepping the changed strings across 24
+   lasting-sync files; exactly one hit, and it was real.
+3. **task-32534, again.** `test_receipt_keeps_durable_status_and_back_visible`
+   asserted a string no producer emits any more — dead, not red, and only a
+   string grep can see that kind.
+4. **task-32544 landing.**
+   `test_both_notes_selection_counts_move_together_on_one_toggle` came back
+   branch-only-red from the post-merge re-grep, again in a file the group's
+   list never ran.
+
+**What to do.** After the last edit, take the set of user-visible strings the
+branch changed — old spelling and new — and `git grep -F` each one across
+`Tests/` and `Docs/`, then run every file that comes back. Do it AGAIN after
+merging dev, because dev moves and the merge can add producers. This is
+additive to the FAILED-name-SET diff over whole files against a detached
+`origin/dev`, not a replacement for it: the set diff finds reds, the string
+grep finds the dead pins that will never be red. And when one comes back:
+tighten it to the shipped string. Loosening an assertion to clear a red is a
+defect, and a pin loosened to a substring becomes the tripwire in incident 2.
+
+## Settle "did our own wave cause this?" with an A/B control, not a code read
+
+**The incident (critique #4 consolidation, 2026-09-14).** Critique #4 arrived
+with a P0 sitting directly beside wave 4's own diff: an active `⇄ Both ways`
+sync root reporting "✓ Up to date" while a note edited in Chatbook never
+reached disk — the *inverse* of the symptom wave 4's task-32534 had just
+fixed on the same surface ("Up to date" beside "Manual check failed" while
+sync wrote silently). Every available shortcut pointed the wrong way. The
+diff was large (`notes_sync_runtime.py` +484, the controller +302), the
+symptom looked like a fix's mirror image, and reading the changed hunks
+supports any story you like. This programme has already filed one P0 whose
+inferred site was wrong.
+
+**What settled it in twenty minutes.** A standalone probe — ~180 lines, no
+pytest, no fixtures — that builds the *production* runtime, executor and
+controller over a real DB and a real folder (copy the shape from
+`Tests/UI/test_library_notes_files_sync_journey.py::_start_real_conflict_stack`),
+performs the user's exact action, and prints the row projection, the status
+line, the raw plan and the bytes on disk at each step. Then run the identical
+file against the pre-wave tree:
+
+```
+git archive <pre-wave-sha> | tar -x -C /tmp/pre-wave
+cd /tmp/pre-wave && PYTHONPATH=. python /path/to/probe.py
+```
+
+`git archive` needs no worktree, mutates nothing, and takes seconds. Both runs
+printed the same row, the same status line and the same
+`[('update_file', 'note_changed')]` plan — independent of the wave, PROVEN,
+with the pre-wave run diverging only where the probe read a field the wave
+added. A `git log -S` on the same functions would have shown real churn in
+every one of them and proved nothing.
+
+**The rule.** When a finding lands next to your own diff, the evidence that
+counts is the same action measured on both trees, not an argument about the
+diff. Write the probe against production objects (a fake's `**kwargs` will
+happily accept a call the real service refuses), print state at every step
+rather than asserting one thing, and keep the probe — it is the regression
+test's first draft. If you genuinely cannot run it, say INFERRED and name the
+experiment that would settle it; never let proximity to your own change
+decide the verdict in either direction.
+
+## A shared red is not a baseline red until the NUMBER matches (task-32605, 2026-09-15)
+
+**The incident.** PR #2691's landing pass reported "zero branch-only reds"
+from a `Tests/Notes/` name-set comparison against detached dev — the method
+the entry above prescribes, run correctly. The PR still had a failing check:
+`UI latency guardrails`. That check was *also* failing on `origin/dev` at the
+exact base commit the branch was cut from, which is the shape everyone here
+has learned to wave through as a baseline red.
+
+It was not one. The two runs differed in the only place that mattered:
+
+```
+dev:    assert 977 <= 975   NEW modules (3)  approval_provenance,
+                                             note_import_parsers, select_values
+branch: assert 980 <= 975   NEW modules (6)  ...those three, PLUS
+                                             note_import_execution_models,
+                                             note_import_planner,
+                                             note_import_receipts
+```
+
+Three of the six were ours. `notes_sync_runtime.py` is resident at
+`_ui_ready`, and the task had added module-level imports of
+`PriorImportObservation` (annotation-only) and `NoteImportReceiptRepository`
+(one call, inside a factory) — dragging two modules and a transitive third
+onto the boot path for a read that only ever happens during a sync pass. Had
+it landed, the next PR to touch this area would have inherited the growth as
+*its* baseline and the ratchet would have drifted by three, permanently,
+with every party correctly reporting "already red on dev".
+
+**The rule.** A red you intend to wave through must be compared the same way
+a green one is: by its **value and its named set**, never by its pass/fail
+bit. A ratchet prints its number and its delta list precisely so the
+comparison is possible — read them on both sides. The same applies to any
+budget, census or count-based guard: `failing on dev too` answers a different
+question than `failing by the same amount, for the same reasons`.
+
+**The fix shape, for the next person who trips the ui-ready census.** ADR-097
+forbids raising the constant, and you rarely need to. An annotation-only
+import moves under `TYPE_CHECKING` for free when the module already has
+`from __future__ import annotations`. A runtime import used in one place
+moves inside the function — or, when the call site is a lambda in a factory,
+behind a small helper that imports inside the closure it returns. Pin it with
+a subprocess probe (`sys.modules` is shared across a test file, so an
+in-process assertion proves nothing about ordering) and capture its RED by
+restoring the module-level import.
+
+## A stale projection is not proof the publisher is silent (task-32604, 2026-09-15)
+
+**The incident.** The crit-4 P0's triage named three links, and link 2 read
+"the root row is a projection of stored root state, never of a fresh plan" —
+which reads as "the runtime does not publish a pending state, so give it
+one". Writing that publisher would have put a second opinion about row state
+beside the runtime's own, the exact shape that bit the wave-4 sync-roots
+group twice.
+
+Three extra lines in the probe settled it instead:
+
+```python
+rt = owner.snapshot().roots[0]
+print("RUNTIME published :", rt.status, "/", rt.next_action)
+controller.refresh_roots()
+print("row after refresh :", row(controller))
+```
+
+The runtime had published `changes_available` / `review_changes` during the
+manual check all along (`_reconcile_locked`'s `elif selected:` branch).
+`LibraryNotesSyncController.sync_now` simply never called `refresh_roots`
+afterwards, so the row kept the projection it held *before* the check. The
+whole of link 2 — and, because the roots canvas gates its **Review** button
+on `next_action == "review_changes"`, most of link 3 — was one missing
+re-read. The fix is one line; the fix the triage implied is a subsystem.
+
+**The rule.** Before adding a publisher for state that renders stale, print
+what the existing publisher actually holds at that moment — one line against
+the producer's own snapshot, next to the line against the consumer's
+projection. A projection and its source disagreeing is evidence of a missing
+read at least as often as a missing write, and the two fixes are a line and a
+subsystem. This also applies to reading a triage you did not write: its
+"cause" for each link is a hypothesis with the same standing as any other
+until the probe prints both sides.
+
+## A truncated FAILED list is indistinguishable from a pass (task-32625, 2026-09-15)
+
+**The incident.** To prove a new pin caught the bug it was written for, an
+implementer reverted the fix and read the resulting FAILED list through
+`head -8`. Four parametrised cases had failed; it saw two, and inferred that the
+other two had passed. It wrote that inference into the task notes as the
+interesting part — "at 8 and 11 it passed even unfixed, which is why the
+one-sided test missed it" — and from there it travelled into a review summary
+and was one round away from hardening into a lesson about threshold blindness.
+The reviewer re-ran the revert and printed the list in full: **4 of 4 failed.**
+The true-at-8-and-11 sentence was about unpatched `dev`, a different tree
+entirely.
+
+**Why it is worth a rule.** `head`, `tail`, `-x`, `--maxfail`, a scrolled
+terminal and a killed run all produce the same artifact: a FAILED list that is
+shorter than the truth, with nothing in it saying so. A short list reads as good
+news — fewer failures — which is exactly the direction that stops you looking.
+The same shape has now bitten this programme three times in one day: a shared
+ratchet red waved through without comparing its NUMBER (977 vs 980), a failure
+count read off `F`/`.` progress marks that Loguru had interleaved, and this.
+
+**The rule.** Evidence that a pin is RED is the **complete** FAILED list, with
+the summary line that says how many there were, from a run you did not truncate.
+If you must page it, page it to a file and count from `grep -c '^FAILED'`, never
+from what fits on screen. And when the interesting claim is that something
+*passed*, say which tree it passed on — "passed unfixed" is meaningless without
+naming whether that was the revert or the base.
+
+## A claim-string checker is blind by construction to composed copy (task-32625, 2026-09-15)
+
+**The incident.** `scripts/check_guide_claim_strings.py` exists because eleven
+false claims were found across three layers of this programme's own
+documentation. It ran green over a guide stanza that promised users a skipped
+folder would read `".trash · 4 files · …"` — a line the product does not produce
+at four files, and never did after the fix. Two more false sentences sat beside
+it, also green.
+
+**Why it could not have caught them.** The checker matches quoted strings in
+prose against string literals in source. That line is **composed at runtime** by
+`review_row_line` out of a folder, a count and a reason; it exists nowhere in
+the tree as a literal, so there is nothing for the checker to match and nothing
+for it to contradict. The gate proves a quoted string is emitted somewhere. It
+cannot prove the sentence around it is true, and it is blind by construction to
+any copy the code assembles rather than stores.
+
+**The rule.** A green claim-checker is not evidence that a guide is honest. For
+any sentence describing composed output — a row, a summary line, a status
+string, anything built from parts — the evidence is a rendered sample at the
+size and state the sentence describes, not a grep. Write the sentence as a rule
+the reader can predict and check ("up to seven listed one per row, eight or more
+collapsed"), not as a specimen output, because a specimen is a claim about a
+literal the checker cannot see.
+
+## The revert-to-RED check also catches a fix that fixes nothing (task-32616, 2026-09-15)
+
+**The incident.** Critique #4 reported that the Notes editor's status line goes
+stale: "after typing, the editor's still reads 'Next: Start typing.'" The
+plausible cause was right there — task-32062's focus guard returns from
+`sync_state` before anything repaints while the title or body has focus. I
+wrote the obvious fix (update the authority `Static` inside the skip, the way
+the import and lasting-sync skips above it already do), wrote the pin, and the
+pin passed.
+
+Then the standing rule — revert the fix, record the RED — was applied. **The
+test passed with the fix reverted.** The line was never stale: after a
+TITLE-only edit the body really is empty, so "Start typing." is the true next
+step, and it becomes "Keep editing" the moment the body has words. Three prints
+against the real screen settled it:
+
+```
+AT OPEN:     'Saved · Next: Start typing.'
+AFTER TITLE: 'Unsaved changes · Next: Start typing.'      <- still true
+AFTER BODY:  'Unsaved changes · Next: Keep editing; …'
+```
+
+The assessor had typed a title, not a body. What was actually wrong was beside
+it: the LIST pane was carrying a second, disagreeing "Next:" at the same time.
+The shipped fix stands that one down; the authority-Static change was deleted
+rather than shipped unpinned, since it also partly undoes a ceiling that skip's
+own comment documents.
+
+**The rule.** The revert-to-RED check is usually read as "prove the test is
+wired to the fix". It is also the cheapest detector of a fix aimed at a cause
+that was never true — and a plausible mechanism sitting in the same function as
+the symptom is exactly when that happens. If the pin passes with the fix
+reverted, do not tighten the pin: go and measure whether the finding reproduces
+at all.
+
+**A trap in the revert harness itself.** If you script the revert/restore with
+a backup directory, do NOT reuse it across runs (`if not bak.exists(): copy`).
+A second run restored a file from a snapshot the FIRST run had taken, silently
+rolling back an edit made in between; it was caught only because a test that
+had been green went red. Delete the backup directory between runs, or key it by
+run.
+
+## The restore that ends a revert-check can eat the fix you were testing (wave 5, 2026-09-15)
+
+**The incidents, two of them in one day.** Proving a pin RED means putting the
+bug back, running, and putting the fix back. Both halves of that are edits, and
+the "put it back" half is where the work goes missing:
+
+- One implementer ended a revert-check with `git checkout -- <file>`. The fix
+  under test was **uncommitted**, so the checkout restored the file to HEAD and
+  silently deleted it. The script's own "source clean" line printed happily.
+- Another ran a restore in the background while still editing the same file.
+  The restore landed second and clobbered the later edit.
+
+Both were caught, and neither by the restore step reporting a problem — the
+first by grepping for the fix's own expression afterwards instead of trusting
+the script, the second by noticing the file had gone backwards.
+
+**Why it is worth a rule.** A revert-check inverts your usual safety: the state
+you must protect is the *working tree*, not the commit, because the thing you are
+proving is not committed yet. `git checkout -- <file>`, `git restore`, and
+`git stash` all mean "throw away the working tree", which during a revert-check
+means "throw away the fix".
+
+**The rule.** Do revert-checks on a **copy**: `cp file file.bak`, break it, run,
+`cp file.bak file`. Never `git checkout`/`git restore`/`git stash` a file whose
+uncommitted content is the thing under test. Never run a restore in the
+background while editing the same file. And verify the restore by **grepping for
+the fix's own text**, not by reading a script's success line — a restore that
+did the wrong thing succeeds just as loudly as one that did the right thing.
+
+Commit the fix first where you can: a committed fix makes the whole class
+impossible, at the cost of one amend.
+
+## A comparison run that never collected scores as perfectly green (wave 5, 2026-09-15)
+
+**The incident.** A branch was being compared against dev the cheap way — swap
+dev's copy of a file in with `git show origin/dev:<path>`, run, swap back — to
+avoid a second worktree on a full disk. Mid-round, dev moved. The newer
+`library_screen.py` referenced `ViewImportedNotesRequested`, a symbol with zero
+occurrences in the branch's canvas file, so every swapped run **died at import**.
+
+Collection failure gives `rc=2`, and:
+
+```
+grep -c '^FAILED'   →  0
+grep -c '^ERROR'    →  1
+```
+
+A harness counting only `^FAILED` read the dev side as **zero failures**. An
+unrun baseline does not score badly; it scores *perfectly*, and it biases the
+comparison in the one direction that matters — toward "no regression here".
+
+**The rule.** Pin the **SHA**, never the branch name, for any baseline you are
+comparing against: `git show <sha>:<path>`, not `git show origin/dev:<path>`. A
+moving baseline silently changes what you measured halfway through. And count
+`^ERROR` alongside `^FAILED`, or assert the collected test count matches what
+you expected — a run that collected nothing is not evidence of anything.
+
+**The family this belongs to.** Four wrong numbers passed as evidence in a single
+day on this programme, each one reading as good news: a ratchet red on both sides
+whose *values* differed (977 vs 980); a failure count read off `F`/`.` progress
+marks that Loguru had interleaved; a FAILED list truncated by `head -8`, whose
+missing entries were inferred to have passed; and this. The common shape is that
+every one of them is a number you did not compute, from output you did not fully
+read, in the direction you were hoping for.
+## A pin for a RACE has to be a pin for the GUARD, not for the race (task-32643, 2026-09-15)
+
+**The incident.** The folder-note badge added work to the picker's
+message loop, and a probe caught the price: at 100x30 the listing opened with
+`..` highlighted in **4 runs out of 4** with a `notes_context`, against **0 of
+4** without one — so the first Enter inside the listing went UP a directory.
+Cause traced to `ProgressiveDirectoryNavigation._settle_highlight`: a
+projection that started before the scan's first batch landed publishes an
+empty listing while `_scan_finished` has since become True, the
+empty-directory fallback reads that as "this folder is empty", and the method's
+own first line (`if self.highlighted is not None: return`) then makes the
+wrong answer permanent. Latent long before this task; the badge only made the
+window wide enough to hit every time.
+
+**What nearly shipped as evidence.** The obvious pin — mount the real picker,
+wait for the rows, assert the highlight is not `..` — **passed with the fix
+reverted** when run alone. conftest's imports warm the process enough to close
+the window, so the test that reproduced the bug by hand could not reproduce it
+under pytest. Running it in a bigger file might have caught it; might not.
+Either way that is a coin, not a pin.
+
+**The rule.** When the defect is a timing window, do not pin the window. Pin
+the GUARD, deterministically, against the production function — here a
+five-attribute stand-in passed to the unbound
+`ProgressiveDirectoryNavigation._settle_highlight`, asserting all three
+branches: owed projection → no highlight claimed, genuinely empty → `..`
+claimed, ordinary listing → first real row, dirty or not. That pin fails the
+moment the guard is deleted (`AssertionError: '..' must not be claimed as the
+answer while the listing may still grow`) and costs 2 seconds. Keep the
+integration-shaped test too, because it is the shape the user meets — but
+label it a smoke check in its own docstring, so the next reader does not
+mistake its green for coverage of the guard.
+
+**Corollary already paid for elsewhere in this file:** "revert the fix and
+record the RED text" is the whole rule, not half of it. A revert that leaves
+the suite green is a finding about the pin, not a formality to tick.
+
+## A harness without the app-tier stylesheet measures a layout that does not exist
+
+*(task-32642, wave 5. One hour from a confident wrong diagnosis.)*
+
+The finding was "Info has ~25 blank rows". The first measurement — a
+`ConsolidatedCSSApp` mounting `LibraryNotesCanvas` directly, which is the
+pattern `Tests/Widgets/Library/test_library_notes_canvas.py` uses — showed 33
+blank rows and pointed at a specific cause: `#library-note-context-keywords-row`
+is a `Horizontal`, Textual defaults those to `height: 1fr`, and it was eating
+the pane. That is exactly the defect task-32614 had just fixed one pane over,
+so it read as obviously right.
+
+It was an artifact. `ConsolidatedCSSApp.CSS_PATH` is the two widget-default
+sheets only; the app bundle and the lazily-loaded split sheets are NOT in it,
+and `#library-note-context-keywords-row { height: auto }` lives in
+`css/components/_agentic_terminal.tcss` → `screen_agentic_library.tcss`, an app
+tier sheet. In the real screen that row is one row tall and always was. The
+real defect was somewhere else entirely (one Static carrying a joined sentence,
+truncated at compact width), and a fix for the imagined one would have changed
+nothing a user sees.
+
+**The rule.** Before diagnosing any geometry, measure inside the REAL screen —
+`LibraryProductionCSSHarness` (`Tests/UI/test_library_shell.py`), whose
+`CSS_PATH` is `TldwCli.CSS_PATH`. A widget-only harness is fine for asserting a
+widget's own composed structure; it is not evidence about what a pane looks
+like. Two tells that you are in this trap: the numbers disagree with the
+critique's capture, and the cause you find is one a sibling task just fixed.
+
+## Showing a widget that was hidden is not a compose-only change
+
+*(task-32642, same wave.)*
+
+`#library-note-keywords` had been mounted, permanently undisplayed, inside a
+container `apply_session_state` sets `display = False` unconditionally. Moving
+it into the editor made it paint at every size — and it was still dead on a
+compact terminal, because a line half a file away read
+`wide_keywords.disabled = state.compact or show_context or locked`, which was
+harmless while nobody could see the field.
+
+The symptom is nasty: at 100x30 and 60x20 the field PAINTED, `display` was
+True, `visible` was True, and `focusable` was False, so forward Tab went from
+Title straight to Body with no visible reason. `widget.focus()` in a test
+"works" (Textual focuses it anyway), so a focus-order pin written that way is
+green. Only `pilot.press("tab")` sees it.
+
+**The rule.** When you make a hidden widget visible, grep the file for every
+rule keyed on its old invisibility — `disabled`, `display`, focus guards,
+`can_focus` — before you believe the move is done; and walk the ring with
+`pilot.press("tab")` at every size the surface claims to support, because a
+control can be painted and unreachable at one width only.
+
+## Assert the paint, not the input to it (wave 5, 2026-09-15)
+
+**Three pins shipped in one wave that could not fail for the case they named**,
+and they share a signature worth learning:
+
+- One asserted source text with `inspect.getsource` — which proves a string
+  exists in a function, not that a user ever sees it.
+- One asserted a widget's `renderable` — which proves what was handed to the
+  renderer, not what the renderer did with it. That one was measured: with the
+  branch's Python and only its five stylesheets reverted, the file reported
+  **19 passed / 0 failed** while the pane painted a single row — *worse than
+  the base*, silently. The entire CSS half of the fix was untested.
+- One used a fixture where the two behaviours under test produced the same
+  value: a folder listing where casefolded `"reading" < "readme.md"` made
+  name-order and folders-first identical, so the sort assertion held either way.
+
+**The rule.** For anything the user sees, assert the **rendered result** —
+`region.height`, `region.y`, the text the compositor actually painted — not the
+model that feeds it. Reserve `renderable`-style assertions for content
+questions, where the model *is* the artifact under test. A layout or styling
+claim tested against a renderable is not tested at all, and a stylesheet
+regression will walk straight past it.
+
+**And ask the second question every time: what fixture would make this vacuous,
+and is that my fixture?** The two failures above are the two ways it happens —
+asserting upstream of the thing you care about, and choosing inputs where the
+right answer and the wrong answer coincide. Both produce a green suite that
+means nothing, and both are invisible unless you break the fix and watch the
+pin fail *for the reason you expect*. "It went red" is not enough; read the
+message.
+
+## A visible field and label do not prove the field's value paints (TASK-32601, 2026-09-14)
+
+The authoring-only Workflows port's first narrow-screen correction passed checks
+for a painted Prompt label and a hit-testable TextArea. The actual 60x20 app
+capture still showed an empty field: inherited vertical padding and borders left
+its four-row region with zero content rows. The populated reference was absent
+from raw Textual SVG too, so font conversion was not the cause. A feature-local
+compact padding correction restored the value without changing shared tokens.
+
+For compact editors, test nonempty content through the real app's stylesheet and
+ancestor hierarchy. Assert the label, expected value, focus and nonzero content
+area together; mounted widgets and hit tests alone miss clipped interior text.
+Keep raw compositor output alongside converted screenshots to distinguish layout
+failures from capture/font failures.
+
+## Test incremental edits after structural fallback (TASK-32601, 2026-09-15)
+
+The Workflows UAT label fix initially added an unguarded selected-step lookup to
+the incremental form refresh. Ordinary typing tests passed, but review removed
+the selected step through Advanced JSON and then edited the Overview name. The
+editor had fallen back to Overview while the controller retained the deleted ID;
+the next field edit raised `RuntimeError: coroutine raised StopIteration`.
+Normalize selection before rendering both regions and test the next edit after
+structural fallback, preserving identity metadata in the raw-edit fixture.
+
+## Valid JSON is not necessarily decodable extracted SQLite text (TASK-32601, 2026-09-16)
+
+PR2690 replaced full workflow projections with name-only SQLite summaries. Its
+420-test selection passed, but independent review created an admitted JSON name
+containing an escaped lone surrogate. Reading the full saved JSON still worked;
+`json_extract` turned the escape into text that Python's SQLite UTF-8 decoder
+rejected, failing the whole library even for an unrelated selected workflow.
+Two high/low-surrogate service cases and both mounted library layouts reproduced
+the failure. Name-only BLOB extraction and local `surrogatepass` decoding fixed
+it without changing saved bytes or the connection's text factory. When moving
+JSON reads into SQL, test previously admitted string boundaries at the real
+query boundary; valid JSON and ordinary Unicode coverage alone are insufficient.

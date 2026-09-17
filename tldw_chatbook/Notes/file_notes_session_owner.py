@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import unicodedata
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Condition, Lock, RLock
 from types import MappingProxyType
 from typing import Literal, Protocol
+from weakref import WeakSet
 
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitRecoveryProjection,
@@ -64,12 +67,14 @@ SessionChangeTopology = tuple[
     str,
 ]
 GitStatusAdmissionReason = Literal[
+    "maintenance_paused",
     "mutation_active",
     "status_active",
     "stale_binding",
     "shutdown",
 ]
 GitMutationAdmissionReason = Literal[
+    "maintenance_paused",
     "authorization_required",
     "mutation_active",
     "recovery_not_ready",
@@ -84,6 +89,7 @@ CommitPublicationState = Literal[
     "uncertain",
 ]
 CommitRecoveryAdmissionReason = Literal[
+    "maintenance_paused",
     "invalid_capability",
     "mutation_active",
     "ownership_active",
@@ -893,6 +899,9 @@ class FileNotesSessionOwner:
         "_issued_commit_publication_token",
         "_issued_commit_recovery",
         "_lock",
+        "_maintenance_closed",
+        "_maintenance_operations",
+        "_maintenance_file_sources",
         "_mutation_token",
         "_next_sequence",
         "_root_commit_lock",
@@ -932,6 +941,9 @@ class FileNotesSessionOwner:
 
     def __init__(self) -> None:
         self._lock = RLock()
+        self._maintenance_closed = False
+        self._maintenance_operations: dict[object, int] = {}
+        self._maintenance_file_sources: WeakSet = WeakSet()
         self._root_commit_lock = Lock()
         self._root_commit_token: object | None = None
         self._root_commit_state: Literal["idle", "reserved", "committed"] = "idle"
@@ -1004,6 +1016,8 @@ class FileNotesSessionOwner:
             with self._lock:
                 if self._shutdown:
                     raise RuntimeError("File Notes session owner is shut down")
+                if self._maintenance_closed:
+                    raise RuntimeError("file_notes_maintenance_paused")
                 if self._root_change_is_blocked_locked(root_key):
                     raise RuntimeError("File Notes Git mutation is in progress")
                 return self._select_root_locked(root_key)
@@ -1032,7 +1046,7 @@ class FileNotesSessionOwner:
             return None
         try:
             with self._lock:
-                if self._shutdown:
+                if self._shutdown or self._maintenance_closed:
                     return None
                 if self._root_change_is_blocked_locked(root_key):
                     return None
@@ -1069,7 +1083,7 @@ class FileNotesSessionOwner:
         access: StableRootAccess | None = None
         try:
             with self._lock:
-                if self._shutdown:
+                if self._shutdown or self._maintenance_closed:
                     return None
                 binding = self._binding
                 if binding is None and root_key is not None:
@@ -1095,6 +1109,7 @@ class FileNotesSessionOwner:
             with self._lock:
                 if (
                     self._shutdown
+                    or self._maintenance_closed
                     or self._mutation_token is not None
                     or not self._root_selection_matches_locked(
                         root_key,
@@ -2163,6 +2178,8 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._shutdown:
                 return CommitRecoveryAdmission(reason="shutdown")
+            if self._maintenance_closed:
+                return CommitRecoveryAdmission(reason="maintenance_paused")
             if binding != self._binding:
                 return CommitRecoveryAdmission(reason="stale_binding")
             quarantine = self._commit_quarantine
@@ -2223,6 +2240,7 @@ class FileNotesSessionOwner:
         with self._lock:
             if (
                 self._shutdown
+                or self._maintenance_closed
                 or binding != self._binding
                 or self._mutation_token is not None
             ):
@@ -2252,6 +2270,8 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._shutdown:
                 return GitMutationAdmission(reason="shutdown")
+            if self._maintenance_closed:
+                return GitMutationAdmission(reason="maintenance_paused")
             if binding != self._binding:
                 return GitMutationAdmission(reason="stale_binding")
             if self._commit_quarantine is not None:
@@ -2283,6 +2303,8 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._shutdown:
                 return GitStatusAdmission(reason="shutdown")
+            if self._maintenance_closed:
+                return GitStatusAdmission(reason="maintenance_paused")
             if binding != self._binding:
                 return GitStatusAdmission(reason="stale_binding")
             if self._mutation_token is not None:
@@ -2310,6 +2332,8 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("File Notes session owner is shut down")
+            if self._maintenance_closed:
+                raise RuntimeError("file_notes_maintenance_paused")
             if self._git_service is not None:
                 raise RuntimeError("A File Notes Git service is already attached")
             self._git_service = service
@@ -2318,6 +2342,67 @@ class FileNotesSessionOwner:
         """Return the one process-owned Git service, if configured."""
         with self._lock:
             return self._git_service
+
+    def _maintenance_close_admission(self) -> None:
+        """Fence new work without shutting down the attached service."""
+        with self._lock:
+            self._maintenance_closed = True
+
+    @contextmanager
+    def _maintenance_operation(self, key: object, *, admitted: bool = False):
+        """Retain a complete source operation, including nested publication."""
+        with self._lock:
+            depth = self._maintenance_operations.get(key, 0)
+            if self._maintenance_closed and not (depth or admitted):
+                raise RuntimeError("file_notes_maintenance_paused")
+            self._maintenance_operations[key] = depth + 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                if depth:
+                    self._maintenance_operations[key] = depth
+                else:
+                    del self._maintenance_operations[key]
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        """Wait for admitted work without cancelling it."""
+        while True:
+            with self._lock:
+                if not self._maintenance_closed:
+                    raise RuntimeError("file_notes_maintenance_not_closed")
+                service = self._git_service
+                idle = not (
+                    self._shutdown
+                    or self._maintenance_operations
+                    or self._transition_tokens
+                    or self._mutation_token is not None
+                    or self._status_token is not None
+                    or self._root_commit_lock.locked()
+                    or self._commit_quarantine is not None
+                    or self._push_recovery_capture is not None
+                    or any(
+                        source._pending_replica_moves
+                        for source in self._maintenance_file_sources
+                        if source._session_owner is self
+                    )
+                )
+            # Do not hold the owner's lock while inspecting the service. Its
+            # retained cycles must remain able to publish and release leases.
+            ready = getattr(service, "_maintenance_ready", None)
+            if idle and (service is None or (ready is not None and ready())):
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(0.01, remaining))
+
+    def _maintenance_resume(self) -> None:
+        """Reopen after storage maintenance releases its lease."""
+        with self._lock:
+            if self._shutdown:
+                raise RuntimeError("file_notes_shutdown")
+            self._maintenance_closed = False
 
     def shutdown(self) -> None:
         """Seal admission and shut down the attached service exactly once."""

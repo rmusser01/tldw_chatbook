@@ -1,0 +1,79 @@
+{
+  "files": 933,
+  "returncode": 1,
+  "diagnostics": [
+    {
+      "cell": null,
+      "code": "F632",
+      "end_location": {
+        "column": 20,
+        "row": 680
+      },
+      "filename": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/UI/test_library_screen.py",
+      "fix": {
+        "applicability": "safe",
+        "edits": [
+          {
+            "content": "!=",
+            "end_location": {
+              "column": 15,
+              "row": 680
+            },
+            "location": {
+              "column": 9,
+              "row": 680
+            }
+          }
+        ],
+        "message": "Replace `is not` with `!=`"
+      },
+      "location": {
+        "column": 26,
+        "row": 675
+      },
+      "message": "Use `!=` to compare constant literals",
+      "name": "is-literal",
+      "noqa_row": 675,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/is-literal"
+    },
+    {
+      "cell": null,
+      "code": "F821",
+      "end_location": {
+        "column": 23,
+        "row": 11394
+      },
+      "filename": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/UI/test_mcp_workbench.py",
+      "fix": null,
+      "location": {
+        "column": 16,
+        "row": 11394
+      },
+      "message": "Undefined name `service`",
+      "name": "undefined-name",
+      "noqa_row": 11394,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+    },
+    {
+      "cell": null,
+      "code": "F821",
+      "end_location": {
+        "column": 23,
+        "row": 11395
+      },
+      "filename": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/UI/test_mcp_workbench.py",
+      "fix": null,
+      "location": {
+        "column": 16,
+        "row": 11395
+      },
+      "message": "Undefined name `service`",
+      "name": "undefined-name",
+      "noqa_row": 11395,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+    }
+  ]
+}

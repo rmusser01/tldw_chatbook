@@ -1,0 +1,17 @@
+{
+  "task": "TASK-32562",
+  "files": [
+    {
+      "file": "replacement-after-abort-startup-failure.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/evidence/replacement-02-startup-output-after.txt",
+      "sha256": "24e1710b874ce382382c62b8726f833f496b057ee6efea0da650704e8cc92baf",
+      "bytes": 4025
+    },
+    {
+      "file": "replacement-after-abort-source-readback.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/evidence/replacement-restart-refusal-readback.json",
+      "sha256": "ae8f7fb4b5727cdd14d7017e2cc1f80122c01777823ba7d13815f4276ec51698",
+      "bytes": 244
+    }
+  ]
+}

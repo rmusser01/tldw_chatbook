@@ -1,0 +1,75 @@
+{
+  "revision": "562530e4b5d7876ecf503b3455a38af264d6cf87",
+  "product_selection": "support-diagnostic",
+  "verified_artifact_files": 109,
+  "summary_effective_returncode": 1,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 2.212
+    },
+    "product": {
+      "collected": 165,
+      "counts": {
+        "passed": 161,
+        "failed": 4
+      },
+      "seconds": 2357.521
+    }
+  },
+  "failures": [
+    {
+      "id": "Tests.Backup_Recovery.test_recovery_restart::test_actual_handoff_execs_fresh_recovery_ui[handoff]",
+      "status": "failed",
+      "seconds": 113.423
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]",
+      "status": "failed",
+      "seconds": 252.943
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+      "status": "failed",
+      "seconds": 335.838
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+      "status": "failed",
+      "seconds": 420.301
+    }
+  ],
+  "installed_receipts": [
+    {
+      "files": 2866,
+      "wheel_sha256": "20c986b642ca45dccd251c3e25afb1a5053f2479c7d2606d56a5fe1de27a099d",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    },
+    {
+      "files": 2866,
+      "wheel_sha256": "23d88c61f3625e385e5b50d3338455bfbc4cad7691120b8502383aae0b6a8fc9",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    }
+  ],
+  "git_blob_verification": {
+    "revision": "562530e4b5d7876ecf503b3455a38af264d6cf87",
+    "source_clean": true,
+    "python_git_blobs": 2474,
+    "installed_receipts": 2,
+    "matching_modes": {
+      "windows_crlf": 2442,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "limits": [
+    "Console SQLite copy changed; writer/member/field unknown.",
+    "Settings reached F4 but failed EX lease admission; slow88.844s group detail was evicted.",
+    "Library retired all owners and remained in held capture rediscovery at the420s test limit."
+  ]
+}

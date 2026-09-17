@@ -1,0 +1,225 @@
+{
+  "base": "cfb5d35e7354b171215e17db261228f48832463a",
+  "scope": "Test-only existing optional Windows startup diagnostic; production behavior, guards and60s limits unchanged.",
+  "root_tests": {
+    "passed": 15,
+    "seconds": 1.04,
+    "initial_red": 6,
+    "cleanup_and_retention_red": 2
+  },
+  "independent_tests": {
+    "passed": 15,
+    "seconds": 0.69
+  },
+  "review": {
+    "Tests/Backup_Recovery/startup_timing_diagnostic.py": "c2b5abb3b1a3267536eef9cd84792cc4af5f1e25171fdf0b7b61f9caeaf553df",
+    "Tests/Backup_Recovery/test_startup_timing_diagnostic.py": "71a50d710853d204e54f14707e36e65f7d67b37aed62adb130e4412b3997d84a",
+    "Tests/Backup_Recovery/test_startup_config_timing.py": "fccd5326356054e7a725d3b8a47da1a27eb73950aae69ccb27cbc515f4317a24"
+  },
+  "native_config": {
+    "passed": [
+      "bound public write",
+      "unbound public write"
+    ],
+    "fixture_root": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/uat-startup-config-native-nc03wgxn",
+    "source_function_identity_unchanged": true,
+    "first_attempt": "Throwaway script used dotted section in read helper; actual write succeeded. Correct nested section readback passes. First failure retained.",
+    "timing_labels": "Native two-write proof predates only the reviewed field-name clarification; final actual-app and15-case verification use the clarified labels."
+  },
+  "actual_app": {
+    "profiles": 2,
+    "source_matches": true,
+    "observer_errors": [
+      [],
+      []
+    ],
+    "config_operations": {
+      "active": [],
+      "completed": [
+        {
+          "function": "transaction",
+          "outcome": "returned",
+          "thread": 158911283,
+          "elapsed_seconds": 0.413615,
+          "thread_cpu_seconds": 0.125192
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911016,
+          "elapsed_seconds": 0.029548,
+          "thread_cpu_seconds": 0.029444
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911016,
+          "elapsed_seconds": 0.026092,
+          "thread_cpu_seconds": 0.026022
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911283,
+          "elapsed_seconds": 0.026874,
+          "thread_cpu_seconds": 0.026708
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911283,
+          "elapsed_seconds": 0.024641,
+          "thread_cpu_seconds": 0.024585
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911016,
+          "elapsed_seconds": 0.035388,
+          "thread_cpu_seconds": 0.034332
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911016,
+          "elapsed_seconds": 0.033995,
+          "thread_cpu_seconds": 0.032655
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911016,
+          "elapsed_seconds": 0.029349,
+          "thread_cpu_seconds": 0.028271
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911016,
+          "elapsed_seconds": 0.025364,
+          "thread_cpu_seconds": 0.025333
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911016,
+          "elapsed_seconds": 0.026453,
+          "thread_cpu_seconds": 0.026315
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911282,
+          "elapsed_seconds": 0.024958,
+          "thread_cpu_seconds": 0.024791
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911281,
+          "elapsed_seconds": 0.031673,
+          "thread_cpu_seconds": 0.029453
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911339,
+          "elapsed_seconds": 0.071596,
+          "thread_cpu_seconds": 0.040447
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911281,
+          "elapsed_seconds": 0.055384,
+          "thread_cpu_seconds": 0.032896
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911281,
+          "elapsed_seconds": 0.028126,
+          "thread_cpu_seconds": 0.027959
+        },
+        {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911281,
+          "elapsed_seconds": 0.028241,
+          "thread_cpu_seconds": 0.027886
+        }
+      ],
+      "counts": {
+        "user_directory": 32,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "slowest": {
+        "user_directory": {
+          "function": "user_directory",
+          "outcome": "returned",
+          "thread": 158911281,
+          "elapsed_seconds": 0.145268,
+          "thread_cpu_seconds": 0.037059
+        },
+        "settings_rebuild": {
+          "function": "settings_rebuild",
+          "outcome": "returned",
+          "thread": 158911283,
+          "elapsed_seconds": 0.060733,
+          "thread_cpu_seconds": 0.04474
+        },
+        "publication": {
+          "function": "publication",
+          "outcome": "returned",
+          "thread": 158911283,
+          "elapsed_seconds": 0.06639,
+          "thread_cpu_seconds": 0.050333
+        },
+        "config_lock": {
+          "function": "config_lock",
+          "outcome": "returned",
+          "thread": 158911283,
+          "elapsed_seconds": 0.413571,
+          "thread_cpu_seconds": 0.125155,
+          "acquisition_seconds": 0.276694,
+          "body_and_release_seconds": 0.136877
+        },
+        "transaction": {
+          "function": "transaction",
+          "outcome": "returned",
+          "thread": 158911283,
+          "elapsed_seconds": 0.413615,
+          "thread_cpu_seconds": 0.125192
+        }
+      },
+      "dropped_active": 0,
+      "errors": []
+    },
+    "result": "1 passed, 1 warning in 18.26s"
+  },
+  "static": {
+    "ruff": "clean",
+    "bandit_diagnostic": 0,
+    "bandit_tests": {
+      "B101": 49
+    },
+    "new_nonassert_findings": 0
+  },
+  "interpretation": "Acquisition includes native admission and lock setup. Body-and-release includes native/lock cleanup. Neither measures mutex contention alone; ongoing CPU is not inferred.",
+  "pending": "Native Windows startup diagnosis; support run34920105965 remains at exactcfb5d.",
+  "evidence_sha256": {
+    "/private/tmp/uat-startup-config-timing-review.md": "8cf72ecef00f13563f68c170fa753487ba2751c08cc0b8ec8669bfb01b3fdec7",
+    "/private/tmp/uat-startup-config-timing-review-hashes.json": "9127015e4c97d6ad820f7f8adf070e7abe191ea71b3ff5b00d9cd0a46859ec11",
+    "/private/tmp/uat-startup-config-timing-red.log": "433c65b3259ce413cea552d9229cb992d7281d3a6b8431bcdc12030236458b0c",
+    "/private/tmp/uat-startup-config-timing-cleanup-red.log": "d033adf712b8dedd6ab97be957110373c72601e13f75ae3e32df790e9a9fda8c",
+    "/private/tmp/uat-startup-config-timing-reviewed.log": "2fcdb1789fa2d240c654f6e8f679d4e93a5c7f64b6c621cc502539e4c781661a",
+    "/private/tmp/uat-startup-config-timing-bandit-final.json": "d184f6ba6a266d037729fa897200a7cb91c87ab454e78df8ca0927b869fd8639",
+    "/private/tmp/uat-startup-config-native.log": "579f5a0b594516b08bd0e5e309b7476e41965f1ed8b2afc599989eaa0c2aa52e",
+    "/private/tmp/uat-startup-config-native-final.log": "f0a3c1441321a74c0359d035d81cfe027c69a6ef87a9ce7ad7df558e40ee7523",
+    "/private/tmp/uat-config-observed-actual-app.log": "e70642b4b06840f850386e8935581535f380cf8bafe45aa93b7424fbf1244664",
+    "/private/tmp/uat-startup-config-actual-summary.json": "f6ffbe8125ddc28d23fd445076aa8dfbeea774c592d7635a12651a9760f3c65d"
+  }
+}

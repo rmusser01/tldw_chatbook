@@ -77,6 +77,11 @@ jobs:
       CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
         delvewheel repair --wheel-dir {dest_dir} {wheel}
     steps:
+      - name: Enable long paths for Windows checkout
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
       - name: Check out the exact source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -1,4 +1,4 @@
-# Prompt More actions and deletion recovery — TASK-32628
+# Prompt More actions and deletion recovery — TASK-32750
 
 The action review found three defects: a deletion error outside the visible
 editor area, confirmed deletion silently ignored on the saved New prompt

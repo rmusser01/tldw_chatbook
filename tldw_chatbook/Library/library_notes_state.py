@@ -516,6 +516,10 @@ class LibraryNotesListState:
         operation_status: Active Navigator transfer status, if any.
         operation_running: Whether Navigator actions must be gated.
         delete_receipt: Most recently deleted note available to Undo.
+        note_open: Whether a note is open in the work pane beside this list.
+            task-32616 AC#3: the list's own "Next:" is advice for a reader
+            with nothing open, so it stands down while the work pane has an
+            instruction of its own.
     """
 
     rows: tuple[LibraryNotesListRow, ...]
@@ -531,6 +535,7 @@ class LibraryNotesListState:
     operation_status: str = ""
     operation_running: bool = False
     delete_receipt: LibraryNoteDeleteReceipt | None = None
+    note_open: bool = False
 
 
 @dataclass(frozen=True)
@@ -547,6 +552,10 @@ class LibraryNoteEditorState:
             unknown/not yet saved.
         meta_line: The rendered Created/Modified/version (and, while
             saving, autosave-status) line.
+        properties: task-32642 -- the same facts ``meta_line`` joins, as
+            ``(label, value)`` pairs, so Info can lay them out as rows
+            without a second construction of the numbers. The line is
+            built FROM these; neither is derived from the other's text.
         has_note: ``False`` for the placeholder "no note open" state;
             ``True`` once a real note has been loaded.
     """
@@ -558,6 +567,7 @@ class LibraryNoteEditorState:
     version: int | None
     meta_line: str
     has_note: bool
+    properties: tuple[tuple[str, str], ...] = ()
 
 
 def _text(value: Any) -> str:
@@ -829,22 +839,32 @@ def build_library_note_editor_state(
     except (TypeError, ValueError):
         version = None
     parts: list[str] = []
+    # task-32642: one construction, two shapes. ``parts`` keeps the joined
+    # line every compact reader already gets; ``properties`` keeps the same
+    # strings as labelled rows for Info's wide layout. Appending to both at
+    # each site is what stops the two from ever disagreeing.
+    properties: list[tuple[str, str]] = []
     created = _text(detail.get("created_at"))
     if created:
         relative = _relative_age_with_ago(
             format_console_relative_age(created, now=reference_now)
         )
         absolute = _absolute_local_label(created)
-        parts.append(f"Created {absolute} · {relative}" if absolute else f"Created {relative}")
+        value = f"{absolute} · {relative}" if absolute else relative
+        parts.append(f"Created {value}")
+        properties.append(("Created", value))
     modified = _updated_raw(detail)
     if modified:
         relative = _relative_age_with_ago(
             format_console_relative_age(modified, now=reference_now)
         )
         absolute = _absolute_local_label(modified)
-        parts.append(f"Modified {absolute} · {relative}" if absolute else f"Modified {relative}")
+        value = f"{absolute} · {relative}" if absolute else relative
+        parts.append(f"Modified {value}")
+        properties.append(("Modified", value))
     if version is not None:
         parts.append(f"v{version}")
+        properties.append(("Version", f"v{version}"))
     return LibraryNoteEditorState(
         note_id=_text(detail.get("id")),
         title=_text(detail.get("title")),
@@ -853,6 +873,7 @@ def build_library_note_editor_state(
         version=version,
         meta_line=" · ".join(parts),
         has_note=True,
+        properties=tuple(properties),
     )
 
 

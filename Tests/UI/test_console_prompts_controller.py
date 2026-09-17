@@ -270,7 +270,7 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
         await _wait_for_selector(console, pilot, "#console-shell")
         recovery = AsyncMock()
         console._open_console_provider_recovery = recovery
-        console._console_provider_blocker_copy = lambda: "No provider configured."
+        console._console_provider_blocker_copy = lambda *, settings_readiness=None: "No provider configured."
 
         console._open_console_prompts_modal()
         await pilot.pause()
@@ -298,7 +298,7 @@ async def test_improve_stays_unavailable_during_an_active_run_even_with_a_health
     async with host.run_test(size=(140, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        console._console_provider_blocker_copy = lambda: ""
+        console._console_provider_blocker_copy = lambda *, settings_readiness=None: ""
         console._console_run_active = lambda: True
 
         console._open_console_prompts_modal()

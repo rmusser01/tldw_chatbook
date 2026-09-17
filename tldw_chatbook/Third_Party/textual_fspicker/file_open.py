@@ -9,12 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 ##############################################################################
-# Textual imports.
-from textual.widgets import Input
-
-##############################################################################
 # Local imports.
-from .base_dialog import ButtonLabel, InputBar, resolve_default_location
+from .base_dialog import ButtonLabel, resolve_default_location
 from .file_dialog import BaseFileDialog
 from .path_filters import Filters
 
@@ -37,6 +33,7 @@ class FileOpen(BaseFileDialog):
         must_exist: bool = True,
         default_file: str | Path | None = None,
         offer_select_folder: bool = False,
+        notes_context: str = "",
     ) -> None:
         """Initialise the `FileOpen` dialog.
 
@@ -52,6 +49,8 @@ class FileOpen(BaseFileDialog):
                 "Select folder" action returning the directory being
                 viewed (task-2222) -- for callers that accept either a
                 file or a folder.
+            notes_context: Which Library Notes folder door this is, if any;
+                see `FileSystemPickerScreen.__init__` (task-32643).
 
         Notes:
             `open_button` and `cancel_button` can either be strings that
@@ -65,51 +64,21 @@ class FileOpen(BaseFileDialog):
             cancel_button=cancel_button,
             filters=filters,
             default_file=default_file,
+            notes_context=notes_context,
         )
         self._must_exist = must_exist
         """Must the file exist?"""
         self._offer_select_folder = offer_select_folder
         """Offer the "select the folder being viewed" action?"""
+        self.RETURNS_A_FOLDER = offer_select_folder
+        """Answer the base's one focus fact per instance (task-32606).
 
-    def _focus_initial_widget(self) -> None:
-        """Focus the path field when this dialog also accepts a folder.
-
-        task-32540 (critique #3, both assessors): Import once and "Keep a
-        folder synced" both push this dialog, and the one thing a keyboard
-        user does first is type a path. With the base class's default focus
-        (the directory listing) every typed character went into the
-        listing's type-ahead instead -- reproduced live at 235x52: typing
-        "/Users" left the field on its placeholder and Enter activated the
-        highlighted ".." row. ``FileSave`` already steers initial focus the
-        same way for the same reason (task-1479).
-
-        Only when ``offer_select_folder`` is on: a plain file-only
-        ``FileOpen`` (character import, skill folders, TTS models, ...)
-        keeps browsing-first focus, where Enter on a listing row is the
-        natural first keystroke.
+        This dialog decides at construction whether its result can be a
+        folder, so it shadows the ClassVar instead of declaring it. With it
+        on, ``FileSystemPickerScreen._focus_initial_widget`` opens on the
+        path field (task-32540); a plain file-only ``FileOpen`` (character
+        import, skill folders, TTS models, ...) keeps browsing-first focus.
         """
-        if not self._offer_select_folder:
-            super()._focus_initial_widget()
-            return
-        field = self.query_one(InputBar).query_one(Input)
-        field.focus()
-        # Any seeded default is a starting point, not something to type
-        # around -- select it so the first keystroke replaces it.
-        if field.value:
-            field.selection = (0, len(field.value))
-
-    def _hint_text(self) -> str:
-        """Name both actions once "Select folder" is offered (task-32122).
-
-        Neither ``FileOpen(offer_select_folder=True)`` nor the vendored
-        ``SelectDirectory`` had any on-screen hint distinguishing "Enter
-        descends" from "the folder-confirming button uses this one" --
-        AC#4 requires that hint actually render.
-        """
-        if not self._offer_select_folder:
-            return ""
-        open_label = self._label(self._select_button, "Open")
-        return f"Enter {open_label}  ·  Select folder to use this folder"
 
     def _should_return(self, candidate: Path) -> bool:
         """Perform the final checks on the chosen file.

@@ -10,16 +10,16 @@ promise holds trivially, and these tests keep it pinned.
 """
 
 import random
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from textual.app import ComposeResult
+from textual.widgets import Static
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Static
-
 from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     ConsoleSetupStep,
@@ -125,6 +125,36 @@ async def test_modal_records_preference_and_backdrop_stays_frozen(
         assert len(backdrop._timers) == 0
         rendered = str(backdrop.render())
         assert any(glyph in rendered for glyph in ("·", "•", "*"))
+
+
+@pytest.mark.asyncio
+async def test_guidance_uses_accepted_appearance_while_backup_pauses_config():
+    """Rendering a mounted modal needs no new disk admission during backup."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    app = ModalHarness(_blocking_state(), reduced_motion=False)
+    owner = SimpleNamespace(app_config={"appearance": {"reduce_motion": True}})
+    screen = SimpleNamespace(
+        app_instance=owner,
+        query_one=app.query_one,
+        _pending_console_launch_context=None,
+        _console_detected_local_server=None,
+        _apply_console_setup_block=lambda blocking: None,
+        _maybe_start_console_local_discovery=lambda: None,
+        _resume_navigation_startup_in_progress=True,
+    )
+    async with app.run_test(size=(80, 24)):
+        with patch(
+            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            side_effect=RecoveryRequired("storage_locally_paused"),
+        ):
+            for preference in (True, False):
+                owner.app_config["appearance"]["reduce_motion"] = preference
+                ChatScreen._sync_console_setup_modal(
+                    screen, _blocking_state(), action_label="Set up", action_tooltip="Set up"
+                )
+                assert app.query_one(ConsoleSetupModal).reduced_motion is preference
 
 
 # ---------------------------------------------------------------------------

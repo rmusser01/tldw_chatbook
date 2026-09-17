@@ -1,0 +1,12 @@
+{
+  "tree": "ab24f6b0c2690f7705bdcddf46a941104541fe07",
+  "wheel_sha256": "198a7494d194b553e1bba81d01adf401ae5e6590c93f9f310fc0659e489ad8bb",
+  "installed_files_verified": 5347,
+  "checks": [
+    "bound config-only profile creates missing user directory",
+    "invalid plain filename UI guidance and disabled Create",
+    "invalid credential-encrypted filename UI guidance and disabled Create"
+  ],
+  "method": "installed native child processes and Textual test harness, not actual keyboard",
+  "evidence": "/private/tmp/uat-installed-corrections-m18ulkca"
+}

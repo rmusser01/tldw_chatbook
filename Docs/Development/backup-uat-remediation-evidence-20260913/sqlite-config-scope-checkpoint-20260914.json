@@ -1,0 +1,68 @@
+{
+  "base_head": "f104d61f5bae0ad1c70793fe60497811a158814e",
+  "source_sha256": {
+    "tldw_chatbook/DB/private_sqlite.py": "40b1515de3676d304b348203b3adab0b057deab9c407b6763d500af7d9f8a00d",
+    "Tests/Backup_Recovery/test_sqlite_inside_config_scope.py": "4fe0ad2b721b00406d104e6564adb7c665bd38bae4c3d3f7fdcb88bedbfcd8a2",
+    "Tests/Backup_Recovery/run_platform_product.py": "3decfc624f51efa288153277ebdda49d603e0a86e5bf817d8370b51e641cf24b"
+  },
+  "change": "Retain outer config ownership while ordinary separately admitted default-native SQLite opens; restore and validate discovery; preserve primary errors and uncertain-close exclusion.",
+  "native_local": {
+    "new_and_existing_console": {
+      "passed": 33,
+      "seconds": 32.69
+    },
+    "bounded_compatibility": {
+      "passed": 11,
+      "seconds": 2.29
+    },
+    "independent_new_cases": {
+      "passed": 12,
+      "seconds": 8.51
+    },
+    "installed_console": {
+      "installed_files": 2867,
+      "source_python_exact_matches": 2474,
+      "source_python_differences": [
+        {
+          "path": "tldw_chatbook/DB/private_sqlite.py",
+          "ast_equal": true,
+          "installed_sha256": "a2d00b63fd548121cc71feaeed36337d9d4410d6273f2a99cd633c767d806662",
+          "current_sha256": "40b1515de3676d304b348203b3adab0b057deab9c407b6763d500af7d9f8a00d"
+        }
+      ],
+      "wheel_sha256": "747652cb1ac229940904d7bd85e8c0c11d56b3b60edf0811806b4fc2d526f50d",
+      "pytest": "1 passed in 53.21s"
+    }
+  },
+  "regression_history": {
+    "original_collision": "6 failed / 2 passed before product candidate; corrected real connector observation subsequently passed",
+    "paired_primary_and_selector": "2 failed before helper exception-precedence correction",
+    "initial_candidate_observation_mistake": "Test watched descriptor _SQLITE_CONNECT instead of ordinary sqlite3.connect; not classified as a candidate product failure"
+  },
+  "static": {
+    "ruff_existing_findings": 36,
+    "ruff_new_findings": 0,
+    "bandit_existing_findings": 7,
+    "bandit_new_findings": 0,
+    "bandit_existing_types": {
+      "B101": 6,
+      "B110": 1
+    },
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "windows": "Fresh support-diagnostic qualification pending after commit; earlier results are revision-specific.",
+  "linux": {
+    "metadata_approval": "Granted and completed for exception types and traceback locations only. Raw logs/messages/data remain on host.",
+    "prior_cases": "86ad and10cc positive Persona child TimeoutExpired at150s",
+    "focused_source": "f104d61f5bae0ad1c70793fe60497811a158814e",
+    "focused_result": "1 failed; actual rollback sampled progressing from publication to installed SQLite validation before unchanged150s cutoff; no completion claimed.",
+    "test_budget_proposal": "Prepared but not applied; pending user approval to redistribute existing aggregate child budget within900s Linux test; no other platform/product bounds change."
+  },
+  "remaining": [
+    "Fresh native Windows Console/support qualification",
+    "Windows Settings Scheduler drain contention",
+    "Windows60s startup regression",
+    "Linux positive Persona final lifecycle completion"
+  ]
+}

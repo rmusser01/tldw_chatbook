@@ -502,8 +502,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
@@ -521,6 +523,7 @@ from ...config import get_cli_setting
 from ...Library.library_browse_location import (
     browse_start_directory,
     claim_browse_directory,
+    picker_recent_context,
     remember_browse_directory,
 )
 from ...Library.library_export_scope import ExportScope
@@ -561,7 +564,7 @@ from ...Library.library_shell_state import (
 )
 from ...Notes.note_folder_models import NoteFolder
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
-from ...Third_Party.textual_fspicker import FileOpen, FileSave
+from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
 from ...Utils.adaptive_reader_state import (
     AdaptiveReaderLayoutPreferences,
     PaneName,
@@ -640,6 +643,17 @@ class LibraryNotesController:
     of the 185 original names this cluster moved -- task 3 (the cleanup PR,
     notes series 3/N) prunes the ones nothing external reaches.
     """
+
+    #: task-32640: where the open note lives, as ``(path, written)``.
+    #: ``_begin_library_note_load`` re-seeds it per note, but the editor's
+    #: presentation state is also built on paths that never ran that load
+    #: (creating a note, then discarding it), where an instance attribute
+    #: set only there is missing and the whole screen fails to compose.
+    #: Measured: ``AttributeError: 'LibraryNotesController' object has no
+    #: attribute '_library_note_location'`` ->
+    #: "This screen failed to load." in
+    #: ``test_a_whitespace_only_title_then_escape_shows_the_discard_receipt``.
+    _library_note_location: tuple[str, str] = ("", "")
 
     def __init__(
         self,
@@ -1438,11 +1452,24 @@ class LibraryNotesController:
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
             raise RuntimeError("A note presentation requires an active session.")
-        base_meta = self._library_note_meta_base_line()
+        base = self._library_note_meta_base_state()
+        base_meta = "" if base is None else base.meta_line
         word_count = self._note_word_count(snapshot.body)
-        word_copy = f"{word_count} words" if word_count != 1 else "1 word"
+        # task-32623: match `library_note_chrome_facts`'s thousands
+        # separator -- Info and the editor footer share this exact int
+        # (see the `word_count=word_count` comment below), so a note over
+        # 999 words used to read two different numbers-as-text for the one
+        # count ("5,453" in the footer, "5453" in Info).
+        word_copy = f"{word_count:,} words" if word_count != 1 else "1 word"
         status_line = self._library_note_status_line()
         metadata_line = " · ".join(part for part in (base_meta, word_copy) if part)
+        # task-32642: the word count joins the line and the rows at the same
+        # site, from the same ``word_copy`` -- see the class docstring on
+        # ``LibraryNoteEditorState.properties``.
+        properties = (
+            *(base.properties if base is not None else ()),
+            ("Words", word_copy),
+        )
         operation = self._library_notes_operation_for_active_region()
         status_channels = resolve_database_note_status_channels(
             conflict=snapshot.in_conflict,
@@ -1469,6 +1496,7 @@ class LibraryNotesController:
         return LibraryNotePresentationState(
             snapshot=snapshot,
             metadata_line=metadata_line,
+            properties=properties,
             # task-32143: the same count the meta line above is built from,
             # carried as a number so the editor chrome strip needs no scan
             # and no database read of its own.
@@ -1494,6 +1522,9 @@ class LibraryNotesController:
             status_channels=status_channels,
             backlinks=self._library_notes_backlinks,
             backlinks_status=self._library_notes_backlinks_status,
+            # task-32640: resolved live by ``_load_library_note_location``.
+            location_path=self._library_note_location[0],
+            location_written=self._library_note_location[1],
             # task-32548: resolved by ``_library_notes_canvas_kwargs`` from
             # the same projection the list rows are drawn from.
             title_suffix=self._notes_state.open_note_title_suffix,
@@ -3420,6 +3451,7 @@ class LibraryNotesController:
         self._library_note_editor_armed = False
         self._library_notes_backlinks = ()
         self._library_notes_backlinks_status = "loading"
+        self._library_note_location = ("", "")
         self._apply_library_notes_stage_visibility()
         self.run_worker(
             self._refresh_library_note_detail(
@@ -3433,6 +3465,11 @@ class LibraryNotesController:
             self._load_library_note_backlinks(note_id),
             exclusive=True,
             group="library_note_backlinks",
+        )
+        self.run_worker(
+            self._load_library_note_location(note_id),
+            exclusive=True,
+            group="library_note_location",
         )
         self.run_worker(
             self._locate_library_notes_tree_target(
@@ -3485,6 +3522,82 @@ class LibraryNotesController:
         )
         self._library_notes_backlinks_status = status
         self._apply_library_note_presentation_state()
+    async def _load_library_note_location(self, note_id: str) -> None:
+        """Answer "where does this note live?" for the header (task-32640).
+
+        Its own worker, like the backlink lookup beside it: the detail load
+        owns how fast the editor appears, and one binding read plus one
+        ``stat`` has no business delaying that.
+
+        Both facts are read LIVE every time this runs -- the binding from
+        the sync runtime, the write time from the file itself -- rather than
+        being carried on the note record, which is what a note looked like
+        when it was opened.
+
+        It is re-run when a save settles
+        (``_apply_library_note_saved_presentation``), but that re-read RACES
+        the write: a save only ``schedule_hint``s the root (task-32604), and
+        the file is written by a later background pass. So right after your
+        own save the row usually still names the PREVIOUS write time, and
+        nothing re-runs it until the note is reopened or saved again. That
+        is accurate -- the file really has not been written yet -- and it is
+        the honest half of what this row exists to show; it is not "fresh
+        after every save", and the task notes and guide say so in those
+        words. Re-running on the sync pass itself is task-32633's ground.
+
+        A runtime that is absent, inert or not yet started answers ""; the
+        header then says the note is in the Library database only, which is
+        what "no root is keeping this note in a file" means.
+
+        Args:
+            note_id: The note whose file, if any, to name.
+        """
+        if not note_id:
+            return
+        runtime = getattr(self.app_instance, "notes_sync_runtime_owner", None)
+        locate = getattr(runtime, "note_file_location", None)
+        path = ""
+        if callable(locate):
+            try:
+                path = str(await locate(note_id) or "")
+            except Exception as error:  # noqa: BLE001 - one header row
+                # Metadata only: this line is about a file path, and a path
+                # is exactly what must not reach a log.
+                logger.debug(
+                    "library_note_location_failed", error_type=type(error).__name__
+                )
+                path = ""
+        written = await asyncio.to_thread(self._note_file_written_label, path)
+        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+            return
+        self._library_note_location = (path, written)
+        self._apply_library_note_presentation_state()
+
+    @staticmethod
+    def _note_file_written_label(path: str) -> str:
+        """Local "when the file was last written", or "" if it cannot be read.
+
+        The file's own mtime, not a record of our writes: a vault edited in
+        Obsidian and a note saved here are the same question to the reader,
+        and only the filesystem answers both.
+        """
+        if not path:
+            return ""
+        try:
+            modified = os.stat(path).st_mtime
+        except OSError:
+            return ""
+        # Local time in the codebase's established absolute-timestamp
+        # spelling -- the same one ``_absolute_local_label`` gives Info's
+        # Created/Modified rows, so the header and Info cannot disagree
+        # about which clock they are on. Built tz-aware, then localised,
+        # rather than through a naive ``fromtimestamp``.
+        return (
+            datetime.fromtimestamp(modified, tz=UTC)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M")
+        )
+
     @on(Button.Pressed, ".library-note-backlink")
     async def handle_library_note_backlink(self, event: Button.Pressed) -> None:
         """Open the note an Info "Linked from" row names (task-32145).
@@ -3700,11 +3813,16 @@ class LibraryNotesController:
             exclusive=True,
             group="library_note_save",
         )
-    def _library_note_meta_base_line(self) -> str:
-        """The static Created/Modified/version portion of the meta line."""
+    def _library_note_meta_base_state(self) -> LibraryNoteEditorState | None:
+        """The Created/Modified/version facts, as line AND labelled pairs.
+
+        task-32642: Info lays the same facts out as rows, so both shapes come
+        out of one ``build_library_note_editor_state`` call rather than two
+        readings of the note.
+        """
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
-            return ""
+            return None
         return build_library_note_editor_state(
             {
                 "id": snapshot.note_id,
@@ -3712,7 +3830,12 @@ class LibraryNotesController:
                 "created_at": snapshot.baseline.created_at,
                 "last_modified": snapshot.baseline.modified_at,
             }
-        ).meta_line
+        )
+
+    def _library_note_meta_base_line(self) -> str:
+        """The static Created/Modified/version portion of the meta line."""
+        base = self._library_note_meta_base_state()
+        return "" if base is None else base.meta_line
     def _update_library_note_meta_static(self, *, content: str) -> None:
         """Synchronize persistent metadata and status without recomposition.
 
@@ -3766,7 +3889,29 @@ class LibraryNotesController:
         if snapshot is None or snapshot.note_id != self._selected_note_id:
             return
         if outcome.kind is NoteSaveOutcomeKind.SAVED:
-            self._patch_library_note_list_from_session()
+            renamed = bool(self._patch_library_note_list_from_session())
+            if renamed and self.is_mounted:
+                # task-32616 AC#1 (A caps 06/07, B cap 58): patching the list
+                # CACHES is not painting the list. Until this sync the only
+                # durable artefact on screen -- the row beside the editor --
+                # still read "Untitled · now" while the editor's own heading
+                # read the new title and its status read "Saved 22:50": the
+                # screen answering "is my writing safe" two ways at once, at
+                # the moment a first-timer checks.
+                #
+                # The task-32062 focus guard is NOT weakened by this (AC#2).
+                # It lives in ``LibraryNotesCanvas.sync_state`` and is
+                # measured per canvas, so the WORK pane still skips its
+                # rebuild while the reader's hands are in the title or body;
+                # the Items pane beside it is a sibling canvas, recomposes as
+                # it already does for every other sync, and ``canvas_sync``'s
+                # ``notes_editor_owned`` branch restores its scroll offset
+                # without touching focus.
+                #
+                # Gated on a genuine rename, not on every save: a body-only
+                # autosave changes no row label, and repainting a 54-note
+                # tree on each debounce tick would buy nothing.
+                _sync_library_canvas(self, "notes")
             # task-32536 AC#3: a successful save ends a failed operation's
             # message -- "Saved" and "Can't use this note…" cannot both be
             # the truth of one status line.
@@ -3775,6 +3920,19 @@ class LibraryNotesController:
                 self._library_notes_operation = None
                 if self.is_mounted:
                     self._apply_library_note_presentation_state()
+            # task-32640 AC#4: a save of a bound note is what makes lasting
+            # sync write the file (task-32604's `note_changed` seam), so the
+            # header's "file written" is stale the moment this returns. Ask
+            # again rather than keep what the note looked like when it
+            # opened. The write is a hinted pass, not a synchronous one --
+            # this re-read races it, and the line lands on the pass after
+            # the one that reaches disk.
+            if self.is_mounted:
+                self.run_worker(
+                    self._load_library_note_location(snapshot.note_id),
+                    exclusive=True,
+                    group="library_note_location",
+                )
         is_current_clean_revision = (
             not snapshot.dirty
             and outcome.revision is not None
@@ -4958,6 +5116,19 @@ class LibraryNotesController:
     def handle_library_notes_lasting_folder_requested(
         self, event: LibraryNotesAddFromFilesCanvas.FolderRequested
     ) -> None:
+        """Open the folder-only picker for "Keep a folder synced".
+
+        ``SelectDirectory``, not ``FileOpen(offer_select_folder=True)``
+        (task-32611 AC#1/#2). This door can only answer with a folder -- the
+        callback below has always dropped anything else on the floor -- yet it
+        pushed the files-AND-folder dialog, whose field is labelled "File
+        name", whose placeholder reads "File name or path" and whose listing
+        shows every file in the folder as if one were pickable. Critique #4
+        met all three under the title "Choose a folder to keep synced". The
+        folder-only mode of the same picker family says "Folder path:",
+        pre-fills it, lists folders only and offers just the two buttons that
+        can act on one.
+        """
         event.stop()
 
         async def selected(path: Path | None) -> None:
@@ -4970,10 +5141,10 @@ class LibraryNotesController:
                 controller.set_setup("display_name", path.name)
 
         self.app.push_screen(
-            FileOpen(
+            SelectDirectory(
                 title="Choose a folder to keep synced",
-                offer_select_folder=True,
                 location=self._library_notes_sync_browse_location(),
+                notes_context=picker_recent_context("library.notes_sync"),
             ),
             selected,
         )
@@ -4999,7 +5170,11 @@ class LibraryNotesController:
         generation = claim_browse_directory("library.notes_sync", "last_directory")
         self.run_worker(
             lambda: remember_browse_directory(
-                "library.notes_sync", "last_directory", selected_path, generation
+                "library.notes_sync",
+                "last_directory",
+                selected_path,
+                generation,
+                recent_context=picker_recent_context("library.notes_sync"),
             ),
             thread=True,
         )
@@ -5152,6 +5327,21 @@ class LibraryNotesController:
         controller = self._library_notes_sync_controller
         if event.action == "check":
             await controller.sync_now(event.root_id)
+            # task-32604 AC#3: the check builds a complete review and used to
+            # leave the user on the roots list looking at it through a
+            # closed door. A check that found effects lands on them; one
+            # that found none says so and stays put. The row keeps the
+            # Review the runtime's own ``review_changes`` now offers, so a
+            # later visit reaches the same review without re-checking.
+            if (
+                self.is_mounted
+                and self._library_notes_view == "lasting_roots"
+                and controller.snapshot.phase == "review"
+            ):
+                self._library_notes_lasting_origin = "roots"
+                self._library_notes_view = "lasting_add"
+                self._apply_library_notes_footer_context()
+                _sync_library_canvas(self, "notes")
         elif event.action in {"migration", "review"}:
             self._library_notes_lasting_origin = "roots"
             self._library_notes_view = "lasting_add"
@@ -5371,6 +5561,25 @@ class LibraryNotesController:
         event.stop()
         current = self._library_note_import_controller.snapshot.page.page_number
         self._library_note_import_controller.set_page(current + event.delta)
+    @on(LibraryNoteImportCanvas.ViewImportedNotesRequested)
+    def handle_library_note_import_view_notes(
+        self, event: LibraryNoteImportCanvas.ViewImportedNotesRequested
+    ) -> None:
+        """Leave the settled receipt for the list the import just filled.
+
+        task-32622 AC#1. The destination is the same list "‹ Notes" reaches
+        (``handle_library_notes_import_back``) -- the import controller
+        already reloads Notes when execution settles
+        (``_refresh_after_settlement``), so the rows are fresh by the time
+        this runs.
+
+        ponytail: it lands on the Notes list, not scrolled to the
+        destination folder -- revealing one folder needs a tree-reveal seam
+        the list does not have yet. Filed as the ceiling on task-32622.
+        """
+        event.stop()
+        self._library_notes_view = "list"
+        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
     @on(LibraryNoteImportCanvas.RetryRequested)
     def handle_library_note_import_retry(
         self, event: LibraryNoteImportCanvas.RetryRequested

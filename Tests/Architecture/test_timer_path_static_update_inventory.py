@@ -375,14 +375,10 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "poll does not repaint or lay out; changed auto-height status/path copy "
         "keeps the required default layout pass."
     ),
-    (
-        "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
-        "LibraryFileNotesWorkspace._apply_opened_document",
-        "self.query_one('#file-notes-breadcrumb', Static)",
-    ): (
-        "NEEDS-LAYOUT: the breadcrumb wraps, so its row count tracks the "
-        "path."
-    ),
+    # task-32614 removed this row's call: the breadcrumb no longer wraps (it
+    # is one row, `text-wrap: nowrap`, middle-elided by
+    # `_fit_path_surfaces`), and every writer now goes through
+    # `_update_static_content`, whose own NOT-PER-TICK row above covers it.
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._dismiss_reload_confirmation",

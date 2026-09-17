@@ -1,4 +1,4 @@
-# Search result focus — TASK-32707
+# Search result focus — TASK-32751
 
 2026-09-17 UTC, `feat/component-pattern-library`, based on `bddafc724d`.
 

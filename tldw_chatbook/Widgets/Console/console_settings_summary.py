@@ -146,6 +146,11 @@ def build_console_readiness_presentation(
         Fixed-copy presentation values safe to render in the settings summary.
     """
     provider = readiness.provider_display_name or "Provider"
+    subscription_copy = {
+        "pending": "Checking Claude subscription credential",
+        "expired": "Claude subscription credential expired — log in with Claude Code",
+        "missing": "Claude subscription credential missing — log in with Claude Code",
+    }.get(readiness.subscription_status)
     if readiness.operability == "ready_to_send":
         primary = "Ready to send"
         if readiness.credential == "present_unverified":
@@ -155,7 +160,7 @@ def build_console_readiness_presentation(
     else:
         blocker_copy = _BLOCKER_COPY.get(readiness.blocker, "review provider settings")
         if readiness.blocker == "credential_missing":
-            blocker_copy = f"API key missing for {provider}"
+            blocker_copy = subscription_copy or f"API key missing for {provider}"
         elif readiness.blocker == "credential_rejected":
             blocker_copy = f"{provider} {blocker_copy}"
         primary = f"Not ready — {blocker_copy}"
@@ -165,11 +170,24 @@ def build_console_readiness_presentation(
             ("Review settings", "console", "Review this Console session's settings"),
         )
         if readiness.recovery_action == "configure_credential":
-            action = (
-                "Configure API key",
-                "settings",
-                f"Configure {provider} API and API key in Settings",
-            )
+            if readiness.subscription_status == "pending":
+                action = (
+                    "Checking credential",
+                    "hidden",
+                    "Credential check in progress",
+                )
+            elif subscription_copy:
+                action = (
+                    "Review credentials",
+                    "settings",
+                    "Review Claude subscription authentication in Settings",
+                )
+            else:
+                action = (
+                    "Configure API key",
+                    "settings",
+                    f"Configure {provider} API and API key in Settings",
+                )
         elif readiness.recovery_action == "save_endpoint":
             action = (
                 "Configure endpoint",
@@ -183,13 +201,17 @@ def build_console_readiness_presentation(
         "authenticated": "Authenticated",
         "present_unverified": "Present — not verified",
     }[readiness.credential]
+    if readiness.subscription_status == "pending":
+        credential_value = "Checking…"
+    elif readiness.subscription_status == "ready":
+        credential_value = "Claude subscription — not verified"
     if readiness.credential == "present_unverified":
         source = {
             "stored": "local config",
             "environment": "environment variable",
             "draft": "unsaved draft",
         }.get(readiness.credential_source)
-        if source:
+        if source and readiness.subscription_status is None:
             credential_value += f" ({source})"
 
     if readiness.endpoint == "unreachable":

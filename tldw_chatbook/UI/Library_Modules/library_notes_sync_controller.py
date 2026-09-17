@@ -10,7 +10,7 @@ from typing import Never, Protocol
 
 from loguru import logger
 
-from tldw_chatbook.Notes.note_import_discovery import OBSIDIAN_MARKER_DIRECTORY
+from tldw_chatbook.Notes.note_import_discovery import folder_is_obsidian_vault
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
@@ -64,16 +64,13 @@ from tldw_chatbook.Notes.notes_sync_models import (
 def _carries_obsidian_marker(folder: str) -> bool:
     """Return whether the chosen folder is an Obsidian vault (task-32535).
 
-    The same marker Import once looks for. An unreadable or missing folder is
-    simply not a vault -- setup validation already has the say on those.
+    The body moved to ``Notes.note_import_discovery.folder_is_obsidian_vault``
+    (task-32643 AC#4) so the folder PICKER can mark a vault in its listing
+    with the same predicate rather than a second copy of it. This name stays
+    as this module's local spelling of the question.
     """
 
-    if not folder.strip():
-        return False
-    try:
-        return (Path(folder) / OBSIDIAN_MARKER_DIRECTORY).is_dir()
-    except OSError:
-        return False
+    return folder_is_obsidian_vault(folder)
 
 
 class LastingSyncRuntimePort(Protocol):
@@ -256,6 +253,10 @@ _STATUS_LABELS = {
     "offline": "⚠ Offline",
     "passive": "Ⅱ Open in another process",
     "needs_attention": "⚠ Needs attention",
+    #: task-32604 fix round 2: not a runtime status -- the label a root wears
+    #: when the runtime stopped watching. "✓ Up to date" is the last thing
+    #: PUBLISHED, not the truth, once nothing is carrying changes either way.
+    "not_watching": "⚠ Sync stopped",
     "partial": "⚠ Partial",
     "failed": "✕ Failed",
     "unsupported": "✕ Blocked",
@@ -744,8 +745,25 @@ class LibraryNotesSyncController:
 
         runtime = self._runtime.snapshot()
         available = runtime.status in _SETUP_READY_STATUSES
+        # task-32604 fix round 2 (re-review, promoted Minor 8): when the
+        # runtime itself is not active nothing is watching ANY of its roots,
+        # so an editor save lands in Notes only and no hint carries it to
+        # disk (``note_changed`` returns () at notes_sync_runtime.py:3024,
+        # and ``_watcher_finished`` sets status "failed" at :1925-1931).
+        # Per-root statuses are the last ones PUBLISHED, so a root that was
+        # clean when watching stopped goes on rendering "✓ Up to date" over a
+        # file that is now stale -- this P0's own lie, one level up. The fact
+        # is already in the snapshot this method reads; read it.
+        #
+        # Fix round 3 (re-review 2): pass the STATUS, not a boolean. A
+        # startup publishes each root's ``up_to_date`` inside ``_start_once``'s
+        # loop and only sets the runtime to "active" after it
+        # (notes_sync_runtime.py:1984 vs :1989), so a boolean made a
+        # just-reconciled root read "⚠ Sync stopped" mid-startup. A wrong
+        # ALARMING label is the same defect as a wrong reassuring one.
         self._all_roots = tuple(
-            self._project_root(root) for root in runtime.roots
+            self._project_root(root, runtime_status=runtime.status)
+            for root in runtime.roots
         )
         page_count = max(
             1, (len(self._all_roots) + _ROOT_PAGE_SIZE - 1) // _ROOT_PAGE_SIZE
@@ -762,8 +780,22 @@ class LibraryNotesSyncController:
         if publish:
             self._publish()
 
-    def _project_root(self, root: NotesSyncRootRuntimeSnapshot) -> LastingSyncRootRow:
-        """Project one runtime root, with its last refusal laid over the top."""
+    def _project_root(
+        self,
+        root: NotesSyncRootRuntimeSnapshot,
+        *,
+        runtime_status: str = "active",
+    ) -> LastingSyncRootRow:
+        """Project one runtime root, with its last refusal laid over the top.
+
+        ``runtime_status`` is the runtime-level status from the same
+        snapshot this root came out of. Only the one reassuring label is
+        rewritten when the runtime is not active -- every other per-root
+        status already says something is wrong, and rewriting ``status``
+        itself would change which controls the canvas offers (see the
+        comment below). A runtime that is still ``starting`` has not
+        finished deciding, so it reads "◌ Starting", not "⚠ Sync stopped".
+        """
 
         failure, failed_action = self._root_failures.get(root.root_id, ("", ""))
         # Fix round 1: the overlay owns the LABELS only. Rewriting ``status``
@@ -772,14 +804,22 @@ class LibraryNotesSyncController:
         # defect this overlay fixes for Resume, on a sibling status.
         status, next_action = root.status, root.next_action
         action_label = failed_action or next_action
+        if failure:
+            status_label = _STATUS_LABELS["needs_attention"]
+        elif runtime_status != "active" and status == "up_to_date":
+            status_label = _STATUS_LABELS[
+                "starting" if runtime_status == "starting" else "not_watching"
+            ]
+        else:
+            status_label = _STATUS_LABELS.get(
+                status, status.replace("_", " ").title()
+            )
         return LastingSyncRootRow(
             root.root_id,
             "Sync folder (name unavailable before cutover)",
             status,
             next_action,
-            _STATUS_LABELS["needs_attention"]
-            if failure
-            else _STATUS_LABELS.get(status, status.replace("_", " ").title()),
+            status_label,
             _ACTION_LABELS.get(action_label, action_label.replace("_", " ").title()),
             root.action_id,
             failure=failure,
@@ -819,7 +859,12 @@ class LibraryNotesSyncController:
         contradiction, inverted. No new copy: the line restates the row.
         """
 
-        row = next((r for r in self._state.roots if r.root_id == root_id), None)
+        # Fix round 2 (re-review): ``_state.roots`` is ONE PAGE, so a root on
+        # any other page missed here and this returned silently -- leaving
+        # whatever line was showing, which for the new sync_now else-branch
+        # is a permanent "Checking changes…". Both callers are fixed by
+        # reading ``_all_roots``; pause/resume (task-32534) had the same miss.
+        row = next((r for r in self._all_roots if r.root_id == root_id), None)
         if row is None:
             return
         self._state = replace(
@@ -1410,15 +1455,63 @@ class LibraryNotesSyncController:
         )
         if installed is None:
             return
-        self._state = replace(
-            self._state,
-            phase="review",
-            status_line=(
-                "Manual check finished. Review exact effects."
-                if installed
-                else "Conflict details are unavailable. Check again."
-            ),
-        )
+        # task-32604: the runtime republished this root's status while the
+        # check ran (``changes_available``/``review_changes`` once the plan
+        # holds actions). Re-project it here or the row keeps whatever it
+        # said BEFORE the check -- "✓ Up to date" over a pending
+        # ``update_file``, with no Review offered, because the roots canvas
+        # gates Review on ``next_action == "review_changes"``. The runtime
+        # stays the single publisher of row state; this only re-reads it.
+        self.refresh_roots(publish=False)
+        # Fix round 1 (review Minor 3): ``_state.roots`` is ONE PAGE, so a root
+        # on any other page missed here and fell back to "review_changes" --
+        # navigating into a review and printing "0 changes to review".
+        # ``_all_roots`` is every root and ``refresh_roots`` just rebuilt it.
+        row = next((r for r in self._all_roots if r.root_id == root_id), None)
+        next_action = row.next_action if row is not None else "review_changes"
+        if not installed:
+            # Fix round 1 (review Minor 4): an un-labelled review is not one
+            # the new handler should land anyone on -- it cannot be applied
+            # and its own line says to check again. Stay on the roots list,
+            # as this branch did before the review gained a door.
+            self._state = replace(
+                self._state,
+                phase="roots",
+                status_line="Conflict details are unavailable. Check again.",
+            )
+        elif next_action == "review_changes":
+            # Fix round 1 (review Minor 5): count every group the runtime
+            # treats as reviewable. ``_blocked_plan_status`` publishes
+            # review_changes for deletion groups or managed placements alone,
+            # so counting only apply-kind actions printed "0 changes to
+            # review." beside "⚠ Needs attention".
+            pending = (
+                len(
+                    [
+                        action
+                        for action in plan.safe_actions
+                        if action.kind in NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
+                    ]
+                )
+                + len(plan.attention)
+                + len(plan.deletion_groups)
+                + len(plan.managed_placement_effects)
+            )
+            noun = "change" if pending == 1 else "changes"
+            self._state = replace(
+                self._state,
+                phase="review",
+                status_line=f"Manual check finished. {pending} {noun} to review.",
+            )
+        elif next_action == "sync_now":
+            self._state = replace(
+                self._state, phase="roots", status_line="Nothing to review."
+            )
+        else:
+            # Offline, unsupported, paused: the row already names the state
+            # and the action, and there is no review behind either.
+            self._state = replace(self._state, phase="roots")
+            self._restate_root(root_id)
         self._publish()
 
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> None:

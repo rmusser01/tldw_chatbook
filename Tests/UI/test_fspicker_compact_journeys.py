@@ -59,6 +59,9 @@ async def test_folder_rows_paint_and_keyboard_navigation_selects_child(
     async with host.run_test(size=size) as pilot:
         dialog = host.dialog
         nav = await _loaded(dialog, pilot, tmp_path)
+        # TASK-32606 opens folder-returning pickers on their path field.
+        assert dialog.focused is dialog.query_one("#path_input", Input)
+        await _tab_to(dialog, host, pilot, DirectoryNavigation, "alpha folder")
         assert dialog.focused is nav
         # The source of the initial regression: loaded options with no list paint.
         geometry = {
@@ -131,7 +134,10 @@ async def test_compact_error_and_resize_keep_path_actions_and_listing(
             assert "Path not found: missing-folder" in _painted(host, error)
             assert "alpha folder" in _painted(host, nav)
             bar = dialog.query_one(InputBar)
-            assert field.region.width >= bar.region.width // 2
+            # The explicit "Select folder" label takes more space than
+            # "Select"; the path must still paint the whole edited value.
+            assert field.region.width >= len(field.value) + 2
+            assert field.region.width < bar.region.width
             for selector in ("#select", "#cancel"):
                 button = dialog.query_one(selector, Button)
                 assert button.region.right <= dialog.query_one(Dialog).region.right
@@ -161,6 +167,12 @@ async def test_compact_empty_or_scrolled_folder_keeps_visible_selection(
         dialog = host.dialog
         nav = await _loaded(dialog, pilot, listing)
         assert nav.option_count == count + 1
+        assert dialog.focused is dialog.query_one("#path_input", Input)
+        for _ in range(24):
+            if dialog.focused is nav:
+                break
+            await pilot.press("tab")
+        assert dialog.focused is nav
         await pilot.press("end")
         selected = nav.get_option_at_index(nav.highlighted).location
         label = selected.name if count else ".."

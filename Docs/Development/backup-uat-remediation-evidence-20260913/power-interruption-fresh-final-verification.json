@@ -1,0 +1,25 @@
+{
+  "revision": "580c657bba5e05e185f8f62243c17f4c16eb28e6",
+  "wheel_sha256": "c9e03643b30fae1671c778c2011398d1bcac4b76e83c5c3c3689e498b9f679ea",
+  "installed_files_unchanged": 5347,
+  "interrupted_archive_exists": false,
+  "archive": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/power-interruption/retry.tldw-backup.zip",
+  "archive_sha256": "58aa245978fd9b43a396516b4771806250902ff2c994da54ea9f42f44d5faa5c",
+  "manifest_sha256": "5553438009df61f13f83b73a46eb4b9f0dfde1c82e018d5730056b4ef2b10002",
+  "consistency": "partial",
+  "credential_policy": "exclude",
+  "payloads_verified": 1936,
+  "archived_research_files_equal_to_baseline": 1800,
+  "live_research_files_unchanged": 1800,
+  "live_note_rows_unchanged": true,
+  "archived_note": [
+    "3f5b7b6f-a4c0-4302-b152-f2deed3a4766",
+    "Interrupt backup survival note",
+    "Saved before interruption. C8-INDEPENDENT-1800-20260913."
+  ],
+  "notes_payload_sha256": "3dbb2ba5de2d070da119b5175f33661c82fca7725e34c3d42406e36c89ddb9bd",
+  "config_before_sha256": "1fe222e08de364a57d5d37e7d8bfed838f3df4f06754bd8c393a3ebe23480430",
+  "config_after_sha256": "47675235389b33c75e096edf41d93f52479097a92ec83d97913d44cdddfd8ade",
+  "config_only_expected_first_console_seed": true,
+  "baseline_evidence_sha256": "19b5816015973b487551e4531e7c281fd626cb4d8f3d2d98be49d5bd90906b41"
+}

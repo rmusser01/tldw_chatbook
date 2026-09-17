@@ -1,0 +1,99 @@
+{
+  "parents": {
+    "ours": "65a5c152b31e77f33506fceac5ec5921b61ef040",
+    "dev": "00240d0f1f6401726093df4bed2609d87db69d58"
+  },
+  "resolution": "Retain upstream binding_labels; existing producer_call on binding_labels and compare_conflict; new saved-root read uses existing maintenance offload. Generated diagnostic inventory regenerated after statement review.",
+  "lifecycle": {
+    "final_root_passes": 18,
+    "root_seconds": 4.55,
+    "independent_passes": 18,
+    "independent_seconds": 4.97,
+    "substantive_red_failures": 3,
+    "draft_probe_limitations": [
+      "Initial incomplete test adapter missing label builder.",
+      "Real-vault draft stopped at root_lease_unavailable before behavioral assertions."
+    ]
+  },
+  "installed_integration": {
+    "passes": 5,
+    "seconds": 176.61,
+    "actual_app_workflows": 3,
+    "diagnostic_helper_checks": 2,
+    "cases": [
+      {
+        "name": "test_first_run_note_creation_can_capture_live_backup",
+        "seconds": 73.218
+      },
+      {
+        "name": "test_saved_closed_library_note_can_handoff_to_recovery",
+        "seconds": 28.231
+      },
+      {
+        "name": "test_first_note_diagnostics_are_collected_and_bounded",
+        "seconds": 0.011
+      },
+      {
+        "name": "test_first_note_diagnostic_io_cannot_replace_original_error",
+        "seconds": 0.094
+      },
+      {
+        "name": "test_mounted_console_complete_capture_and_resumed_writes[library]",
+        "seconds": 74.951
+      }
+    ],
+    "packages": [
+      {
+        "fixture": "/private/tmp/uat-dev-00240-installed-native/f9-native-package0",
+        "wheel_sha256": "f7673f848635e4ae90acf71aa8f2bca3c23f590c9df8351fac6c10deccff7987",
+        "installed_file_count": 2867,
+        "current_python_matches": 2475
+      },
+      {
+        "fixture": "/private/tmp/uat-dev-00240-installed-native/f9-native-package1",
+        "wheel_sha256": "5c5f6d262bfcaeacf2db224c9cc8acea79c6e804a73a3e9b5d7a049f1229d957",
+        "installed_file_count": 2867,
+        "current_python_matches": 2475
+      }
+    ]
+  },
+  "static": {
+    "ruff": {
+      "counts": {
+        "ours": 1228,
+        "dev": 1223,
+        "merged": 1236
+      },
+      "new_findings": []
+    },
+    "bandit": {
+      "counts": {
+        "ours": 111,
+        "dev": 112,
+        "merged": 112
+      },
+      "new_findings": []
+    },
+    "parsed_python_files": 26
+  },
+  "test_static": {
+    "ruff_existing_findings": 4,
+    "bandit_assertions_before": 25,
+    "bandit_assertions_after": 27,
+    "new_nonassert_findings": 0
+  },
+  "inventory": "610 owners;1407 TASK492;55 TASK31551;7763 TASK494;14 sinks",
+  "upstream_focused": {
+    "passes": 17,
+    "failures": 5,
+    "seconds": 2.42,
+    "four_app_cases": "raw_source_selection_changed before app constructor feature path; exact premerge65a5 reproduces all4",
+    "new_binding_label_case": "root_lease_unavailable during review_setup before labels; premerge comparison not applicable because RuntimeBindingLabel did not exist",
+    "parent_probe_seconds": 6.2
+  },
+  "limitations": [
+    "Focused upstream failures retained; no all-suite pass.",
+    "No Linux diagnostic access or timing changes approved.",
+    "Current Windows support still runs65a5."
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "task": "TASK-32562",
+  "files": [
+    {
+      "file": "power-interruption-fresh-report.md",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-fresh-report.md",
+      "bytes": 4096,
+      "sha256": "d271d338db81aa556b6926457aaf688c2d2d1edad26772079eddff9f2383d840"
+    },
+    {
+      "file": "power-interruption-fresh-baseline-summary.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-fresh-baseline-summary.json",
+      "bytes": 733,
+      "sha256": "0c2b6b4b16c30e46409cb4bb348ce9d2690f90f7323a0b7a3385beb2436de27b"
+    },
+    {
+      "file": "power-interruption-fresh-preview.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-fresh-preview.json",
+      "bytes": 323,
+      "sha256": "904b5cbf095732f0a47937b7d1cc0b4c66d2d557ab3072080f73c46aaec94eb2"
+    },
+    {
+      "file": "power-interruption-22-review-classification-after.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-22-review-classification-after.txt",
+      "bytes": 6581,
+      "sha256": "d00d0a26f89985bbc3fee346b8786a2575c7765a8478d95ae1ee3a94dd655f96"
+    },
+    {
+      "file": "power-interruption-24-running-before-kill.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-24-running-before-kill.txt",
+      "bytes": 9842,
+      "sha256": "d9f985d6d5dab69d8704672d2c6a8ff886a705376ed29ebb9ba121792495e756"
+    },
+    {
+      "file": "power-interruption-fresh-process-receipt.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-fresh-process-receipt.json",
+      "bytes": 309,
+      "sha256": "be2a3f7d310713e94a7ff938a93ecd7da64fd8b5890559d303472ffa69760552"
+    },
+    {
+      "file": "power-interruption-fresh-source-after-kill.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-fresh-source-after-kill.json",
+      "bytes": 153,
+      "sha256": "22763541165a49f70b6003424fdafbfca4ca080dca0a551d40a986a7bba9fe78"
+    },
+    {
+      "file": "power-interruption-26-normal-restart-after.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-26-normal-restart-after.txt",
+      "bytes": 3404,
+      "sha256": "00e7c769605be6634eaf4cbd9ebf24b9c8b7427a2066cb18591271d3c43c75b7"
+    },
+    {
+      "file": "power-interruption-restart-config-delta.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-restart-config-delta.json",
+      "bytes": 669,
+      "sha256": "b2ad96864435047db9b7993a0ee040b29b298f279e6ba64ec3ddc673d298d3cb"
+    },
+    {
+      "file": "power-interruption-36-retry-progress-after.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-36-retry-progress-after.txt",
+      "bytes": 10043,
+      "sha256": "fced4a0360fb37a25a3a483fc46fe6e0dfea2711044a4e32263286d4892e3959"
+    },
+    {
+      "file": "power-interruption-fresh-final-verification.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-fresh-final-verification.json",
+      "bytes": 1337,
+      "sha256": "80e2fee1c988df7f7080e4627a73fe3321841dae955b76bae022bf244c2ab266"
+    },
+    {
+      "file": "power-interruption-old-home-report.md",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-old-home-report.md",
+      "bytes": 1905,
+      "sha256": "5d9846d85e8d55a5912b754ce95630fd68872a6778688509e52992fd0502beb1"
+    },
+    {
+      "file": "power-interruption-discovery-summary.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-discovery-summary.json",
+      "bytes": 1612,
+      "sha256": "7475f143f486f83ea7d6f4f10112b84cb056be704e18b37e3eea2ec9a530b6cd"
+    },
+    {
+      "file": "power-interruption-old-home-retry-failure.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-32-retry-terminal-result-after.txt",
+      "bytes": 9213,
+      "sha256": "032ce2b45cb87a57429f9e83d02df8de479e16094924b8e7d6487c81d9721e99"
+    },
+    {
+      "file": "power-interruption-old-home-selected-profiles.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-33-reviewed-coverage-bottom-after.txt",
+      "bytes": 6495,
+      "sha256": "f2767a308860e3b3c6e5ec36fd327fc04fa2104205765b93e2ff1b89c4f7c10a"
+    },
+    {
+      "file": "power-interruption-old-home-process-receipt.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-process-receipt.json",
+      "bytes": 275,
+      "sha256": "96b9d70ee43d96912c02c6ce6ee866d96236f35522caeac59cecab6d7209257e"
+    }
+  ]
+}

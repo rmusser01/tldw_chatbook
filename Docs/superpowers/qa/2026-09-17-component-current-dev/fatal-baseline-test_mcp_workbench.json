@@ -1,0 +1,40 @@
+[
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 23,
+      "row": 11394
+    },
+    "filename": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/UI/test_mcp_workbench.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 11394
+    },
+    "message": "Undefined name `service`",
+    "name": "undefined-name",
+    "noqa_row": 11394,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 23,
+      "row": 11395
+    },
+    "filename": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/UI/test_mcp_workbench.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 11395
+    },
+    "message": "Undefined name `service`",
+    "name": "undefined-name",
+    "noqa_row": 11395,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  }
+]

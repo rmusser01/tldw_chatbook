@@ -1,0 +1,30 @@
+{
+  "base": "63756d61d621be37f4b5a94df9640fd565575333",
+  "files": {
+    "tldw_chatbook/Widgets/Console/console_workspace_context.py": "f7318c9aed51d3db1812d546cfa62b15db592bfbf80783670181e4bf17e87cf6",
+    "Tests/Backup_Recovery/test_console_tray_layout.py": "ee96e9b4eea68e247be9dfd41a85a8282da0fcba99f0ca5c434e601c378f3a07",
+    "Tests/Backup_Recovery/run_platform_product.py": "b50f2b5912f4d738fd1938c27d7e4abdb2a2faf3f90e7ede7886baa07039c506",
+    "Tests/Backup_Recovery/test_console_guidance_readiness.py": "a797dbd8a02a58a2cad9a913f11928478262854cf76477edd81ff9b2af5c43cf"
+  },
+  "independent_tests": {
+    "passed": 5,
+    "duration_seconds": 7.34,
+    "log": "/private/tmp/uat-tray-independent-pytest.log"
+  },
+  "refinement_verification": {
+    "guidance_non_checkpoint_AST_equals_HEAD": true,
+    "checkpoint_sites": 8,
+    "checkpoint_labels": [
+      "guidance_phase=import_begin",
+      "guidance_phase=import_complete",
+      "guidance_phase=construct_begin",
+      "guidance_phase=construct_complete",
+      "guidance_phase=mounted",
+      "guidance_phase=assertions_complete",
+      "guidance_phase=assertions_complete",
+      "guidance_phase=shutdown_complete"
+    ],
+    "layout_change_exactly_import_sort": true,
+    "no_behavioral_rerun": true
+  }
+}

@@ -15,6 +15,7 @@ from textual.app import ComposeResult
 from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.containers import Container, Grid, Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -57,6 +58,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionGitRow,
     SessionGitStatus,
 )
+from tldw_chatbook.Utils.Utils import fold_path_lines
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
@@ -1863,6 +1865,9 @@ class LibraryFileNotesGitPanel(Vertical):
         self._sync_commit_footer_layout(event.size.width)
         self._sync_push_footer_layout(event.size.width)
         self.call_after_refresh(self._fit_fixed_regions)
+        # A narrower pane re-wraps the phase's copy, so its content height --
+        # the commit scroll's ceiling (task-32615) -- moves with the width.
+        self.call_after_refresh(self._sync_commit_body_height)
 
     def _sync_action_layout(self, width: int) -> None:
         """Stack only when a visible action row's real labels do not fit."""
@@ -2298,13 +2303,27 @@ class LibraryFileNotesGitPanel(Vertical):
             return
         push_active = self._push_phase != "list"
         commit_active = self._commit_phase != "list"
+        commit_workflow = self.query_one("#file-notes-git-commit-workflow")
+        push_workflow = self.query_one("#file-notes-git-push-workflow")
         self.query_one("#file-notes-git-list-surface").display = (
             not push_active and not commit_active
         )
-        self.query_one("#file-notes-git-commit-workflow").display = (
-            not push_active and commit_active
-        )
-        self.query_one("#file-notes-git-push-workflow").display = push_active
+        commit_workflow.display = not push_active and commit_active
+        push_workflow.display = push_active
+        # task-32608 AC#2: an open commit (or push) workflow is a modal form
+        # -- its own subject/body/Cancel/Confirm and nothing else. Without a
+        # trap, Tab out of the subject field walked the LIBRARY SCREEN's
+        # focus chain, which Textual orders by screen POSITION
+        # (``Widget._focus_sort_key``), so the next stop from a field at the
+        # top of the pane was whatever sat below it anywhere on the screen
+        # and the form's own footer -- 30 rows down -- was not reached in
+        # four presses (assessor B, caps 42/43, K18: "only reachable by a
+        # computed mouse click at row 48"). ``trap_focus`` is Textual's own
+        # containment for exactly this shape, so no second Tab mechanism is
+        # invented here; Escape still leaves (the screen's binding chain is
+        # not focus-scoped) and so does the form's Cancel.
+        commit_workflow.trap_focus(commit_workflow.display)
+        push_workflow.trap_focus(push_workflow.display)
 
     def _focus_push_control(self, selector: str) -> None:
         operation_id = self._push_operation_id
@@ -2745,6 +2764,39 @@ class LibraryFileNotesGitPanel(Vertical):
         self._set_commit_footer_buttons(visible_footer)
         self._sync_commit_footer_layout(
             self.content_region.width or self.size.width
+        )
+        self.call_after_refresh(self._sync_commit_body_height)
+
+    def _sync_commit_body_height(self) -> None:
+        """Cap the commit scroll at the phase it is showing.
+
+        task-32615 AC#1, and the same defect ``_sync_row_list_height`` fixed
+        one surface over: the ``1fr`` scroll takes every spare row of the
+        pane, so Cancel/Review painted at row 48 under fields that ended at
+        row 27 -- twenty blank rows between an action and the thing it acts
+        on, at 235x52 (B caps 42-44). The ``1fr`` stays, because it is what
+        lets the scroll SHRINK on a short pane and keeps the footer on
+        screen; the ceiling is the visible phase's own settled height, which
+        Textual leaves at its content height whatever the scroll is capped
+        to. Deferred one refresh because the phase's display was only just
+        switched -- its region is still the previous phase's.
+        """
+        if not self.is_mounted:
+            return
+        try:
+            body = self.query_one("#file-notes-git-commit-body", _WorkflowScroll)
+        except NoMatches:
+            return
+        phase = next(
+            (
+                widget
+                for widget in body.query(".file-notes-git-commit-phase")
+                if widget.display
+            ),
+            None,
+        )
+        body.styles.max_height = (
+            max(phase.outer_size.height, 1) if phase is not None else None
         )
 
     def _set_commit_footer_buttons(
@@ -3921,18 +3973,35 @@ class LibraryFileNotesGitPanel(Vertical):
         ):
             self._edit_commit_message()
 
+
+#: Cells ``ConfirmationDialog`` leaves its message: a 60-cell container less
+#: its one-cell border either side and its ``padding: 1 2`` (task-32615,
+#: measured against the painted Label at 235x52, 100x30 and 60x24 -- the
+#: container is a fixed width, so the number does not move with the
+#: terminal).
+_TRUST_DIALOG_MESSAGE_WIDTH = 54
+
+
 class SessionGitTrustDialog(ConfirmationDialog):
     """Safe-focus process-only trust prompt for worktree-aware Git commands."""
 
     def __init__(self, repository_path: str) -> None:
-        display_path = _repository_path_for_display(
-            repository_path,
-            markup=True,
+        # task-32615 AC#2: the path is what this prompt asks consent FOR, so
+        # it is the one string that may not be elided -- and Textual folded
+        # it at whatever column ran out, painting ".../power/vaul" and "t"
+        # (B cap 39). Broken at its own separators instead: complete, and
+        # every component whole.
+        # Folded AFTER the control-character pass, never before: that pass
+        # turns a real newline into a literal "\n", so folding first would
+        # have its own breaks escaped back out.
+        display_path = fold_path_lines(
+            _repository_path_for_display(repository_path, markup=True),
+            _TRUST_DIALOG_MESSAGE_WIDTH,
         )
         super().__init__(
             title="Trust repository for session changes?",
             message=(
-                f"Repository: {display_path}\n\n"
+                f"Repository:\n{display_path}\n\n"
                 "Trust lasts only for this application process. Git status "
                 "and staging may execute configured Git filters, including "
                 "arbitrary programs with side effects outside Chatbook.\n\n"

@@ -43,7 +43,7 @@ import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
@@ -61,8 +61,15 @@ from typing import (
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import (
+    participant as projection_lifetime,
+)
+
 from ..config import get_cli_setting
 from ..Utils.optional_deps import embeddings_rag_deps_installed
+from .activation import RAGActivationRequired
+from .activation import async_guarded as activation_async_guarded
+from .activation import execution as activation_execution
 
 logger = logger.bind(module="ingestion_indexing")
 
@@ -248,7 +255,17 @@ def _close_discarded_rag_service(service: Any) -> None:
         logger.debug(f"Error closing discarded shared RAG service build: {e}")
 
 
-def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
+def get_shared_rag_service(profile_name: str | None = None) -> Any | None:
+    """Resolve the installed service only while its actual sources permit use."""
+    try:
+        with activation_execution(_shared_service):
+            return _get_shared_rag_service(profile_name)
+    except RAGActivationRequired:
+        logger.info("rag_activation_required")
+        return None
+
+
+def _get_shared_rag_service(profile_name: str | None = None) -> Any | None:
     """Get (or lazily create) the process-wide RAG service instance.
 
     Both the ingestion indexer and the search paths
@@ -492,12 +509,15 @@ class IndexEntry:
             item, used to decide whether re-indexing is needed.
         document: Document dict for ``RAGService.index_batch_optimized``
             ({'id', 'content', 'title', 'metadata'}).
+        source_path: Actual local owner path carried by accepted ingestion work;
+            a dependency hint for query gating, never a readiness credential.
     """
 
     item_id: str
     item_type: str
     last_modified: datetime
     document: Dict[str, Any]
+    source_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -507,6 +527,7 @@ class IndexRemoval:
     item_id: str
     item_type: str
     document_id: str
+    source_path: Path | None = None
 
 
 def _coerce_timestamp(value: Any) -> datetime:
@@ -665,18 +686,31 @@ def conversation_index_entry(
 
 def _default_indexing_db() -> Optional[Any]:
     """Create the default RAG indexing-state DB under the user data dir."""
-    try:
-        from ..DB.RAG_Indexing_DB import RAGIndexingDB
-        from ..config import get_rag_indexing_db_path
+    from ..config import get_rag_indexing_db_path
 
-        return RAGIndexingDB(get_rag_indexing_db_path())
-    except Exception as e:
-        logger.warning(
-            f"Could not open RAG indexing-state DB (indexing will not be incremental): {e}"
-        )
-        return None
+    return _open_indexing_db(get_rag_indexing_db_path())
 
 
+def _open_indexing_db(path: Path) -> Optional[Any]:
+    """Admit the actually selected tracking owner before native initialization."""
+    # Opening SQLite can change journal mode and schema. Denial must escape
+    # without selecting the ordinary best-effort untracked-indexing fallback.
+    with activation_execution(sources=(("db.rag_indexing", path),)):
+        try:
+            from ..DB.RAG_Indexing_DB import RAGIndexingDB
+
+            return RAGIndexingDB(path)
+        except RAGActivationRequired:
+            raise
+        except Exception as e:
+            logger.warning(
+                f"Could not open RAG indexing-state DB (indexing will not be incremental): {e}"
+            )
+            return None
+
+
+@projection_lifetime.async_operation
+@activation_async_guarded
 async def index_entries(
     service: Any,
     indexing_db: Optional[Any],
@@ -701,6 +735,9 @@ async def index_entries(
     """
     summary: Dict[str, Any] = {"indexed": 0, "skipped": 0, "failed": 0, "errors": []}
 
+    from .generation import record_source_paths
+
+    record_source_paths(service, (entry.source_path for entry in entries))
     to_index: List[IndexEntry] = []
     for entry in entries:
         if indexing_db is not None:
@@ -818,6 +855,8 @@ async def _clear_service_search_cache(service: Any) -> None:
         clear()
 
 
+@projection_lifetime.async_operation
+@activation_async_guarded
 async def remove_entries(
     service: Any,
     indexing_db: Optional[Any],
@@ -888,6 +927,12 @@ async def remove_entries(
 # =============================================================================
 
 
+@dataclass(frozen=True)
+class _AcceptedIndexWork:
+    entry: Any
+    token: object
+
+
 class IngestionIndexer:
     """Background indexing worker: a daemon thread draining a queue of IndexEntry.
 
@@ -949,35 +994,54 @@ class IngestionIndexer:
         """
         if entry is None:
             return False
+        token = None
+        queued = False
         try:
+            from .activation import _call_scope
+
+            with _call_scope({"self": self, "entry": entry}):
+                pass
             with self._thread_lock:
                 if self._stopped:
                     return False
+                token = projection_lifetime.reserve()
                 self._ensure_thread_locked()
                 with self._state_lock:
                     self._stats["submitted"] += 1
                     self._pending += 1
-                self._queue.put(entry)
+                self._queue.put(_AcceptedIndexWork(entry, token))
+                queued = True
             return True
         except Exception as e:
             logger.error(
                 f"Failed to enqueue {getattr(entry, 'item_type', '?')} for indexing: {e}"
             )
             return False
+        finally:
+            if token is not None and not queued:
+                projection_lifetime.release(token)
 
     def submit_removal(self, removal: Optional[IndexRemoval]) -> bool:
         """Enqueue a derived-index removal. Never blocks or raises."""
         if removal is None:
             return False
+        token = None
+        queued = False
         try:
+            from .activation import _call_scope
+
+            with _call_scope({"self": self, "entry": removal}):
+                pass
             with self._thread_lock:
                 if self._stopped:
                     return False
+                token = projection_lifetime.reserve()
                 self._ensure_thread_locked()
                 with self._state_lock:
                     self._stats["submitted"] += 1
                     self._pending += 1
-                self._queue.put(removal)
+                self._queue.put(_AcceptedIndexWork(removal, token))
+                queued = True
             return True
         except Exception as e:
             logger.error(
@@ -985,6 +1049,9 @@ class IngestionIndexer:
                 f"for index removal: {e}"
             )
             return False
+        finally:
+            if token is not None and not queued:
+                projection_lifetime.release(token)
 
     def wait_until_idle(self, timeout: float = 30.0) -> bool:
         """Block until all submitted entries have been processed (tests/backpressure).
@@ -1054,19 +1121,11 @@ class IngestionIndexer:
 
     def _get_indexing_db(self) -> Optional[Any]:
         if not self._indexing_db_resolved:
-            self._indexing_db_resolved = True
             if self._indexing_db_path is not None:
-                try:
-                    from ..DB.RAG_Indexing_DB import RAGIndexingDB
-
-                    self._indexing_db = RAGIndexingDB(self._indexing_db_path)
-                except Exception as e:
-                    logger.warning(
-                        f"Could not open RAG indexing-state DB at {self._indexing_db_path}: {e}"
-                    )
-                    self._indexing_db = None
+                self._indexing_db = _open_indexing_db(self._indexing_db_path)
             else:
                 self._indexing_db = _default_indexing_db()
+            self._indexing_db_resolved = True
         return self._indexing_db
 
     def _run(self) -> None:
@@ -1099,8 +1158,11 @@ class IngestionIndexer:
                         break
                     batch.append(nxt)
 
+                accepted = batch
+                batch = [work.entry for work in accepted]
                 try:
-                    loop.run_until_complete(self._process_batch(batch))
+                    with projection_lifetime.accepted(accepted[0].token):
+                        loop.run_until_complete(self._process_batch(batch))
                 except Exception as e:
                     # Last-resort guard: even loop/setup crashes must not kill the worker.
                     self._record_batch_failure(batch, f"indexing batch crashed: {e}")
@@ -1108,8 +1170,17 @@ class IngestionIndexer:
                         f"RAG ingestion indexing batch crashed: {e}"
                     )
                 finally:
-                    with self._state_lock:
-                        self._pending -= len(batch)
+                    try:
+                        # Retire only this worker's exact installed SQLite cache.
+                        from ..DB.RAG_Indexing_DB import RAGIndexingDB
+
+                        if type(self._indexing_db) is RAGIndexingDB:
+                            RAGIndexingDB.close(self._indexing_db)
+                    finally:
+                        with self._state_lock:
+                            self._pending -= len(batch)
+                        for work in accepted:
+                            projection_lifetime.release(work.token)
 
                 if stop_after_batch:
                     return
@@ -1122,6 +1193,7 @@ class IngestionIndexer:
             asyncio.set_event_loop(None)
             loop.close()
 
+    @activation_async_guarded
     async def _process_batch(self, batch: List[Any]) -> None:
         service = self._get_service()
         if service is None:
@@ -1341,7 +1413,7 @@ def _media_post_ingest_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
         entry = media_index_entry(media)
         if entry is None:
             return
-        get_ingestion_indexer().submit(entry)
+        get_ingestion_indexer().submit(replace(entry, source_path=db.db_path))
     except Exception as e:
         logger.warning(f"RAG post-ingest hook failed for media_id={media_id}: {e}")
 
@@ -1359,6 +1431,7 @@ def _media_post_delete_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
                 item_id=str(media_id),
                 item_type=ITEM_TYPE_MEDIA,
                 document_id=f"media_{media_id}",
+                source_path=db.db_path,
             )
         )
     except Exception as e:
@@ -1479,6 +1552,7 @@ async def reconcile_media_index(
             item_id=item_id,
             item_type=ITEM_TYPE_MEDIA,
             document_id=f"media_{item_id}",
+            source_path=media_db.db_path,
         )
         for item_id in sorted(set(tracked) - active_ids)
     ]
@@ -1502,7 +1576,7 @@ def _iter_note_entries(chachanotes_db: Any, page_size: int) -> Iterator[IndexEnt
 def _iter_conversation_entries(
     chachanotes_db: Any,
     page_size: int,
-    messages_per_conversation: int = 500,
+    messages_per_conversation: int | None = 500,
 ) -> Iterator[IndexEntry]:
     """Yield IndexEntry items for all active conversations (as transcripts), paginated."""
     offset = 0
@@ -1513,10 +1587,27 @@ def _iter_conversation_entries(
         )
         for conversation in conversations:
             try:
-                messages = chachanotes_db.get_messages_for_conversation(
-                    conversation["id"], limit=messages_per_conversation
-                )
+                if messages_per_conversation is None:
+                    messages = []
+                    while True:
+                        page = chachanotes_db.get_messages_for_conversation(
+                            conversation["id"],
+                            limit=500,
+                            offset=len(messages),
+                            include_image_data=False,
+                        )
+                        messages.extend(page)
+                        if len(messages) > 100_000:
+                            raise ValueError("projection_source_limit")
+                        if len(page) < 500:
+                            break
+                else:
+                    messages = chachanotes_db.get_messages_for_conversation(
+                        conversation["id"], limit=messages_per_conversation
+                    )
             except Exception as e:
+                if messages_per_conversation is None:
+                    raise
                 logger.warning(
                     f"Backfill: could not load messages for conversation {conversation.get('id')}: {e}"
                 )
@@ -1542,6 +1633,8 @@ def _batched(
         yield batch
 
 
+@projection_lifetime.async_operation
+@activation_async_guarded
 async def backfill_semantic_index(
     *,
     media_db: Optional[Any] = None,
@@ -1556,6 +1649,7 @@ async def backfill_semantic_index(
     page_size: int = 100,
     batch_size: int = 16,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    reconcile_for_recovery: bool = False,
 ) -> Dict[str, Any]:
     """Bulk-index pre-existing media/notes/conversations into the vector store.
 
@@ -1575,6 +1669,8 @@ async def backfill_semantic_index(
         batch_size: Documents per indexing batch.
         progress_callback: Optional callable receiving a progress dict after
             every processed batch.
+        reconcile_for_recovery: Explicit recovery rebuild and owner verification;
+            False preserves ordinary incremental Backfill without readiness claims.
 
     Returns:
         Summary dict: {'status', 'indexed', 'skipped', 'failed', 'errors',
@@ -1603,8 +1699,25 @@ async def backfill_semantic_index(
         summary["errors"].append("RAG service could not be created")
         return summary
 
+    from .generation import record_source_paths
+
+    record_source_paths(
+        service, (getattr(db, "db_path", None) for db in (media_db, chachanotes_db))
+    )
     if indexing_db is None:
         indexing_db = _default_indexing_db()
+
+    if reconcile_for_recovery:
+        from .recovery import rebuild_projection
+
+        return await rebuild_projection(
+            service,
+            indexing_db,
+            media_db=media_db,
+            chachanotes_db=chachanotes_db,
+            item_types=item_types,
+            batch_size=batch_size,
+        )
 
     if ITEM_TYPE_MEDIA in item_types and media_db is not None:
         try:

@@ -110,6 +110,8 @@ commit, with the owner's explicit sign-off recorded in the PR.
 |---|---|---|---|---|---|
 | 2026-08-29 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 970 → 972 | `tls_trust` | Owner commit `6fac5dbf95`, "perf: raise ui-ready census ratchet 970->972 for tls_trust (PR #2223, ADR-097 deliberate refresh)" |
 | 2026-09-12 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 973 → 975 | agent provider routing (`Agents.agent_routing` + `Chat.sampling_params`, pure modules on the already-resident AgentService import path) | Owner directive on PR #2651 ("address all issues... approved for all of it"); commit "perf: raise ui-ready census ratchet 973->975 for agent provider routing (PR #2651, ADR-097 exception)" |
+| 2026-09-14 | boot import weight | `MAX_TLDW_MODULE_COUNT` | 660 → 686 | Python backup startup admission/activation: dev `4631b60f8d` measured 643 modules; PR #2642 `9e5914fca1` measured 669 (+26). Preserves dev's existing headroom. | Owner answered "approved" to the explicit 660→686 and 975→1022 exception request in the PR #2642 work session (TASK-32562). Timing limits and backup safety checks remain unchanged. |
+| 2026-09-14 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 975 → 1022 | Python backup startup admission/activation and registered storage participants: same-probe dev/current warm boot measured 975/1022 (+47). Preserves dev's existing headroom. | Same explicit owner approval for PR #2642 (TASK-32562); optional recovery UI/archive services remain deferred. |
 
 Row added retroactively on 2026-08-31 (TASK-25813), found while taking the
 ratchet baseline for the 2026-08-30 holistic review. **The decision was the

@@ -1,0 +1,59 @@
+{
+  "baseline_revision": "d3082ef98211e3ad42273ac2d2dcbbf43b6d93cc",
+  "current_counts": {
+    "failed": 52,
+    "passed": 16
+  },
+  "baseline_counts": {
+    "failed": 52,
+    "passed": 16
+  },
+  "changed_outcomes": [],
+  "source_receipts": {
+    "uat-existing-config-order-baseline-process-38504.json": {
+      "revision": "d3082ef98211e3ad42273ac2d2dcbbf43b6d93cc",
+      "modules": {
+        "tldw_chatbook.config": {
+          "sha256": "78f20102d319dfbff54b25fe6b48dabc84a19446939d6639b567041a5d969625",
+          "executions": 1
+        },
+        "tldw_chatbook.Backup_Recovery.config_participants": {
+          "sha256": "796843ab6626c1a142f7262a40368ba62ab8608d2ded3a1b46fe198e928bd7c2",
+          "executions": 0
+        }
+      }
+    },
+    "uat-existing-config-order-baseline-process-38467.json": {
+      "revision": "d3082ef98211e3ad42273ac2d2dcbbf43b6d93cc",
+      "modules": {
+        "tldw_chatbook.config": {
+          "sha256": "78f20102d319dfbff54b25fe6b48dabc84a19446939d6639b567041a5d969625",
+          "executions": 1
+        },
+        "tldw_chatbook.Backup_Recovery.config_participants": {
+          "sha256": "796843ab6626c1a142f7262a40368ba62ab8608d2ded3a1b46fe198e928bd7c2",
+          "executions": 1
+        }
+      }
+    },
+    "uat-existing-config-order-baseline-process-38506.json": {
+      "revision": "d3082ef98211e3ad42273ac2d2dcbbf43b6d93cc",
+      "modules": {
+        "tldw_chatbook.config": {
+          "sha256": "78f20102d319dfbff54b25fe6b48dabc84a19446939d6639b567041a5d969625",
+          "executions": 1
+        },
+        "tldw_chatbook.Backup_Recovery.config_participants": {
+          "sha256": "796843ab6626c1a142f7262a40368ba62ab8608d2ded3a1b46fe198e928bd7c2",
+          "executions": 0
+        }
+      }
+    }
+  },
+  "failure_categories": {
+    "source-selection-refusal": 22,
+    "downstream-assertion": 27,
+    "incomplete-TrackingLock-double": 1,
+    "child-startup-scope-refusal": 2
+  }
+}

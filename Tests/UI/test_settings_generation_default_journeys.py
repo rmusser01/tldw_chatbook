@@ -5,6 +5,7 @@ import copy
 import pytest
 from textual.widgets import Collapsible, Input, Select, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_rag_result_focus import _assert_painted
 from Tests.UI.test_settings_configuration_hub import (
@@ -68,8 +69,9 @@ async def _open_generation(host, pilot):
 @pytest.mark.parametrize("provider", ["openai", "anthropic"])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
+@private_profile_test
 async def test_generation_controls_paint_labels_values_and_visible_keyboard_focus(
-    provider, theme, size, monkeypatch
+    request, provider, theme, size, monkeypatch
 ):
     mutations = _capture_provider_settings_mutations(monkeypatch)
     host = ProviderSettingsHarness(_app(provider), "settings")
@@ -108,8 +110,9 @@ async def test_generation_controls_paint_labels_values_and_visible_keyboard_focu
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
+@private_profile_test
 async def test_generation_keyboard_validation_revert_save_clear_and_return(
-    theme, size, monkeypatch
+    request, theme, size, monkeypatch
 ):
     app = _app()
     original = copy.deepcopy(app.app_config)
@@ -174,7 +177,10 @@ async def test_generation_keyboard_validation_revert_save_clear_and_return(
 
 
 @pytest.mark.asyncio
-async def test_generation_nonfinite_value_is_rejected_before_persistence(monkeypatch):
+@private_profile_test
+async def test_generation_nonfinite_value_is_rejected_before_persistence(
+    request, monkeypatch
+):
     mutations = _capture_provider_settings_mutations(monkeypatch)
     host = ProviderSettingsHarness(_app(), "settings")
     async with host.run_test(size=(170, 48)) as pilot:
@@ -193,7 +199,10 @@ async def test_generation_nonfinite_value_is_rejected_before_persistence(monkeyp
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
-async def test_generation_resize_and_explicit_collapse_keep_state(theme, monkeypatch):
+@private_profile_test
+async def test_generation_resize_and_explicit_collapse_keep_state(
+    request, theme, monkeypatch
+):
     mutations = _capture_provider_settings_mutations(monkeypatch)
     host = ProviderSettingsHarness(_app(), "settings")
     host.theme = theme

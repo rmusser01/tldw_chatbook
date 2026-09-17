@@ -30,6 +30,7 @@ from Tests.Performance.test_boot_worker_census import (
     ALLOWED_BOOT_WORKERS,
     EXPECTED_BOOT_WORKERS,
 )
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.Utils.boot_worker_policy import (
@@ -40,7 +41,6 @@ from tldw_chatbook.Utils.boot_worker_policy import (
     BootWorkerTier,
     StaggeredBootWorkerGate,
 )
-
 
 # --------------------------------------------------------------------------
 # The policy itself
@@ -169,7 +169,9 @@ def test_gate_rejects_a_zero_limit_and_duplicate_keys():
 # --------------------------------------------------------------------------
 
 
-def test_app_can_start_every_staggered_key():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_app_can_start_every_staggered_key(request):
     """Every policy key resolves to a real starter on the app."""
     app = _build_test_app()
     starters = app.boot_worker_starters()
@@ -187,7 +189,9 @@ def _fake_worker(spec_key: str) -> SimpleNamespace:
     )
 
 
-def test_deferred_startup_starts_the_cap_then_advances_on_completion():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_deferred_startup_starts_the_cap_then_advances_on_completion(request):
     """The app starts up to the cap, then one more per terminal transition."""
     cap = MAX_CONCURRENT_STAGGERED_BOOT_WORKERS
     app = _build_test_app()
@@ -213,7 +217,9 @@ def test_deferred_startup_starts_the_cap_then_advances_on_completion():
     assert started == list(STAGGERED_BOOT_WORKER_KEYS)
 
 
-def test_a_starter_that_starts_nothing_still_advances_the_queue():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_starter_that_starts_nothing_still_advances_the_queue(request):
     """A skipped or failing start must not hold its slot forever."""
     app = _build_test_app()
     started: list[str] = []
@@ -230,7 +236,36 @@ def test_a_starter_that_starts_nothing_still_advances_the_queue():
     assert started == list(STAGGERED_BOOT_WORKER_KEYS)
 
 
-def test_shutdown_closes_the_gate_instead_of_starting_more_work():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_backup_pause_retries_unstarted_workers_after_readmission(request):
+    """An admission refusal must not silently discard queued boot work."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    app = _build_test_app()
+    refused = True
+    started = []
+
+    def start(key):
+        if refused:
+            raise RecoveryRequired("storage_locally_paused")
+        started.append(key)
+        return None
+
+    app._start_boot_worker = start
+    app._start_staggered_boot_workers()
+    assert app._boot_worker_gate.pending == STAGGERED_BOOT_WORKER_KEYS
+    assert app._boot_worker_gate.in_flight == ()
+    refused = False
+    app._reconcile_boot_worker_slots()
+    app._reconcile_boot_worker_slots()
+    assert started == list(STAGGERED_BOOT_WORKER_KEYS)
+    assert app._boot_worker_gate.is_drained
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_shutdown_closes_the_gate_instead_of_starting_more_work(request):
     """A quit inside the staggered window starts nothing further."""
     app = _build_test_app()
     started: list[str] = []
@@ -256,7 +291,8 @@ def test_the_worker_identity_map_covers_the_whole_policy():
 
 
 @pytest.mark.asyncio
-async def test_every_staggered_body_runs_after_the_ui_is_ready():
+@private_profile_test
+async def test_every_staggered_body_runs_after_the_ui_is_ready(request):
     """On a real mounted app, no staggered body runs before first paint.
 
     Red on the pre-fix tree: both FTS backfills were started from

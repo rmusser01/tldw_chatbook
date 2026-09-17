@@ -82,7 +82,7 @@ def anyio_backend():
 
 
 @pytest.fixture(autouse=True)
-def _disable_model_catalog_refresh(monkeypatch):
+def _disable_model_catalog_refresh(monkeypatch, isolate_test_environment, request):
     """Keep UI full-app boots off the ADR-020 catalog network seam (task-16198).
 
     Incident: the knowledge_entry suite went red on pristine dev with the
@@ -109,6 +109,27 @@ def _disable_model_catalog_refresh(monkeypatch):
     unaffected. A test that needs the real seam monkeypatches the method
     back within its own scope.
     """
+
+    # The parent of an opted-in case only launches a fresh pytest process.
+    # Importing the app here would bind config to the parent's changing profile
+    # before the child gets to exercise its actual, lifetime-bound source.
+    from Tests.private_profile import is_private_profile_child
+
+    if getattr(request.function, "_private_profile_test", False) and not (
+        is_private_profile_child(request)
+    ):
+        return
+
+    if request.node.path.name in {
+        "test_personas_persona_visual_authoring.py",
+        "test_personas_persona_visual_pack.py",
+        "test_personas_visual_identity_pack.py",
+        "test_personas_expression_generate.py",
+    }:
+        # These source-bound consumers must follow this test's newly selected
+        # real config, before the fixture lazily imports the application.
+        from Tests.Backup_Recovery.config_test_support import install_config_source
+        install_config_source(monkeypatch)
 
     async def _offline_refresh(_app) -> None:
         return None

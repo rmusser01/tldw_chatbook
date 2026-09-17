@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
@@ -11,6 +12,10 @@ from textual.events import DescendantBlur, DescendantFocus
 from textual.scroll_view import ScrollView
 from textual.widget import Widget
 from textual.widgets import Static
+
+if TYPE_CHECKING:
+    from textual.screen import Screen
+    from textual.signal import Signal
 
 
 MAX_SECTION_CONTENT_LINES = 20
@@ -94,6 +99,7 @@ class ConsoleBoundedSection(Vertical):
         self._has_overflow = False
         self._hint_text = ""
         self._reconcile_scheduled = False
+        self._reconcile_layout_signal: Signal[Screen] | None = None
         # TASK-22203: True only while the single scheduled pass was requested
         # exclusively through ``request_scoped_reconcile``.
         self._reconcile_scoped = False
@@ -231,6 +237,14 @@ class ConsoleBoundedSection(Vertical):
     def on_show(self) -> None:
         self.request_reconcile()
 
+    def on_unmount(self) -> None:
+        """Release the pending layout wake without retaining a removed section."""
+        if self._reconcile_layout_signal is not None:
+            self._reconcile_layout_signal.unsubscribe(self)
+            self._reconcile_layout_signal = None
+        self._reconcile_scheduled = False
+        self._reconcile_scoped = False
+
     def on_resize(self) -> None:
         self.request_reconcile()
 
@@ -289,9 +303,35 @@ class ConsoleBoundedSection(Vertical):
         self.call_after_refresh(self._run_scheduled_reconcile)
 
     def _run_scheduled_reconcile(self) -> None:
+        if self._reconcile_layout_signal is not None:
+            return
         self._reconcile_scheduled = False
         self._reconcile_scoped = False
         self._reconcile()
+
+    def _wait_for_reconcile_layout(self) -> None:
+        """Wait for a covered screen; retain normal visible-screen scheduling."""
+        if self.screen.is_current:
+            self.request_reconcile()
+            return
+        # Keep the original full-retry semantics, including demotion of a scoped
+        # request. A callback already queued by a focus/owner notification must
+        # also wait; the active screen cannot lay out a covered section for us.
+        self._reconcile_scoped = False
+        self._reconcile_scheduled = True
+        if self._reconcile_layout_signal is None:
+            signal = self.screen.screen_layout_refresh_signal
+            signal.subscribe(self, self._reconcile_after_layout, immediate=True)
+            self._reconcile_layout_signal = signal
+
+    def _reconcile_after_layout(self, _screen: Screen) -> None:
+        """Queue the existing virtual reconcile once fresh geometry is available."""
+        signal = self._reconcile_layout_signal
+        if signal is None:
+            return
+        signal.unsubscribe(self)
+        self._reconcile_layout_signal = None
+        self.call_after_refresh(self._run_scheduled_reconcile)
 
     def _reconcile(self) -> None:
         """Apply one equality-guarded snapshot of laid-out content geometry."""
@@ -344,7 +384,7 @@ class ConsoleBoundedSection(Vertical):
             )
             self._has_overflow = False
             self._set_hint_layout(hint, visible=False)
-            self.request_reconcile()
+            self._wait_for_reconcile_layout()
             return
 
         max_scroll_y = max(0, viewport.max_scroll_y)
@@ -404,7 +444,7 @@ class ConsoleBoundedSection(Vertical):
             )
             self._has_overflow = False
             self._set_hint_layout(self._hint, visible=False)
-            self.request_reconcile()
+            self._wait_for_reconcile_layout()
             return
 
         max_scroll_y = max(0, viewport.max_scroll_y)
@@ -425,7 +465,7 @@ class ConsoleBoundedSection(Vertical):
             self.remove_class(*(name for name in self.classes if name.startswith("h-")))
             # ds-runtime: Measured available viewport and rendered content rows determine the bounded section height.
             self.set_styles(height=native_height)
-            self.request_reconcile()
+            self._wait_for_reconcile_layout()
         self._recover_removed_focus_target()
         self._update_hint()
 

@@ -1,0 +1,20 @@
+...............                                                          [100%]
+============================= slowest 25 durations =============================
+57.94s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-dark]
+57.42s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-light]
+55.05s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light]
+54.89s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-dark]
+40.16s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_resize_and_explicit_collapse_keep_state[textual-light]
+39.65s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_resize_and_explicit_collapse_keep_state[textual-dark]
+22.57s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-anthropic]
+21.18s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-openai]
+20.59s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-openai]
+20.28s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-light-anthropic]
+20.18s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-dark-openai]
+19.98s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-anthropic]
+19.90s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-light-openai]
+18.85s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-dark-anthropic]
+5.99s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_nonfinite_value_is_rejected_before_persistence
+
+(10 durations < 1s hidden.)
+15 passed in 477.11s (0:07:57)

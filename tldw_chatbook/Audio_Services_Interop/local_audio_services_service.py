@@ -2,13 +2,49 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import inspect
 import json
+import threading
+import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+_history_lock = threading.RLock()
+_history_closed = False
+_history_calls: set[tuple] = set()
+
+
+def _maintenance_close_admission() -> None:
+    """Stop new history mutations while accepted generations finish normally."""
+    global _history_closed
+    with _history_lock:
+        _history_closed = True
+
+
+async def _maintenance_drain(deadline: float) -> bool:
+    """Wait for actual generation/publication scopes without cancelling them."""
+    while True:
+        with _history_lock:
+            if not _history_calls:
+                return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(0.01, remaining))
+
+
+def _maintenance_resume() -> None:
+    """Reopen history mutations after storage admission has resumed."""
+    global _history_closed
+    with _history_lock:
+        _history_closed = False
 
 
 class LocalAudioServicesService:
@@ -35,6 +71,47 @@ class LocalAudioServicesService:
         self._history_records: list[dict[str, Any]] = []
         self._next_history_id = 1
         self._load_history()
+
+    @contextmanager
+    def _history_write(self):
+        """Retain this caller's source lease through generation and publication."""
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+        selected = (
+            self.history_store_path.expanduser().absolute()
+            if self.history_store_path is not None
+            else None
+        )
+        call = (self, threading.get_ident(), task, selected)
+        with _history_lock:
+            nested = call in _history_calls
+            if not nested:
+                if _history_closed:
+                    raise RuntimeError("audio_history_paused_for_maintenance")
+                lease = acquire_storage(selected)
+                _history_calls.add(call)
+        if nested:
+            # Only synchronous persistence on this same owner/thread/task/path
+            # reuses the accepted generation's admission during a pause.
+            yield
+            return
+        try:
+            yield
+        finally:
+            lease.close()
+            with _history_lock:
+                _history_calls.remove(call)
+
+    def _maintenance_close_admission(self) -> None:
+        _maintenance_close_admission()
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        return await _maintenance_drain(deadline)
+
+    def _maintenance_resume(self) -> None:
+        _maintenance_resume()
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -90,17 +167,18 @@ class LocalAudioServicesService:
         self._next_history_id = max_id + 1
 
     def _persist_history(self) -> None:
-        if self.history_store_path is None:
-            return
-        self.history_store_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"items": self._history_records}
-        temp_path = self.history_store_path.with_suffix(
-            self.history_store_path.suffix + ".tmp"
-        )
-        temp_path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        temp_path.replace(self.history_store_path)
+        with self._history_write():
+            if self.history_store_path is None:
+                return
+            self.history_store_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"items": self._history_records}
+            temp_path = self.history_store_path.with_suffix(
+                self.history_store_path.suffix + ".tmp"
+            )
+            temp_path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+            )
+            temp_path.replace(self.history_store_path)
 
     @staticmethod
     def _tts_provider_for_model(model: str) -> str:
@@ -252,70 +330,71 @@ class LocalAudioServicesService:
         return {provider: voices.get(provider, [])}
 
     async def create_audio_speech(self, request_data: Any) -> dict[str, Any]:
-        self._enforce("audio.speech.launch.local")
-        payload = self._dump_request(request_data)
-        text = str(payload.get("input") or "").strip()
-        if not text:
-            raise ValueError("local_tts_input_required")
+        with self._history_write():
+            self._enforce("audio.speech.launch.local")
+            payload = self._dump_request(request_data)
+            text = str(payload.get("input") or "").strip()
+            if not text:
+                raise ValueError("local_tts_input_required")
 
-        model = str(payload.get("model") or "kokoro").strip() or "kokoro"
-        voice = str(payload.get("voice") or "af_heart").strip() or "af_heart"
-        response_format = self._normalize_response_format(
-            payload.get("download_format") or payload.get("response_format")
-        )
-        stream = bool(payload.get("stream", True))
-        speed = float(payload.get("speed", 1.0) or 1.0)
-
-        generator = self.tts_audio_generator or self._default_tts_audio_generator
-        audio = await self._maybe_await(
-            generator(
-                text=text,
-                model=model,
-                voice=voice,
-                response_format=response_format,
-                stream=stream,
-                speed=speed,
+            model = str(payload.get("model") or "kokoro").strip() or "kokoro"
+            voice = str(payload.get("voice") or "af_heart").strip() or "af_heart"
+            response_format = self._normalize_response_format(
+                payload.get("download_format") or payload.get("response_format")
             )
-        )
-        if not isinstance(audio, bytes | bytearray):
-            raise ValueError("local_tts_generator_must_return_bytes")
+            stream = bool(payload.get("stream", True))
+            speed = float(payload.get("speed", 1.0) or 1.0)
 
-        audio_bytes = bytes(audio)
-        history_id = self._next_history_id
-        self._next_history_id += 1
-        filename = str(
-            payload.get("filename") or f"local_speech_{history_id}.{response_format}"
-        )
-        content_type = self._tts_content_type(response_format)
-        record = {
-            "id": history_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "provider": self._tts_provider_for_model(model),
-            "model": model,
-            "voice": voice,
-            "response_format": response_format,
-            "filename": filename,
-            "content_type": content_type,
-            "size_bytes": len(audio_bytes),
-            "input_characters": len(text),
-            "text_preview": text[:160],
-            "text": text,
-            "favorite": False,
-            "content_base64": base64.b64encode(audio_bytes).decode("ascii"),
-            "deleted": False,
-        }
-        self._history_records.append(record)
-        self._persist_history()
-        return {
-            "content": audio_bytes,
-            "content_type": content_type,
-            "filename": filename,
-            "history_id": history_id,
-            "provider": record["provider"],
-            "model": model,
-            "voice": voice,
-            "response_format": response_format,
-        }
+            generator = self.tts_audio_generator or self._default_tts_audio_generator
+            audio = await self._maybe_await(
+                generator(
+                    text=text,
+                    model=model,
+                    voice=voice,
+                    response_format=response_format,
+                    stream=stream,
+                    speed=speed,
+                )
+            )
+            if not isinstance(audio, bytes | bytearray):
+                raise ValueError("local_tts_generator_must_return_bytes")
+
+            audio_bytes = bytes(audio)
+            history_id = self._next_history_id
+            self._next_history_id += 1
+            filename = str(
+                payload.get("filename") or f"local_speech_{history_id}.{response_format}"
+            )
+            content_type = self._tts_content_type(response_format)
+            record = {
+                "id": history_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "provider": self._tts_provider_for_model(model),
+                "model": model,
+                "voice": voice,
+                "response_format": response_format,
+                "filename": filename,
+                "content_type": content_type,
+                "size_bytes": len(audio_bytes),
+                "input_characters": len(text),
+                "text_preview": text[:160],
+                "text": text,
+                "favorite": False,
+                "content_base64": base64.b64encode(audio_bytes).decode("ascii"),
+                "deleted": False,
+            }
+            self._history_records.append(record)
+            self._persist_history()
+            return {
+                "content": audio_bytes,
+                "content_type": content_type,
+                "filename": filename,
+                "history_id": history_id,
+                "provider": record["provider"],
+                "model": model,
+                "voice": voice,
+                "response_format": response_format,
+            }
 
     async def list_tts_history(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce("audio.history.list.local")
@@ -358,18 +437,20 @@ class LocalAudioServicesService:
     async def update_tts_history_favorite(
         self, history_id: int, request_data: Any
     ) -> dict[str, Any]:
-        self._enforce("audio.history.update.local")
-        payload = self._dump_request(request_data)
-        record = self._find_history_record(history_id)
-        record["favorite"] = bool(payload.get("favorite", False))
-        self._persist_history()
-        detail = self._history_summary(record)
-        detail["text"] = record.get("text")
-        return detail
+        with self._history_write():
+            self._enforce("audio.history.update.local")
+            payload = self._dump_request(request_data)
+            record = self._find_history_record(history_id)
+            record["favorite"] = bool(payload.get("favorite", False))
+            self._persist_history()
+            detail = self._history_summary(record)
+            detail["text"] = record.get("text")
+            return detail
 
     async def delete_tts_history_entry(self, history_id: int) -> dict[str, Any]:
-        self._enforce("audio.history.delete.local")
-        record = self._find_history_record(history_id)
-        record["deleted"] = True
-        self._persist_history()
-        return {"id": int(history_id), "deleted": True}
+        with self._history_write():
+            self._enforce("audio.history.delete.local")
+            record = self._find_history_record(history_id)
+            record["deleted"] = True
+            self._persist_history()
+            return {"id": int(history_id), "deleted": True}

@@ -1,0 +1,358 @@
+/* ========================================
+ * GENERATED FILE - DO NOT EDIT DIRECTLY
+ * ========================================
+ * workflows-owned rules split out of features/_workflows.tcss
+ * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
+ * CSS_PATH, so these bytes are parsed on first visit instead of before
+ * first paint. Edit features/_workflows.tcss and re-run build_css.py.
+ * ======================================== */
+
+$ds-surface-panel: $panel;
+$ds-surface-raised: $surface;
+$ds-surface-inspector: $surface;
+$ds-grid-line: $surface-lighten-1;
+$ds-column-line: $surface-lighten-2;
+$ds-text-primary: $text;
+$ds-text-muted: $text-muted;
+$ds-text-disabled: $text-disabled;
+$ds-action-focus: $primary;
+$ds-focus-fg: $ds-text-primary;
+$ds-focus-bg: $block-cursor-blurred-background;
+$ds-focus-accent: $primary;
+$ds-input-focus-border: $primary;
+$ds-input-focus-bg: $ds-focus-bg;
+$ds-input-focus-accent: $primary;
+$ds-control-edge: $surface-lighten-2;
+$ds-status-ready: $success;
+$ds-status-running: $primary;
+$ds-status-info: $accent;
+$ds-status-warning: $warning;
+$ds-status-approval-required: $warning;
+$ds-status-blocked: $error;
+$ds-status-error: $error;
+$ds-status-error-readable: $text-error;
+$ds-text-placeholder: $text-muted;
+$ds-text-disabled-readable: $text-muted;
+$ds-status-paused: $warning;
+$ds-status-unsaved: $warning;
+$ds-status-recovered: $success;
+$ds-authority-local: $success;
+$ds-authority-server: $primary;
+$ds-authority-workspace: $accent;
+$ds-authority-remote-only: $warning;
+$ds-source-role-context: $accent;
+$ds-source-role-evidence: $accent;
+$ds-source-role-editable-target: $warning;
+$ds-source-role-output-seed: $secondary;
+$ds-active-fg: $text-primary;
+$ds-value-fg: $text-accent;
+
+$ds-chat-user-accent: $text-primary;
+$ds-chat-user-accent-dark: #8bd5ff;
+$ds-chat-user-accent-light: #004d6d;
+$ds-chat-assistant-accent-dark: #ffc473;
+$ds-chat-assistant-accent-light: #704000;
+$ds-chat-rp-speech-dark: #8bd5ff;
+$ds-chat-rp-speech-light: #004d6d;
+$ds-chat-rp-thought-dark: #2dd4bf;
+$ds-chat-rp-thought-light: #0b5d4a;
+$ds-chat-rp-action-dark: #d7b2ff;
+$ds-chat-rp-action-light: #5e3578;
+$ds-chat-rp-strong-dark: #fff0a6;
+$ds-chat-rp-strong-light: #665000;
+$ds-destination-header-height: 1;
+$ds-destination-compact-strip-height: 1;
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
+$ds-home-dashboard-grid-height: 18;
+$ds-home-control-button-height: 1;
+$ds-home-compact-row-height: 1;
+$ds-home-followup-row-height: 6;
+$ds-console-workspace-grid-height: 1fr;
+$ds-console-composer-height: 1;
+$ds-library-mode-chip-height: 1;
+$ds-library-mode-chip-min-width: 10;
+$ds-library-note-task-actions-min-width: 61;
+$ds-workflow-navigator-width: 27;
+$ds-library-source-action-width: auto;
+$ds-library-source-action-min-width: 0;
+$ds-library-source-action-height: 1;
+$ds-library-source-browser-width: 31;
+
+$ds-space-0: 0;
+$ds-space-1: 1;
+$ds-space-2: 2;
+$ds-space-3: 3;
+$ds-space-inline: $ds-space-1;
+$ds-space-stack: $ds-space-1;
+$ds-space-section: $ds-space-2;
+$ds-space-inset: $ds-space-1;
+
+$ds-control-height: 3;
+$ds-control-height-compact: 1;
+$ds-textarea-min-height: 5;
+$ds-width-full: 100%;
+$ds-width-fill: 1fr;
+$ds-width-auto: auto;
+$ds-height-auto: auto;
+
+$ds-height-full: 100%;
+$ds-height-fill: 1fr;
+$ds-size-0: 0;
+$ds-size-1: 1;
+$ds-size-2: 2;
+$ds-size-3: 3;
+$ds-size-4: 4;
+$ds-size-5: 5;
+$ds-size-6: 6;
+$ds-size-7: 7;
+$ds-size-8: 8;
+$ds-size-9: 9;
+$ds-size-10: 10;
+$ds-size-11: 11;
+$ds-size-12: 12;
+$ds-size-13: 13;
+$ds-size-14: 14;
+$ds-size-15: 15;
+$ds-size-16: 16;
+$ds-size-17: 17;
+$ds-size-18: 18;
+$ds-size-20: 20;
+$ds-size-21: 21;
+$ds-size-22: 22;
+$ds-size-23: 23;
+$ds-size-24: 24;
+$ds-size-25: 25;
+$ds-size-26: 26;
+$ds-size-28: 28;
+$ds-size-29: 29;
+$ds-size-30: 30;
+$ds-size-31: 31;
+$ds-size-32: 32;
+$ds-size-34: 34;
+$ds-size-35: 35;
+$ds-size-36: 36;
+$ds-size-38: 38;
+$ds-size-40: 40;
+$ds-size-42: 42;
+$ds-size-44: 44;
+$ds-size-45: 45;
+$ds-size-46: 46;
+$ds-size-48: 48;
+$ds-size-50: 50;
+$ds-size-52: 52;
+$ds-size-60: 60;
+$ds-size-64: 64;
+$ds-size-66: 66;
+$ds-size-70: 70;
+$ds-size-76: 76;
+$ds-size-80: 80;
+$ds-size-84: 84;
+$ds-size-90: 90;
+$ds-size-92: 92;
+$ds-size-94: 94;
+$ds-size-96: 96;
+$ds-splash-progress-cap: 100;
+$ds-size-104: 104;
+$ds-size-110: 110;
+$ds-size-120: 120;
+$ds-percent-34: 34%;
+$ds-percent-25: 25%;
+$ds-percent-30: 30%;
+$ds-percent-40: 40%;
+$ds-percent-42: 42%;
+$ds-percent-45: 45%;
+$ds-percent-50: 50%;
+$ds-percent-70: 70%;
+$ds-percent-75: 75%;
+$ds-percent-80: 80%;
+$ds-percent-85: 85%;
+$ds-percent-90: 90%;
+$ds-percent-92: 92%;
+$ds-percent-94: 94%;
+$ds-percent-95: 95%;
+$ds-percent-96: 96%;
+$ds-percent-99: 99%;
+$ds-fr-2: 2fr;
+$ds-fr-4: 4fr;
+$ds-fr-5: 5fr;
+$ds-fr-6: 6fr;
+$ds-fr-3: 3fr;
+$ds-fr-13: 13fr;
+$ds-watchlists-rail-left-share: 28fr;
+$ds-watchlists-rail-right-share: 34fr;
+$ds-watchlists-region-share: 44fr;
+$ds-watchlists-region-share-read: 50fr;
+$ds-watchlists-artifacts-detail-share: 8fr;
+$ds-agentic-mcp-table-cap: 70%;
+$ds-agentic-prompt-vars-pane: 27;
+$ds-agentic-mcp-compact-canvas-share: 7fr;
+$ds-research-chat-pane-floor: 58;
+$ds-new-ingest-media-panel-share: 65%;
+$ds-new-ingest-activity-panel-share: 35%;
+$ds-new-ingest-file-panel-share: 55%;
+$ds-new-ingest-card-desc-leading: 1.2;
+$ds-new-ingest-scrollbar-gutter: 6px;
+$ds-conversations-ai-generate-share: 12%;
+$ds-profile-link-modal-cols: 88;
+$ds-profile-link-modal-body-share: 82%;
+$ds-widgets-skeleton-title-share: 60%;
+$ds-messages-scroll-cap: 50vh;
+$ds-messages-text-scroll-cap: 40vh;
+$ds-console-frame: #6f7782;
+
+$ds-duration-fast: 0.2s;
+$ds-duration-medium: 0.3s;
+$ds-duration-slow: 0.5s;
+
+$ds-opacity-dim: 70%;
+
+$ds-text-strong: bold;
+$ds-text-emphasis: italic;
+
+$ds-hover-bg: $surface-lighten-1;
+$ds-hover-fg: $ds-text-primary;
+$ds-disabled-bg: $surface-darken-1;
+$ds-surface-sunken: $surface-darken-1;
+
+$ds-sidebar-width: 25%;
+$ds-sidebar-min-width: 35;
+$ds-sidebar-max-width: 80;
+
+$ds-theme-preset-blues-0: #0099FF;
+$ds-theme-preset-blues-1: #006FB3;
+$ds-theme-preset-blues-2: #004D80;
+$ds-theme-preset-blues-3: #003366;
+$ds-theme-preset-blues-4: #002244;
+$ds-theme-preset-greens-0: #00CC66;
+$ds-theme-preset-greens-1: #009944;
+$ds-theme-preset-greens-2: #006633;
+$ds-theme-preset-greens-3: #004422;
+$ds-theme-preset-greens-4: #002211;
+$ds-theme-preset-reds-0: #FF3333;
+$ds-theme-preset-reds-1: #CC0000;
+$ds-theme-preset-reds-2: #990000;
+$ds-theme-preset-reds-3: #660000;
+$ds-theme-preset-reds-4: #330000;
+$ds-theme-preset-purples-0: #9966FF;
+$ds-theme-preset-purples-1: #7744DD;
+$ds-theme-preset-purples-2: #5522BB;
+$ds-theme-preset-purples-3: #330099;
+$ds-theme-preset-purples-4: #220066;
+$ds-theme-preset-grays-0: #FFFFFF;
+$ds-theme-preset-grays-1: #CCCCCC;
+$ds-theme-preset-grays-2: #999999;
+$ds-theme-preset-grays-3: #666666;
+$ds-theme-preset-grays-4: #333333;
+$ds-theme-preset-material-0: #2196F3;
+$ds-theme-preset-material-1: #4CAF50;
+$ds-theme-preset-material-2: #FF9800;
+$ds-theme-preset-material-3: #F44336;
+$ds-theme-preset-material-4: #9C27B0;
+$ds-theme-preset-pastels-0: #FFB3BA;
+$ds-theme-preset-pastels-1: #BAFFC9;
+$ds-theme-preset-pastels-2: #BAE1FF;
+$ds-theme-preset-pastels-3: #FFFFBA;
+$ds-theme-preset-pastels-4: #FFDFBA;
+$ds-theme-preset-dark-0: #1A1A1A;
+$ds-theme-preset-dark-1: #2D2D2D;
+$ds-theme-preset-dark-2: #404040;
+$ds-theme-preset-dark-3: #525252;
+$ds-theme-preset-dark-4: #656565;
+$ds-theme-preview-dark-ink: #000000;
+$ds-theme-preview-light-ink: #FFFFFF;
+$ds-theme-preview-invalid: #808080;
+
+$ds-console-settings-wide-max-width: 196;
+
+
+.tldw-agentic-split-preamble-end { }
+
+/* Approved editor geometry: 28/27-column rails, 6-row fields and bounded dialogs.
+ * Shared visual values use ADR-150 tokens; feature geometry uses shared dimension tokens. */
+WorkflowsScreen #workflow-authoring { height: $ds-height-fill; min-height: $ds-size-0; }
+    WorkflowsScreen #workflows-title { height: $ds-control-height-compact; color: $ds-action-focus; text-style: $ds-text-strong; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowsScreen #workflow-draft-status { height: auto; max-height: $ds-size-2; padding: $ds-space-0 $ds-space-inset; background: $ds-surface-panel; }
+    WorkflowsScreen #workflow-action-bar, WorkflowsScreen #workflow-selectors { height: $ds-control-height-compact; padding: $ds-space-0 $ds-space-inset; margin-bottom: $ds-space-stack; }
+    WorkflowsScreen #workflow-panes { height: $ds-height-fill; min-height: $ds-size-0; }
+    WorkflowsScreen #workflow-readiness { height: auto; max-height: $ds-size-2; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowsScreen #workflows-unavailable { height: auto; padding: $ds-space-inset; }
+
+
+    WorkflowEditor#workflows-editor { width: $ds-width-fill; height: $ds-height-fill; min-width: $ds-size-12; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowEditor #workflow-form { height: $ds-height-fill; min-height: $ds-control-height-compact; }
+    WorkflowEditor #workflow-general, WorkflowEditor #workflow-step-form { height: auto; }
+    WorkflowEditor .workflow-neighbors, WorkflowEditor .workflow-step-actions { height: $ds-control-height-compact; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; }
+    WorkflowEditor .workflow-field { height: auto; margin-bottom: $ds-space-stack; }
+    WorkflowEditor .workflow-field Label { height: auto; margin: $ds-space-0; }
+    WorkflowEditor .workflow-help { height: auto; color: $ds-text-muted; }
+    WorkflowEditor .workflow-linear-step { width: $ds-width-full; height: $ds-control-height; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; }
+    WorkflowEditor #workflow-editor-heading { color: $ds-action-focus; text-style: $ds-text-strong; height: $ds-control-height-compact; }
+    WorkflowEditor #workflow-scroll-hint { height: $ds-control-height-compact; color: $ds-text-muted; }
+    ChoiceModal .workflow-dialog-actions { height: $ds-control-height-compact; }
+    ChoiceModal #workflow-dialog-detail { height: $ds-height-fill; min-height: $ds-size-2; max-height: $ds-size-8; }
+    ChoiceModal #workflow-dialog-detail Static { height: auto; }
+
+
+    WorkflowLibrary#workflows-library { width: $ds-size-28; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowLibrary#workflows-library OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
+    WorkflowLibrary#workflows-library Input { margin: $ds-space-0; }
+    WorkflowLibrary #workflow-library-pages { height: $ds-control-height-compact; }
+
+
+    WorkflowNavigator#workflows-navigator { width: $ds-workflow-navigator-width; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowNavigator#workflows-navigator OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
+
+WorkflowsScreen #workflow-run:disabled {
+    background: $ds-disabled-bg;
+    color: $ds-text-disabled-readable;
+    opacity: 1;
+    text-style: $ds-text-strong;
+}
+WorkflowConsoleContext #workflows-run-status,
+WorkflowConsoleContext #workflows-console-unavailable { height: $ds-control-height-compact; width: $ds-width-fill; }
+WorkflowConsoleContext .workflow-console-actions { height: $ds-control-height-compact; }
+WorkflowEditor TextArea.workflow-expanded { height: $ds-size-18; }
+WorkflowsScreen.workflow-short #workflow-action-bar,
+WorkflowsScreen.workflow-short #workflow-selectors { margin-bottom: $ds-space-0; }
+
+.workflow-compact {
+    height: $ds-control-height-compact;
+    min-width: $ds-size-0;
+    width: auto;
+    margin: $ds-space-0;
+    border: none;
+    outline: none;
+}
+.workflow-compact:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+.workflow-compact:hover {
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+}
+.workflow-compact:disabled, .workflow-compact:disabled:hover {
+    background: $ds-disabled-bg;
+    color: $ds-text-disabled-readable;
+    opacity: 1;
+    text-style: $ds-text-strong;
+}
+WorkflowEditor .workflow-collapse {
+    padding: $ds-space-0;
+    border: none;
+    margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0;
+}
+WorkflowEditor .workflow-collapse-title {
+    height: $ds-control-height-compact;
+    padding: $ds-space-0;
+    border: none;
+}
+.workflow-step-chooser > Vertical { padding: $ds-space-0 $ds-space-inset; }
+.workflow-step-chooser #workflow-type-detail { max-height: $ds-control-height; }

@@ -1,0 +1,13 @@
+{
+  "archive": "/private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/novice/first-time-complete.tldw-backup.zip",
+  "archive_sha256": "cf386124bb7c0daf46ffe0a127454713bde3d83d677a88dc6cf289def7406114",
+  "manifest_sha256": "68e49e8f843b37dda8cfe2a4ca2d5c91cafdc2577a01b82efd42707bde35860b",
+  "consistency": "coherent",
+  "note": [
+    "f8df7474-0275-4422-8d9d-d00268b4edee",
+    "First saved note merged backup",
+    "My first saved note survives backup and restore. MERGED-NOVICE-20260913-F69A."
+  ],
+  "payload_sha256": "445cf3feb90c6bdf94955acfdc61979486670cb6c500f5c87174194025abdfa1",
+  "saved_note_readback": true
+}

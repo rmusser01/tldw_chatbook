@@ -32,6 +32,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
 from tldw_chatbook.UI.Screens import home_screen as home_screen_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
@@ -1928,7 +1929,10 @@ def test_open_content_item_routes_by_prefix():
 
 
 @pytest.mark.asyncio
-async def test_home_ready_empty_profile_offers_start_conversation_beside_import_card():
+@private_profile_test
+async def test_home_ready_empty_profile_offers_start_conversation_beside_import_card(
+    request,
+):
     """AC4: provider ready but no content -> the import suggestion card is
     kept, with a primary Start-a-conversation control beside it."""
     app = _build_test_app()
@@ -1961,7 +1965,8 @@ async def test_home_ready_empty_profile_offers_start_conversation_beside_import_
 
 
 @pytest.mark.asyncio
-async def test_home_not_ready_empty_profile_keeps_import_card_only():
+@private_profile_test
+async def test_home_not_ready_empty_profile_keeps_import_card_only(request):
     """AC4: no content AND provider not ready -> the import card exactly as
     today, with none of the new elements (no zero-count clutter)."""
     app = _build_test_app()
@@ -2015,7 +2020,8 @@ async def test_home_resume_control_survives_markup_hostile_title():
 
 
 @pytest.mark.asyncio
-async def test_home_content_snapshot_uses_library_rail_seams():
+@private_profile_test
+async def test_home_content_snapshot_uses_library_rail_seams(request):
     """AC2 seam contract: counts and the resume candidate come from the SAME
     scope-service seams the Library rail uses -- count_notes, and the
     conversation snapshot with scope_type='all' (workspace-scoped Console
@@ -2225,7 +2231,10 @@ def test_open_tasks_provider_wiring_flows_to_dashboard_input():
 
 
 @pytest.mark.asyncio
-async def test_home_model_badge_reports_blocked_without_credential(monkeypatch):
+@private_profile_test
+async def test_home_model_badge_reports_blocked_without_credential(
+    monkeypatch, request
+):
     """No valid credential for the selected provider -> 'Model: Blocked'.
 
     The old weak check ``model_ready = bool(providers_models)`` reported ready
@@ -2260,7 +2269,8 @@ async def test_home_model_badge_reports_blocked_without_credential(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_home_model_badge_reports_ready_with_credential(monkeypatch):
+@private_profile_test
+async def test_home_model_badge_reports_ready_with_credential(monkeypatch, request):
     """Paired arm: a resolvable API key still reports 'Model: Ready'.
 
     Guards the TASK-31805 honesty fix against over-correcting a genuinely

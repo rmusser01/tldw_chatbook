@@ -6,9 +6,13 @@ import inspect
 from enum import Enum
 from typing import Any
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
 from tldw_chatbook.runtime_policy.server_parity_models import SyncIdentityMapEntry
 
-from .sync_state import SyncV2ProfileMode, is_local_first_sync_profile_mode
+from .server_sync_service import _sync_call, _sync_execution_scope
 from .sync_mirror_report import build_sync_mirror_report
 from .sync_promotion_state import SyncPromotionState, build_sync_promotion_state
 from .sync_readiness import (
@@ -16,6 +20,7 @@ from .sync_readiness import (
     SyncEligibilityRegistry,
     build_sync_readiness_report,
 )
+from .sync_state import SyncV2ProfileMode, is_local_first_sync_profile_mode
 
 
 class SyncBackend(str, Enum):
@@ -58,6 +63,18 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
 class SyncScopeService:
     """Expose the active-server sync transport without implying local mirroring support."""
 
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
+
     def __init__(
         self,
         *,
@@ -65,6 +82,7 @@ class SyncScopeService:
         policy_enforcer: Any = None,
         state_repository: Any = None,
     ):
+        self._producer_lifetime = ProducerLifetime()
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
         self.state_repository = state_repository
@@ -298,6 +316,7 @@ class SyncScopeService:
             )
         return states
 
+    @_sync_call(delegate=True)
     async def send_changes(
         self,
         *,
@@ -310,6 +329,7 @@ class SyncScopeService:
         result = await self._maybe_await(service.send_changes(request_data))
         return self._normalize_send_result(normalized_mode, request_data, result)
 
+    @_sync_call(delegate=True)
     async def get_changes(
         self,
         *,
@@ -325,6 +345,7 @@ class SyncScopeService:
         )
         return self._normalize_get_result(normalized_mode, client_id, result)
 
+    @producer_call
     async def prepare_sync_v2_profile_mode(
         self,
         *,
@@ -369,19 +390,20 @@ class SyncScopeService:
         if not is_local_first_sync_profile_mode(normalized_mode):
             raise ValueError(f"Invalid Sync v2 profile mode: {profile_mode}")
         service = self._require_server_service(SyncBackend.SERVER)
-        result = await self._maybe_await(
-            service.run_v2_dry_run(
-                server_profile_id=server_profile_id,
-                authenticated_principal_id=authenticated_principal_id,
-                workspace_scope=workspace_scope,
-                display_name=display_name,
-                domains=domains,
-                client_version=client_version,
-                scope_type=scope_type,
-                encryption_policy=encryption_policy,
-                profile_mode=normalized_mode.value,
+        with _sync_execution_scope(self, delegate=True):
+            result = await self._maybe_await(
+                service.run_v2_dry_run(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    display_name=display_name,
+                    domains=domains,
+                    client_version=client_version,
+                    scope_type=scope_type,
+                    encryption_policy=encryption_policy,
+                    profile_mode=normalized_mode.value,
+                )
             )
-        )
         if not isinstance(result, dict):
             result = {"result": result}
         record = dict(result)

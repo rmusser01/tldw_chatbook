@@ -331,7 +331,7 @@ class PersonasPreviewController:
             pass
 
     def console_handoff_readiness(self) -> tuple[bool, str | None]:
-        """Cheap, config/env-only readiness for a Console handoff send.
+        """Nonblocking config/credential-snapshot readiness for a Console handoff.
 
         The Roleplay inspector/header readiness surfaces (task-440) gate
         Attach/Start Chat, which create a FRESH native-Console session
@@ -350,9 +350,12 @@ class PersonasPreviewController:
         task-425) - that one IS the preview send path.
 
         Readiness goes through ``get_provider_readiness`` - the same
-        side-effect-free seam Chat and Settings badges already use - not the
+        readiness seam Chat and Settings badges already use - not the
         async ``ConsoleProviderGateway.resolve_for_send`` probe: this runs
-        on every selection sync and must stay cheap. Unlike the real send
+        on every selection sync and must stay cheap. Subscription credentials
+        use the shared background snapshot; the screen refreshes completion
+        and expiry while mounted. The preview's actual send still resolves
+        its own credentials through the gateway. Unlike the real send
         path it performs no llama.cpp network reachability check, so a
         configured-but-unreachable llama.cpp endpoint reads as ready here -
         the real send still surfaces that failure when it happens.
@@ -365,7 +368,9 @@ class PersonasPreviewController:
         raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
         config = raw_config if isinstance(raw_config, Mapping) else {}
         selection = self._selection_from_defaults(config, "chat_defaults")
-        readiness = get_provider_readiness(selection.provider, config)
+        readiness = get_provider_readiness(
+            selection.provider, config, background_credentials=True
+        )
         if readiness.ready:
             return True, None
         return False, readiness.user_message

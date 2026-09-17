@@ -1,0 +1,247 @@
+{
+  "product_selection": "support-diagnostic",
+  "selected_product_nodes": [
+    "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
+    "Tests/Backup_Recovery/test_console_projection_config_lifetime.py",
+    "Tests/Backup_Recovery/test_console_canvas_config_order.py",
+    "Tests/Backup_Recovery/test_config_native_lock_order.py",
+    "Tests/Backup_Recovery/test_recovery_restart.py::test_actual_restart_keeps_launching_package_ahead_of_shadow_cwd",
+    "Tests/Backup_Recovery/test_mounted_console_backup.py",
+    "Tests/Backup_Recovery/test_profile_open.py::test_profile_open_requires_actual_mounted_local_reads[console_quit]",
+    "Tests/Backup_Recovery/test_profile_open.py::test_profile_open_requires_actual_mounted_local_reads[console_edit]",
+    "Tests/Backup_Recovery/test_large_recovery_records.py::test_large_collection_completes_actual_isolated_publication",
+    "Tests/Backup_Recovery/test_bound_config_siblings.py::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-emoji]",
+    "Tests/Backup_Recovery/test_bound_config_siblings.py::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-runtime]",
+    "Tests/Backup_Recovery/test_bound_config_siblings.py::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-sidebar]"
+  ],
+  "summary_effective_returncode": 1,
+  "revision": "e683efb86433d3598a99e31033da38f778b59896",
+  "artifact": "/private/tmp/uat-windows-e683-support/backup-platform-windows-2022-py3.12-support-diagnostic-e683efb86433d3598a99e31033da38f778b59896",
+  "verified_artifact_files": 48,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.811,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 57,
+      "counts": {
+        "passed": 50,
+        "failed": 7
+      },
+      "seconds": 2093.791,
+      "failures": [
+        {
+          "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_stale_true_policy_allows_only_inert_authority_and_refuses_live_effects",
+          "status": "failed",
+          "seconds": 8.833,
+          "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/744c4557d557c473.txt",
+          "failure_evidence": [
+            "E       AssertionError: lls', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generatio",
+            "E         tldw_chatbook.Canvas.compiler.CanvasCompileError: Canvas document is incompatible with the canvas-v1 runtime",
+            "E       assert 1 == 0",
+            "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+          "status": "failed",
+          "seconds": 406.304,
+          "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/344f17c907ca7f60.txt",
+          "failure_evidence": [
+            "E       AssertionError:  | #x1B[36mtldw_chatbook.DB.base_db#x1B[0m:#x1B[36m__init__#x1B[0m:#x1B[36m806#x1B[0m - #x1B[1mScheduledTasksDB initialized with path: [PRIVATE_ROOT]\\product-pytest\\test_mounted_console_complete_2\\home\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_scheduled_tasks.db [Client: default]#x1B[0m",
+            "E         AssertionError: {'operation_id': '5d3efc6d4b2a45c1b7eb3ea976aeedae', 'kind': 'backup', 'state': 'failed', 'phase': 'capturing', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('admission_timeout',), 'review_issues': ()}",
+            "E       assert 1 == 0",
+            "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyring\\nfrom"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_quit]",
+          "status": "failed",
+          "seconds": 176.425,
+          "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/15d6d04f1f5bec94.txt",
+          "failure_evidence": [
+            "E       AssertionError: Traceback (most recent call last):",
+            "E         AssertionError: {'operation_id': '3b54569ab0ec45e08789c370697c025f', 'kind': 'open_profile', 'state': 'failed', 'phase': 'opening_profile', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('backup_operation_failed',), 'review_issues': ()}",
+            "E       assert 1 == 0",
+            "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', 'CHILD=\\'\\\\nimport threading,time\\\\nfrom pathlib import Path\\\\nfrom Tests.Backup_Recovery.thread_diagnostics import observe_threads,_error_metadata,_write\\\\n_diagnostic_root=Path.home()\\\\n_diagnostic_sta"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_edit]",
+          "status": "failed",
+          "seconds": 149.843,
+          "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/3f776e196d81632b.txt",
+          "failure_evidence": [
+            "E       AssertionError: Traceback (most recent call last):",
+            "E         AssertionError: {'operation_id': '19ca3f9c5f3148c79923d3a9d4d9338c', 'kind': 'open_profile', 'state': 'failed', 'phase': 'opening_profile', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('backup_operation_failed',), 'review_issues': ()}",
+            "E       assert 1 == 0",
+            "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', 'CHILD=\\'\\\\nimport threading,time\\\\nfrom pathlib import Path\\\\nfrom Tests.Backup_Recovery.thread_diagnostics import observe_threads,_error_metadata,_write\\\\n_diagnostic_root=Path.home()\\\\n_diagnostic_sta"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-emoji]",
+          "status": "failed",
+          "seconds": 4.044,
+          "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/c1a17cad8f834db2.txt",
+          "failure_evidence": [
+            "E       AssertionError: #x1B[32m2026-09-14 11:27:47.423#x1B[0m | #x1B[34m#x1B[1mDEBUG   #x1B[0m | #x1B[36mtldw_chatbook.config#x1B[0m:#x1B[36m<module>#x1B[0m:#x1B[36m109#x1B[0m - #x1B[34m#x1B[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.#x1B[0m",
+            "E         AssertionError: original native security not restored: owner_equal=True original_control=36868 restored_control=37892 control_xor=1024 original_revision=1 restored_revision=1 original_acl_length=72 restored_acl_length=72 acl_equal=True",
+            "E       assert 1 == 0",
+            "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-runtime]",
+          "status": "failed",
+          "seconds": 3.965,
+          "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/764e5f6ec54f3c04.txt",
+          "failure_evidence": [
+            "E       AssertionError: #x1B[32m2026-09-14 11:27:51.446#x1B[0m | #x1B[34m#x1B[1mDEBUG   #x1B[0m | #x1B[36mtldw_chatbook.config#x1B[0m:#x1B[36m<module>#x1B[0m:#x1B[36m109#x1B[0m - #x1B[34m#x1B[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.#x1B[0m",
+            "E         AssertionError: original native security not restored: owner_equal=True original_control=36868 restored_control=37892 control_xor=1024 original_revision=1 restored_revision=1 original_acl_length=72 restored_acl_length=72 acl_equal=True",
+            "E       assert 1 == 0",
+            "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-sidebar]",
+          "status": "failed",
+          "seconds": 4.037,
+          "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/861a23179eb92baf.txt",
+          "failure_evidence": [
+            "E       AssertionError: #x1B[32m2026-09-14 11:27:55.418#x1B[0m | #x1B[34m#x1B[1mDEBUG   #x1B[0m | #x1B[36mtldw_chatbook.config#x1B[0m:#x1B[36m<module>#x1B[0m:#x1B[36m109#x1B[0m - #x1B[34m#x1B[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.#x1B[0m",
+            "E         AssertionError: original native security not restored: owner_equal=True original_control=36868 restored_control=37892 control_xor=1024 original_revision=1 restored_revision=1 original_acl_length=72 restored_acl_length=72 acl_equal=True",
+            "E       assert 1 == 0",
+            "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+          ]
+        }
+      ],
+      "skips": []
+    }
+  },
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2866,
+      "wheel_sha256": "9a5344fde530051d34acadbc9b52439d80375dc262a0ef72b698bc59354e2129",
+      "source_comparable_python_files": 2474,
+      "source_python_mismatches": []
+    }
+  ],
+  "source_files": 16424,
+  "prior_failures_and_skips": {
+    "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]": {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]",
+      "status": "passed",
+      "seconds": 291.724
+    },
+    "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]": {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+      "status": "passed",
+      "seconds": 260.066
+    },
+    "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]": {
+      "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+      "status": "failed",
+      "seconds": 406.304,
+      "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/344f17c907ca7f60.txt",
+      "failure_evidence": [
+        "E       AssertionError:  | #x1B[36mtldw_chatbook.DB.base_db#x1B[0m:#x1B[36m__init__#x1B[0m:#x1B[36m806#x1B[0m - #x1B[1mScheduledTasksDB initialized with path: [PRIVATE_ROOT]\\product-pytest\\test_mounted_console_complete_2\\home\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_scheduled_tasks.db [Client: default]#x1B[0m",
+        "E         AssertionError: {'operation_id': '5d3efc6d4b2a45c1b7eb3ea976aeedae', 'kind': 'backup', 'state': 'failed', 'phase': 'capturing', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('admission_timeout',), 'review_issues': ()}",
+        "E       assert 1 == 0",
+        "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyring\\nfrom"
+      ]
+    },
+    "Tests.Backup_Recovery.test_first_note_backup::test_first_run_note_creation_can_capture_live_backup": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_first_note_backup::test_saved_closed_library_note_can_handoff_to_recovery": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_quit]": {
+      "id": "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_quit]",
+      "status": "failed",
+      "seconds": 176.425,
+      "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/15d6d04f1f5bec94.txt",
+      "failure_evidence": [
+        "E       AssertionError: Traceback (most recent call last):",
+        "E         AssertionError: {'operation_id': '3b54569ab0ec45e08789c370697c025f', 'kind': 'open_profile', 'state': 'failed', 'phase': 'opening_profile', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('backup_operation_failed',), 'review_issues': ()}",
+        "E       assert 1 == 0",
+        "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', 'CHILD=\\'\\\\nimport threading,time\\\\nfrom pathlib import Path\\\\nfrom Tests.Backup_Recovery.thread_diagnostics import observe_threads,_error_metadata,_write\\\\n_diagnostic_root=Path.home()\\\\n_diagnostic_sta"
+      ]
+    },
+    "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_edit]": {
+      "id": "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_edit]",
+      "status": "failed",
+      "seconds": 149.843,
+      "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/3f776e196d81632b.txt",
+      "failure_evidence": [
+        "E       AssertionError: Traceback (most recent call last):",
+        "E         AssertionError: {'operation_id': '19ca3f9c5f3148c79923d3a9d4d9338c', 'kind': 'open_profile', 'state': 'failed', 'phase': 'opening_profile', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('backup_operation_failed',), 'review_issues': ()}",
+        "E       assert 1 == 0",
+        "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', 'CHILD=\\'\\\\nimport threading,time\\\\nfrom pathlib import Path\\\\nfrom Tests.Backup_Recovery.thread_diagnostics import observe_threads,_error_metadata,_write\\\\n_diagnostic_root=Path.home()\\\\n_diagnostic_sta"
+      ]
+    },
+    "Tests.Backup_Recovery.test_bound_config_companions::test_bound_config_companion_operation_contract[unsafe]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_companions::test_bound_config_companion_operation_contract[replaced]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_companions::test_bound_config_companion_operation_contract[missing]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_bound_config_companions::test_bound_config_companion_operation_contract[unsafe_active]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_config_sibling_capture::test_capture_relation_never_repairs_unsafe_native_sources[symlink]": {
+      "status": "not_selected_or_not_reached"
+    },
+    "Tests.Backup_Recovery.test_large_recovery_records::test_large_collection_completes_actual_isolated_publication": {
+      "id": "Tests.Backup_Recovery.test_large_recovery_records::test_large_collection_completes_actual_isolated_publication",
+      "status": "passed",
+      "seconds": 381.931
+    },
+    "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-emoji]": {
+      "id": "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-emoji]",
+      "status": "failed",
+      "seconds": 4.044,
+      "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/c1a17cad8f834db2.txt",
+      "failure_evidence": [
+        "E       AssertionError: #x1B[32m2026-09-14 11:27:47.423#x1B[0m | #x1B[34m#x1B[1mDEBUG   #x1B[0m | #x1B[36mtldw_chatbook.config#x1B[0m:#x1B[36m<module>#x1B[0m:#x1B[36m109#x1B[0m - #x1B[34m#x1B[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.#x1B[0m",
+        "E         AssertionError: original native security not restored: owner_equal=True original_control=36868 restored_control=37892 control_xor=1024 original_revision=1 restored_revision=1 original_acl_length=72 restored_acl_length=72 acl_equal=True",
+        "E       assert 1 == 0",
+        "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+      ]
+    },
+    "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-runtime]": {
+      "id": "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-runtime]",
+      "status": "failed",
+      "seconds": 3.965,
+      "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/764e5f6ec54f3c04.txt",
+      "failure_evidence": [
+        "E       AssertionError: #x1B[32m2026-09-14 11:27:51.446#x1B[0m | #x1B[34m#x1B[1mDEBUG   #x1B[0m | #x1B[36mtldw_chatbook.config#x1B[0m:#x1B[36m<module>#x1B[0m:#x1B[36m109#x1B[0m - #x1B[34m#x1B[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.#x1B[0m",
+        "E         AssertionError: original native security not restored: owner_equal=True original_control=36868 restored_control=37892 control_xor=1024 original_revision=1 restored_revision=1 original_acl_length=72 restored_acl_length=72 acl_equal=True",
+        "E       assert 1 == 0",
+        "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+      ]
+    },
+    "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-sidebar]": {
+      "id": "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-sidebar]",
+      "status": "failed",
+      "seconds": 4.037,
+      "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/861a23179eb92baf.txt",
+      "failure_evidence": [
+        "E       AssertionError: #x1B[32m2026-09-14 11:27:55.418#x1B[0m | #x1B[34m#x1B[1mDEBUG   #x1B[0m | #x1B[36mtldw_chatbook.config#x1B[0m:#x1B[36m<module>#x1B[0m:#x1B[36m109#x1B[0m - #x1B[34m#x1B[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.#x1B[0m",
+        "E         AssertionError: original native security not restored: owner_equal=True original_control=36868 restored_control=37892 control_xor=1024 original_revision=1 restored_revision=1 original_acl_length=72 restored_acl_length=72 acl_equal=True",
+        "E       assert 1 == 0",
+        "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+      ]
+    }
+  }
+}

@@ -7,9 +7,17 @@ import contextvars
 import functools
 import inspect
 import threading
+import time
+from contextlib import nullcontext
+
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from typing import Any
+
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
 
 from .research_normalizers import normalize_research_record
 
@@ -105,17 +113,29 @@ def _backend_executor() -> ThreadPoolExecutor:
     return _BACKEND_EXECUTOR
 
 
-async def _run_on_backend_thread(call: Any) -> Any:
+async def _run_on_backend_thread(call: Any, *, lifetime=None, pending=None) -> Any:
     """Await ``call()`` on the shared single backend thread.
 
     Mirrors ``asyncio.to_thread``'s contextvar propagation, which
     ``run_in_executor`` does not do on its own.
     """
-    loop = asyncio.get_running_loop()
-    context = contextvars.copy_context()
-    return await loop.run_in_executor(
-        _backend_executor(), functools.partial(context.run, call)
-    )
+    operation = lifetime.operation() if lifetime is not None else nullcontext()
+    with operation:
+        loop = asyncio.get_running_loop()
+        context = contextvars.copy_context()
+        future = loop.run_in_executor(
+            _backend_executor(), functools.partial(context.run, call)
+        )
+        if pending is not None:
+            pending.add(future)
+
+            def finished(completed):
+                pending.discard(completed)
+                if not completed.cancelled():
+                    completed.exception()
+
+            future.add_done_callback(finished)
+        return await asyncio.shield(future)
 
 
 class _ThreadOffloadedBackend:
@@ -134,10 +154,12 @@ class _ThreadOffloadedBackend:
     ``stream_run_events`` keeps yielding.
     """
 
-    __slots__ = ("_backend",)
+    __slots__ = ("_backend", "_lifetime", "_pending")
 
-    def __init__(self, backend: Any) -> None:
+    def __init__(self, backend: Any, *, lifetime=None, pending=None) -> None:
         self._backend = backend
+        self._lifetime = lifetime
+        self._pending = pending
 
     def offloads(self, name: str) -> bool:
         """Report whether ``name`` will be dispatched to the backend thread.
@@ -163,7 +185,11 @@ class _ThreadOffloadedBackend:
 
         @functools.wraps(attribute)
         def _offloaded(*args: Any, **kwargs: Any) -> Any:
-            return _run_on_backend_thread(functools.partial(attribute, *args, **kwargs))
+            return _run_on_backend_thread(
+                functools.partial(attribute, *args, **kwargs),
+                lifetime=self._lifetime,
+                pending=self._pending,
+            )
 
         return _offloaded
 
@@ -179,10 +205,64 @@ class ResearchScopeService:
         policy_enforcer: Any = None,
         sync_scope_service: Any = None,
     ):
+        self._producer_lifetime = ProducerLifetime()
+        self._pending_backend_work = set()
+        self._maintenance_close_task = None
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
         self.sync_scope_service = sync_scope_service
+
+    def _maintenance_close_admission(self):
+        """Fence new scope calls before local persistence admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Settle accepted calls and retire the local cache on its executor."""
+        if not await self._producer_lifetime.drain(deadline):
+            return False
+        while self._pending_backend_work:
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(min(0.01, max(0, deadline - time.monotonic())))
+        if self.local_service is None:
+            return True
+        from .local_research_service import LocalResearchService
+
+        if type(self.local_service) is not LocalResearchService:
+            raise RuntimeError("runtime_owner_unqualified")
+        from tldw_chatbook.Backup_Recovery.participants import (
+            _close_settled_core_cache,
+        )
+
+        if self._maintenance_close_task is None or (
+            self._maintenance_close_task.done()
+            and not self._maintenance_close_task.result()
+        ):
+            self._maintenance_close_task = asyncio.create_task(
+                _run_on_backend_thread(
+                    functools.partial(_close_settled_core_cache, self.local_service)
+                )
+            )
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(self._maintenance_close_task),
+                max(0, deadline - time.monotonic()),
+            )
+        except TimeoutError:
+            return False
+
+    def _maintenance_resume(self):
+        """Reopen the same service after its native work has settled."""
+        if self._pending_backend_work or (
+            self._maintenance_close_task is not None
+            and not self._maintenance_close_task.done()
+        ):
+            raise RuntimeError("runtime_work_not_settled")
+        if self._maintenance_close_task is not None:
+            self._maintenance_close_task.result()
+            self._maintenance_close_task = None
+        self._producer_lifetime.resume()
 
     def _normalize_mode(self, mode: ResearchBackend | str | None) -> ResearchBackend:
         if mode is None:
@@ -204,10 +284,16 @@ class ResearchScopeService:
         if mode == ResearchBackend.LOCAL:
             if self.local_service is None:
                 raise ValueError("Local research backend is unavailable.")
-            return _ThreadOffloadedBackend(self.local_service)
+            return _ThreadOffloadedBackend(
+                self.local_service, lifetime=self._producer_lifetime,
+                pending=self._pending_backend_work,
+            )
         if self.server_service is None:
             raise ValueError("Server research backend is unavailable.")
-        return _ThreadOffloadedBackend(self.server_service)
+        return _ThreadOffloadedBackend(
+            self.server_service, lifetime=self._producer_lifetime,
+            pending=self._pending_backend_work,
+        )
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -413,6 +499,7 @@ class ResearchScopeService:
             payload["artifacts"] = artifacts
         return payload
 
+    @producer_call
     async def list_sessions(
         self,
         *,
@@ -438,6 +525,7 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "session", result)
 
+    @producer_call
     async def create_session(
         self,
         *,
@@ -463,6 +551,7 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "session", result)
 
+    @producer_call
     async def get_session(
         self,
         *,
@@ -480,6 +569,7 @@ class ResearchScopeService:
         result = await self._call_service(service, "get_session", session_id)
         return self._normalize_result(normalized_mode, "session", result)
 
+    @producer_call
     async def update_session(
         self,
         *,
@@ -505,6 +595,7 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "session", result)
 
+    @producer_call
     async def delete_session(
         self,
         *,
@@ -529,6 +620,7 @@ class ResearchScopeService:
             )
         )
 
+    @producer_call
     async def launch_run(
         self,
         *,
@@ -550,6 +642,7 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "run", result)
 
+    @producer_call
     async def create_run(
         self,
         *,
@@ -565,6 +658,7 @@ class ResearchScopeService:
         result = await self._call_service(service, method_name, query=query, **kwargs)
         return self._normalize_result(normalized_mode, "run", result)
 
+    @producer_call
     async def list_runs(
         self,
         *,
@@ -595,6 +689,7 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "run", result)
 
+    @producer_call
     async def get_run(
         self,
         run_id: str,
@@ -608,6 +703,7 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "run", result)
 
+    @producer_call
     async def pause_run(
         self,
         run_id: str,
@@ -621,6 +717,7 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "run", result)
 
+    @producer_call
     async def resume_run(
         self,
         run_id: str,
@@ -635,6 +732,7 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "run", result)
 
+    @producer_call
     async def cancel_run(
         self,
         run_id: str,
@@ -648,6 +746,7 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "run", result)
 
+    @producer_call
     async def delete_run(
         self,
         *,
@@ -672,6 +771,7 @@ class ResearchScopeService:
             )
         )
 
+    @producer_call
     async def observe_run_events(
         self,
         *,
@@ -744,6 +844,7 @@ class ResearchScopeService:
         for item in list(await self._maybe_await(result)):
             yield item
 
+    @producer_call
     async def get_bundle(
         self,
         *args: str,
@@ -771,6 +872,7 @@ class ResearchScopeService:
         )
         return self._normalize_bundle(normalized_mode, result, run_id=run_id)
 
+    @producer_call
     async def get_artifact(
         self,
         *,
@@ -794,6 +896,7 @@ class ResearchScopeService:
             else result
         )
 
+    @producer_call
     async def patch_and_approve_checkpoint(
         self,
         run_id: str,

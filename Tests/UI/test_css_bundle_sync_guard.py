@@ -7,6 +7,8 @@ drifted module. Also asserts the repo's own committed bundle is currently in syn
 
 from pathlib import Path
 
+from Tests.private_profile import private_profile_test
+
 from tldw_chatbook.css import build_css, check_bundle_sync as guard
 
 
@@ -18,26 +20,30 @@ def _bundle(overrides_body: str, timestamp: str = "2026-01-01 00:00:00") -> str:
     )
 
 
-def test_drifted_modules_ignores_the_generated_timestamp():
+@private_profile_test
+def test_drifted_modules_ignores_the_generated_timestamp(request):
     """A faithful rebuild differing only in the timestamp reports no drift."""
     committed = _bundle("Tooltip { border: none; }", timestamp="2026-01-01 00:00:00")
     rebuilt = _bundle("Tooltip { border: none; }", timestamp="2026-07-24 06:31:20")
     assert guard.drifted_modules(committed, rebuilt) is None
 
 
-def test_drifted_modules_names_the_changed_module():
+@private_profile_test
+def test_drifted_modules_names_the_changed_module(request):
     """A source edited without regenerating names the drifted MODULE block."""
     committed = _bundle("Tooltip { border: none; }")
     rebuilt = _bundle("Tooltip { border: round $primary; }")
     assert guard.drifted_modules(committed, rebuilt) == ["utilities/_overrides.tcss"]
 
 
-def test_committed_bundle_reproduces_from_sources():
+@private_profile_test
+def test_committed_bundle_reproduces_from_sources(request):
     """The repo's committed bundle is in sync (and the guard passes end-to-end)."""
     assert guard.main() == 0
 
 
-def test_generated_widget_and_screen_sheets_have_no_trailing_whitespace():
+@private_profile_test
+def test_generated_widget_and_screen_sheets_have_no_trailing_whitespace(request):
     """Python class indentation never leaks onto generated blank CSS lines."""
 
     css_dir = Path(build_css.__file__).parent
@@ -51,7 +57,8 @@ def test_generated_widget_and_screen_sheets_have_no_trailing_whitespace():
         assert all(line == line.rstrip() for line in path.read_text().splitlines())
 
 
-def test_generated_widget_and_screen_sheets_end_with_one_newline():
+@private_profile_test
+def test_generated_widget_and_screen_sheets_end_with_one_newline(request):
     """Selector filtering cannot leave generated blank lines at EOF."""
 
     css_dir = Path(build_css.__file__).parent

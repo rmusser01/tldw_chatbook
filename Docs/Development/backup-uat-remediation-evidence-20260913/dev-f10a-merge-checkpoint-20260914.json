@@ -1,0 +1,128 @@
+{
+  "parents": {
+    "ours": "f54a5a630c",
+    "dev": "f10a3fa36471ade188a002dc119bf19db54c4d83"
+  },
+  "review": {
+    "ours": "f54a5a630c",
+    "incoming": "f10a3fa36471ade188a002dc119bf19db54c4d83",
+    "merge_specific_methods": [
+      [
+        "_RuntimeAdapter",
+        "build_receipt_labels"
+      ],
+      [
+        "_ProductionRuntimeAdapter",
+        "build_receipt_labels"
+      ],
+      [
+        "NotesSyncRuntimeOwner",
+        "_read_receipt_labels"
+      ],
+      [
+        "NotesSyncRuntimeOwner",
+        "write_receipts"
+      ],
+      [
+        "NotesSyncRuntimeOwner",
+        "_shutdown_once"
+      ]
+    ],
+    "existing_compare_and_binding_labels_ast_unchanged": true,
+    "files": {
+      "tldw_chatbook/Notes/notes_sync_runtime.py": "54a4567a32b55a27fa0d366f9b80d5b91bc9b84f453dcf86738a750f192c8b8e",
+      "Tests/Backup_Recovery/test_merged_service_producer_maintenance.py": "2056c7cea505fc8deba94c51eab8e6c32abad6a54be4501e9eb4118130d23dc4"
+    },
+    "final_test_comment_only_verified": true
+  },
+  "native_lifetimes": {
+    "root": "36 passed in13.31s",
+    "independent": "36 passed in14.11s",
+    "red": "16 failed,2 passed in5.11s"
+  },
+  "static": {
+    "ruff": {
+      "counts": {
+        "ours": 268,
+        "dev": 266,
+        "merged": 270
+      },
+      "new_findings": []
+    },
+    "bandit": {
+      "counts": {
+        "ours": 23,
+        "dev": 23,
+        "merged": 23
+      },
+      "new_findings": []
+    },
+    "parsed_python_files": 7
+  },
+  "test_static": {
+    "ruff": 0,
+    "bandit": {
+      "B101": 36
+    },
+    "new_nonassert": 0,
+    "synthetic_journal_id": "B106 documented false positive"
+  },
+  "inventory": {
+    "owners": 610,
+    "task492_calls": 1407,
+    "task31551_calls": 55,
+    "task494_calls": 7765,
+    "sinks": 14
+  },
+  "installed_cases": [
+    {
+      "classname": "Tests.Backup_Recovery.test_first_note_backup",
+      "name": "test_first_run_note_creation_can_capture_live_backup",
+      "time": "81.139",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Backup_Recovery.test_first_note_backup",
+      "name": "test_saved_closed_library_note_can_handoff_to_recovery",
+      "time": "55.174",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Backup_Recovery.test_first_note_backup",
+      "name": "test_first_note_diagnostics_are_collected_and_bounded",
+      "time": "0.027",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Backup_Recovery.test_first_note_backup",
+      "name": "test_first_note_diagnostic_io_cannot_replace_original_error",
+      "time": "0.272",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Backup_Recovery.test_mounted_console_backup",
+      "name": "test_mounted_console_complete_capture_and_resumed_writes[library]",
+      "time": "77.417",
+      "status": "passed"
+    }
+  ],
+  "installed_receipts": [
+    {
+      "fixture": "/private/tmp/uat-dev-f10a-installed-native/f9-native-package0",
+      "wheel_sha256": "c53a869616df7a9e983d1903f1cc22524da2b025a058890b2d9760f56c9575f4",
+      "python_files": 2475,
+      "installed_files": 2867
+    },
+    {
+      "fixture": "/private/tmp/uat-dev-f10a-installed-native/f9-native-package1",
+      "wheel_sha256": "4559dd852336ba782e9b3b75c1f1ac925713c347d558af432418a4fc4d080748",
+      "python_files": 2475,
+      "installed_files": 2867
+    }
+  ],
+  "installed_log": "/private/tmp/uat-dev-f10a-installed-native.log",
+  "installed_evidence": "/private/tmp/uat-dev-f10a-installed-native/verified-packages.json",
+  "upstream_selected_cases": "2 native store checks pass. Two real-root tests fail under shared late profile retargeting; exact incoming f10a baseline passes. Both unchanged test bodies then pass against merged source in fresh fixed private-profile native processes, no guard/config/testmode overrides, source origins and zero network attempts verified.",
+  "native_windows": "not yet run on this merge",
+  "qualified_upstream_receipt": "dev-f10a-qualified-upstream-20260914.json"
+}

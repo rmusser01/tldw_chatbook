@@ -28,28 +28,31 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 from pathlib import Path
 
 import pytest
-
 from textual.css.stylesheet import Stylesheet
 
+from Tests.private_profile import private_profile_test
 
-def _scratch_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    home, data, config = tmp_path / "home", tmp_path / "data", tmp_path / "config"
+
+def _scratch_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    home, data, config = (
+        Path(os.environ[name]) for name in ("HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME")
+    )
     for sub in (home, data, config):
         sub.mkdir(parents=True, exist_ok=True)
-    config_file = config / "tldw_cli" / "config.toml"
+    config_file = Path(os.environ["TLDW_CONFIG_PATH"])
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(
         "[first_run]\nsetup_completed = true\n\n[splash_screen]\nenabled = false\n"
     )
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_DATA_HOME", str(data))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
     monkeypatch.setenv("TLDW_TEST_MODE", "1")
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "css_fastpath")
+    from tldw_chatbook.config import load_settings
+
+    load_settings(force_reload=True)
 
 
 def test_upstream_apply_still_has_the_shape_the_fastpath_assumes() -> None:
@@ -83,20 +86,21 @@ def test_upstream_apply_still_has_the_shape_the_fastpath_assumes() -> None:
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_fastpath_computes_identical_styles_for_every_node(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
     """Every node on every toured screen resolves to the same rules both ways.
 
     This is the fidelity check. A specificity or source-order regression in the
     fast path shows up here as a differing rule map, naming the node.
     """
-    _scratch_env(monkeypatch, tmp_path)
+    _scratch_env(monkeypatch)
+    from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Utils.textual_css_fastpath import (
         install_stylesheet_fastpath,
         is_installed,
     )
-    from tldw_chatbook.app import TldwCli
 
     install_stylesheet_fastpath()
     assert is_installed(), "fast path failed to install"
@@ -170,8 +174,9 @@ def test_ancestor_requirements_only_claims_what_it_can_prove() -> None:
     dangerous one: `Button.foo` is ONE compound, so demanding an ancestor
     `.foo` would reject the very node that matches.
     """
-    from textual.css.parse import parse_selectors
     from textual.css.model import RuleSet
+    from textual.css.parse import parse_selectors
+
     from tldw_chatbook.Utils.textual_css_fastpath import _ancestor_requirements
 
     def requirements_for(css_selector: str):
@@ -223,8 +228,9 @@ def test_ancestor_requirements_only_claims_what_it_can_prove() -> None:
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
     """A rule scoped under `.foo` must apply the moment an ancestor gains it.
 
@@ -244,7 +250,7 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
     # Splash disabled (as the sibling fastpath test already does): this test
     # needs the main UI mounted, and the default splash now runs 7s
     # (TASK-30016) -- far past the poll window below.
-    _scratch_env(monkeypatch, tmp_path)
+    _scratch_env(monkeypatch)
     app = _build_test_app()
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
@@ -340,7 +346,10 @@ _GUARDED_TYPE_KEYS = (
 
 @pytest.mark.ui
 @pytest.mark.asyncio
-async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet() -> None:
+@private_profile_test
+async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
+    request: pytest.FixtureRequest,
+) -> None:
     """New CSS must not grow the bare-type-subject candidate tax.
 
     Counts, in the app's real parsed stylesheet, the rules that are (a)

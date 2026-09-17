@@ -8,6 +8,7 @@ legacy Chat window are deprecated parallels; new settings belong here.
 import asyncio
 import copy
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import logging
 import math
@@ -85,7 +86,6 @@ from ...Chat.local_reasoning import (
     supports_local_reasoning,
 )
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
-from ...Widgets.select_values import assign_select_value
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
     first_configured_endpoint,
@@ -248,6 +248,8 @@ from .settings_search_index import (
     # rebuilds the index via settings_screen_module._build_field_search_index.
     build_field_search_index as _build_field_search_index,  # noqa: F401
 )
+from tldw_chatbook.Backup_Recovery.rag_definition_participant import definition_operation
+from .settings_rag_definition_actions import QueuedDefinitionAction
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,
     SUMMARY_PROMPT_ID,
@@ -2648,6 +2650,25 @@ class SettingsRegion(Vertical):
         yield from self._builder()
 
 
+@contextmanager
+def _workspace_worker_connection(screen):
+    """Retire only this Settings worker's new installed workspace connection."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    registry = getattr(screen.app_instance, "workspace_registry_service", None)
+    database = getattr(registry, "db", None)
+    owned = (
+        type(database) is WorkspaceDB
+        and not database.is_memory_db
+        and getattr(database._thread_local, "conn", None) is None
+    )
+    try:
+        yield
+    finally:
+        if owned:
+            WorkspaceDB.close(database)
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, storage, and app behavior."""
 
@@ -2863,7 +2884,18 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
+        self._openai_reconnect_token = None
+        self._openai_reconnect_busy = False
+        self._openai_reconnect_prompt_open = False
+        self._local_model_review_token = None
+        self._local_model_review_busy = False
+        self._local_model_review_prompt_open = False
         self._provider_credential_revision = 0
+        self._subscription_readiness_timer = None
+        self._subscription_readiness_observation: tuple[str, str, str | None] | None = (
+            None
+        )
+        self._provider_subscription_test: tuple[str, int] | None = None
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
@@ -3850,6 +3882,9 @@ class SettingsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
+        self._subscription_readiness_timer = self.set_interval(
+            0.25, self._poll_subscription_readiness
+        )
         self._register_footer_shortcuts()
         self._sync_responsive_workbench()
         # task-15475: claim this visit's sync-rows refresh -- but only if one
@@ -3873,8 +3908,14 @@ class SettingsScreen(BaseAppScreen):
             self.call_after_refresh(self._focus_provider_return_continuation)
 
     def on_unmount(self) -> None:
-        """Fence any late Model Library review before this screen is replaced."""
+        """Fence late credential and Model Library results before replacement."""
 
+        if self._subscription_readiness_timer is not None:
+            self._subscription_readiness_timer.stop()
+            self._subscription_readiness_timer = None
+        self._provider_subscription_test = None
+        self._discard_openai_reconnect_review()
+        self._discard_local_model_review()
         self._rollback_vllm_default_intent()
         if (
             self._advanced_config_settings is not None
@@ -3895,6 +3936,57 @@ class SettingsScreen(BaseAppScreen):
             self._retry_audio_cpp_result_cleanup(force_overlap=True)
         except BaseException:
             pass
+
+    def _poll_subscription_readiness(self) -> None:
+        """Refresh only the current mounted projection after completion or expiry."""
+        if not self.is_attached or not self.is_current:
+            return
+        category = self._active_category_id()
+        if category not in {
+            SettingsCategoryId.OVERVIEW,
+            SettingsCategoryId.PROVIDERS_MODELS,
+        }:
+            self._subscription_readiness_observation = None
+            return
+        provider = (
+            str(self._resolve_provider_model_for_settings().provider or "")
+            if category is SettingsCategoryId.OVERVIEW
+            else self._provider_widget_value()
+        )
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_readiness_app_config(),
+            background_credentials=True,
+        )
+        observation = (category.value, provider, readiness.subscription_status)
+        if observation == self._subscription_readiness_observation:
+            return
+        self._subscription_readiness_observation = observation
+        if category is SettingsCategoryId.OVERVIEW:
+            presentation = self._settings_overview_presentation()
+            for row in presentation.primary_rows:
+                if row.key == "configuration":
+                    self._set_static_text(
+                        "#settings-overview-configuration",
+                        f"{row.label}: {_fold_long_tokens(row.value)}",
+                    )
+            return
+        self._set_static_text(
+            "#settings-provider-key-status", self._provider_key_status(provider)
+        )
+        self._set_static_text(
+            "#settings-provider-credential-status",
+            self._provider_credential_status(provider),
+        )
+        tested_draft = self._provider_subscription_test
+        if tested_draft is None:
+            return
+        if tested_draft != (provider, self._provider_draft_generation):
+            self._provider_subscription_test = None
+            return
+        detail, _summary, _passed = self._provider_readiness_test_report()
+        self._provider_test_result = detail
+        self._update_provider_test_result()
 
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
@@ -9293,6 +9385,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _stage_library_rag_value(self, key: str, value: object) -> None:
+        self._discard_local_model_review()
         category = SettingsCategoryId.LIBRARY_RAG
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
@@ -10211,22 +10304,23 @@ class SettingsScreen(BaseAppScreen):
         snapshots, whereas sharing the group would let a solo refresh CANCEL
         an in-flight combined pass and silently drop the handoff update.
         """
-        try:
-            handoff_rows = self._server_sync_workspace_handoff_rows()
-        except Exception:
-            logger.warning(
-                "Failed to refresh Settings server/sync/workspace/handoff rows.",
-                exc_info=True,
-            )
-            handoff_rows = self._server_sync_workspace_handoff_loading_rows()
-        try:
-            manual_rows = self._manual_sync_rows()
-        except Exception:
-            logger.warning(
-                "Failed to refresh Settings manual sync rows.", exc_info=True
-            )
-            manual_rows = self._manual_sync_loading_rows()
-        self.app.call_from_thread(self._apply_sync_rows, handoff_rows, manual_rows)
+        with _workspace_worker_connection(self):
+            try:
+                handoff_rows = self._server_sync_workspace_handoff_rows()
+            except Exception:
+                logger.warning(
+                    "Failed to refresh Settings server/sync/workspace/handoff rows.",
+                    exc_info=True,
+                )
+                handoff_rows = self._server_sync_workspace_handoff_loading_rows()
+            try:
+                manual_rows = self._manual_sync_rows()
+            except Exception:
+                logger.warning(
+                    "Failed to refresh Settings manual sync rows.", exc_info=True
+                )
+                manual_rows = self._manual_sync_loading_rows()
+            self.app.call_from_thread(self._apply_sync_rows, handoff_rows, manual_rows)
 
     def _apply_sync_rows(
         self,
@@ -10288,14 +10382,15 @@ class SettingsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True, group="settings-manual-sync-preview")
     def _refresh_manual_sync_rows(self) -> None:
-        try:
-            rows = self._manual_sync_rows()
-        except Exception:
-            logger.warning(
-                "Failed to refresh Settings manual sync rows.", exc_info=True
-            )
-            rows = self._manual_sync_loading_rows()
-        self.app.call_from_thread(self._apply_manual_sync_rows, rows)
+        with _workspace_worker_connection(self):
+            try:
+                rows = self._manual_sync_rows()
+            except Exception:
+                logger.warning(
+                    "Failed to refresh Settings manual sync rows.", exc_info=True
+                )
+                rows = self._manual_sync_loading_rows()
+            self.app.call_from_thread(self._apply_manual_sync_rows, rows)
 
     @work(exclusive=True, group="settings-manual-sync-run")
     async def _manual_sync_run_worker(self, run_token: int) -> None:
@@ -10945,6 +11040,7 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
         if not readiness.ready:
             return f"Not ready: {readiness.reason}"
@@ -11904,6 +12000,7 @@ class SettingsScreen(BaseAppScreen):
         }
 
     def _stage_provider_value(self, key: str, value: object) -> None:
+        self._discard_openai_reconnect_review()
         category = SettingsCategoryId.PROVIDERS_MODELS
         current = self._provider_setting_values_mapping()
         draft = self._settings_drafts.setdefault(
@@ -12502,6 +12599,7 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_test_staged_config(provider),
+            background_credentials=True,
         )
         source = readiness.api_key_source or ""
         if source.startswith("env:"):
@@ -12638,6 +12736,7 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
         return bool(
             readiness.api_key_source and readiness.api_key_source.startswith("config:")
@@ -12650,7 +12749,10 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return "Claude subscription selected; API key is not used"
         if not readiness.requires_api_key:
             return "No credential required"
         if self._provider_saved_api_key_present(provider):
@@ -12661,7 +12763,10 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
             return "Provider settings invalid; repair in Advanced Config or config.toml"
         if self._provider_saved_api_key_present(provider):
@@ -12683,12 +12788,25 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return "Claude Code owns the subscription credential"
         if not readiness.requires_api_key:
             return "No credential required"
         if readiness.env_var:
             return readiness.env_var
         return f"{provider_key.upper()}_API_KEY"
+
+    @staticmethod
+    def _subscription_credential_copy(status: str) -> str:
+        """Return fixed credential copy without implying API-key recovery."""
+        return {
+            "pending": "Checking Claude subscription credential…",
+            "ready": "Credential source: Claude subscription (not verified)",
+            "expired": "Claude subscription credential expired; log in with Claude Code",
+            "missing": "Claude subscription credential missing; log in with Claude Code",
+        }[status]
 
     def _provider_catalog_entries(self) -> tuple[ConsoleProviderCatalogEntry, ...]:
         return supported_console_provider_catalog(
@@ -12925,6 +13043,8 @@ class SettingsScreen(BaseAppScreen):
                 ).strip()
 
     def _sync_provider_manual_widget(self, provider: str) -> None:
+        from ...Widgets.select_values import assign_select_value
+
         try:
             provider_select = self.query_one("#settings-provider-value", Select)
             manual_row = self.query_one("#settings-provider-manual-row", Horizontal)
@@ -13512,7 +13632,10 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
             return "Provider settings invalid; repair in Advanced Config or config.toml"
         if readiness.api_key_source:
@@ -14215,7 +14338,14 @@ class SettingsScreen(BaseAppScreen):
             draft.dirty_keys if draft is not None else set()
         )  # dirty_keys is a @property
         readiness = get_provider_readiness(
-            provider, self._provider_test_staged_config(provider)
+            provider,
+            self._provider_test_staged_config(provider),
+            background_credentials=True,
+        )
+        self._provider_subscription_test = (
+            (provider, getattr(self, "_provider_draft_generation", 0))
+            if readiness.subscription_status is not None
+            else None
         )
         detail, summary, passed = self._build_provider_readiness_findings(
             provider, model, readiness, draft_endpoint=draft_endpoint, dirty=dirty
@@ -14591,6 +14721,7 @@ class SettingsScreen(BaseAppScreen):
         prompt. A no-op when nothing has run yet or it is already marked stale, so
         it never clobbers the not-run sentinel or thrashes on every keystroke.
         """
+        self._provider_subscription_test = None
         if self._provider_test_result in (
             self._PROVIDER_TEST_NOT_RUN_COPY,
             self._PROVIDER_TEST_STALE_COPY,
@@ -14657,6 +14788,12 @@ class SettingsScreen(BaseAppScreen):
             guidance = self.query_one("#settings-hosted-provider-guidance", Static)
             guidance.update(hosted_guidance)
             guidance.set_class(not hosted_guidance, "settings-gated-profile-hidden")
+        except QueryError:
+            pass
+        try:
+            reconnect = self.query_one("#settings-openai-reconnect-review", Button)
+            reconnect.display = provider_config_key(provider) == "openai"
+            reconnect.disabled = self._openai_reconnect_busy
         except QueryError:
             pass
         self._refresh_generation_support_summary(provider)
@@ -15619,6 +15756,13 @@ class SettingsScreen(BaseAppScreen):
     def _render_overview_detail(self) -> ComposeResult:
         presentation = self._settings_overview_presentation()
         yield Static("Overview", classes="destination-section settings-column-title")
+        with Horizontal(classes="settings-action-row"):
+            yield Button(
+                "Backup & Restore",
+                id="settings-backup-restore",
+                classes="settings-open-backup-restore",
+                tooltip="Create a backup or inspect and restore an archive.",
+            )
         # TASK-23104: no in-card State banner -- the detail-pane region already
         # pins one above the scroll body for every category; a second copy
         # here rendered the contract line twice.
@@ -15979,6 +16123,13 @@ class SettingsScreen(BaseAppScreen):
                     else "settings-status-row settings-gated-profile-hidden"
                 ),
             )
+            reconnect = Button(
+                "Review restored OpenAI connection",
+                id="settings-openai-reconnect-review",
+            )
+            reconnect.display = provider_config_key(provider) == "openai"
+            reconnect.disabled = self._openai_reconnect_busy
+            yield reconnect
             # task-189: the Test affordance closes the first-run Connect job
             # (provider -> model -> endpoint -> credentials -> test) before
             # the informational readiness and discovery sections.
@@ -18279,7 +18430,7 @@ class SettingsScreen(BaseAppScreen):
         release_bulk_rag_slot(BACKFILL_SLOT)
 
     @work(exclusive=True, thread=True, group="settings-rag-backfill")
-    def _rag_backfill_worker(self) -> None:
+    def _rag_backfill_worker(self, *, reconcile_for_recovery: bool = False) -> None:
         """Bulk-index existing media/notes/conversations into the active
         profile's resolved vector collection.
 
@@ -18340,7 +18491,7 @@ class SettingsScreen(BaseAppScreen):
                 self.app.call_from_thread(
                     self.app.notify,
                     "RAG backfill could not start: the shared RAG service "
-                    "is unavailable right now. Try again shortly.",
+                    "is unavailable. Review recovery permissions and local model setup.",
                     severity="error",
                 )
                 return
@@ -18364,6 +18515,7 @@ class SettingsScreen(BaseAppScreen):
                     chachanotes_db=chachanotes_db,
                     rag_service=rag_service,
                     progress_callback=_progress,
+                    reconcile_for_recovery=reconcile_for_recovery,
                 )
             )
         except Exception as e:
@@ -18523,6 +18675,11 @@ class SettingsScreen(BaseAppScreen):
         )
         with Horizontal(classes="settings-action-row"):
             yield Button("Backfill", id="settings-library-rag-index-backfill")
+        with Horizontal(classes="settings-action-row"):
+            yield Button("Review recovery", id="settings-library-rag-recovery-review")
+            yield Button("Reconcile / rebuild", id="settings-library-rag-recovery-reconcile")
+        with Horizontal(classes="settings-action-row"):
+            yield Button("Review local model", id="settings-library-rag-model-review")
 
     def _queue_rag_select_suppression(
         self, select: Select, expected_value: object
@@ -20461,6 +20618,12 @@ class SettingsScreen(BaseAppScreen):
             except (OSError, RuntimeError, ValueError) as exc:
                 config_path = f"invalid - {redact_secret_text(str(exc))}"
             yield Static("Storage", classes="destination-section settings-column-title")
+            yield Button(
+                "Backup & Restore",
+                id="settings-storage-backup-restore",
+                classes="settings-open-backup-restore",
+                tooltip="Create a backup or inspect and restore an archive.",
+            )
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
                 yield Static("Storage defaults", classes="destination-section")
                 yield self._detail_row(
@@ -21602,6 +21765,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _apply_speech_tts_navigation_context(self) -> None:
         """Restore a bounded Speech provider/intent without invoking work."""
+        from ...Widgets.select_values import assign_select_value
 
         target = self._speech_tts_navigation_target
         if (
@@ -22758,6 +22922,8 @@ class SettingsScreen(BaseAppScreen):
                         exit_on_error=False,
                     )
                 return
+        self._discard_openai_reconnect_review()
+        self._discard_local_model_review()
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
             self._clear_provider_suppression_queues()
@@ -23917,6 +24083,12 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         # task-1369 (review): persist disclosure state across recomposes.
         self._overview_ownership_details_collapsed = event.collapsible.collapsed
+
+    @on(Button.Pressed, ".settings-open-backup-restore")
+    def handle_open_backup_restore(self, event: Button.Pressed) -> None:
+        """Keep storage draft saving separate from deliberate recovery work."""
+        event.stop()
+        self.app.action_backup_restore()
 
     @on(Button.Pressed, ".settings-overview-open-category")
     def handle_overview_open_category(self, event: Button.Pressed) -> None:
@@ -25984,6 +26156,7 @@ class SettingsScreen(BaseAppScreen):
         if queue and event.value == queue[0]:
             queue.pop(0)
             return
+        self._discard_local_model_review()
         selected = event.value
         active_id = active_profile_info()["id"]
         # PR #863 review: `Select.NULL` is the real blank sentinel on this
@@ -26124,39 +26297,58 @@ class SettingsScreen(BaseAppScreen):
         # or save worker (save) completes. "cancel"/None deliberately does
         # NOT clear it here -- the user chose to keep browsing/editing
         # exactly as they left it.
-        if result == "discard":
-            self._rag_preview_profile_id = None
-            self._sync_rag_editor_display()
-            self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
-            self._sync_library_rag_widgets()
-            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
-            self._dispatch_rag_set_active(profile_id)
-        elif result == "save":
-            self._rag_preview_profile_id = None
-            self._sync_rag_editor_display()
-            self._rag_profile_pending_activate = profile_id
-            self.action_settings_save_category(allow_text_entry_focus=True)
+        if result not in {"save", "discard"}:
+            return
+        action = QueuedDefinitionAction()
+
+        def finish():
+            if result == "discard":
+                self._rag_preview_profile_id = None
+                self._sync_rag_editor_display()
+                self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
+                self._sync_library_rag_widgets()
+                self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+                self._dispatch_rag_set_active(profile_id, _definition_action=action)
+            elif result == "save":
+                self._rag_preview_profile_id = None
+                self._sync_rag_editor_display()
+                self._rag_profile_pending_activate = profile_id
+                self.action_settings_save_category(
+                    allow_text_entry_focus=True, _definition_action=action
+                )
+
+        action.execute(finish)
         # "cancel"/None (Escape): leave the draft, active profile, and any
         # in-progress preview untouched.
 
-    def _dispatch_rag_set_active(self, profile_id: str) -> None:
+    def _dispatch_rag_set_active(
+        self, profile_id: str, *, _definition_action=None
+    ) -> None:
+        action = QueuedDefinitionAction(parent=_definition_action)
+        action.enqueue(self._rag_set_active_worker, profile_id)
         self._library_rag_profile_result = "Setting active profile..."
         self._set_static_text(
             "#settings-library-rag-profile-result", self._library_rag_profile_result
         )
-        self._rag_set_active_worker(profile_id)
 
     @work(exclusive=True, thread=True, group="settings-rag-set-active")
-    def _rag_set_active_worker(self, profile_id: str) -> None:
-        ok, reason = activate_profile(profile_id)
-        # Task 4 (SP3): fetch the newly-active profile's index status in the
-        # SAME off-thread hop that flips the pointer -- both touch the
-        # profile/config store off the UI thread already, so this reuses that
-        # trip instead of a second worker round-trip right after. `None` on
-        # failure (nothing to report) preserves the pre-task-4 2-arg call
-        # shape for `_rag_after_set_active`'s "no warning known" branch.
-        new_status = fetch_index_status() if ok else None
-        self.app.call_from_thread(self._rag_after_set_active, ok, reason, new_status)
+    def _rag_set_active_worker(
+        self, profile_id: str, *, _definition_action=None
+    ) -> None:
+        action = _definition_action or QueuedDefinitionAction()
+
+        def execute():
+            ok, reason = activate_profile(profile_id)
+            # Task 4 (SP3): fetch the newly-active profile's index status in the
+            # SAME off-thread hop that flips the pointer -- both touch the
+            # profile/config store off the UI thread already, so this reuses that
+            # trip instead of a second worker round-trip right after. `None` on
+            # failure (nothing to report) preserves the pre-task-4 2-arg call
+            # shape for `_rag_after_set_active`'s "no warning known" branch.
+            new_status = fetch_index_status() if ok else None
+            action.deliver(self.app, self._rag_after_set_active, ok, reason, new_status)
+
+        action.execute(execute)
 
     def _rag_after_set_active(
         self,
@@ -26234,6 +26426,283 @@ class SettingsScreen(BaseAppScreen):
         self._set_library_rag_preview_banner(None)
         self.app.notify(message, severity="error")
 
+    def _rag_recovery_sources(self):
+        """Observe already-open local owners without constructing index services."""
+        return tuple(
+            ("rag.projections", database.db_path)
+            for name in ("media_db", "chachanotes_db")
+            if (database := getattr(self.app_instance, name, None)) is not None
+            and not getattr(database, "is_memory_db", False)
+        )
+
+    def _discard_openai_reconnect_review(self) -> None:
+        self._openai_reconnect_token = None
+
+    def on_screen_suspend(self) -> None:
+        if not self._openai_reconnect_prompt_open:
+            self._discard_openai_reconnect_review()
+        if not self._local_model_review_prompt_open:
+            self._discard_local_model_review()
+
+    def _discard_local_model_review(self) -> None:
+        self._local_model_review_token = None
+
+    def _local_model_review_current(self, token) -> bool:
+        return (
+            self.is_mounted and token is self._local_model_review_token
+            and self._active_category_id() == SettingsCategoryId.LIBRARY_RAG
+            and not self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG)
+            and self._rag_preview_profile_id is None
+        )
+
+    @on(Button.Pressed, "#settings-library-rag-model-review")
+    def handle_library_rag_model_review(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._local_model_review_busy:
+            return
+        token = self._local_model_review_token = object()
+        if not self._local_model_review_current(token):
+            self._discard_local_model_review()
+            self.app.notify(
+                "Review the active RAG profile after saving or discarding changes.",
+                severity="warning",
+            )
+            return
+        self.run_worker(
+            self._prepare_local_model_review(token),
+            group="settings-local-model-preview", exit_on_error=False,
+        )
+
+    async def _prepare_local_model_review(self, token) -> None:
+        from ...RAG_Search.model_recovery import preview_local_embedding
+        from ...RAG_Search.simplified.active_config import resolve_active_rag_config
+        from ...TTS._async_lifecycle import join_retained_task
+
+        def preview():
+            return preview_local_embedding(resolve_active_rag_config())
+
+        try:
+            task = asyncio.create_task(asyncio.to_thread(preview))
+            await join_retained_task(task)
+            review = task.result()
+        except (OSError, ValueError, RuntimeError):
+            if self._local_model_review_current(token):
+                self._discard_local_model_review()
+                self.app.notify(
+                    "No local model recovery review is available. Select an existing "
+                    "local HF embedding model in the active restored RAG profile.",
+                    severity="warning",
+                )
+            return
+        if not self._local_model_review_current(token) or self.app.screen is not self:
+            return
+        message = (
+            f"Model directory: {review.model_path}\nFiles: {review.file_count}\n"
+            f"Generations: {', '.join(review.generations)}\n\n"
+            "Allow this local embedding model for the reviewed generation? "
+            "No model will load or download. RAG review and Reconcile / rebuild "
+            "are separate actions."
+        )
+        self._local_model_review_prompt_open = True
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Review restored local embedding model",
+                message=escape_markup(message), confirm_label="Approve local model",
+            ),
+            lambda accepted: self._confirm_local_model_review(token, review, accepted),
+        )
+
+    def _confirm_local_model_review(self, token, review, accepted: bool) -> None:
+        self._local_model_review_prompt_open = False
+        current = self._local_model_review_current(token) and self.app.screen is self
+        self._discard_local_model_review()
+        if not accepted or not current or self._local_model_review_busy:
+            return
+        self._local_model_review_busy = True
+        # Accepted native receipt writes belong to the app across view navigation.
+        self.app.run_worker(
+            self._record_local_model_review(review.fingerprint),
+            group="settings-local-model-confirm", exit_on_error=False,
+        )
+
+    async def _record_local_model_review(self, fingerprint: str) -> None:
+        from ...RAG_Search.model_recovery import approve_local_embedding
+        from ...RAG_Search.simplified.active_config import resolve_active_rag_config
+        from ...TTS._async_lifecycle import join_retained_task
+
+        def approve():
+            return approve_local_embedding(resolve_active_rag_config(), fingerprint)
+
+        message = "Local model review recorded. No model loaded and no index rebuilt."
+        try:
+            task = asyncio.create_task(asyncio.to_thread(approve))
+            await join_retained_task(task)
+        except (OSError, ValueError, RuntimeError):
+            message = "Local model or active settings changed. Request a fresh review."
+        finally:
+            self._local_model_review_busy = False
+        if self.is_mounted and self.app.is_running:
+            self.app.notify(message)
+
+    def _openai_reconnect_review_current(self, token) -> bool:
+        if (
+            not self.is_mounted or token is not self._openai_reconnect_token
+            or self._active_category_id() != SettingsCategoryId.PROVIDERS_MODELS
+            or self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
+        ):
+            return False
+        return provider_config_key(self._provider_widget_value()) == "openai"
+
+    @on(Button.Pressed, "#settings-openai-reconnect-review")
+    def handle_openai_reconnect_review(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._openai_reconnect_busy:
+            return
+        if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
+            self.app.notify("Save or discard provider changes before reviewing reconnect.", severity="warning")
+            return
+        token = self._openai_reconnect_token = object()
+        if not self._openai_reconnect_review_current(token):
+            self._discard_openai_reconnect_review()
+            return
+        self.run_worker(
+            self._prepare_openai_reconnect_review(token),
+            group="settings-openai-reconnect-preview", exit_on_error=False,
+        )
+
+    async def _prepare_openai_reconnect_review(self, token) -> None:
+        from ...LLM_Calls.recovery_review import prepare_openai_reconnect
+        from ...TTS._async_lifecycle import join_retained_task
+
+        try:
+            task = asyncio.create_task(asyncio.to_thread(prepare_openai_reconnect))
+            await join_retained_task(task)
+            review = task.result()
+        except (OSError, ValueError, RuntimeError):
+            if self._openai_reconnect_review_current(token):
+                self._discard_openai_reconnect_review()
+                self.app.notify("OpenAI recovery review is unavailable or changed. Check connection setup and request a fresh review.", severity="warning")
+            return
+        if not self._openai_reconnect_review_current(token) or self.app.screen is not self:
+            return
+        message = (
+            f"Endpoint: {review.endpoint}\nCredential source: {review.auth_source}\n"
+            f"Configuration: {review.config_selector}\nGenerations: {', '.join(review.generations)}\n\n"
+            "Allow explicit requests through this OpenAI connection? No connection test will run. "
+            "Automatic catalog refresh and other capabilities remain unchanged."
+        )
+        self._openai_reconnect_prompt_open = True
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Review restored OpenAI connection",
+                message=escape_markup(message), confirm_label="Allow OpenAI requests",
+            ),
+            lambda accepted: self._confirm_openai_reconnect_review(token, review, accepted),
+        )
+
+    def _confirm_openai_reconnect_review(self, token, review, accepted: bool) -> None:
+        self._openai_reconnect_prompt_open = False
+        current = self._openai_reconnect_review_current(token) and self.app.screen is self
+        self._discard_openai_reconnect_review()
+        if not accepted or not current or self._openai_reconnect_busy:
+            return
+        self._openai_reconnect_busy = True
+        self._update_provider_dynamic_widgets()
+        # The app owns accepted durable work across view navigation. No second
+        # request cancels it; the owner rechecks actual sources in its worker.
+        self.app.run_worker(
+            self._record_openai_reconnect_review(review),
+            group="settings-openai-reconnect-confirm", exit_on_error=False,
+        )
+
+    async def _record_openai_reconnect_review(self, review) -> None:
+        from ...LLM_Calls.recovery_review import confirm_openai_reconnect
+        from ...TTS._async_lifecycle import join_retained_task
+
+        message = "OpenAI reconnect review recorded. No connection test was run."
+        try:
+            task = asyncio.create_task(asyncio.to_thread(confirm_openai_reconnect, review))
+            await join_retained_task(task)
+        except (OSError, ValueError, RuntimeError):
+            message = "OpenAI connection changed or is unavailable. Request a fresh review."
+        finally:
+            self._openai_reconnect_busy = False
+        if self.is_mounted and self.app.is_running:
+            self._update_provider_dynamic_widgets()
+            self.app.notify(message)
+
+    @work(exclusive=True, thread=True, group="settings-rag-recovery-review")
+    def _rag_recovery_review_worker(self, fingerprint: str | None = None) -> None:
+        """Review or approve the same current settings; neither action indexes."""
+        from ...RAG_Search.activation import (
+            approve_recovery_review,
+            preview_recovery_review,
+        )
+        from ...RAG_Search.simplified.active_config import resolve_active_rag_config
+
+        try:
+            config = resolve_active_rag_config()
+            sources = self._rag_recovery_sources()
+            if fingerprint is None:
+                review = preview_recovery_review(config, sources=sources)
+                self.app.call_from_thread(self._show_rag_recovery_review, review)
+            else:
+                approve_recovery_review(config, fingerprint, sources=sources)
+                self.app.call_from_thread(
+                    self.app.notify,
+                    "RAG owner review approved. Local model setup remains separate. "
+                    "Use Reconcile / rebuild when prerequisites are ready.",
+                )
+        except (OSError, ValueError, RuntimeError):
+            self.app.call_from_thread(
+                self.app.notify,
+                "Recovery review is unavailable or changed. Request a fresh review.",
+                severity="warning",
+            )
+
+    def _show_rag_recovery_review(self, review) -> None:
+        """Display only the owner's sanitized current-generation preview."""
+        if not review.owners:
+            self.app.notify("No restored RAG owners require this review.")
+            return
+        message = (
+            f"Model: {review.model}\nProvider host: {review.provider_host}\n"
+            f"Owners: {', '.join(review.owners)}\n"
+            f"Prerequisites: {', '.join(review.prerequisites) or 'none reported'}\n"
+            "Sources:\n" + "\n".join(review.sources) +
+            "\nApprove these RAG owners for the displayed local generation? "
+            "Approval does not rebuild the index or approve configuration or models."
+        )
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Review restored RAG execution", message=message,
+                confirm_label="Approve RAG owners",
+            ),
+            lambda accepted: self._rag_recovery_review_worker(review.fingerprint)
+            if accepted else None,
+        )
+
+    @on(Button.Pressed, "#settings-library-rag-recovery-review")
+    def handle_library_rag_recovery_review(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._rag_recovery_review_worker()
+
+    @on(Button.Pressed, "#settings-library-rag-recovery-reconcile")
+    def handle_library_rag_recovery_reconcile(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Reconcile restored search index",
+                message="Rebuild and verify this profile's index from available local "
+                "sources? RAG owners and local model setup must already "
+                "permit execution. This can take a while for large libraries.",
+                confirm_label="Reconcile / rebuild",
+            ),
+            lambda accepted: self._trigger_library_rag_index_backfill(
+                reconcile_for_recovery=True
+            ) if accepted else None,
+        )
+
     @on(Button.Pressed, "#settings-library-rag-index-backfill")
     def handle_library_rag_index_backfill(self, event: Button.Pressed) -> None:
         event.stop()
@@ -26247,7 +26716,7 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._trigger_library_rag_index_backfill()
 
-    def _trigger_library_rag_index_backfill(self) -> None:
+    def _trigger_library_rag_index_backfill(self, *, reconcile_for_recovery: bool = False) -> None:
         # task-13 (spec §10.3): the in-flight state is the SHARED bulk-RAG
         # slot guard -- the own-slot refusal reproduces the historical
         # "already running" behavior, and the other-slot refusal is the new
@@ -26262,7 +26731,10 @@ class SettingsScreen(BaseAppScreen):
             "Backfill started — this may take a while for large libraries.",
             severity="information",
         )
-        self._rag_backfill_worker()
+        if reconcile_for_recovery:
+            self._rag_backfill_worker(reconcile_for_recovery=True)
+        else:
+            self._rag_backfill_worker()
 
     @on(Button.Pressed, "#settings-library-rag-profile-clone")
     def handle_library_rag_profile_clone(self, event: Button.Pressed) -> None:
@@ -26347,25 +26819,31 @@ class SettingsScreen(BaseAppScreen):
     def _dispatch_rag_profile_action(
         self, action: str, profile_id: str, arg: str
     ) -> None:
+        queued = QueuedDefinitionAction()
+        queued.enqueue(self._rag_profile_action_worker, action, profile_id, arg)
         self._library_rag_profile_result = f"{action.capitalize()} profile..."
         self._set_static_text(
             "#settings-library-rag-profile-result", self._library_rag_profile_result
         )
-        self._rag_profile_action_worker(action, profile_id, arg)
 
     @work(exclusive=True, thread=True, group="settings-rag-profile-crud")
     def _rag_profile_action_worker(
-        self, action: str, profile_id: str, arg: str
+        self, action: str, profile_id: str, arg: str, *, _definition_action=None
     ) -> None:
-        if action == "clone":
-            ok, result = clone_profile_as(profile_id, arg)
-        elif action == "rename":
-            ok, result = rename_user_profile(profile_id, arg)
-        elif action == "delete":
-            ok, result = delete_user_profile(profile_id)
-        else:
-            ok, result = False, "unknown-action"
-        self.app.call_from_thread(self._rag_after_profile_action, action, ok, result)
+        queued = _definition_action or QueuedDefinitionAction()
+
+        def execute():
+            if action == "clone":
+                ok, result = clone_profile_as(profile_id, arg)
+            elif action == "rename":
+                ok, result = rename_user_profile(profile_id, arg)
+            elif action == "delete":
+                ok, result = delete_user_profile(profile_id)
+            else:
+                ok, result = False, "unknown-action"
+            queued.deliver(self.app, self._rag_after_profile_action, action, ok, result)
+
+        queued.execute(execute)
 
     def _rag_after_profile_action(self, action: str, ok: bool, result: str) -> None:
         if ok:
@@ -26571,6 +27049,8 @@ class SettingsScreen(BaseAppScreen):
 
     @on(OptionList.OptionSelected, "#settings-provider-picker")
     def handle_provider_picker_selected(self, event: OptionList.OptionSelected) -> None:
+        from ...Widgets.select_values import assign_select_value
+
         event.stop()
         option = event.option
         action = getattr(option, "action", None)
@@ -28015,7 +28495,7 @@ class SettingsScreen(BaseAppScreen):
             raise
 
     def action_settings_save_category(
-        self, *, allow_text_entry_focus: bool = False
+        self, *, allow_text_entry_focus: bool = False, _definition_action=None
     ) -> None:
         if self._vllm_default_actions_fenced():
             return
@@ -28624,39 +29104,8 @@ class SettingsScreen(BaseAppScreen):
                     "Return to the active profile to save.", severity="warning"
                 )
                 return
-            # TASK-2 review (Finding 2): a "Save" choice from
-            # RagProfileSwitchConfirmModal arms `_rag_profile_pending_activate`
-            # then calls back in here -- but `_apply_library_rag_save_result`
-            # (the only clearing site) only runs once the save worker
-            # dispatches below. Capture-and-clear up front so EVERY early
-            # return in this branch (no-unsaved-changes, validation failure)
-            # drops the stale pending id instead of leaking it into a later,
-            # unrelated successful save; re-arm it only right before the
-            # worker dispatch that will actually consume it.
-            pending_activate = self._rag_profile_pending_activate
-            self._rag_profile_pending_activate = None
-            if not self._category_has_unsaved_changes(category):
-                self.app.notify("No Settings changes to save.", severity="information")
-                return
-            values = self._library_rag_current_defaults()
-            validation = validate_library_rag_defaults(values)
-            if not validation.valid:
-                self._library_rag_result = validation.message
-                self._set_static_text(
-                    "#settings-library-rag-save-result", self._library_rag_result
-                )
-                self._update_draft_status_widgets(category)
-                self.app.notify(validation.message, severity="error")
-                return
-            # Task 2 (541 v2 UX): gate behind a pre-commit re-index confirm
-            # when this save would re-point the active profile at a fresh,
-            # EMPTY collection while the CURRENT one is actually built (see
-            # _confirm_reindex_then_save's docstring). `pending_activate`
-            # travels through the whole gate/confirm chain as a plain
-            # argument -- `_rag_profile_pending_activate` stays cleared
-            # (from the capture-and-clear above) until the save actually
-            # dispatches, so a Cancel never re-arms it.
-            self._confirm_reindex_then_save(values, pending_activate)
+            action = QueuedDefinitionAction(parent=_definition_action)
+            action.execute(self._save_library_rag_category, action)
             return
 
         if category is SettingsCategoryId.APPEARANCE:
@@ -29053,6 +29502,8 @@ class SettingsScreen(BaseAppScreen):
             self._sync_raw_cli_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
+            from ...Widgets.select_values import assign_select_value
+
             self.run_worker(
                 self._revert_snapshot_preferences(),
                 group="settings-snapshot-revert",
@@ -29607,10 +30058,52 @@ class SettingsScreen(BaseAppScreen):
             dict(section_values),
         )
 
+    def _save_library_rag_category(self, action):
+        """Prepare an accepted RAG save before any pending/draft mutation."""
+        category = SettingsCategoryId.LIBRARY_RAG
+        # TASK-2 review (Finding 2): a "Save" choice from
+        # RagProfileSwitchConfirmModal arms `_rag_profile_pending_activate`
+        # then calls back in here -- but `_apply_library_rag_save_result`
+        # (the only clearing site) only runs once the save worker
+        # dispatches below. Capture-and-clear up front so EVERY early
+        # return in this branch (no-unsaved-changes, validation failure)
+        # drops the stale pending id instead of leaking it into a later,
+        # unrelated successful save; re-arm it only right before the
+        # worker dispatch that will actually consume it.
+        pending_activate = self._rag_profile_pending_activate
+        self._rag_profile_pending_activate = None
+        if not self._category_has_unsaved_changes(category):
+            self.app.notify("No Settings changes to save.", severity="information")
+            return
+        values = self._library_rag_current_defaults()
+        validation = validate_library_rag_defaults(values)
+        if not validation.valid:
+            self._library_rag_result = validation.message
+            self._set_static_text(
+                "#settings-library-rag-save-result", self._library_rag_result
+            )
+            self._update_draft_status_widgets(category)
+            self.app.notify(validation.message, severity="error")
+            return
+        # Task 2 (541 v2 UX): gate behind a pre-commit re-index confirm
+        # when this save would re-point the active profile at a fresh,
+        # EMPTY collection while the CURRENT one is actually built (see
+        # _confirm_reindex_then_save's docstring). `pending_activate`
+        # travels through the whole gate/confirm chain as a plain
+        # argument -- `_rag_profile_pending_activate` stays cleared
+        # (from the capture-and-clear above) until the save actually
+        # dispatches, so a Cancel never re-arms it.
+        self._confirm_reindex_then_save(
+            values, pending_activate, _definition_action=action
+        )
+        return
+
     def _confirm_reindex_then_save(
         self,
         values: SettingsLibraryRagDefaults,
         pending_activate: str | None,
+        *,
+        _definition_action=None,
     ) -> None:
         """Task 2 (541 v2 UX): pre-commit gate for the LIBRARY_RAG save.
 
@@ -29634,11 +30127,15 @@ class SettingsScreen(BaseAppScreen):
         does this dispatch its own off-thread fetch before deciding.
         """
         if not index_change_pending(values):
-            self._dispatch_library_rag_save(values, False, pending_activate)
+            self._dispatch_library_rag_save(
+                values, False, pending_activate, _definition_action=_definition_action
+            )
             return
         cached_status = self._library_rag_index_status_cache
         if cached_status is not None:
-            self._decide_reindex_confirmation(values, pending_activate, cached_status)
+            self._decide_reindex_confirmation(
+                values, pending_activate, cached_status, _definition_action
+            )
             return
         if self._rag_reindex_confirm_in_flight:
             # Debounce (Task 2 review, Important): a status fetch for an
@@ -29649,20 +30146,29 @@ class SettingsScreen(BaseAppScreen):
             # still complete and dispatch save for the FIRST click once it
             # lands.
             return
+        action = QueuedDefinitionAction(
+            parent=_definition_action,
+            on_cancel=self._clear_rag_reindex_confirm_in_flight,
+        )
+        action.enqueue(
+            self._rag_reindex_confirm_status_worker, values, pending_activate
+        )
         self._rag_reindex_confirm_in_flight = True
-        self._rag_reindex_confirm_status_worker(values, pending_activate)
 
     def _decide_reindex_confirmation(
         self,
         values: SettingsLibraryRagDefaults,
         pending_activate: str | None,
         status: Mapping[str, object],
+        _definition_action=None,
     ) -> None:
         """Given a (cached or freshly fetched) index status, either push the
         re-index confirm modal (state == "built") or proceed straight to
         dispatch (absent/empty/unknown -- nothing built to lose)."""
         if str(status.get("state") or "unknown") != "built":
-            self._dispatch_library_rag_save(values, True, pending_activate)
+            self._dispatch_library_rag_save(
+                values, True, pending_activate, _definition_action=_definition_action
+            )
             return
         # task-566: this decision can be reached by a `settings-rag-index-
         # status` worker callback that was already in flight when the user
@@ -29708,14 +30214,17 @@ class SettingsScreen(BaseAppScreen):
         # unconditionally, on BOTH the Confirm and Cancel branches, means
         # this handler can never be the reason a future Save stays
         # debounced.
-        self._rag_reindex_confirm_in_flight = False
         if not confirmed:
+            self._rag_reindex_confirm_in_flight = False
             # Cancel: the draft stays staged (never popped on this path) and
             # `_rag_profile_pending_activate` stays cleared (never re-armed
             # -- see the capture-and-clear comment at the LIBRARY_RAG save
             # branch) -- no save dispatched, nothing lost, nothing leaked.
             return
+        # Confirmation is fresh user input, not a continuation retained while
+        # the modal was open. Refuse it before changing any save state.
         self._dispatch_library_rag_save(values, True, pending_activate)
+        self._rag_reindex_confirm_in_flight = False
 
     def _clear_rag_reindex_confirm_in_flight(self) -> None:
         """Main-thread flip of the in-flight guard -- see
@@ -29727,43 +30236,68 @@ class SettingsScreen(BaseAppScreen):
         self,
         values: SettingsLibraryRagDefaults,
         pending_activate: str | None,
+        *,
+        _definition_action=None,
     ) -> None:
-        try:
-            status = fetch_index_status()
-            self.app.call_from_thread(self._apply_library_rag_index_status, status)
-            self.app.call_from_thread(
-                self._decide_reindex_confirmation, values, pending_activate, status
-            )
-        finally:
-            # Task 2 review (Important): ALWAYS clears the in-flight guard,
-            # even if something above raises -- fetch_index_status() itself
-            # never raises (see its own except-fallback), but this is a
-            # belt-and-suspenders net: without it, a failure here would
-            # leave the flag stuck True forever, silently no-op-ing every
-            # future Save on this category ("Save bricks"). `call_from_thread`
-            # is synchronous from this (background) thread's point of view,
-            # so this runs only AFTER `_decide_reindex_confirmation` above
-            # has already returned -- covers both the direct-dispatch and
-            # the modal-pushed outcome in this one place.
-            self.app.call_from_thread(self._clear_rag_reindex_confirm_in_flight)
+        action = _definition_action or QueuedDefinitionAction()
+
+        def execute():
+            try:
+                status = fetch_index_status()
+                action.deliver(self.app, self._apply_library_rag_index_status, status)
+                action.deliver(
+                    self.app,
+                    self._decide_reindex_confirmation,
+                    values,
+                    pending_activate,
+                    status,
+                    action,
+                )
+            finally:
+                # Task 2 review (Important): ALWAYS clears the in-flight guard,
+                # even if something above raises -- fetch_index_status() itself
+                # never raises (see its own except-fallback), but this is a
+                # belt-and-suspenders net: without it, a failure here would
+                # leave the flag stuck True forever, silently no-op-ing every
+                # future Save on this category ("Save bricks"). `call_from_thread`
+                # is synchronous from this (background) thread's point of view,
+                # so this runs only AFTER `_decide_reindex_confirmation` above
+                # has already returned -- covers both the direct-dispatch and
+                # the modal-pushed outcome in this one place.
+                action.deliver(self.app, self._clear_rag_reindex_confirm_in_flight)
+
+        action.execute(execute)
 
     def _dispatch_library_rag_save(
         self,
         values: SettingsLibraryRagDefaults,
         index_will_change: bool,
         pending_activate: str | None,
+        *,
+        _definition_action=None,
     ) -> None:
+        action = QueuedDefinitionAction(parent=_definition_action)
+        try:
+            sections = build_library_rag_save_sections(
+                self._app_config_mapping(), values
+            )
+            action.enqueue(
+                self._settings_save_library_rag_worker,
+                values,
+                index_will_change,
+                sections,
+                pending_activate,
+            )
+        except BaseException:
+            action.cancel_queued()
+            raise
         self._library_rag_result = "Saving Library/RAG defaults..."
         self._set_static_text(
             "#settings-library-rag-save-result", self._library_rag_result
         )
         self._rag_profile_pending_activate = pending_activate
-        # task-1337: build the [console]/AppRAGSearchConfig sections on the UI
-        # thread (reads the app config mapping); the worker persists them
-        # after the profile write lands.
-        sections = build_library_rag_save_sections(self._app_config_mapping(), values)
-        self._settings_save_library_rag_worker(values, index_will_change, sections)
 
+    @definition_operation
     def _persist_library_rag_save(
         self,
         values: SettingsLibraryRagDefaults,
@@ -29797,13 +30331,17 @@ class SettingsScreen(BaseAppScreen):
         reason: str,
         index_will_change: bool = False,
         applied_sections: Mapping[str, Mapping[str, object]] | None = None,
+        _definition_action=None,
+        pending_activate: str | None = None,
     ) -> None:
         # A "Save" choice from RagProfileSwitchConfirmModal defers the profile
         # switch until this save completes; consumed (and cleared) exactly
         # once here regardless of outcome, so a later unrelated save never
         # replays a stale switch.
-        pending_activate = self._rag_profile_pending_activate
-        self._rag_profile_pending_activate = None
+        if _definition_action is None:
+            pending_activate = self._rag_profile_pending_activate
+        if self._rag_profile_pending_activate == pending_activate:
+            self._rag_profile_pending_activate = None
         if saved:
             if applied_sections is not None:
                 # Keep the in-memory app config in step with the persisted
@@ -29832,7 +30370,9 @@ class SettingsScreen(BaseAppScreen):
                 # The deferred set-active worker fetches its own fresh index
                 # status for the NEW active profile -- refreshing here first
                 # would just be immediately-stale, wasted off-thread work.
-                self._dispatch_rag_set_active(pending_activate)
+                self._dispatch_rag_set_active(
+                    pending_activate, _definition_action=_definition_action
+                )
             else:
                 self._refresh_library_rag_index_status()
             return
@@ -29858,19 +30398,35 @@ class SettingsScreen(BaseAppScreen):
         values: SettingsLibraryRagDefaults,
         index_will_change: bool = False,
         sections: Mapping[str, Mapping[str, object]] | None = None,
+        pending_activate: str | None = None,
+        *,
+        _definition_action=None,
     ) -> None:
-        if sections is None:
-            sections = build_library_rag_save_sections(
-                self._app_config_mapping(), values
+        action = _definition_action or QueuedDefinitionAction()
+        if _definition_action is None:
+            pending_activate = self._rag_profile_pending_activate
+
+        def execute():
+            applied_input = sections
+            if applied_input is None:
+                applied_input = build_library_rag_save_sections(
+                    self._app_config_mapping(), values
+                )
+            saved, reason, applied = self._persist_library_rag_save(
+                values, applied_input
             )
-        saved, reason, applied = self._persist_library_rag_save(values, sections)
-        self.app.call_from_thread(
-            self._apply_library_rag_save_result,
-            saved,
-            reason,
-            index_will_change,
-            applied,
-        )
+            action.deliver(
+                self.app,
+                self._apply_library_rag_save_result,
+                saved,
+                reason,
+                index_will_change,
+                applied,
+                action,
+                pending_activate,
+            )
+
+        action.execute(execute)
 
     def _apply_storage_save_result(
         self,

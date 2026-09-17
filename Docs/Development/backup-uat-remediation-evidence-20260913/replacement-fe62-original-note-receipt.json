@@ -1,0 +1,14 @@
+{
+  "revision": "fe62a5aa319969ae2f21403ab3ca61059a8e3707",
+  "db": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/novice/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db",
+  "config": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/novice/home/.config/tldw_cli/config.toml",
+  "notes": [
+    [
+      "c0abcd54-77d8-40e8-b2f0-c17a8329c67c",
+      "Before replacement acceptance note",
+      "Restore this original note on rollback. REPLACE-FRESH-FE62-20260913."
+    ]
+  ],
+  "database_sha256": "b19b01bd7497dbdfd33c7da50938ed556335d3bbbe1937f431a4347951927332",
+  "config_sha256": "1fe222e08de364a57d5d37e7d8bfed838f3df4f06754bd8c393a3ebe23480430"
+}

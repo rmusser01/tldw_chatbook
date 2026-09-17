@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 import re
+import shlex
+from pathlib import Path
 
 import yaml
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = PROJECT_ROOT / ".github/workflows/task-2062-2-gguf-source-evidence.yml"
@@ -28,11 +28,14 @@ REQUIRED_NODES = (
     "Tests/LLM_Management/test_gguf_server_sources.py::test_source_command_matrix_uses_only_active_authority",
     "Tests/LLM_Management/test_gguf_server_sources.py::test_gguf_nonzero_exit_presents_sanitized_runtime_compatibility_copy",
     "Tests/LLM_Management/test_gguf_server_sources.py::test_real_managed_contention_delivers_busy_recovery_without_spawning",
-    "Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection",
-    "Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable",
-    "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions",
     "Tests/LLM_Management/test_vllm_setup.py::test_vllm_command_snapshot_is_unchanged",
     "Tests/LLM_Management/test_gguf_server_sources.py::test_mlx_command_snapshot_is_unchanged",
+)
+REQUIRED_UI_NODES = (
+    "Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection",
+    "Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable",
+    "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]",
+    "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]",
 )
 EXPECTED_OSES = ("ubuntu-latest", "macos-latest", "windows-latest")
 EXPECTED_PULL_REQUEST_PATHS = (
@@ -45,6 +48,7 @@ EXPECTED_PULL_REQUEST_PATHS = (
     "tldw_chatbook/UI/LLM_Management_Window.py",
     "tldw_chatbook/UI/Screens/llm_screen.py",
     "Tests/conftest.py",
+    "Tests/private_profile.py",
     "Tests/LLM_Management/**",
     "Tests/Model_Artifacts/**",
     "Tests/UI/app_factory.py",
@@ -52,10 +56,14 @@ EXPECTED_PULL_REQUEST_PATHS = (
     "Tests/UI/test_llm_gguf_source_modes.py",
 )
 EXPECTED_STEP_NAMES = (
+    "Enable long checkout paths on Windows",
     "Check out the exact tested commit",
     "Set up Python 3.12",
     "Install bounded test dependencies",
+    "Prepare Windows package files beneath a trusted private ancestor",
     "Run exact GGUF source evidence nodes",
+    "Run each full-app GGUF case with its profile selected before imports",
+    "Compare Windows keyboard waits with the dev source baseline",
 )
 
 
@@ -86,7 +94,7 @@ def _named_step(job: dict[str, object], name: str) -> dict[str, object]:
 
 
 def _command_tokens(command: str) -> tuple[str, ...]:
-    return tuple(command.replace("\\\n", " ").split())
+    return tuple(shlex.split(command.replace("\\\n", " ")))
 
 
 def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
@@ -121,19 +129,38 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
     steps = job.get("steps")
     assert isinstance(steps, list)
     assert tuple(step.get("name") for step in steps) == EXPECTED_STEP_NAMES
-    assert all(set(step) <= {"name", "uses", "with", "run"} for step in steps)
+    # Only the final diagnostic may ignore a failure; evidence remains required.
+    expected_step_keys = (
+        {"name", "if", "shell", "run"},
+        {"name", "uses", "with"},
+        {"name", "uses", "with"},
+        {"name", "run"},
+        {"name", "if", "run"},
+        {"name", "working-directory", "run"},
+        {"name", "working-directory", "env", "run"},
+    )
+    assert tuple(set(step) for step in steps[:-1]) == expected_step_keys
+    assert set(steps[-1]) == {"name", "if", "continue-on-error", "run"}
     assert [step.get("uses") for step in steps if "uses" in step] == [
         "actions/checkout@v4",
         "actions/setup-python@v5",
     ]
-    assert steps[0].get("with") == {
+    checkout = _named_step(job, "Check out the exact tested commit")
+    assert checkout.get("with") == {
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
     }
-    assert steps[1].get("with") == {"python-version": "3.12"}
+    python = _named_step(job, "Set up Python 3.12")
+    assert python.get("with") == {"python-version": "3.12"}
+    assert steps[0] == {
+        "name": "Enable long checkout paths on Windows",
+        "if": "runner.os == 'Windows'",
+        "shell": "pwsh",
+        "run": "git config --global core.longpaths true",
+    }
 
     lowered = text.casefold()
+    assert lowered.count("continue-on-error") == 1
     for forbidden in (
-        "continue-on-error",
         "actions/cache",
         "upload-artifact",
         "download-artifact",
@@ -148,6 +175,59 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
         "ollama serve",
     ):
         assert forbidden not in lowered
+
+
+def test_windows_failure_diagnostic_keeps_exact_read_only_commands() -> None:
+    _text, workflow = _workflow()
+    diagnostic = _named_step(_only_job(workflow), EXPECTED_STEP_NAMES[-1])
+    assert diagnostic.get("if") == "failure() && runner.os == 'Windows'"
+    assert diagnostic.get("continue-on-error") is True
+    baseline = "4631b60f8dd9623fc55bf16f4a37e29fcb1240c7"
+    assert _command_tokens(str(diagnostic.get("run", ""))) == (
+        "git",
+        "fetch",
+        "--depth=1",
+        "origin",
+        baseline,
+        "git",
+        "worktree",
+        "add",
+        "--detach",
+        "$RUNNER_TEMP/backup-startup-dev",
+        baseline,
+        "diagnostic=$GITHUB_WORKSPACE/Tests/Backup_Recovery/startup_timing_diagnostic.py",
+        "failed=0",
+        "for",
+        "node",
+        "in",
+        *REQUIRED_UI_NODES[2:],
+        "do",
+        "python",
+        "$diagnostic",
+        "--source",
+        "$RUNNER_TEMP/backup-startup-dev",
+        "--node",
+        "$node",
+        "--label",
+        "dev",
+        "--no-profile",
+        "||",
+        "failed=1",
+        "python",
+        "$diagnostic",
+        "--source",
+        "$GGUF_EVIDENCE_SOURCE",
+        "--node",
+        "$node",
+        "--label",
+        "candidate",
+        "--no-profile",
+        "||",
+        "failed=1",
+        "done",
+        "exit",
+        "$failed",
+    )
 
 
 def test_workflow_installs_only_editable_package_and_bounded_test_dependencies() -> (
@@ -167,6 +247,10 @@ def test_workflow_runs_every_exact_node_once_with_only_bounded_flags() -> None:
         "Run exact GGUF source evidence nodes",
     )
     command = str(test_step.get("run", ""))
+    assert (
+        test_step.get("working-directory")
+        == "${{ env.GGUF_EVIDENCE_SOURCE || github.workspace }}"
+    )
     assert _command_tokens(command) == (
         "python",
         "-m",
@@ -179,12 +263,45 @@ def test_workflow_runs_every_exact_node_once_with_only_bounded_flags() -> None:
     assert selected == REQUIRED_NODES
     assert len(selected) == len(set(selected))
 
+    ui_step = _named_step(
+        _only_job(workflow),
+        "Run each full-app GGUF case with its profile selected before imports",
+    )
+    ui_tokens = _command_tokens(str(ui_step.get("run", "")))
+    assert ui_step.get("working-directory") == test_step.get("working-directory")
+    assert ui_step.get("env") == {
+        "GGUF_APP_TIMEOUT": "${{ runner.os == 'Windows' && '180' || '60' }}"
+    }
+    assert ui_tokens == (
+        "failed=0",
+        "for",
+        "node",
+        "in",
+        *REQUIRED_UI_NODES,
+        "do",
+        "TLDW_TEST_PRIVATE_PROFILE_NODE=$node",
+        "python",
+        "-m",
+        "pytest",
+        "$node",
+        "--timeout=$GGUF_APP_TIMEOUT",
+        "-v",
+        "||",
+        "failed=1",
+        "done",
+        "exit",
+        "$failed",
+    )
+    selected += tuple(token for token in ui_tokens if token.startswith("Tests/"))
+    assert selected == REQUIRED_NODES + REQUIRED_UI_NODES
+    assert len(selected) == len(set(selected))
+
 
 def test_every_workflow_node_names_one_existing_test_function() -> None:
     by_file: dict[str, set[str]] = {}
-    for node in REQUIRED_NODES:
+    for node in REQUIRED_NODES + REQUIRED_UI_NODES:
         relative_path, function_name = node.split("::", 1)
-        by_file.setdefault(relative_path, set()).add(function_name)
+        by_file.setdefault(relative_path, set()).add(function_name.split("[", 1)[0])
 
     for relative_path, expected_names in by_file.items():
         source = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")

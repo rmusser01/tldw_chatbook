@@ -419,23 +419,31 @@ def test_library_note_footer_shortcut_contract_is_exact():
     # vocabulary as the sibling canvases -- with a _COMPACT tier that only
     # compresses labels (same keys/destinations) for the ≤100-col
     # single-stage footer.
+    # task-32607 AC#5: the list tier advertises the bare "n" (the key that
+    # is live wherever this tier is shown) and gains "g go to folder"; "e
+    # export selected" lives on the select-mode tier, where its button is.
     assert LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS == (
-        ("ctrl+n", "new note"),
+        ("n", "new note"),
         ("/", "find note"),
+        ("g", "go to folder"),
         ("esc", "focus rail"),
     )
     assert LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT == (
-        ("ctrl+n", "new"),
+        ("n", "new"),
         ("/", "find"),
+        ("g", "folder"),
         ("esc", "rail"),
     )
+    # task-32247 moved the editor tier to esc-first + ctrl+end; this
+    # assertion still named the pre-32247 pair and had been failing on dev
+    # since. Re-pinned to what the screen ships (task-32607 fix round).
     assert LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS == (
-        ("ctrl+s", "save note"),
         ("esc", "back to notes"),
+        ("ctrl+end", "end of note"),
     )
     assert LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT == (
-        ("ctrl+s", "save"),
         ("esc", "notes"),
+        ("ctrl+end", "end"),
     )
     assert LibraryScreen.LIBRARY_NOTES_PREVIEW_SHORTCUTS == (
         ("pgup/pgdn", "scroll"),

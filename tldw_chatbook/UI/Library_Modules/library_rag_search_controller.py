@@ -1338,7 +1338,7 @@ class LibraryRagSearchController:
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
         # task-4023 AC#6 (RC-08): the landed evidence must be visible at
         # the point of action, unless a focused panel control needs the
-        # viewport (TASK-32707). A newer focus choice takes precedence.
+        # viewport (TASK-32751). A newer focus choice takes precedence.
         self.call_after_refresh(self._reveal_library_rag_results)
 
     def _reveal_library_rag_results(self) -> None:
@@ -1350,7 +1350,7 @@ class LibraryRagSearchController:
         mid-flight) is a silent no-op. A focused descendant takes precedence:
         the user may still be editing the query or have moved to another
         control while retrieval was in flight. Read focus here, after refresh,
-        rather than restoring a stale submit-time target (TASK-32707).
+        rather than restoring a stale submit-time target (TASK-32751).
         """
         try:
             panel = self.query_one("#library-search-rag-panel", LibrarySearchRagPanel)

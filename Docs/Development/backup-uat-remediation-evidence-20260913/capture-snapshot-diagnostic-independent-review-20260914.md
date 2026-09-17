@@ -1,0 +1,7 @@
+# Independent capture snapshot diagnostic review
+
+APPROVED; no actionable findings. Exact two-file hashes match /private/tmp/uat-capture-snapshot-hashes.json (helper059931cd11b3, test091d61da80b2). Independent complete existing helper suite:33 passed; /private/tmp/uat-capture-snapshot-independent.log.
+
+The added wrapper invokes original _PreviewScope.sqlite_target exactly once, with unchanged scope/source; successful result identity is retained and no success log emitted. Failure appends only existing bounded class/errno/winerror/basename/function/line metadata and one of four exact builtin-error reason strings. Other messages and subclasses are not emitted; source paths/content and frame locals are not inspected. At most eight shared records remain. All logging failures, including BaseException, leave the same snapshot exception and original terminal traceback in place; no deferred diagnostic error is added by this new path. stop restores the exact saved method before its existing failure handling.
+
+Tests cover result identity, cancellation, private-message/path omission, record limit, six metadata/write failure combinations, original error and terminal frame, and real concurrent ordinary-note snapshot refusal through the existing native fixture. This proves observer fidelity and the mechanism for a snapshot changing during discovery, not the preserved Windows Library cause. No product, runner, guard, deadline, retry, SQLite connection or authority change. Native Windows attribution remains pending a subsequent authorized run.

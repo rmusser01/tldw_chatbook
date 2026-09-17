@@ -660,6 +660,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # The first measurement always relabels (to replace the pre-measure
         # fallback budget); later ones apply the hysteresis threshold.
         self._row_width_measured = False
+        self._height_fit_layout_signal: Any | None = None
         self._workspace_tree_context_data: Any | None = None
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
         self.set_styles(height=None)
@@ -674,6 +675,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """
 
         self.call_after_refresh(self._fit_height_to_content)
+
+    def on_unmount(self) -> None:
+        """Release a pending layout wake when the tray leaves its screen."""
+        if self._height_fit_layout_signal is not None:
+            self._height_fit_layout_signal.unsubscribe(self)
+            self._height_fit_layout_signal = None
 
     def on_resize(self, event: Any) -> None:
         """Refit wrapped status rows when the rail width changes.
@@ -1077,11 +1084,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
            section overlapping the conversation list. With two or more
            children a settled layout ALWAYS yields a bottom of at least 2
            (the tray composes four or more children unconditionally), so a
-           bottom of exactly 1 means "not laid out yet": defer one more
-           pass instead of latching. Termination is guaranteed because a
-           displayed tray's children are laid out within the pending
-           refresh, and a hidden one already returned above on
-           ``region.height <= 0``.
+           bottom of exactly 1 means "not laid out yet": wait for the
+           owning screen's next layout instead of latching. A retained
+           tray below another destination can keep its old positive
+           region while recomposed children have no layout. Refresh
+           callbacks run on the active screen, so recursively requesting
+           one would spin until the owning screen becomes visible again.
 
         Returns:
             None.
@@ -1108,11 +1116,17 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
 
         if content_bottom == 1 and len(self.children) > 1:
-            # Mid-recompose: no child has a laid-out height yet (see point 3
-            # in the docstring). Defer one more pass rather than latch a
-            # bogus one-row height.
-            if self.is_mounted and self.display:
-                self.call_after_refresh(self._fit_height_to_content)
+            # Coalesce retries until this screen actually lays out children.
+            if (
+                self.is_mounted
+                and self.display
+                and self._height_fit_layout_signal is None
+            ):
+                signal = self.screen.screen_layout_refresh_signal
+                signal.subscribe(
+                    self, self._fit_height_after_layout, immediate=True
+                )
+                self._height_fit_layout_signal = signal
             return
 
         target_height = max(1, content_bottom - content_top)
@@ -1130,6 +1144,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             self.remove_class(*(name for name in self.classes if name.startswith("h-")))
             # ds-runtime: The rail region is measured to retain its viewport height during reflow.
             self.set_styles(height=target_height)
+
+    def _fit_height_after_layout(self, screen: Any) -> None:
+        """Retry once after the owning screen supplies fresh child geometry."""
+        screen.screen_layout_refresh_signal.unsubscribe(self)
+        self._height_fit_layout_signal = None
+        self.call_after_refresh(self._fit_height_to_content)
 
     def _is_inside_rail_section_body(self) -> bool:
         """Return whether this tray is nested in a collapsible rail section body.

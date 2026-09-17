@@ -1,0 +1,484 @@
+---
+id: DOC-2
+title: Backup and recovery release evidence
+---
+
+# Backup and recovery release evidence
+
+This ledger tracks original Task26 / TASK-32009. The final verification sections
+record completion evidence for the exact qualified macOS/APFS configurations;
+earlier sections retain their historical checkpoints and intermediate limitations.
+A passing native primitive or individual regression alone is not a whole-product
+release claim. Runtime availability is enforced by installed operation evidence,
+not enabled by this document. No published-build or executed-CI claim is made.
+
+## Declared platform evidence
+
+| Layer | Checked evidence | Scope and limit |
+| --- | --- | --- |
+| Bundled age helper | `Packaging/backup_age/qualification.json`: darwin/arm64; age1.3.2; Go1.26.2; helper protocol1; Python3.12.11; APFS; recorded wheel digest | Installed evidence declares reproducible build, pipe handling, inherited native network denial, integrity and same-protocol interoperability. This continuation inspected the declaration; it did not repeat packaging qualification. |
+| Native publication and admission | `tldw_chatbook/Backup_Recovery/native_qualification.json`: Darwin25.5.0, arm64, Python3.12.11, APFS, flags76583040; protocol2 | Installed evidence explicitly covers only publish_new, publish_file, publish_directory and admission. It does not establish isolated restore or replacement release qualification. |
+| Additional approved APFS publication | Same native resource: Darwin25.5.0, arm64, Python3.12.11, APFS, flags76583448; protocol2 | Commit `4bf66cc2d` enables publish_new, publish_file and publish_directory on matching volumes after explicit user approval and native tests. Admission remains unavailable for this row; whole replacement qualification is separate. |
+| Other combinations | Helper declaration lists darwin/amd64, linux/amd64, linux/arm64, windows/amd64 unavailable; Python3.11/3.13 untested | No inference from arm64 macOS results. Other OS/filesystem, runtime and upgrade combinations require actual qualification. |
+
+The exact native identity includes filesystem flags and interpreter version. Application capability checks must use the installed evidence, not a broader OS label or this prose.
+
+## Verified F9 replacement regression
+
+Repository test: `Tests/Backup_Recovery/test_f9_replacement_workflow.py`, committed in `3afae0913cf2f030705f77704e62e153e9770901`.
+
+Actual result: **1 passed in84.67s**, call83.40s. Executed in the isolated production extraction `/private/tmp/f9-complete-restart-probe-g8ga7iaj`, with the production safety-scope screen matching commit95c021d6c (`9b5841214a181ef6ef01d45f68b575f9d7abff4984f95acffef3ddf7a494b246`). The snapshot predates the Notes/Skills/OpenAI prerequisite follow-ups; no claim is made that this receipt exercised those later changes.
+
+Exact command, with the project virtual environment activated:
+
+```sh
+GOMODCACHE=/private/tmp/task31985-go/mod GOCACHE=/private/tmp/chatbook-task12-gocache GOPROXY=off python /private/tmp/f9-workflow-run.py -q Tests/Backup_Recovery/test_f9_replacement_workflow.py
+```
+
+The private wrapper creates HOME/XDG/config and installs the network guard before imports. It provides a120s outer watchdog; the permanent test retains its own110s seed,100s child and bounded service waits. The helper uses the preprovisioned offline cache. The fixture uses NullKeyring and generated disposable local data; it does not use developer profiles, credentials, models or external endpoints.
+
+The test exercises public Complete capture and native note readback, ordinary writes resuming before packaging, normal CLI F9 shutdown, real exec into fresh minimal recovery, new archive inspection, explicit selection of35 displayed preserved safety items,21 initially unchecked credential omissions, actual Abort untouched replacement, explicit acknowledgements and fresh password/review, validated replacement, clean shutdown and zero blocked network attempts in the fresh child. It does not inject engine scope, owner approvals or a successful service result.
+
+Local receipts: `/private/tmp/f9-workflow-transfer-final.log`, `/private/tmp/chatbook-f9-replacement-workflow-transfer-report.md`, `/private/tmp/chatbook-f9-workflow-root-review.md`. These temporary files are local audit aids, not portable build inputs. Permanent test SHA256: `313275b31fe26c2b2c03fff5abdd49a33030b4311725783bbf38ef7d5cd23896`.
+
+## Two-profile capture: Stage1 only
+
+Commit `5f529fba7` preserves shared directory group metadata during capture and adds `test_two_known_profiles_complete_capture_preserves_native_state_and_resumes` in `Tests/Backup_Recovery/test_complete_roundtrip.py`. The actual private fixture has two known profiles with custom database paths and a shared prompts database; one application is live and the other profile is closed at capture. Public Complete capture preserves declared shared peers, archive metadata and native stored content, then both profiles resume ordinary writes. Installed owners are accounted for as included, unused, or explicitly excluded; unused owners are not populated-owner roundtrip evidence.
+
+`/private/tmp/complete-stage1-final.log`: **2 passed in18.48s**, comprising the native capture case (call17.85s) and the existing seven-gate conjunction test. The clean snapshot `/private/tmp/complete-stage1-51kujhi2` was exported from `73e419651a77c67525cc36c01dc1abebe50ae1d3` with the exact capture correction and test. It used private HOME/XDG/config/cache/temp, a network guard before application imports, NullKeyring and the preprovisioned offline helper caches. `/private/tmp/shared-directory-capture-independent-review.md` verifies the final tested two-file scope and owner-status accounting: `capture.py` SHA256 `211a0534239bd039f18c64cdee73c83e268f160dcce93efb951d9435ccbd836e` and `test_complete_roundtrip.py` SHA256 `4d3f56a88e4adfbaf4e2031474afff87c850ed6d18f79b5a1f8c3fdaacd3695a`, both matching commit `5f529fba7`. This is capture and resumed-write evidence, not two-profile isolated restore or a complete create-to-rollback sequence.
+
+## Two-profile isolated restore and fresh opens
+
+Commit `bfb1d437a` adds the finite Stage2b scenario to `test_complete_roundtrip.py`. Clean `6bee8367a` plus only the test change passed **1 test in56.74s** (`/private/tmp/two-profile-stage2b-native-corrected.log`), using the same private runner and offline environment as Stage1. Test SHA256: `8b585160b46a1cbdb5159c461e674b0f8874a5c78e2ec41438c696459a372104`. Independent review and frozen source/artifact hashes: `/private/tmp/two-profile-stage2b-independent-review.md`, `/private/tmp/two-profile-stage2b-frozen-hashes.json`.
+
+The real isolated executor publishes the captured profiles into separate destinations. Each profile then opens through the actual recovery service, paired CLI selection, and a fresh mounted TldwCli process. Real opened receipts, distinct installation identities, saved notes/messages/media/research/deletions, shared prompts, retained Needs setup, and ordinary writes under the new identities are checked. Captured queued ingest remains queued before opening; ordinary startup records its existing interrupted-job state without replay. Selected original config/database hashes remain unchanged. The terminal transport is adapted for a headless mount; no opened receipt, owner approval, or successful result is manufactured. Production launch filtering and paired selection both enforce NullKeyring; network-attempt assertions remain zero.
+
+The first run failed1 in37.25s after successful publication because the fixture expected captured0755 directory permissions. The corrected assertion independently checks archived desired metadata, the plan's applied private0700 policy, exact mtime retention and disclosed normalization. No production code or source permissions were changed; restored permissions follow the disclosed private0700 plan. This proves the finite captured cohort's isolated restore and two opens; source removal, richer populated owners, interactive F9 restore, replacement/later rollback and full release qualification remain separate.
+
+## Recovered-media deletion process interruptions
+
+Commit `d067f3e41` adds `Tests/Backup_Recovery/test_recovered_media_crashes.py`. The first and only native run passed **2 tests in6.05s** (`/private/tmp/recovered-media-crashes-first.log`) on clean `6bee8367a` plus that test, Darwin25.5.0 arm64/Python3.12.11. Command: `GOMODCACHE=/private/tmp/task31985-go/mod GOCACHE=/private/tmp/chatbook-task12-gocache GOPROXY=off python -m pytest -q Tests/Backup_Recovery/test_recovered_media_crashes.py --basetemp=/private/tmp/recovered-media-crashes-hgvwr57g-pytest`, with the project virtual environment activated and all owner work in private guarded child processes.
+
+The actual owner commits its tombstone and pending deletion before one child exits91; the other passes through the exact native payload unlink before exiting92. Independent read-only catalog observations verify both interruption boundaries. Fresh owner processes complete pending deletion, preserve the tombstone and all reference identities, keep unrelated media bytes unchanged, and recover idempotently. Test SHA256: `90e21fcdc700b4627c3cba299426737b1ab3cc9165677b1eff4c897d801820c9`. Independent review: `/private/tmp/recovered-media-crashes-independent-review.md`; exact boundary facts and hashes: `/private/tmp/recovered-media-crashes-frozen-hashes.json`. No production code changed. This is abrupt process-death evidence; it does not establish power-loss durability, multiple-volume behavior or the complete crash matrix.
+
+## Delivered local model and RAG setup controls
+
+Commit `39cfec085` adds the current reviewed local-HF native identity needed for same-process projection builds. Commit `78bd37031` exposes **Settings → Library/RAG → Review local model → Approve local model**. The user separately chooses **Review recovery → Approve RAG owners**, then explicitly confirms **Reconcile / rebuild**. Approval alone performs no model load, download, configuration save, or rebuild. Config and unrelated owner approvals remain false in the actual positive fixture.
+
+The final clean five-file snapshot `/private/tmp/local-model-core-yLmzWN` uses committed `73e419651a77c67525cc36c01dc1abebe50ae1d3` plus the exact reviewed core3 and UI2 changes. `/private/tmp/local-model-core-ui-final.log`: **10 passed in62.17s**, including six native identity/invalidated-authority cases, ordinary model compatibility, existing approved-load and retirement cases, and the mounted isolated Settings model review → separate RAG review → actual backfill readiness → semantic query. The actual UI worker alone produces readiness; the test does not repair it with a later direct reconcile call. This is an actual mounted Settings host with installed local source owners, not a full TldwCli launch qualification.
+
+Approved source SHA256s, also verified against the committed files:
+
+| File | SHA256 |
+| --- | --- |
+| `RAG_Search/model_recovery.py` | `32e0ea5c27670ad0c1a9c3e9dd37c23dda73cccf87aee81c51712ac780c578f6` |
+| `RAG_Search/recovery.py` | `8e84bbaba123f3477109600ffb601242e64753fa2408ce7fa7fdc00cc913ca1c` |
+| `Tests/Backup_Recovery/test_activation_local_embedding.py` | `8d03c42a59b3fa0c0981d6ecb20eae518aaf526ee935d095684bb686a6c86d5b` |
+| `UI/Screens/settings_screen.py` | `b5d53134f5d8a7fcd0df8cd9eaef2e95951a1e0ee2d9e7555d039a3b743dd16c` |
+| `Tests/Backup_Recovery/test_rag_model_recovery_controls.py` | `a102f33202f163064ea4b6e352306bd1270fcd603a1c4ba31c470eb9e207cd0b` |
+
+Production paths in the table are relative to `tldw_chatbook/`; test paths are relative to the repository. Independent reviews are `/private/tmp/local-model-core-independent-review.md` and `/private/tmp/chatbook-rag-model-controls-independent-review.md`.
+
+Eight mounted UI negative cases also explicitly assert zero blocked network attempts: cancel, changed bytes, changed selection and navigation passed4 in68.54s (`/private/tmp/rag-model-ui-negative-confirm-final.log`); draft, late preview, missing local model and ordinary profile passed4 in65.83s (`/private/tmp/rag-model-ui-negative-preview-final.log`). Their production UI bytes are identical to the final combined snapshot; core dependency hashes for these earlier batches are recorded in `/private/tmp/rag-model-ui-final-frozen-hashes.json`. Unchanged model-only approval and accepted-native-write cancellation have separate passing receipts. Eleven UI scenarios is the incremental distinct total, not an eleven-case final module rerun. No separate mounted nonlocal-provider case is claimed.
+
+Fresh-process HF projection reuse deliberately remains `projection_model_reopen_unavailable`. The file-closure/model-review receipt does not establish that a saved projection was built from the freshly loaded model's computation. The approved design's projection contract requires sufficient provenance and explicit qualified reconciliation/rebuild; it does not permit automatic reconstruction or query when proof is missing. `/private/tmp/local-model-fresh-reopen-preflight.md` documents this existing boundary; no new provenance feature was implemented. Model receipt reopening and projection readiness reopening are different capabilities.
+
+## Open product evidence
+
+- The user explicitly approved the previously blocked later-rollback validation dispatch. Commit `9e0762de0` preserves the exact authenticated created builtin/eval destinations through later rollback. On clean `7fde83218` plus the six-file unit, the actual two-cycle regression passed1 in37.33s (`/private/tmp/later-created-execution-valid-locators.log`): new encrypted copy verified before retirement, edited bytes decrypted/read back, older ciphertext explicitly deleted, then both edited files recovered from the newer copy. Canonical package bytes and inode stayed unchanged. The held-read omission was corrected with exact reviewed retirement sources; subsequent malformed-TOML and missing-locator failures were fixed only in the initial test seed. Root census11 passed9.98s, production Ruff/Bandit0, independent final review approved. This is native component execution evidence; the actual public later-rollback credential-review flow is covered by the later e6150b7d3 receipt below.
+- Current-profile setup reporting is committed in `3ab0e5ac2`. Twelve new cases and four affected cases passed on committed `31e0034d2` plus the exact three-file change, including actual replacement/later generations, a fresh-process read and damaged-evidence refusal. Individual owner controls have separate receipts in their Backlog tasks; these do not establish the missing full product sequence.
+- Stage2a two-profile isolated planning initially failed1 in35.50s with `destination_collision` after the real Complete capture. Commit `322aea0c2` now permits a common destination only for explicitly shared concrete trees with matching full relative contents, ownership, shared declarations and metadata. The unchanged actual two-profile test passed1 in20.95s on clean `5f529fba7` plus the exact planner/test overlays (`/private/tmp/two-profile-stage2a-planner-positive.log`); it maps all54 selected roots in a fresh archive-only process. Eighteen focused and existing compatibility cases passed1.44s on clean `78bd37031` plus the exact three-file change (`/private/tmp/shared-directory-plan-final-compatibility.log`). Independent review: `/private/tmp/shared-directory-planner-independent-review.md`. Stage2a supplies planning-only evidence; Stage2b above separately verifies finite isolated publication, paired fresh opens and semantic readback.
+- The user explicitly approved the MCP discovery and inactive-display patches; they are applied. Four passive and fourteen review/native-lifetime cases passed. Actual app warmup exposed an unreviewed target bootstrap write and rebackup exposed an unrecognized generated container; the bounded corrections retain imported bytes and refuse unknown contents. Actual held capture, archive writing and canonical manifest/payload readback passed1 in13.42s (`/private/tmp/mcp-approved-rebackup-canonical.log`). These MCP changes remain under review; repeated-generation definition selection and shipped review controls are still open.
+- The specified seven-gate conjunction regression is committed in `b039a94f3`; it is not yet wired to product availability and supplies no native evidence. The packaging checklist update is committed in `7bff17e89`, with its qualification items intentionally unchecked.
+- Stage2b above separately establishes finite two-profile publication and fresh opens after the Stage2a planning-only receipt. Rich populated-owner coverage, the complete create/inspect/isolated-open/replace/later-rollback sequence, remaining native crash/multiple-volume matrix, product release-gate wiring and qualification CI remain Task26 requirements. Run named feature and inventory/lifecycle checks only; no full-suite run is implied. The latest committed owner inventory check passed11 in10.42s on clean `6bee8367a` (`/private/tmp/backup-owner-inventory-6bee.log`); it is a census check, not populated-owner evidence.
+
+Update this ledger with exact revision, environment, command and actual result when each gate is demonstrated. Keep Complete capture and replacement qualification separate. A generic boolean conjunction test establishes wiring only; it cannot substitute for owner, archive, native or product evidence.
+
+## Recovered-media details and explicit owner actions
+
+Commit `2071cd8da` adds passive bounded catalog details and exact asset/reference/hold reviews. Checked deletion and orphan cleanup compare the review inside the existing owner transaction, retain deletion history, and use the existing operation journal. No constructor, migration, journal replay, or payload decoding runs for passive details. Historical profile references remain attached; no alias equivalence is inferred.
+
+The clean `7fde83218` plus owner/test snapshot passed17 new cases and11 census cases in16.57s (`/private/tmp/recovered-details-final-owner-census.log`). An earlier version passed16 new plus36 existing owner cases in6.22s before the final bounded-reference parsing change. Root independently reviewed the two-file diff, verified source/snapshot/eight receipt hashes, and confirmed Ruff/format and production Bandit were clean. Report: `/private/tmp/chatbook-recovered-media-details-report.md`.
+
+Commit `fb9cf69d6` adds the current-profile service and **Restored profiles → Recovered media details** controls. Immutable reviews bind the selected configuration bytes and native generation to the owner's full reference/hold review. Explicit checked delete or orphan cleanup runs on the existing app-owned worker and survives navigation. Later config edits cannot relabel an already committed deletion as failed. Historical aliases remain visible; sizes are recorded metadata, not payload verification or disk accounting.
+
+The exact three-file service/UI snapshot, with the committed `2071cd8da` owner dependency, passed13 new and2 affected existing tests in13.02s (`/private/tmp/recovered-media-ui-final.log`). The tests use real native profile binding, actual owner mutations and a mounted Textual recovery screen. They cover changed selectors/configuration/references, damaged actual paired-generation evidence, confirmation, pagination, held/deleted rows, and navigation during accepted work. Root reviewed the full source/test diff and verified all source, snapshot, patch and five test-receipt hashes. Production Ruff and Bandit had zero findings. Report: `/private/tmp/chatbook-recovered-media-ui-report.md`; frozen hashes: `/private/tmp/recovered-media-ui-frozen-hashes.json`.
+
+Commit `ec8137d93` releases current-profile recovered-media references after actual ChatPersistenceService message deletion and retries pending cleanup when a new ConsoleRuntime is composed. Only positive database tombstones authorize release; other messages and historical profile aliases retain their references, and no payload is automatically deleted. Ancillary cleanup failure preserves the committed chat result and reports pending cleanup. The final varied-reference/bounded-cursor correction passed7 affected cases in11.02s; a separate actual two-process failure/retry case passed1 in2.30s. An earlier version passed26 new, compatibility and census cases before those final corrections. Production Bandit0; no new Ruff findings. Exact boundaries, snapshot and receipts: `/private/tmp/chatbook-recovered-message-lifecycle-report.md`, `/private/tmp/recovered-message-lifecycle-frozen-hashes.json`.
+
+Commit `446530525` covers direct Character/alias and public legacy message deletion. The native chat guard retires before ancillary cleanup, and committed success survives cleanup failure. All12 new cases,3 compatibility cases and11 census cases passed across named runs on clean `ec8137d93` plus the four-file unit. Two negative fixtures were corrected against actual foreign-DB and per-call-binding semantics; product code did not change after the initial green. Source/snapshot/evidence hashes and independent review: `/private/tmp/recovered-direct-message-frozen-hashes.json`, `/private/tmp/recovered-direct-message-independent-review.md`. Conversation-only soft deletion and payload deletion behavior remain unchanged.
+
+## Additional populated-profile and staging evidence
+
+Commit `7fde83218` populates Writing projects/scenes/versions, Study decks/cards, completed Quiz attempts and linked read/dismissed Notifications through actual owner APIs in both profiles. Clean `bfb1d437a` plus the test-only overlay passed the full two-profile capture/isolated/fresh-open scenario1 in53.32s. Captured raw database values and ordinary fresh-app readers both verify the data and relationships. Report: `/private/tmp/chatbook-rich-domain-roundtrip-report.md`.
+
+Commit `80e297557` adds prompt history, recent emoji, UI-state and custom-theme files to that same scenario. Clean `782e7becd` plus only the test overlay passed1 in69.82s with source SHA256 `63fdaee253e1bef8d371e89b57f2e6e804e0f1a42ae533bad2562d6bcf7f8ed9`. Every added file is included for both profiles, compared through capture/archive/installed readback and left unchanged at its original source. Actual fresh mounted readers verify history completion and emoji; state/theme files establish retained bytes, not automatic application. The first90-second aggregate wrapper timed out despite the later child completion; the unchanged test passed with a150-second aggregate watchdog and all individual child limits retained. No production behavior changed. Report: `/private/tmp/chatbook-backup-preferences-report.md`; exact source/snapshot/command/result hashes: `/private/tmp/backup-preferences-frozen-hashes.json`.
+
+Commit `782e7becd` retains the real selected source lease while staging an isolated restore from an already bound profile. Only a positively bound source uses the existing private-stage maintenance context; ordinary unbound application behavior remains covered. The actual healthy-replacement-then-isolated-restore regression passed1 in7.30s on clean `7fde83218` plus the two-file unit. Three existing ordinary/malformed-source cases passed in the preceding run, whose new-case failure was a path-type assertion corrected without changing publication behavior. Production Ruff/Bandit0. Report: `/private/tmp/chatbook-isolated-bound-stage-report.md`. These receipts do not qualify every installed owner or whole-product release availability.
+
+The next test-only cohort adds actual persona, dictionary-history, grammar, feedback, audio-history and user chunking-template APIs. Clean `80e297557` plus source SHA256 `ee73cfdab4993250bb34ec7fc018c50c79e71e056163663ef5f53ab901db9acf` passed capture1 in33.31s and full two-profile isolated/fresh-open1 in64.81s on their first runs. Exact captured and installed bytes precede fresh native getter checks; original files remain unchanged. Only the external audio generator is a fixture substitute. Persona remains inactive, grammar unchecked and template unexecuted. Reports: `/private/tmp/chatbook-backup-durable-cohort-report.md`, `/private/tmp/backup-durable-cohort-frozen-hashes.json`. No production behavior or inner test cap changed.
+
+
+## Completed recovery and later-rollback review corrections
+
+Commit `d3bfb469f` resumes ordinary replacement only across exact journaled native move gaps with validated retained bytes, metadata, parent identities and alias closure. The new14 tests passed35.50s; existing admission/staging/capture47 passed9.98s; finalization and actual Finish/Rollback compatibility28 passed22.81s. Commit `ed411564f` extends the same proof to credential retire/publish/unpublish with the exact historical credential amendment:5 native gap cases passed33.56s;2 changed-byte/parent refusals plus16 compatibility cases passed64.53s. Production Bandit0 and no new Ruff findings. Frozen reports preserve the intended failures, source/snapshot hashes, actual commands and independent review: `/private/tmp/recovery-rename-gap-final-report.md`, `/private/tmp/credential-admission-gap-final-report.md`. These are native process/move-gap receipts, not power-loss or multiple-volume qualification.
+
+Commit `e6150b7d3` completes explicit credential-omission review in the public later-rollback screen. Clean snapshot `/private/tmp/later-ui-final-event-i9bezs5f` (d3bfb469f plus exact service/UI/test4) passed the full fresh F9 replacement and later-rollback test **1 in173.86s**: `/private/tmp/later-ui-full-event-final.log`. Each operation ran in its actual fresh recovery host, with unchecked omission choices, untouched Abort, new review, stale-plan invalidation and consequence/password confirmation. Replacement `b220e215ab4343d180d781c5537619e2` committed153 records; later rollback `1b7f455ed55043738629650ea9b218cb` committed117 records and produced a verified new encrypted safety copy. Two untouched omission operations each ended in prepublication abort. Root independently checked all276 native journal hashes and both ciphertext hashes. The earlier55-second wait failure and Textual repeated-Enter event suppression are retained as failed harness runs; the final test uses a90-second second service wait,150-second F9 child, and a bounded wait for the actual button inactive state. No native operation or admission limits were changed. Production Ruff/Bandit0. Report, frozen hashes and independent review: `/private/tmp/chatbook-later-credential-ui-final-report.md`, `/private/tmp/later-credential-ui-final-hashes.json`, `/private/tmp/later-credential-ui-independent-review.md`.
+
+Commit `7fca99799` adds explicit local MCP Permissions review/defaults controls bound to the actual selected scope. The final source correction passed5 affected tests16.07s; the prior15-test result30.24s is incremental evidence, not a final17-test module run. Real service/stdio effects were tested through a minimal mounted Textual host, not a full application launch. No new static findings. Report: `/private/tmp/chatbook-mcp-recovery-controls-correction1-report.md`.
+
+## Further populated owners and canonical native schema
+
+Commit `df3a2e4c9` adds actual collection/workspace records, disabled RSS/reminders, unrun evaluation, kanban, local notifications and sync status to both profiles. The full native capture/isolated/fresh-reader case passed1 in52.27s (`/private/tmp/eight-owner-stage2b-final.log`). Commit `875ebdfa9` adds actual exported dictionaries and documented custom styles; full capture/isolated/fresh-reader case passed1 in51.99s (`/private/tmp/dictionary-style-stage2b-policy-final.log`). Both retain original source bytes and inactive behavior.
+
+The latter case required `769fb10d9`: accept the second exact full ChaChaNotes schema emitted by the existing native dictionary updater. Only its known trigger serialization differs; arbitrary whitespace/body/predicate/schema changes remain refused. The central/owner tests passed13 in9.54s and the actual full roundtrip above uses that policy. No migration, writer, schema normalization or inferred schema learning was introduced. Production security findings are unchanged. Reports: `/private/tmp/chatbook-eight-owner-roundtrip-report.md`, `/private/tmp/chatbook-dictionary-style-roundtrip-report.md`, `/private/tmp/chatbook-dictionary-schema-policy-report.md`.
+
+All commands used the activated project Python3.12.11 environment, private guarded fixtures and offline cached helper builds on the development Darwin25.5.0 arm64/APFS host. These finite receipts supersede the earlier open later-rollback UI statement; they do not establish every populated owner/option, full production create/inspect/isolated/reopen sequence, all crash/platform combinations, or final release-capability wiring. Task32009 remains in progress.
+
+Commit `3738515ff` adds retained configuration history and note templates to both profiles. The intended missing-history test failed1 in20.85s; the complete native capture/isolated/twofreshreader case then passed1 in49.41s (`/private/tmp/history-templates-stage2b-first.log`) on clean875ebdfa9 plus the exact test overlay. Native config history and template APIs produce the fixture; capture excludes the explicitly synthetic managed secret while retaining historical ordinary content and locators. Fresh readers compare the exact sanitized history and template content; current configuration never adopts the historical settings and both original sources remain unchanged. All31 evidence hashes and8 child programs were independently verified; Ruff1→1/Bandit8→8 unchanged. Report/review: `/private/tmp/chatbook-history-templates-roundtrip-report.md`, `/private/tmp/history-templates-independent-review.md`.
+
+Commit `242c207f4` fixes actual shared Chatbook registry capture when selected profiles share a registry but use separate owned ZIP directories. Discovery reconciles only the concrete registry aliases' included ZIP dependencies, capture selects deterministic references, and isolated relocation requires the authenticated selected peer and explicit matching ZIP destination. External or missing references remain unresolved. The native capture/public ZIP writer/isolated/twofreshappreader case passed1 in42.51s (`/private/tmp/shared-chatbook-roundtrip-final.log`);16 finite policy cases and30 existing source-absent absolute/relative relocation guards and owner census passed across named runs. The actual shared_payload_mismatch red and two fixture-only failures remain recorded. Exact four-file source/snapshot/patch and30 receipt hashes were independently checked; production Bandit0 and Ruff4→4 unchanged. Report/review: `/private/tmp/chatbook-shared-registry-correction-report.md`, `/private/tmp/shared-chatbook-independent-review.md`. This supplies actual shared registry/ZIP recovery evidence, not the still-open combined Skills cohort.
+
+## Actual second-volume source and further local content
+
+Commit `79b4810c1` adds explicitly supplied disposable APFS-image cases. Actual raw primitives/refusal and native application capture passed **2 in9.78s** (`/private/tmp/native-multivolume-final.log`). The actual research DB, explicit external file and empty directory live on the image; Admission, staging and archive remain on the qualified host volume. Native writes resume and sealed archive readback retains the data and directory. Explicit external files make this archive per-file consistent/partial, even though inventory is complete. The image's different filesystem flags remain unqualified for public destination publication and Admission; these tests explicitly verify that refusal. No image-side replacement, multivolume recovery, or physical power-loss guarantee follows from this result. Report/review: `/private/tmp/chatbook-native-multivolume-final-report.md`, `/private/tmp/native-multivolume-independent-review.md`.
+
+Commit `dd637bc55` closes the combined Skills/shared-Chatbook cohort noted above. The full two-profile native capture/isolated/two fresh mounted app readers passed **1 in49.09s** (`/private/tmp/skills-books-stage2b-final.log`). Both profiles retain exact Skills content and historical trust bytes, but native restored readers report recovery review and deny historical script execution grants. Both apps resolve and preview both actual shared-registry Chatbook ZIPs from their explicit restored destinations. The archive is plaintext; only existing Skills snapshots are encrypted. Original sources remain byte-exact. The no-model fixture now disables automatic indexing through its ordinary initial configuration before imports; no runtime model or inventory override is used. All41 frozen artifacts and the complete test diff were independently checked. Report/review: `/private/tmp/chatbook-skills-chatbooks-roundtrip-report.md`, `/private/tmp/skills-books-independent-review.md`. Ruff1→1/Bandit8→8 remain unchanged baseline findings.
+
+Commit `808988d86` corrects concurrent restored-profile/recovery-copy list rendering. Three actual mounted-screen failures became **3 passes in0.81s** on final source; two existing list/copy cases also pass. A delivery token and post-removal freshness check prevent stale callbacks from mounting duplicate IDs or rows after navigation. Production Ruff/Bandit0; new test has expected assertion findings only. This is a rendering correction, not a complete F9 launch receipt. Report/review: `/private/tmp/profile-list-render-final-report.md`, `/private/tmp/profile-list-render-independent-review.md`.
+
+Commit `7d702f20a` accounts for the exact native TTS profile-store lock left after repository closure. Only the selected database's absent or empty regular singlelink lock is intentionally excluded; linked, nonempty or directory entries remain unsupported, and unrelated names receive no declaration. Actual default/custom native failures became **8 new plus11 census passes in12.54s**. Production Ruff/Bandit0; no census exemption or lease changes. This removes a reproduced backup inventory blocker; separate briefing-audio relocation and native readback still require evidence. Report/review: `/private/tmp/chatbook-tts-lock-inventory-report.md`, `/private/tmp/tts-lock-inventory-independent-review.md`.
+
+The parent terminal failure above is resolved by `33ddac172`: drawing remains paused until the terminal resumes, and expected synchronous launch errors are reported after resume. Two actual PTY failures became four passes in8.17s, covering success, retained cancellation, failed service result and immediate launch error. No new production lint/security findings. Report/review: `/private/tmp/profile-terminal-final-report.md`, `/private/tmp/profile-terminal-independent-review.md`.
+
+
+## Complete F9 create, inspect, isolated restore and open regression
+
+`Tests/ProductionApp/test_backup_restore_end_to_end.py` passed **1 in36.73s**, call35.80s, on clean27bb7b6ea plus the exact terminal correction subsequently committed33ddac172 and this new test. `/private/tmp/backup-f9-terminal-fixed-final.log` records the result. Actual TldwCli runs in a private PTY with a real non-headless terminal driver, follows F9 Settings controls through create/inspect/explicit isolated review/publication/profile open, and returns to the parent. A controlled launcher adapter preserves the actual prepared CLI arguments/environment and starts a fresh real CLI selection plus mounted headless application reader; this is not an unmodified interactive standalone child session.
+
+The archive is Complete/coherent and plaintext; the synthetic managed secret is excluded. The fresh reader uses the exact selected config/core, reads the captured note, excludes the later source note and observes its genuine opened receipt. The parent retains both original notes and byte-exact configuration and closes its recovery service. Service states distinguish archive verification, installation validation, successful opening and Needs setup; no restored execution is approved. Native isolated operation05f5189f0a79425aab9222d28c30b804 ends committed after22 hash-linked records. Root checked the entire chain and archive digest83fe6ddf886fba5b0063dee1bc11c47b7f0ca03d79b9c39efade395e58412860; independent review verified all37 frozen artifacts and source equality.
+
+Test source SHA256ad537ac16190fe3bea0391b8bd1c14fe3cb09f9f0f2ae06b1222b583c9f913b8; report/review: `/private/tmp/chatbook-f9-create-restore-open-report.md`, `/private/tmp/backup-f9-product-final-independent-review.md`. Ruff0/format/compile pass; test Bandit has3 expected assertion findings only. The original consent fixture failure and two180-second failed runs remain separately preserved; no deadline was raised. This supplies the planned one-profile plaintext product sequence. Remaining populated-owner/options, multivolume recovery, installed release decisions and planned CI/packaging checks remain open.
+
+## Approved second-volume publication and packaged backup flows
+
+Commit `4bf66cc2d` adds the explicitly approved publication-only row for Darwin25.5.0/arm64/Python3.12.11/APFS/flags76583448. It applies to every matching volume; the format does not restrict it to the disposable image UUID or path. Actual raw qualification evidence in `ac146ce32` preceded this row. The normal wrapper and malformed-evidence cohort passed13 in2.47s; root independently reran the exact frozen source with13 passes in2.05s. File/empty/populated-directory moves, two-parent barriers, races, changed-parent and cross-device source-preserving refusal are covered. Existing host capabilities are unchanged, and image Admission remains refused before creation. This supersedes the earlier image-publication refusal as current capability, while retaining that earlier receipt as historical evidence. It does not qualify whole-engine multivolume replacement or physical power loss. Report: `/private/tmp/image-wrapper-final-report.md`; frozen hashes: `/private/tmp/image-wrapper-frozen-hashes.json`.
+
+Commit `763183fd5` runs both plain and encrypted F9 flows from a real native wheel installed into a private directory. Both passed2 in69.54s: `/private/tmp/backup-f9-packaged-fixed.log`. Existing packaging qualification and the reproducible native helper digest govern the build; no helper manifest, resource-root or runtime qualification override is used. Both parent and fresh reader verify that production modules come from the installed package, and all2034 initial installed files remain unchanged. The UI creates, inspects, explicitly restores and opens each archive; exact source preservation, secret exclusion and restored note semantics are checked. The fresh child is still the explicitly controlled actual-CLI/headless-reader adapter described above, not an unmodified interactive child. Both native isolated operations end committed after22 independently checked hash-linked records. This adds actual encrypted creation and installed-package evidence to the prior plaintext source test.
+
+The first wheel run failed2 in15.22s because fresh database startup could not load the existing v40→v41 persona visual SQL migration. The only production change adds that file to the two explicit distribution lists; no schema behavior changes. Its exact bytes are verified in both the successful wheel and a separately built sdist. Root and independent review checked the three-file source and artifact evidence;82 artifacts are frozen in `/private/tmp/backup-f9-packaged-frozen-hashes.json`. Ruff/format/child compilation/diff checks pass; Bandit reports test assertions only. Report/review: `/private/tmp/backup-f9-packaged-final-report.md`, `/private/tmp/backup-f9-packaged-independent-review.md`.
+
+## Notes replicas and briefing audio
+
+Commit `2892e1c61` extends the two-profile combined case with native FileNotes replicas and NotesInterop membership. The actual full capture/isolated/fresh-reader scenario passed1 in96.62s with existing limits. It compares exact rows, version history, raw CRLF/NUL content and search results, while leaving both restored Notes integrations pending. Historical external paths remain retained metadata and are not followed. The intended missing-row failure and final31 artifacts are preserved and independently checked. Report/review: `/private/tmp/chatbook-notes-replica-roundtrip-report.md`, `/private/tmp/notes-replica-independent-review.md`.
+
+Commit `335b82a05` fixes completed briefing-audio relocation through authenticated same-profile asset mappings. Only the completed-row file locator is updated, through the existing restricted private-candidate SQLite API; ordinary capture validation remains unchanged. Real native generation with a deterministic synthesis fixture, Complete capture, archive, isolated publication and fresh native readers succeed, including when the original WAV is absent. Historical unsuccessful rows and all other completed-row fields remain intact. Staged byte drift is refused before publication, and finite SQL/dependency negatives retain strict scope. All16 new cases, one previous dependency case and11 owner-census cases pass across the documented bounded cohorts; the intermediate expected-error fixture failure is retained rather than described as a green cohort. Root and independent review checked all four source files, patch and23 artifact hashes. Production Bandit0; one unchanged Ruff finding. Report/review: `/private/tmp/chatbook-briefing-audio-relocation-report.md`, `/private/tmp/briefing-audio-relocation-independent-review.md`.
+
+Task32009 remains in progress. Actual two-volume replacement/recovery, remaining populated owners/options, independent installed release decisions and planned CI checks remain outstanding; the above component receipts do not assert those results.
+
+## Two-device staging, visual identity and placement containers
+
+Commit `ec82c4ee6` adds actual coherent capture, current native edits, closed-target inventory and replacement planning/staging with research on the disposable APFS image and other state on the host. The final named case passed1 in10.15s:59 staged artifacts,19 publication units (18 host and1 image), distinct private staging roots on both devices, and49 unchanged live files. Root verified the test and23 frozen artifacts. No replacement or recovery executes in this Stage1 receipt. Report: `/private/tmp/two-device-stage-final-report.md`; hashes: `/private/tmp/two-device-stage-frozen-hashes.json`.
+
+Commit `6b935fea1` verifies a native manual character visual-identity fork, Complete capture, archive, isolated restore and fresh typed graph/asset reads. The first run passed1 in22.82s;32 custom asset files retain exact identity, references and bytes, and original configuration/assets remain unchanged. Root reviewed the test and23 frozen hashes; Ruff0 and test assertion-only Bandit findings. This case supplies custom character asset evidence without model generation or source-absence coverage. Report: `/private/tmp/chatbook-visual-identity-roundtrip-report.md`; hashes: `/private/tmp/visual-identity-frozen-hashes.json`.
+
+Commit `fb6f2e842` allows an explicitly selected synthetic placement container to exist only when it is pinned, owned, private and empty. Its directory is excluded from restoration, metadata adoption and retirement; concrete roots, data selectors, external additions and existing payloads retain their previous refusal. Changed-container and control-overlap checks remain enforced. Two intended failures preceded17 new and7 compatibility passes in2.93s, including actual native publication and cancellation. Root and independent review checked source2 and9 artifacts; production Ruff/Bandit0. Report/review: `/private/tmp/isolated-synthetic-container-report.md`, `/private/tmp/isolated-synthetic-container-independent-review.md`.
+
+The shared-HOME pet correction recognizes only the native canonical JSON file and exact timestamped automatic backups for the actual owner/profile and direct synthetic container. Staging retains exact default-destination checks; discovery, native storage APIs and inactive imported-owner status are unchanged. The actual missing relocation route preceded16 finite passes in0.68s and15 native/compatibility/census passes in60.31s. The full two-profile capture/ZIP/isolated scenario includes both fresh default load/list readers, exact backup bytes and original source preservation. Its intermediate environment-diagnostic failure remains separately recorded. Root and independent review checked source3 and39 receipts; Ruff and production Bandit0. Report/review: `/private/tmp/chatbook-pet-owner-restore-report.md`, `/private/tmp/pet-owner-independent-review.md`. This does not establish Windows runtime or arbitrary dormant pet storage support.
+
+## Included credentials through the packaged F9 flow
+
+The third packaged F9 mode exposed the internal credential material as a normal destination slot. The one-line service correction omits only credential-only roots from those slots, preserving verified summary metadata and the existing encrypted retention path. Actual typed17 omission review, initially unchecked controls, a fresh encrypted capture, inspection, isolated publication and fresh profile open now pass1 in69.63s. The archive is correctly Partial because of acknowledged omissions; synthetic inline credentials remain in encrypted capture, while restored configuration is sanitized and matching ciphertext is retained. Original sources remain unchanged. Existing plain/encrypted-exclude F9 modes and three encrypted-retention variants pass5 in122.79s; root's service-summary compatibility case separately passes1 in2.34s.
+
+The intended destination-slot failure62.06s and preceding fixture diagnostic failures remain recorded. Root and independent review verified source2 and22 frozen artifacts, the actual wheel/service bytes and retained ciphertext; root additionally checked22 journal sequence/hash links ending committed. Production Ruff/Bandit0. Report/review: `/private/tmp/backup-f9-credentials-final-report.md`, `/private/tmp/backup-f9-credentials-independent-review.md`; hashes: `/private/tmp/backup-f9-credentials-frozen-hashes.json`. This establishes the specific supported-credential product case, not every credential backend or final release availability.
+
+The workspace shadow-history test passed on its first run1 in24.62s. Two actual native Git snapshots,28 owned files and20 directories survive Complete capture/ZIP/isolated restore and fresh default `tip`, `has_snapshot` and `file_bytes` reads. The native workspace binding remains read-only; original config, owned shadow data and external workspace content remain unchanged. External workspace bytes are not implicitly added to the archive. Root reviewed the source and actual getter contract and verified all21 frozen artifacts; Ruff0, test assertion-only Bandit findings. No production behavior changed. Report/hashes: `/private/tmp/chatbook-shadow-roundtrip-report.md`, `/private/tmp/shadow-roundtrip-frozen-hashes.json`.
+
+The Notes import receipt test passed on its first run1 in29.17s. A real selected Markdown import uses native discovery, parsing, approval and execution to create one note, two folders and a membership with a completed receipt. Complete ZIP capture, isolated publication and fresh native getters preserve the session/effect/target identities and returned values. The restored Notes owner remains pending; no import replays. Original receipt/config/Markdown and restored receipt bytes remain unchanged. Root independently reviewed the full test and22 artifact hashes; Ruff0 and assertion-only test Bandit findings. Report/hashes: `/private/tmp/chatbook-note-receipt-roundtrip-report.md`, `/private/tmp/note-receipt-roundtrip-frozen-hashes.json`.
+
+Selected local options now pass31 cases in28.90s on clean `7aa866119` plus the exact three-file unit: one native capture/ZIP/isolated/fresh-reader case,17 finite diagnostics destination cases, two existing inventory guards and11 owner-census cases. The actual missing diagnostics relocation failed first; independent review also found and reproduced a file-as-directory allowance before the correction. Only the configured diagnostic log or its immediate ASCII-decimal rotations may restore to their exact expected file paths. Native model installation supplies one explicitly selected dependency closure; unrelated model payload stays excluded. Actual native logging supplies the captured event. External text, binary bytes and an empty directory survive, with the archive honestly reporting Partial consistency and unsanitized content. Fresh readers preserve descriptors, dependencies and bytes while models remain inactive and pending. Original config/model/log/external bytes remain unchanged. Root verified three sources across working/snapshot/frozen copies, the patch and34 artifacts; production Bandit0 and three unchanged Ruff findings. A mistaken mixed-working-tree run is retained as diagnostic evidence only; final test whitespace cleanup has exact AST equality. Report/hashes: `/private/tmp/chatbook-selected-options-final-report.md`, `/private/tmp/selected-options-frozen-hashes.json`.
+
+The default tokenizer placement correction passes26 focused/native cases in6.67s, followed by the actual Console roundtrip and six existing replacement-directory/synthetic compatibility cases passing7 in29.81s on clean `7aa866119` plus four exact source/test overlays. Only an authenticated concrete `tokenizers.custom` root at its ordinary default path may use an existing owned/private/empty directory. It retains the root inode and applies planned metadata through the existing journal protocol; identical shared trees use one physical intent. Replacement still requires verified rollback coverage. Native cancellation preserves the empty root; real child-rename and metadata-update process deaths recover through fresh Finish, while changed child/inode/mode state remains fenced. Ancestor drift is covered at plan recheck, not as a fresh pending-parent recovery case. These component cases use crafted authenticated archives. Separately, a genuine accepted Console turn and installed tokenizer produce Complete capture/ZIP/isolated/fresh native readback with exact run semantics, five history files, two tokenizer files and an empty execution cache. Root verified four working/snapshot source files,29 artifacts, actual archive digest and nine original source-file hashes; Ruff and production Bandit are clean. Report/hashes: `/private/tmp/tokenizer-container-final-report.md`, `/private/tmp/tokenizer-container-frozen-hashes.json`. This adds no general existing-directory adoption or whole-product release qualification.
+
+The custom-config initial-binding proposal was initially held after automatic approval review rejected its durable directory-scope expansion. Exact held/rejected patches and intended failures remain recorded in `/private/tmp/first-config-binding-blocked-report.md`. The user subsequently explicitly approved ongoing future-file access within a verified private custom configuration directory, excluding recovery controls. That approval supersedes the earlier hold for this bounded change only.
+
+The approved correction derives the current configuration directory from independent current-owner discovery, proves its private closed footprint and identity, and checks it again under existing maintenance before the first binding. An unbound registration left by a failed attempt cannot bypass that proof on retry. Forward publication also requires coverage of the mapped configuration directory itself. No default-control-parent exception, arbitrary data-root expansion or native qualification change is included. The fresh two-volume matrix is recorded below; the earlier successful Finish diagnostic is not counted as a passing matrix case. Task32009 remains in progress.
+
+The exact three-file correction on clean `665d18630` passes29 distinct affected cases across bounded groups: actual first binding and fresh CLI startup, prepared cancellation/Abort/fresh CLI with unchanged original binding and bytes, closed-directory/retry refusals, publication-scope components, and both unchanged full CLI replacement scenarios (86.84s and98.79s). The topology case passes in an otherwise failing bootstrap-fixture group; its separate failure remains recorded. The corrected bootstrap case tests the helper against real discovery and protected controls, not a planned replacement. Root verified nine working/snapshot/frozen source copies,31 report/static/test receipts, the patch and431 referenced native artifacts, including the final141/138-record committed chains and each earlier untouched Abort. Ruff and production Bandit report zero findings; test warnings retain existing subprocess findings and add two assertion findings. Report/hashes: `/private/tmp/first-config-binding-approved-final-report.md`, `/private/tmp/first-config-binding-approved-frozen-hashes.json`. Default data outside the tested private custom container and parents containing recovery controls remain unsupported by this correction.
+
+## Fresh two-volume interruption and recovery
+
+With the private configuration binding correction committed as `9dd9c34fd`, all four fresh native-wheel cases pass in separate bounded runs: between-device Finish145.99s and Rollback201.77s; image-publication Finish92.16s and Rollback161.84s. The second boundary exits after the actual image-volume rename and native barrier but before its journal acknowledgement. Every case uses real capture, explicit17 credential-omission review, untouched Abort, a fresh reviewed plan and an independently decrypted safety copy proving both current database values before the first move. No helper, native qualification or Admission override is used.
+
+Fresh recovery resolves the actual pending state and clears its fence. A new CLI startup and actual application constructors/native getters return archived host/image values after Finish and pre-replacement values after Rollback; this reader is not a mounted interactive UI session. Rollback also verifies original artifact identities and metadata. Root independently verified the four actual on-disk hash-linked journal chains (141/182/141/190 records), their preserved interrupted prefixes (107/107/110/110), safety ciphertext digests and semantic readback. Original input archives and retained encrypted safety copies remain unchanged.
+
+The first fresh Rollback attempt failed at its90-second test-child watchdog while native moves were still progressing at88.385s. That fixture and failure remain preserved and are not counted as a pass. Only the matrix test's Rollback child budget increased to180s, with a330-second private outer runner; Finish remains90s, initial review35s, reviewed interruption90s, and production Admission30s. All six embedded child programs are byte-identical across this test-only budget change. The successful fresh retry completed recovery about98 seconds after child creation. The image retains publication-only qualification; controls and Admission stay on the qualified host. No physical detachment, power-loss or broader platform qualification is claimed.
+
+Root verified the three working/snapshot/frozen test copies,25 receipts, patch and949 referenced native artifact hashes. Ruff and formatting pass; Bandit reports five test assertions only. Report/hashes: `/private/tmp/two-device-approved-final-report.md`, `/private/tmp/two-device-approved-frozen-hashes.json`. The read-only original Step5 reconciliation at `/private/tmp/backup-step5-final-reconciliation.md` credits existing native/admission/archive/source/SQLite/index/tombstone/credential checks without repeating whole suites. Its ENOSPC handling equivalence is explicitly a source inference, and unavailable-path refusal is not physical-disconnection evidence. Populated-owner completion and independent product release wiring/CI remain separate unfinished original Task26 work.
+
+## Native RAG indexing capture prerequisite
+
+A populated native `RAGIndexingDB` exposed `unsupported_sqlite_owner` during Complete capture: the restricted validator omitted the owner's existing factory. The correction adds that factory to the installed resolver. Its exact schema0 policy, private SQLite registry, authorizer, budgets and migration checks remain unchanged. Four new native validation cases first reproduced the refusal, then passed alongside11 existing schema/authorizer/migration guards (15 in1.76s). After a fixture-only UTC spelling correction, the four affected cases passed again in1.38s. Both validation modes preserve native tracking records; an altered catalog and foreign supplied policy remain refused.
+
+The separate retained-RAG roundtrip now reaches successful coherent capture, preserving all six actual Chroma files and directory metadata. Its unfinished downstream assertions exposed two fixture assumptions: credential exclusion removes an empty API-key field, and SQLite backup changes header bytes while preserving the database body. These failures are retained and do not count as completed archive/restore evidence. Original source hashes remain unchanged; no readiness or automatic rebuild is enabled.
+
+Root reviewed the two-file patch and verified203 source/receipt hashes. Ruff, formatting, compilation and whitespace checks pass; production Bandit has no findings. Exact commands, snapshots, results and limits: `/private/tmp/rag-retained-prerequisite-report.md`; hashes: `/private/tmp/rag-retained-prerequisite-hashes.json`. The new full roundtrip test remains outside this prerequisite commit and Task32009 remains in progress.
+
+## Retained RAG archive and isolated restore
+
+On committed indexing prerequisite `12766f38a` plus six scoped source/test overlays,27 focused and affected component cases pass in4.90s, followed by the genuine retained-RAG roundtrip passing1 in22.02s. The fixture uses actual Note/profile/tracking APIs and1100 native Chroma records with supplied vectors. Its coherent61-file archive is written, independently acquired and verified, then restored into explicit isolated destinations. A fresh selected-profile process reads the relocated profile setting, exact native Note and tracking records, all six projection files and directory mtimes/private modes. Original config/profile/indexing/projection bytes and directory metadata remain unchanged. The indexing reader's observed SQLite-header change is recorded; semantic records remain exact.
+
+Known absolute index selectors now map only through the same-profile captured projection root identity, concrete non-synthetic root metadata, definition/config dependencies and explicit selected destination. Missing, foreign, unselected, synthetic, ambiguous and relative/home-relative roots remain refused. Both staging and installed-copy validation check the final mapping using the existing bounded owner reader. Arbitrary descriptions/history and the local-snapshot byte-preservation check remain unchanged. An earlier21.81s failure at the ordinary live reader is preserved; it is not counted as a pass.
+
+The fresh reader leaves all three RAG owners pending and makes no model, query or rebuild call. This establishes retained data and relocation, not embedding execution or retrieval readiness. Root verified all737 source/receipt hashes, six current/frozen source identities, equivalence to the tested production ASTs, unchanged test bytes, the archive digest and all25 actual journal hash links ending committed. Ruff/format/compile/whitespace checks pass and production Bandit reports no findings. Final report, exact commands and artifacts: `/private/tmp/rag-retained-final-report.md`, `/private/tmp/rag-retained-final-hashes.json`, `/private/tmp/rag-retained-root-verification.json`. Broader Task32009 qualification remains incomplete.
+
+## Retained TTS reference audio and loose voices
+
+The test-only TTS cohort on committed `4f7bb0a5a` passes two separate final native runs: canonical reference BLOB19.40s and loose-voice catalog17.11s. Actual native writers create the reference/profile with the installed recipe declaration and a separate Chatterbox catalog/WAV. Each case creates and verifies a55-payload Complete archive, publishes an isolated restore and reads it through fresh native APIs. The reference and profile aliases share one restored database, retaining UUIDs, revision, timestamps, WAV/text/audio metadata and recipe requirement. The loose catalog reader succeeds and its copied WAV matches; the historical audio path remains distinct from the new retained path. TTS owners remain pending and Needs setup remains true. Model execution and synthesis were deliberately not invoked.
+
+Original config and input WAV bytes/identities are unchanged. The BLOB database's ordinary native reopen/maintenance-close changes its SQLite hash/mtime; the observed post-close state and semantic records are preserved through subsequent restore/readback. The report records this difference rather than claiming live-database byte equality. Several earlier fixture mistakes are preserved separately and are not counted as product defects or passing evidence.
+
+Root verified both complete archive digests/member hashes and25/28 actual journal hash chains ending committed. Independent source review binds all eight executed child programs to the final test. The final hash manifest's single truncated log-hash entry was regenerated from disk; the original manifest is preserved and all17 corrected source/report/check/log/receipt hashes verify. Ruff, formatting, compilation and whitespace checks pass. Root's unsuppressed Bandit scan reports five pytest assertions and one false-positive SQL warning on fixed SELECT text in the embedded child; no input constructs that SQL. No production code changed. Exact commands/results: `/private/tmp/tts-retained-final-report.md`; hashes: `/private/tmp/tts-retained-final-hashes.json`; root archive/journal checks: `/private/tmp/tts-retained-root-verification.json`; raw scan: `/private/tmp/tts-retained-bandit-raw.json`.
+
+## Saved generated-image restore
+
+On committed `30f6cb98f` plus the two scoped source/test changes, the real saved-image case first failed after successful native save, Complete capture, archive acquisition and planning: staging refused `owner_relocation_unverified:generation.assets`. The verified public archive contained a concrete generated-image root and `saved/retained.png`; temporary image/video records were excluded. Staging now maps this exact installed owner's saved descendants to the selected profile's normal generated-image root, retaining concrete-root and exact-destination checks. Temporary/video, synthetic-root and renamed-destination cases remain refused. The existing recovered-media conversion is unchanged.
+
+The final module passes6 cases in17.15s, including five focused mapping cases and an actual54-payload Complete archive → isolated restore → fresh ImageGenerationService path/readback. The restored77-byte PNG has the original digest, dimensions and pixel values; the native journal ends committed, original saved/disposable image identities remain unchanged, and network attempts are zero. `generation.assets` remains pending with Needs setup. No generation backend, model or provider was invoked. This is saved-data retention evidence, not generation execution or replacement qualification.
+
+Root independently verified every archive payload, all four executed child programs against final source and all25 journal hash links. Ruff lint, compilation and whitespace checks pass; the new test is formatted. Existing staging formatting differences remain the same five unrelated baseline regions. Unsuppressed Bandit reports six pytest assertions and no production findings. Final test formatting changed only outer whitespace, with executed child strings unchanged. Exact commands/results and preserved failures: `/private/tmp/task26-saved-generation-report.md`; final artifact/source hashes and root checks: `/private/tmp/saved-generation-root-verification.json`; raw scan: `/private/tmp/bandit_task26_saved_generation_final.json`. Task32009 remains in progress.
+
+## MCP saved targets, context and rotated history
+
+The test-only native MCP cohort on committed `4bbd81749` uses the actual target/context stores and execution-log builder/append APIs. It preserves the app's default target, adds a nondefault inert target without credentials, and writes two denied historical metadata records that rotate into current and `.1` files. These are fixture history records, not executed tools. The native log builder excludes supplied argument values and result bodies. A real56-payload Complete archive is verified and restored into isolated destinations; a fresh app and native readers retain the target IDs, authority-scope ID, all canonical default fields after expected credential sanitization, context target reference and both history generations. Runtime context remains the safe local default, MCP owners remain pending and no network attempt occurs. Both source and restored store files remain unchanged through fresh construction and passive reads.
+
+Final exact node passes1 in18.53s after independent review required an explicit comparison of restored default-target fields. Earlier fixture-only failures (unsupported auth mode, guessed setup marker, incorrectly empty native default list, and destination username mismatch) are preserved and are not product defects. Earlier20.72s and17.98s greens are separate snapshots; the latter repeated unchanged child programs to emit test receipts and is not additional behavior coverage. Root verified every payload, four executed child programs and25 hash-linked journal records ending committed. No production code changed. Final command/output: `/private/tmp/task26-mcp-retained-final-test.log`; report: `/private/tmp/task26-mcp-retained-history-report.md`; root checks: `/private/tmp/mcp-retained-history-root-verification.json`. Broader release qualification remains in progress.
+
+MCP final scoped Ruff/format/compile/whitespace checks pass. Unsuppressed `/private/tmp/bandit_task26_mcp_retained_final.json` reports three low-severity pytest assertion findings, with no medium/high findings, scan errors or suppressions. The root verification record includes17 source/report/scan/test-log/child/receipt hashes.
+
+## Historical chat-context sidecar compatibility
+
+The test-only legacy-context cohort on committed `3dda85cf2` passes1 in21.98s. Actual conversation/message APIs create a conversation and two messages; an explicitly historical version1 sidecar fixture references their real IDs. This is compatibility input, not a current production sidecar writer. With normal app composition and migration settings unchanged, native message readers report `legacy_fallback` before and after Complete capture, archive verification, isolated restore and fresh app readback. The assistant's context/citations and both message IDs/content survive, while the user message has no invented context. The migration remains writes-disabled/not-ready with no journal, and `chat.rag_context` remains pending. No canonical provenance, fingerprint policy or owner approval was manufactured; network attempts are zero.
+
+An initial physical-baseline assertion failed because ordinary second app composition grew the SQLite DB from3354624 to3362816 bytes with the same inode. Selector and sidecar bytes remained exact. The corrected test preserves seed sidecar/selector/message semantics and records the physical DB state after normal reopen/capture close; it does not claim live SQLite bytes stay unchanged across startup. Root verified every payload in the54-file archive, all four executed child programs, the1212-byte sidecar across source/archive/restored paths and all25 journal hash links ending committed. Exact command/output: `/private/tmp/task26-legacy-chat-context-native-corrected.log`; report: `/private/tmp/task26-legacy-chat-context-report.md`; root checks: `/private/tmp/legacy-chat-context-root-verification.json`. Original Task26 release wiring and final checks remain open.
+
+Legacy-context scoped Ruff, formatting, compilation and whitespace checks pass. Unsuppressed `/private/tmp/task26-legacy-chat-context-bandit.json` reports three low-severity pytest assertions, no medium/high findings and no scan errors. Source remained unchanged after the green run;17 root source/report/scan/log/child/receipt hashes bind the reviewed artifacts.
+
+## Dependency completion reconciliation
+
+The remaining In Progress dependency records were reconciled against their original
+acceptance criteria and the committed receipts above at `7db576163`. Tasks31993,
+31993.20,31994,31997,31998 and32001–32008 now record their completed behavior and
+superseding integration evidence. Earlier failed or partial receipts remain history;
+this bookkeeping does not combine them into one current-build result. The independent
+per-criterion mapping is `/private/tmp/task26-dependency-completion-reconciliation.md`.
+
+This closes stale dependency statuses, not Task26. Final availability wiring,
+packaged product checks and the manual qualification workflow remain open. Execution
+capabilities without a released owner-review path remain inactive; fresh local-HF
+projection reuse, physical detach and power-loss qualification remain unavailable.
+Replacement ENOSPC equivalence remains source inference. No additional dependency
+feature or native matrix was inferred from this reconciliation.
+
+## Independent operation availability wiring
+
+The original seven-gate decision is now connected to the service, F9 preview and
+confirmation controls, and replacement CLI. Installed source facts are declared
+independently for Complete capture on Darwin25.5.0/arm64/Python3.12.11/APFS
+flags76583040/protocol2 and new replacement (including later rollback) on that cell
+and flags76583448. The user explicitly approved this local wiring after automatic
+review requested authorization beyond the prior publication-only approval.
+Complete staging/output on the image cell and image Admission remain unavailable.
+
+These four source facts compose with the actual installed helper, Admission at
+bootstrap authority locations, and publication support at participating write
+locations. Source distributions without the helper remain unavailable even for
+plaintext creation. New operations check before worker allocation and again before
+native work; pending Finish/Rollback/Abort retains its existing recovery checks.
+Helper verification runs outside the Textual UI thread. Genuine input edits discard
+stale callbacks; clearing passwords programmatically does not lose operation-bound
+credential-review controls.
+
+The initial missing-check test failed before implementation. The final focused
+module passes24 cases in3.00s; related checks passed16 in1.78s, and actual interrupted
+activation recovery passed1 in4.89s. Independent review found the password-clear
+callback regression, which was reproduced with real populated widgets and corrected.
+Ruff, compilation and whitespace checks pass; production Bandit reports0 findings.
+Test-only Bandit reports59 ordinary pytest assertions. Exact source hashes and
+commands are in `/private/tmp/task26-release-wiring-report.md`; scoped review is
+`/private/tmp/task26-release-wiring-independent-review.md`. These checks establish
+wiring and the stated compatibility case, not final packaged product verification.
+Task26 remains open for the installed-package cohorts and manual workflow definition.
+
+## Packaged fixtures after availability enforcement
+
+The existing native-wheel fixture now serves public service, mounted backup,
+first-binding, publication-scope and full replacement tests. Actual product children
+import the installed package from a private working directory; fresh recovery keeps
+that package provenance. The installed files are checked for preservation. The
+known-profile screen test remains component evidence using the real helper fixture.
+
+On production checkpoint `c3f96e152`, live service backup passed1 in14.69s and mounted
+backup passed1 in20.12s. The remaining representatives passed: known profiles1/2.43s,
+first binding1/17.09s, CLI replacement1/63.44s, and companion-file readback1/19.84s.
+Review caught and corrected a readback subprocess working directory that would
+select the checkout instead of the installed package. Behavioral assertions and
+child deadlines remain unchanged. Scoped Ruff and whitespace checks pass.
+Reports: `/private/tmp/task26-release-fixtures-report.md` and
+`/private/tmp/task26-release-fixtures-independent-review.md`. Final full F9 flows
+remain separate required checks; these representatives do not replace them.
+
+## External-content Partial classification
+
+The final branch review identified a mismatch between healthy inventory coverage
+and external-file archive consistency. Both capture entry points now require the
+existing Partial acknowledgement before capturing selected external files. F9 shows
+archive classification separately from coverage, and the service reports the
+classification from the archive writer's verified canonical manifest. Empty external
+directories retain their existing behavior; Partial replacement remains refused.
+
+The four focused regressions first failed at missing acknowledgement, preview
+classification and UI labeling. The final focused run passes28 in3.84s, including
+the24 release-gate cases; two existing direct capture seam tests also pass.
+The new service tests use real local files/native capture/archive verification with
+isolated discovery and qualification, so they are component evidence. Production
+Bandit reports0 findings/errors; scoped Ruff, compilation and whitespace checks pass.
+Independent source review approved the correction. Reports:
+`/private/tmp/task26-external-partial-fix-report.md` and
+`/private/tmp/task26-external-partial-independent-review.md`.
+
+Three legacy capture-service parameter cases failed at an inventory-preview
+assertion with `dependency_unavailable`, before capture execution. Their baseline
+assessment is recorded with final verification below; these failures are not counted
+as passes or hidden by changing the expected issue list.
+
+## Manual qualification workflow definition
+
+The manually dispatched workflow now defines the original five Step8 modules,
+the five retained-owner cohorts, the Partial regression and the combined F9 replacement
+and later-rollback case as twelve serial entries on the existing Darwin/arm64 runner
+labels. It checks
+the actual platform and helper identity, isolates application imports, retains JUnit
+and logs, and rejects missing or skipped required evidence. It does not change
+installed qualification declarations or create a new runner. YAML, six shell blocks
+and four Python bodies passed static validation; no workflow was dispatched.
+
+Review removed seed JSON from artifact collection because those fixture records can
+embed raw configuration and synthetic credentials. Automatic approval review rejected
+adding bare `capture.json`, `preview.json` and `restored.json` receipts to future
+GitHub uploads; they remain excluded. JUnit, logs, native/helper identity and package
+evidence remain available. This collection limitation is accepted explicitly and does
+not imply those omitted receipts were uploaded. Initial definition SHA-256:
+`7511509542b822891bba4eaca3ba385857b3ab41b235f47cd6f07d722fb8f741`.
+Reports: `/private/tmp/task26-manual-workflow-report.md` and
+`/private/tmp/task26-manual-workflow-independent-review.md`.
+
+## Native configuration lock during first replacement
+
+The final installed F9 replacement run exposed a normal-app integration gap: the
+first configuration-folder proof rejected the retained empty `config.toml.lock`
+created by Chatbook's native config transaction. The failed41.10s run and a fresh
+sanitized diagnostic both stopped before replacement credential review, at
+`replacement_config_container_unverified`. The failed private fixtures remain intact.
+
+The proof now recognizes only the selected config's exact lock path when it is an
+included, regular, owned, mode0600, single-link, zero-byte file. Its identity remains
+in the existing first and maintenance-held second checks. Unknown siblings and unsafe
+lock impersonators remain refused; no lock is created, removed, backed up or restored
+by this correction. Two intended acceptance/state cases failed before the correction;
+the final focused module passes8 in0.61s, including six refusal cases. Independent
+source review, scoped Ruff/compile/whitespace checks and production Bandit0 pass.
+Reports: `/private/tmp/task26-config-lock-fix-report.md` and
+`/private/tmp/task26-config-lock-independent-review.md`. The actual packaged rerun is
+reported separately below.
+
+## Final targeted verification
+
+The original Step8 modules were exercised in finite serial runs, with no required
+case replaced by a skip. The following final receipts have zero failures, errors
+and skips. They are distinct builds and runs, not one identical wheel or a full-suite
+result. Product children use private application locations, a network guard and
+NullKeyring. The explicitly installed F9, first-binding and publication cases assert
+installed package origin; multi-profile and lifecycle cases exercise actual native
+product behavior from the source checkout. Component evidence is labeled below.
+
+| Check | Passed | Pytest duration | Local log and matching JUnit basename |
+| --- | ---: | ---: | --- |
+| Installed F9 plaintext/encrypted/included-credential create, inspect, isolated restore and open | 3 | 128.42 s | `/private/tmp/task26-final-f9-endtoend` |
+| Multi-profile Complete capture and source/writer preservation | 1 | 22.87 s | `/private/tmp/task26-final-complete-capture` |
+| Shared-root isolated restore planning | 1 | 21.31 s | `/private/tmp/task26-final-complete-plan` |
+| Two restored profiles opened with native content | 1 | 56.19 s | `/private/tmp/task26-final-complete-open` |
+| Owner inventory, lifecycle AST guards, conjunction and source-helper refusals | 16 | 9.28 s | `/private/tmp/task26-final-guards` |
+| Actual composition and scheduler lifecycle | 2 | 58.85 s | `/private/tmp/task26-final-lifecycle` |
+| Recovery UI behavior | 20 | 32.75 s | `/private/tmp/task26-final-ui` |
+| Installed F9 replacement, explicit credential omissions, Abort and successful replacement | 1 | 101.99 s | `/private/tmp/task26-final-f9-replacement-fixed` |
+
+The Partial and release-gate component run passes28 in3.84s; the first-config-lock
+regression passes8 in0.61s. Their reports above retain the exact commands, red/green
+results, source hashes, static checks and scoped Bandit results. Changed production
+scopes have zero Bandit findings; test-only LOW assertion/subprocess findings are
+recorded without blanket suppression.
+
+The isolated F9 wheel SHA-256 is
+`197afc447ebdcebf5fd5b10e7b20b3e6ce75a9f700be292c011f0f6dd2af69de`;
+the corrected replacement wheel SHA-256 is
+`296f25d6ee37b39c7efaaafebb96f14346e8dfc7096ca1e2378c6619dca8d797`.
+Each fixture checked preservation of2034 initially installed files. The isolated
+run includes the Partial correction; the replacement run also includes the native
+config-lock correction at `8da467890`. The standalone replacement result does not
+claim later rollback; that combined result is recorded separately.
+
+Three extra legacy capture-service preview cases fail with `dependency_unavailable`
+before capture execution. A clean archive of pre-Partial checkpoint `c86d33595`
+reproduces all three at the same line121 assertion in3.50s. The baseline receipt is
+`/private/tmp/task26-preview-baseline.log` with matching XML; its private source is
+`/private/tmp/task26-preview-baseline.h0Wit4`. These unchanged failures are outside
+the required Step8 modules and were neither skipped nor hidden by changing expected
+issues. No all-tests-pass, full-suite, CI-run, new-platform or published-build claim
+is made.
+
+## Final installed replacement and retained-copy rollback
+
+The combined node
+`Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review`
+passes once in228.85s, outer exit0 (220.05s call,8.49s setup). It invokes the exact
+standalone replacement test before the later-rollback child; every earlier assertion
+and failure remains effective. The installed wheel, private child cwd, installed-first
+module lookup and exact origin assertions replace the stale checkout/helper fixture.
+The original aggregate230s, seed110s, replacement150s and later180s deadlines remain.
+
+The later flow discards a stale preview, presents eight unchecked credential
+omissions, verifies Abort leaves data untouched, requires fresh acknowledgement and
+confirmation, completes with `restoration_validated`, and verifies the new encrypted
+safety copy while retaining the previous copy. The existing sealed readback and
+rollback credential-policy assertions pass. The receipt is
+`/private/tmp/task26-later-installed-fixture-test.log`; this local run did not emit
+JUnit. Child logs and checkpoints are under
+`/private/tmp/backup-f9-product-final-76b5cw1h/pytest/test_f9_later_rollback_require0`.
+The complete command and artifact record is
+`/private/tmp/task26-later-installed-fixture-report.md`.
+
+Wheel SHA-256:
+`c8fb58f4a77cc9a912061ae67bcbb1eb47a3f919d599b3154fec8390dd0b4b31`.
+All2034 initially installed files are preserved. Root also verified this wheel's
+digest and current installed/source equality for replacement, qualification, capture,
+capture service, recovery service and recovery UI. The product source is checkpoint
+`8da467890`; this final delta changes the fixture, workflow selection and release docs.
+
+The workflow now uses that combined node in both mirrored twelve-entry lists.
+Source review confirmed it executes the entire former replacement gate first;
+an evidence-backed retry resolved the initial automatic review rejection as an
+apparent coverage reduction. The final workflow SHA-256 is
+`31bcbc9cea499a3fffe4123cd4564325f95cabece38d3f2f1a25bc2f72280995`.
+YAML and all four complete embedded Python blocks pass static validation, including
+identical entry-list checks. Artifact selection is unchanged; no dispatch occurred.
+Scoped test Ruff/compile and whitespace checks pass. Bandit reports five LOW
+test-only assertion/subprocess findings, zero errors and no MEDIUM/HIGH findings.
+
+Final independent review approves original Task26 specification compliance and
+quality with no remaining concrete findings. The earlier whole-branch review and
+this final scoped addendum are retained at
+`/private/tmp/task26-whole-branch-review.md` and
+`/private/tmp/task26-final-release-independent-review.md`. TASK-32009 is Done with
+all three acceptance criteria checked; the qualified boundaries and baseline
+failures above remain part of that completion record.

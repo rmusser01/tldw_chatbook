@@ -1,0 +1,25 @@
+{
+  "source_fixture": {
+    "revision": "b7f51bdc20e0355dce8ac630e0c1ddbe4fcdb8f3",
+    "source": "/home/ml-user/Working/chatbook-backup-linux-20260912/source-final-b7f51bdc20-jwmv6ggp",
+    "fixture": "/home/ml-user/Working/chatbook-backup-linux-20260912/native-final-b7f51bdc20-m4927m5u"
+  },
+  "result": {
+    "pytest_returncode": 0,
+    "revision": "b7f51bdc20e0355dce8ac630e0c1ddbe4fcdb8f3",
+    "source_tracked_unchanged": true,
+    "status": {
+      "collected": 5,
+      "counts": {
+        "failed": 0,
+        "passed": 5,
+        "skipped": 0
+      },
+      "exitstatus": 0,
+      "failed_ordinals": [],
+      "unfinished": 0
+    }
+  },
+  "local_numeric_receipt_sha256": "c957d0f413d231380a9368a3e7c799f9c027c127bbbd42cbf9f8524f8cf482e8",
+  "privacy": "Only numeric status and source/fixture identity exported; raw logs remain on SSH host."
+}

@@ -1127,7 +1127,8 @@
    (tall border, focus accent) rather than defaulting to Textual's bare
    Input styling. */
 #library-note-title,
-#library-note-keywords {
+#library-note-keywords,
+#library-note-context-keywords {
     width: $ds-width-full;
     height: $ds-size-3;
     min-height: $ds-size-3;
@@ -1139,12 +1140,19 @@
 }
 
 #library-note-title:focus,
-#library-note-keywords:focus {
+#library-note-keywords:focus,
+#library-note-context-keywords:focus {
     border: tall $ds-input-focus-accent;
     outline: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+/* TASK-32607: the live Info keywords field shares Title's field treatment;
+   its destructive action uses the readable error tier, not muted chrome. */
+#library-note-context-delete {
+    color: $ds-status-error-readable;
 }
 
 /* task-32217 (critique #9 density rule): the Body is the primary content
@@ -1181,7 +1189,8 @@
 
 #library-note-preview-region:focus,
 #library-note-context-region:focus {
-    border: solid $ds-input-focus-accent;
+    border: heavy $ds-input-focus-accent;
+    outline: none;
     background: $ds-input-focus-bg;
 }
 
@@ -1214,6 +1223,21 @@
    `margin: 0` there with a more specific selector. */
 #library-note-context-meta {
     color: $ds-text-muted;
+}
+
+/* TASK-32620: body headings remain body content beneath the note title. */
+#library-note-preview-body MarkdownH1 {
+    content-align: left middle;
+}
+
+/* TASK-32640: elided path provenance occupies exactly one row. */
+#library-note-location {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* task-32143: the editor chrome strip -- one row at the bottom of the body
@@ -2793,6 +2817,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 #library-notes-status-row,
 #library-note-heading,
 #library-note-title-row,
+#library-note-keywords-row,
 #library-note-context-keywords-row,
 #library-notes-create-heading {
     layout: vertical;
@@ -2842,6 +2867,12 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     width: $ds-width-full;
     height: auto;
     min-height: $ds-size-1;
+}
+
+/* TASK-32625: safe review rows have no body requiring a trailing gap.
+   Both class tokens stay in the same Library-owned split as the base row. */
+.library-notes-sync-review-row.library-notes-sync-review-plain {
+    margin: $ds-space-0;
 }
 
 .library-notes-sync-conflict-choices,

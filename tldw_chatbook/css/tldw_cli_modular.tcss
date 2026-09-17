@@ -91,6 +91,8 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
+$ds-library-note-task-actions-min-width: 61;
+$ds-workflow-navigator-width: 27;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -9836,7 +9838,6 @@ WorktreeRecoveryDialog {
 
 #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
 #library-shell-grid.library-notes-compact #library-note-preview-region .destination-section,
-#library-shell-grid.library-notes-compact #library-note-context-meta,
 #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
     height: $ds-size-1;
     min-height: $ds-size-1;
@@ -19034,6 +19035,32 @@ LogsWindow {
     height: $ds-height-fill;
     width: $ds-width-full;
 }
+
+/* ===== MODULE: features/_workflows.tcss ===== */
+    WorkflowEditor TextArea { height: $ds-size-6; min-height: $ds-control-height; }
+    WorkflowEditor Input { height: $ds-control-height; margin: $ds-space-0; }
+    WorkflowEditor Collapsible { padding: $ds-space-0; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; border: none; }
+    WorkflowEditor Collapsible > Contents { padding: $ds-space-0 $ds-space-inset; }
+
+
+    ChoiceModal { align: center middle; background: $background $ds-opacity-dim; }
+    ChoiceModal > Vertical { width: $ds-percent-90; max-width: $ds-size-90; height: $ds-percent-80; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
+    ChoiceModal OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
+    ChoiceModal .choice-copy { height: auto; max-height: $ds-size-8; }
+    ChoiceModal.has-scroll-detail #workflow-dialog-choices { height: $ds-control-height; min-height: $ds-control-height; }
+    StepChooser > Vertical { padding: $ds-space-0 $ds-space-inset; }
+    StepChooser .choice-copy { max-height: $ds-control-height; }
+WorkflowsScreen #workflow-library-search > .input--placeholder {
+    color: $ds-text-muted;
+    text-style: none;
+}
+WorkflowConsoleContext { height: $ds-control-height-compact; padding: $ds-space-0 $ds-space-inset; }
+WorkflowsScreen WorkflowEditor TextArea.form-textarea { height: $ds-size-6; min-height: $ds-control-height; }
+WorkflowsScreen.workflow-short WorkflowEditor TextArea.form-textarea {
+    height: $ds-control-height;
+    padding: $ds-space-0 $ds-space-inset;
+}
+WorkflowsScreen WorkflowEditor TextArea.form-textarea.workflow-expanded { height: $ds-size-18; max-height: $ds-size-18; }
 
 /* ===== MODULE: features/config_search.tcss ===== */
 

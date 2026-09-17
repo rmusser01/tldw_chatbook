@@ -1,0 +1,15 @@
+..........                                                               [100%]
+============================= slowest 25 durations =============================
+3.02s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+1.80s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+1.65s call     Tests/UI/test_css_build_integrity.py::test_library_notes_compact_source_module_is_exactly_bundled
+1.53s call     Tests/UI/test_component_pattern_governance.py::test_active_css_extension_is_in_dimension_floor
+1.48s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]
+1.46s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]
+1.43s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]
+1.42s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.42s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]
+1.41s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]
+
+(15 durations < 1s hidden.)
+10 passed in 17.53s

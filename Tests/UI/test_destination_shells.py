@@ -1037,7 +1037,10 @@ class DestinationHarness(ConsolidatedCSSApp):
         self, app_instance, route, seen_routes=None, restored_state=None,
         seen_contexts=None,
     ):
-        super().__init__()
+        # Workflows moved its reviewed DEFAULT_CSS into the app token bundle.
+        super().__init__(
+            css_path=list(APP_STYLESHEETS) if route == "workflows" else None
+        )
         self.app_instance = app_instance
         self.route = route
         self.seen_routes = seen_routes if seen_routes is not None else []
@@ -1052,6 +1055,12 @@ class DestinationHarness(ConsolidatedCSSApp):
         if self.restored_state is not None:
             screen.restore_state(self.restored_state)
         await self.push_screen(screen)
+
+    async def on_unmount(self) -> None:
+        # The wrapped app is not mounted, so it cannot drain its lazy owner.
+        owner = getattr(self.app_instance, "_workflow_authoring", None)
+        if owner is not None:
+            await owner.close()
 
     def on_navigate_to_screen(self, message) -> None:
         self.seen_routes.append(message.screen_name)
@@ -2498,7 +2507,7 @@ async def test_destination_action_buttons_explain_their_outcome(route):
     [
         ("watchlists_collections", ["Watchlists", "Monitored sources"]),
         ("schedules", ["Schedule Queue", "Next Run"]),
-        ("workflows", ["Recipes", "Dry Run", "Console launch unavailable"]),
+        ("workflows", ["Workflow library", "Step navigator", "Run unavailable"]),
     ],
 )
 @pytest.mark.asyncio
@@ -2575,7 +2584,7 @@ async def test_schedules_pending_run_uses_shared_approval_status_taxonomy():
 
 
 @pytest.mark.asyncio
-async def test_workflows_approval_pending_run_exposes_review_before_console_state():
+async def test_workflows_existing_approval_is_followed_in_console_without_run_controls():
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         HomeActiveWorkItem(
@@ -2592,25 +2601,20 @@ async def test_workflows_approval_pending_run_exposes_review_before_console_stat
 
     async with host.run_test(size=(180, 45)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#workflows-console-available")
+        await _wait_for_visible_text(screen, pilot, "Publish newsletter")
         visible_text = _visible_text(screen)
         launch_button = screen.query_one("#workflows-launch-in-console", Button)
-        approval_button = screen.query_one("#workflows-review-approval", Button)
-        retry_button = screen.query_one("#workflows-retry-run", Button)
+        assert screen.query_one("#workflow-run", Button).disabled
+        assert not screen.query("#workflows-review-approval, #workflows-retry-run")
+        assert await pilot.click("#workflows-launch-in-console")
+        await pilot.pause()
 
     assert "Publish newsletter" in visible_text
-    assert "Status: pending_approval" in visible_text
-    assert "State: pending_approval" in visible_text
-    assert "Approvals: pending" in visible_text
-    assert "Run control: approval required" in visible_text
-    assert "Next action: review approval before Console follow" in visible_text
+    assert "pending_approval" in visible_text
     assert launch_button.disabled is False
-    assert approval_button.disabled is True
-    assert (
-        str(approval_button.tooltip)
-        == "Review this workflow approval from Workflows when approval services are available."
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="local:workflow_run:9", target_route="chat"
     )
-    assert retry_button.disabled is True
 
 
 @pytest.mark.asyncio
@@ -2635,7 +2639,7 @@ async def test_schedules_empty_state_reads_as_live_queue_with_recovery_path():
 
 
 @pytest.mark.asyncio
-async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
+async def test_workflows_empty_state_offers_real_authoring_with_disabled_run():
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter()
     host = DestinationHarness(app, "workflows")
@@ -2644,30 +2648,21 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#workflows-console-unavailable")
         visible_text = _visible_text(screen)
-        list_pane = screen.query_one("#workflows-list-pane")
-        detail_pane = screen.query_one("#workflows-detail-pane")
-        inspector_pane = screen.query_one("#workflows-inspector-pane")
-        control_label = screen.query_one("#workflows-action-state-label", Static)
+        for pane in ("workflows-library", "workflows-navigator", "workflows-editor"):
+            assert screen.query_one("#" + pane).region.width > 0
+        assert not screen.query_one("#workflow-new", Button).disabled
+        assert not screen.query_one("#workflow-import", Button).disabled
+        assert screen.query_one("#workflow-run", Button).disabled
+        assert screen.query_one("#workflows-launch-in-console", Button).disabled
 
     for expected in (
-        "Recipes 0",
-        "Inputs 0",
-        "Steps 0",
-        "Dry Run 0",
-        "Approvals 0",
-        "Outputs 0",
-        "No active workflow run selected",
-        "Next action: start or select a workflow run",
-        "Recovery controls require an active workflow run",
+        "Workflow library",
+        "Step navigator",
+        "No workflows yet",
+        "No active workflow run",
+        "Run unavailable in this authoring release",
     ):
         assert expected in visible_text
-    assert "destination-workbench-pane" in list_pane.classes
-    assert "destination-workbench-pane" in detail_pane.classes
-    assert "destination-workbench-pane" in inspector_pane.classes
-    assert (
-        str(control_label.renderable)
-        == "Recovery controls require an active workflow run"
-    )
 
 
 @pytest.mark.parametrize(

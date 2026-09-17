@@ -20,7 +20,9 @@ commit to its existing upstream, without leaving the app.
 ## Getting there
 
 Open [Library](../library.md) (**Ctrl+3**), pick **Notes** in the rail's
-Browse section, then use the source strip at the top of the canvas: it reads
+Browse section (on a brand-new profile that section is not there yet — see
+"Getting there" in [Library notes](notes.md) for the three routes that are),
+then use the source strip at the top of the canvas: it reads
 **Library notes** | **Folder files**. Click **Folder files** — while the
 workspace loads you'll briefly see "Opening File Notes…". At wide sizes,
 Library navigation and the Folder files tree have separate slim collapse
@@ -87,7 +89,12 @@ goes.)
   failed Git operation, or a folder problem, takes this slot instead.
 - **Folder navigator** (left) — a **New** action, a "File contents…" search
   input, the **Files** tree of everything under the linked folder, and a
-  **Search results** tree that appears only while a query is active. Every
+  **Search results** tree that appears only while a query is active. Directly
+  under the pane's heading it states what it lists — "Lists .md, .markdown,
+  .txt and .text. Other files stay on disk." — so a `notes.csv`, a
+  `meta.yaml`, a Canvas folder or an attachments folder is explained rather
+  than silently absent: this workspace only ever edits note files, and
+  everything else in the folder is left exactly as it is. Every
   folder whose name starts with a dot is hidden — `.git`, and Obsidian's own
   `.obsidian` and `.trash` alike (task-32552); Folder files edits the folder
   in place, so those stay exactly as they are on disk, just out of the tree
@@ -102,7 +109,10 @@ goes.)
   open one; "Recently deleted: \<path\>" right after a delete), an
   Idle / Dirty / Saving / Saved / Conflict / Error status, and **Edit** /
   **Manage** modes. Edit gives the file body nearly all available space;
-  Manage groups path details, file actions, Session Git, and Danger.
+  Manage groups path details, file actions, Session Git, and Danger. With no
+  file open there is no save state and no body box: the status line reads
+  "No file open." rather than claiming a save, and the editor appears when
+  there is a file to put in it.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **‹ Files** returns to the files.
@@ -111,13 +121,40 @@ goes.)
   During commit or push, **Esc** follows the phase-specific safe action in the
   keyboard table below.
 
+### Linking a folder without a mouse
+
+Every step has a keyboard route (task-32606):
+
+1. From the notes list, **Shift+Tab** back to the mode strip at the top of the
+   screen until **Folder files** carries the focus underline, then **Enter**.
+2. **Tab** to **Choose folder…** (or **Change…** once a folder is linked) and
+   press **Enter**.
+3. The picker opens with the **Folder path** field focused and its value
+   selected — type or paste the folder and it replaces what was there.
+4. **Enter** browses into the typed folder; **Tab** then **Enter** on
+   **Select** links it. **Esc** leaves the picker without changing anything.
+
+While the picker is open the bottom row of the terminal shows the picker's own
+keys instead of Library's, starting with `esc Cancel` — that row is how you
+tell you are inside the dialog. The keys are clickable as well as typable, and
+clicking one does what pressing it does: `esc Cancel` closes the picker, and
+every other key runs without closing it.
+
+The row is ordered by usefulness and the overflow scrolls off the right edge,
+so how much of it you see depends on your terminal's width. At 100 columns it
+ends around `f5 Refresh direc`; the keys past that — `^r Show recent
+locations` and `^s Select this folder` — appear only on a wide terminal.
+`^s Select this folder` is dimmed wherever it does appear: it belongs to the
+file-and-folder picker Import once uses, and this dialog's **Select folder**
+button does that job instead.
+
 ## Features & controls
 
 ### Folder link
 
 | Control | What it does |
 |---|---|
-| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. Type into the **Folder path** field and either press Enter (browses into it) or click **Select** (uses it right away, without needing Enter first); an invalid path shows an inline reason and leaves the picker open |
+| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. The **Folder path** field holds focus from the moment the picker opens, with the folder it opened on selected, so the first thing you type replaces that path rather than going into the file listing (task-32606). Press **Enter** to browse into what you typed, or **Select folder** to use it right away without needing Enter first; an invalid path shows an inline reason and leaves the picker open. The listing opens with folders first in name order (**Sort** still offers discovery order and the rest), each folder saying how many notes sit directly inside it and marking an Obsidian vault as `· vault`; **Ctrl+R** offers the folders you last chose through this door and **Enter** on one uses it without browsing (task-32611, task-32643) |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
 | **Cancel** (folder change) | Appears once a folder change has been running about three seconds — the same moment the line stops being a bare "Changing folder…". Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
@@ -236,10 +273,18 @@ states such as checking, pushing, or needing attention also remain visible in
 the work header, so you do not have to leave Edit merely to learn that work is
 still running.
 
-The panel is headed "Prepare session for commit" with the scope line
-"Session paths only · stages complete file state" and the keyboard guide
-"Up/Down Select | Tab Actions | Enter Run | Esc Back". Before anything runs
-it shows "Repository: not checked" / "Status: NOT CHECKED".
+The panel is headed "Review session changes" with the scope line "Review and
+commit only notes changed during this Chatbook session." and the keyboard
+guide "Up/Down select · Tab actions · Enter run · Esc back". Before anything
+runs it shows "Repository: not checked" / "Status: NOT CHECKED". *(Was
+headed "Prepare session for commit", with the scope line "Session paths only
+· stages complete file state" and a pipe-separated, title-case keyboard
+guide. All three were real once and all three were rewritten by task-15122
+on 2026-08-11 — superseded by task-32558 below, which read them off the
+shipped widget. **Fifteen** "Verified against" stamps were added to this
+page in between, across six dates; three of them named this panel and two of
+those three drove it live, end to end. Each verified what it named, not the
+chapter around it.)*
 
 **Trust first.** Press **Trust and check status** and a confirmation dialog
 titled "Trust repository for session changes?" appears (was "Trust Session
@@ -442,11 +487,17 @@ save shortcut. File edits save automatically.
 
 ## Quirks & troubleshooting
 
-- **The "Chunking Lab | Try selected text" strip is not part of this
-  canvas.** It paints under the header on every Library canvas and opens a
-  full-screen developer tool for comparing chunking strategies; Escape does
-  not leave it. See [Library overview](../library.md); demoting it is
-  tracked as task-32064.
+- **The "Chunking Lab / Try selected text" pair is not part of this
+  canvas.** The two buttons live in the Library rail's **Details ▸ Actions**
+  group, under the line "Chunking Lab — compare how text is split for
+  search", and open a full-screen developer tool for comparing chunking
+  strategies; **Escape** there returns to the Library canvas you came from.
+  See [Library overview](../library.md). *(Was "It paints under the header
+  on every Library canvas … Escape does not leave it … demoting it is
+  tracked as task-32064" — superseded by task-32064, which is Done: the
+  strip left the header, the pair moved into Details ▸ Actions, and the Lab
+  gained its Escape route. This page was not updated with it; caught by
+  task-32558 below.)*
 
 - **YAML frontmatter is hidden from the editor and kept exactly as it is on
   disk.** A file that opens with a `---` block (Obsidian properties, for
@@ -637,3 +688,118 @@ and the compact Folder-files work pane's return control reads **‹ Files** at
 60x24 (`import-25-files-60x24`) — both were "Back to navigator". The Notes
 editor keeps its own task-32139 wording ("‹ Notes" wide, "‹ Back to list"
 compact), so the grammar is now one cue plus the destination everywhere.)*
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep). Two chapters on this page were stating copy the app
+stopped rendering and nobody re-read. The **Session Git** chapter's heading,
+scope line and keyboard guide were all three rewritten by task-15122 on
+2026-08-11 and are only now corrected — they now read "Review session
+changes", "Review and commit only notes changed during this Chatbook
+session." and "Up/Down select · Tab actions · Enter run · Esc back", read off
+`library_file_notes_git_panel.py:1271-1289`; "Repository: not checked",
+"Status: NOT CHECKED" and "No current-session Git changes." were checked in
+the same pass and are unchanged. The **Chunking Lab** quirk described a
+header strip task-32064 removed; the pair lives in the rail's Details ▸
+Actions group now and the Lab has its own Escape route. "Getting there"
+gained the note that a brand-new profile has no Browse section — see
+[Library notes](notes.md). Per-file caps re-read from
+`Notes/file_notes_service.py` (`MAX_FILE_BYTES = 8_000_000`,
+`MAX_FILE_CHARS = 2_000_000`, `INTERACTIVE_FILE_CHARS = 200_000`) and
+unchanged. Not re-walked live: this page's Git chapter was corrected against
+the widget's own compose, not a capture, and says so rather than carrying a
+capture it does not have.)*
+
+*Verified against fix/library-notes-w5-picker-kbd — 2026-09-15 (task-32606:
+critique #4's P1. "Choose File Notes Folder" opened with the directory
+listing focused, so a typed path went into the listing's type-ahead and the
+door needed a mouse. Wave 4 had fixed exactly this for Import once but only
+on `FileOpen`; the behaviour now lives on the shared
+`FileSystemPickerScreen` behind one `RETURNS_A_FOLDER` fact, which
+`SelectDirectory` and `EnhancedSelectDirectory` declare. Walked
+keyboard-only on a scratch power profile at 235x52 and 100x30: the mode
+strip, **Choose folder…**, the picker, the typed path and **Select** were
+all reached with Tab/Shift+Tab/Enter and no click. Captures
+`wave5/caps/picker-kbd/01`–`11`; `04-typed-path-lands-in-field-235x52.txt`
+and `10-typed-path-100x30.txt` show a pasted absolute path REPLACING the
+pre-filled value with no click first, and
+`09-picker-100x30-footer-order.txt` shows the bottom row reading
+`esc Cancel  ^s Select this folder  ^l Edit path directly …`. Not re-walked:
+opening a file from the **Files** tree by Tab from the shell — the tree was
+reached live but Tab from the folder navigator's search field leaks into the
+Library rail, which is a separate open issue; that leg is pinned instead by
+`Tests/UI/test_library_notes_w5_picker_keyboard.py::test_folder_files_reaches_and_edits_a_file_with_no_mouse`,
+which drives the real workspace inside the real Library screen.)*
+
+*Verified against fix/library-notes-w5-picker-kbd — 2026-09-15 (task-32606
+review round 1). Two corrections to the paragraph above. (a) The picker's key
+row is clickable, and clicking a key used to ALSO cancel the dialog: the row
+docks outside the modal's content, so the safe-dismiss classifier read a chip
+click as a backdrop click (`Widgets/modal_dismissal.py`). Re-walked live at
+235x52 and 100x30 — clicking `^h Toggle hidden files` listed `.obsidian` and
+left the picker open (`14-r1-toggle-hidden-chip-235x52.txt`), clicking
+`^f Search in directory` revealed the "Search files..." input and left it open
+(`17-r1-search-chip-click-100x30.txt`). (b) `^s Select this folder` moved from
+second to LAST on the row, because Textual renders a key a dialog cannot run
+dimmed rather than dropping it and at 60 columns it was crowding out live
+actions; the 100-column row now reads `esc Cancel  ^l Edit path directly  ^f
+Search in directory  ^h Toggle hidden files  f5 Refresh direc`
+(`15-r1-picker-100x30.txt`). Log grep after both walks: zero
+`unhandled_exception`, zero `| ERROR`.)*
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32614, at
+235x52, 100x30 and 60x24 through the production Library harness): the file
+tree now fills the navigator pane instead of sharing its spare rows with the
+"Folder files" title row — 38 visible tree rows at 235x52 where there were
+20, and 18 at 100x30 where there were 10. At 100x30 the two panes divide
+46/44 rather than 56/34: Folder files uses the same 44-column work-pane floor
+as every other Library destination instead of its own 30. Both identity lines
+— the breadcrumb above the editor and the full path under **File details &
+path** — now paint on exactly one row, middle-elided with an … so the row
+spends the head of the path and keeps its end: the file's own name, or as
+much of the name as the row holds. The breadcrumb's own budget is only 25 cells at 100x30,
+narrow enough that a long daily-note name is itself cut short there; the line
+under File details keeps the whole pane width, so it holds more. Before this
+the absolute path folded over six rows at 100x30, broken inside a directory
+name.
+
+The line under File details also now always shows the absolute path. It used
+to alternate — opening a file, or selecting a deleted one, wrote the path
+relative to the folder, and switching to Manage rewrote it as the full path —
+so the same line said different things depending on what you had just done.
+
+*Verified against fix/library-notes-w5-density — 2026-09-15 (task-32615, same
+three sizes): in Session Git's Commit workflow the Cancel/Review actions now
+sit directly under the Subject and Body they act on rather than at the pane
+floor twenty to forty rows below, and they stay on screen on a pane too short
+for the whole form. The repository-trust prompt prints the repository path on
+its own lines, broken only at "/" — the whole path, with no component split
+in half. An action receipt ("Committed 1 session note as …") now paints under
+the file's save state near the top of the Manage pane instead of below the
+"Danger" heading.*
+
+*Verified against fix/library-notes-w5-import-preview — 2026-09-15 (task-32621,
+critique #4): the Folder-files tree now states what it lists directly under its
+heading, and with no file open the work area claims no save state and shows no
+editable body. Both were measured on the pure status resolver and the pane's
+own compose; the extension list is read from
+`Notes/file_notes_service.py`'s `SUPPORTED_EXTENSIONS` rather than retyped.)*
+*Verified against fix/library-notes-w5-picker-followon — 2026-09-15
+(task-32611, task-32643). Three changes to the folder picker. (a) "Keep a
+folder synced" now opens the same folder-only dialog this door does, instead
+of the file-and-folder one whose field said "File name" — so all three Notes
+folder doors show one hint, `Enter Open  ·  Select folder to use this folder`,
+and one name for the button that commits a folder. (b) Their listings default
+to **Folders first**, name-ascending, rather than to discovery order, which
+was interleaving a vault's files and folders unsorted. That default is keyed
+on "can this dialog answer with a folder?", so every other folder-choosing
+picker in the app changed with them — skill-folder import, workspace bind, TTS
+model and voice directories, external model directories, podcast export;
+file-only pickers still open on discovery order, and "Discovery order" stays
+on the Sort menu everywhere. (c) Folder rows in the three Notes pickers carry
+a note count and a `· vault` marker, both read from the folder itself only —
+never a sub-tree walk, and never more than 500 entries READ of one folder,
+past which the count says "48+ notes", meaning at least 48 — and **Ctrl+R**
+offers the roots that door RETURNED before (a folder you only browsed through
+on the way to a file is not one), focused, so Enter takes one. Pinned by
+`Tests/UI/test_library_notes_w5_picker_followon.py` (22 tests collected; 18 of
+them red at dev 48d40df8ce).)*

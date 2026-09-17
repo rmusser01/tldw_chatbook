@@ -414,7 +414,8 @@ class ConsoleMessageController:
         # reads/writes -- see `chat_screen.py`'s own "Message cluster state"
         # comment block for the exact list.
         self._console_message_action_service = ConsoleMessageActionService(
-            canvas_enabled_reader=self._canvas_enabled
+            canvas_enabled_reader=self._canvas_enabled,
+            canvas_disabled_reader=self._canvas_disabled,
         )
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
@@ -440,6 +441,15 @@ class ConsoleMessageController:
             return reader() is True
         except Exception:  # noqa: BLE001 - message actions fail closed
             return False
+
+    def _canvas_disabled(self) -> bool:
+        """Keep a temporary runtime backup refusal out of the action-service latch."""
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        reader = getattr(runtime, "canvas_disabled", None)
+        try:
+            return not callable(reader) or reader() is not False
+        except Exception:  # noqa: BLE001 - unavailable policy fails closed
+            return True
 
     @property
     def run_worker(self) -> Any:
@@ -1830,6 +1840,11 @@ class ConsoleMessageController:
             self._console_original_attempt_previews.clear()
             subtree_ids = store.subtree_message_ids(message_id)
             store.delete_message(message_id)
+            cleanup_warning = getattr(
+                store.persistence, "recovered_media_cleanup_warning", None
+            )
+            if cleanup_warning:
+                self.app_instance.notify(cleanup_warning, severity="warning")
             self._invalidate_console_fork_image_selections(subtree_ids)
             # TASK-251: a deleted message can change what the browser row
             # shows for this conversation (title/updated_at) -- invalidate

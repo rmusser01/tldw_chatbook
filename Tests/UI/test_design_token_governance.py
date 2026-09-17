@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.css.build_css import CSS_MODULES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -101,7 +102,8 @@ def _defined_tokens() -> set[str]:
     return set(_DEFINITION_RE.findall(TOKENS_FILE.read_text(encoding="utf-8")))
 
 
-def test_all_referenced_ds_tokens_are_defined() -> None:
+@private_profile_test
+def test_all_referenced_ds_tokens_are_defined(request) -> None:
     """No sheet may reference a $ds-* token that _variables.tcss lacks."""
     defined = _defined_tokens()
     assert "$ds-space-1" in defined, "token catalog sanity check failed"
@@ -120,14 +122,16 @@ def test_all_referenced_ds_tokens_are_defined() -> None:
     )
 
 
-def test_defined_tokens_have_no_orphans_in_catalog() -> None:
+@private_profile_test
+def test_defined_tokens_have_no_orphans_in_catalog(request) -> None:
     """Token definitions must be unique — a redefinition is a silent override."""
     definitions = _DEFINITION_RE.findall(TOKENS_FILE.read_text(encoding="utf-8"))
     duplicates = sorted({tok for tok in definitions if definitions.count(tok) > 1})
     assert not duplicates, f"Duplicate token definitions: {duplicates}"
 
 
-def test_documented_design_vocabulary_is_available() -> None:
+@private_profile_test
+def test_documented_design_vocabulary_is_available(request) -> None:
     """ADR-150's catalog must exist even before a feature consumes a token."""
     required = {
         "$ds-space-0",
@@ -162,7 +166,8 @@ def test_documented_design_vocabulary_is_available() -> None:
     )
 
 
-def test_hex_literals_are_ratcheted_outside_token_definitions() -> None:
+@private_profile_test
+def test_hex_literals_are_ratcheted_outside_token_definitions(request) -> None:
     """Raw hex colors may only shrink, never grow, outside token definitions.
 
     Comments are stripped before counting: only active declarations are
@@ -183,13 +188,15 @@ def test_hex_literals_are_ratcheted_outside_token_definitions() -> None:
         )
 
 
-def test_hex_ratchet_ignores_comments() -> None:
+@private_profile_test
+def test_hex_ratchet_ignores_comments(request) -> None:
     """Regression: hex strings inside /* */ comments must not be counted."""
     css = "/* measured #51677e at 3:1 */\n.card { color: #ff8fa3; }\n"
     assert _HEX_RE.findall(_strip_comments(css)) == ["#ff8fa3"]
 
 
-def test_new_sheets_must_use_spacing_tokens() -> None:
+@private_profile_test
+def test_new_sheets_must_use_spacing_tokens(request) -> None:
     """Modules added after ADR-150 may not hardcode numeric padding/margin."""
     for module in _source_modules():
         relative = str(module.relative_to(CSS_ROOT))
@@ -204,7 +211,8 @@ def test_new_sheets_must_use_spacing_tokens() -> None:
         )
 
 
-def test_active_css_extension_is_in_hex_floor(tmp_path, monkeypatch):
+@private_profile_test
+def test_active_css_extension_is_in_hex_floor(request, tmp_path, monkeypatch):
     sheet = tmp_path / "components" / "active.css"
     sheet.parent.mkdir()
     sheet.write_text("Widget { color: #abcdef; }")
@@ -215,11 +223,12 @@ def test_active_css_extension_is_in_hex_floor(tmp_path, monkeypatch):
     assert sheet in _source_modules()
     assert unused not in _source_modules()
     with pytest.raises(AssertionError, match="components/active.css"):
-        test_hex_literals_are_ratcheted_outside_token_definitions()
+        test_hex_literals_are_ratcheted_outside_token_definitions.__wrapped__(request)
 
 
 @pytest.mark.asyncio
-async def test_section_header_preserves_global_and_stats_computed_geometry():
+@private_profile_test
+async def test_section_header_preserves_global_and_stats_computed_geometry(request):
     """The former Stats duplicate contributes the same global header geometry."""
     from textual.app import App, ComposeResult
     from textual.containers import Vertical

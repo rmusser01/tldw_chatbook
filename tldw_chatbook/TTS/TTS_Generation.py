@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -17,6 +18,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import wraps
 from types import MappingProxyType
 from typing import Any, Literal, Protocol
 from uuid import uuid4
@@ -1086,8 +1088,64 @@ class _AdmittedTTSOperation:
         self._on_finished(self)
 
 
+def _maintenance_call(function):
+    """Keep admitted calls live through their own nested publication."""
+    @wraps(function)
+    async def call(self, *args, **kwargs):
+        task = asyncio.current_task()
+        depth = self._maintenance_calls.get(task, 0)
+        if self._maintenance_paused and not (depth or task in self._settings_publication_tasks or task in self._audio_cpp_lifecycle_tasks or function.__name__ == "shutdown_audio_cpp"):
+            raise TTSRegistryClosedError("TTS admission is paused for maintenance")
+        self._maintenance_calls[task] = depth + 1
+        try:
+            return await function(self, *args, **kwargs)
+        finally:
+            if depth:
+                self._maintenance_calls[task] = depth
+            else:
+                self._maintenance_calls.pop(task, None)
+    return call
+
+
 class TTSService:
     """Coordinate registry-backed TTS operations and response lifetimes."""
+
+    def maintenance_close_admission(self) -> None:
+        """Fence new work without starting terminal shutdown."""
+        self._maintenance_paused = True
+
+    @property
+    def maintenance_ready(self) -> bool:
+        """Require actual calls, responses and owned lease publication to settle."""
+        return not (
+            self._maintenance_calls or self._maintenance_native_tasks
+            or self._admitted_operations or self._responses
+            or self._settings_publication_tasks or self._settings_publication_leases
+            or self._audio_cpp_lifecycle_tasks or not self.registry.maintenance_ready
+        )
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait without cancelling accepted work or releasing its resources."""
+        if not self._maintenance_paused:
+            raise RuntimeError("tts_maintenance_not_paused")
+        while not self.maintenance_ready:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def maintenance_resume(self) -> None:
+        """Reopen this owner's intake after downstream owners resume."""
+        self._maintenance_paused = False
+
+    async def _run_native_publication(self, function, *args):
+        """Keep actual settings replacement/rollback alive through cancellation."""
+        task = asyncio.create_task(asyncio.to_thread(function, *args))
+        self._maintenance_native_tasks.add(task)
+        task.add_done_callback(self._maintenance_native_tasks.discard)
+        await _join_retained_task(task)
+        return task.result()
 
     def __init__(
         self,
@@ -1103,6 +1161,9 @@ class TTSService:
     ) -> None:
         if max_concurrent_operations < 1:
             raise ValueError("max_concurrent_operations must be positive")
+        self._maintenance_paused = False
+        self._maintenance_calls: dict[asyncio.Task, int] = {}
+        self._maintenance_native_tasks: set[asyncio.Task] = set()
         self.registry = registry
         self._audio_cpp_supervisor = audio_cpp_supervisor
         self._clone_materializer = clone_materializer
@@ -1253,6 +1314,7 @@ class TTSService:
                     self._audio_cpp_preparation.reset(token)
                 return
 
+    @_maintenance_call
     async def admit(
         self,
         request: TTSRequest,
@@ -1477,6 +1539,7 @@ class TTSService:
             raise closed_error
         return operation
 
+    @_maintenance_call
     async def resolve_provider_outbound_endpoint(self, provider_id: str) -> str:
         """Resolve the exact endpoint of one ready adapter under its lease."""
         lease = await self.registry.acquire(provider_id)
@@ -1505,6 +1568,7 @@ class TTSService:
         """Close a claimed operation without replacing its primary failure."""
         await _cleanup_preserving_primary(operation.close, primary_error)
 
+    @_maintenance_call
     async def synthesize(
         self,
         request: TTSRequest,
@@ -1528,6 +1592,7 @@ class TTSService:
         )
         return await operation.synthesize(progress_sink)
 
+    @_maintenance_call
     async def synthesize_exact(
         self,
         request: TTSRequest,
@@ -1543,6 +1608,7 @@ class TTSService:
             progress_sink,
         )
 
+    @_maintenance_call
     async def require_current_configuration_revision(
         self,
         provider_id: str,
@@ -1755,6 +1821,7 @@ class TTSService:
             return
         self._publish_native_capability_snapshot(merged)
 
+    @_maintenance_call
     async def get_native_capability_snapshot(
         self,
         provider_id: str,
@@ -2235,6 +2302,7 @@ class TTSService:
         """Return the latest saved settings generation published in memory."""
         return self._request_admission.preferences_generation()
 
+    @_maintenance_call
     async def synthesize_default(
         self,
         *,
@@ -2288,6 +2356,7 @@ class TTSService:
             admission_authorizer=admission_authorizer,
         )
 
+    @_maintenance_call
     async def synthesize_effective(
         self,
         *,
@@ -2319,6 +2388,7 @@ class TTSService:
             admission_authorizer=admission_authorizer,
         )
 
+    @_maintenance_call
     async def synthesize_effective_with_evidence(
         self,
         *,
@@ -2465,6 +2535,7 @@ class TTSService:
         finally:
             await lease.release()
 
+    @_maintenance_call
     async def get_catalog(
         self,
         provider_id: str,
@@ -2527,6 +2598,7 @@ class TTSService:
             )
         return catalog
 
+    @_maintenance_call
     async def get_voices(
         self,
         provider_id: str,
@@ -2563,6 +2635,7 @@ class TTSService:
                     await lease.release()
             return result
 
+    @_maintenance_call
     async def observe_voices(
         self,
         provider_id: str,
@@ -2612,6 +2685,7 @@ class TTSService:
             )
         return result
 
+    @_maintenance_call
     async def reconfigure_provider(
         self,
         provider_id: str,
@@ -2635,6 +2709,7 @@ class TTSService:
             raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
         return supervisor.snapshot()
 
+    @_maintenance_call
     async def audio_cpp_guided_dependency_snapshot(
         self,
         requirement: TTSCloneRecipeRequirement,
@@ -2758,6 +2833,7 @@ class TTSService:
             recovery_action="open_settings",
         ) from None
 
+    @_maintenance_call
     async def audio_cpp_runtime_observation(
         self,
         *,
@@ -2932,10 +3008,12 @@ class TTSService:
                     clone_setup=clone_setup,
                 )
 
+    @_maintenance_call
     async def start_and_test_audio_cpp(self) -> TTSProviderCatalog:
         """Deliberately prepare audio.cpp and refresh its native catalog."""
         return await self.get_catalog("audio_cpp", refresh=True)
 
+    @_maintenance_call
     async def restart_audio_cpp(self) -> TTSProviderCatalog | None:
         """Drain audio.cpp, apply the latest stage, and restart Managed mode."""
         if self._close_signal.is_set():
@@ -2947,6 +3025,7 @@ class TTSService:
         await join_retained_task(task)
         return task.result()
 
+    @_maintenance_call
     async def shutdown_audio_cpp(self) -> None:
         """Drain and stop audio.cpp while promoting the latest stage lazily."""
         if self._close_signal.is_set():
@@ -3076,6 +3155,8 @@ class TTSService:
             TypeError: If an input does not match the publication contract.
             ValueError: If provider IDs or the timeout are invalid.
         """
+        if self._maintenance_paused and asyncio.current_task() not in self._maintenance_calls:
+            raise TTSRegistryClosedError("TTS admission is paused for maintenance")
         if self._close_signal.is_set():
             raise TTSRegistryClosedError("The TTS service is closed")
         if not isinstance(preferences, TTSPreferencesSnapshot):
@@ -3202,7 +3283,7 @@ class TTSService:
 
         async with self._request_admission._publication_lock:
             try:
-                persisted = await asyncio.to_thread(persistence)
+                persisted = await self._run_native_publication(persistence)
                 if not isinstance(persisted, TTSSettingsPersistenceOutcome):
                     raise TypeError("Unexpected TTS settings persistence result")
                 persistence_outcome = persisted
@@ -3358,6 +3439,7 @@ class TTSService:
             return False
         return tts_configuration_is_active(self, provider_id, generation)
 
+    @_maintenance_call
     async def commit_voice_setup_default(
         self,
         preferences: TTSPreferencesSnapshot,
@@ -3404,7 +3486,7 @@ class TTSService:
                 )
                 return False
             try:
-                outcome = await asyncio.to_thread(rollback, prior)
+                outcome = await self._run_native_publication(rollback, prior)
             except BaseException as error:
                 logger.error(
                     "TTS default rollback raised %s",
@@ -3434,7 +3516,7 @@ class TTSService:
                     return TTSDefaultActivationOutcome("activation_not_ready")
                 if persistence is not None:
                     try:
-                        outcome = await asyncio.to_thread(persistence)
+                        outcome = await self._run_native_publication(persistence)
                     except BaseException:
                         return TTSDefaultActivationOutcome("activation_not_ready")
                     if not isinstance(outcome, TTSSettingsPersistenceOutcome):

@@ -1,0 +1,11 @@
+# Independent settlement admission-phase observer review
+
+APPROVED. Frozen two-file hashes match /private/tmp/uat-admission-phase-hashes.json (helper ad12fe0e51b9, test ff100f290840). Independent complete helper suite: 46 passed in 2.59s, /private/tmp/uat-admission-phase-independent.log. No actionable findings.
+
+The observer delegates original initialization context entry/body/exit and exact argument/exception triples, entry value, exit suppression result, and ordinary callable returns/errors. Entry failure cannot call exit; metadata/clock failures cannot prevent native calls or replace their errors. Context construction remains lazy because the original context-manager object is constructed normally before delegated enter. All saved storage/bootstrap/runtime bindings are restored by stop before existing diagnostic failure reporting.
+
+Admission measurement uses fixed phase labels and thread IDs, at most32 retained observed thread lifetimes, eight active nested frames per slot, six counter rows, and eight bounded type/code-only errors. No argument, path, registry data, source value, frame local, or leader identity is inspected. Slot registration uses bounded existing Python dictionary operations rather than extra product/observer locks. No admission-call write, sampler or traceback tracing was added; serialization occurs only on existing settlement records and one bounded stage-begin baseline. The existing *.log collector accepts it.
+
+Tests cover exact context protocol outcomes, cancellation, original error identity, metadata failure, nested restoration, overflow/error bounds, no per-call writes, product-lock-unavailable snapshots, and genuine native initialization contention followed by unchanged permission/authority/scope checks. Author overhead samples are evidence of low local cost, not Windows performance proof.
+
+Interpretation limits remain material: samples/counters are not atomic authority; initializing-body threads are candidates, not proven same-root leaders; generic scope/permission phases do not separate first and post checks, and hold-ready wait is not wrapped. Truncation cannot exclude unseen work; nested inclusive elapsed times must not be summed as exclusive cost. This supplies bounded causal evidence without changing product guards, deadlines, retries or scheduling semantics.

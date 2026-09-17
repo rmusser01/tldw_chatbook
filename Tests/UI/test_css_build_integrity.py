@@ -6,6 +6,8 @@ from pathlib import Path
 import json
 import re
 
+from Tests.private_profile import private_profile_test
+
 import pytest
 from textual.css.tokenize import tokenize
 
@@ -316,8 +318,9 @@ def _rule_body(css: str, selector: str) -> str:
     return body
 
 
+@private_profile_test
 def test_css_bundle_build_is_independent_of_wall_clock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    request, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two identical source trees produce byte-identical app bundles."""
     css_dir = tmp_path / "css"
@@ -427,7 +430,8 @@ def _generated_agentic_css() -> str:
     return "\n".join(parts)
 
 
-def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
+@private_profile_test
+def test_library_notes_compact_source_module_is_exactly_bundled(request) -> None:
     """Every CSS token reaches its output; split sheets reproduce exactly.
 
     Pre-split this was `bundle section == source` for the agentic monolith.
@@ -468,7 +472,8 @@ def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
                 )
 
 
-def test_console_bounded_sections_have_no_legacy_fractional_css_owner() -> None:
+@private_profile_test
+def test_console_bounded_sections_have_no_legacy_fractional_css_owner(request) -> None:
     """Only the bounded viewport may own direct-section scrolling geometry."""
 
     stylesheets = (
@@ -493,7 +498,10 @@ def test_console_bounded_sections_have_no_legacy_fractional_css_owner() -> None:
         assert viewport["scrollbar-gutter"] == "stable"
 
 
-def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> None:
+@private_profile_test
+def test_library_notes_compact_geometry_matches_fallback_source_and_bundle(
+    request,
+) -> None:
     stylesheets = (
         _library_screen_default_css(),
         _sources_text(_LIBRARY_SOURCES),
@@ -516,7 +524,8 @@ def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> 
             ], (selector, name, declarations)
 
 
-def test_file_notes_error_ink_and_disabled_opacity_are_app_tier() -> None:
+@private_profile_test
+def test_file_notes_error_ink_and_disabled_opacity_are_app_tier(request) -> None:
     stylesheets = (
         _AGENTIC_SOURCE.read_text(encoding="utf-8"),
         _generated_css_text(),
@@ -551,8 +560,9 @@ def _missing_fixture(
     return css_root, output_file
 
 
+@private_profile_test
 def test_build_css_rejects_a_missing_declared_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    request, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     css_root, output_file = _missing_fixture(tmp_path, monkeypatch)
 
@@ -560,8 +570,9 @@ def test_build_css_rejects_a_missing_declared_module(
         css_builder.build_css(css_root, output_file)
 
 
+@private_profile_test
 def test_build_css_preserves_existing_output_when_a_module_is_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    request, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     css_root, output_file = _missing_fixture(tmp_path, monkeypatch)
 
@@ -571,7 +582,8 @@ def test_build_css_preserves_existing_output_when_a_module_is_missing(
     assert output_file.read_text(encoding="utf-8") == "known-good bundle\n"
 
 
-def test_css_manifest_declares_only_existing_settings_source() -> None:
+@private_profile_test
+def test_css_manifest_declares_only_existing_settings_source(request) -> None:
     assert "components/splash_viewer.css" not in css_builder.CSS_MODULES
     assert "components/_settings_splash_theme.tcss" in css_builder.CSS_MODULES
     assert [
@@ -581,7 +593,8 @@ def test_css_manifest_declares_only_existing_settings_source() -> None:
     ] == []
 
 
-def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
+@private_profile_test
+def test_settings_splash_theme_rules_have_source_and_bundle_integrity(request) -> None:
     assert _SETTINGS_SOURCE.is_file()
     settings_source = _SETTINGS_SOURCE.read_text(encoding="utf-8")
     bundle = _generated_css_text()
@@ -605,7 +618,10 @@ def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
     assert "(NOT FOUND)" not in bundle
 
 
-def test_splash_theme_module_has_no_bare_or_generic_component_selectors() -> None:
+@private_profile_test
+def test_splash_theme_module_has_no_bare_or_generic_component_selectors(
+    request,
+) -> None:
     """The splash/theme module defines no app-wide component styles.
 
     TASK-394 regression lock: no bare type selectors and none of the relocated
@@ -659,7 +675,8 @@ def _registry_class_owning_sheets() -> dict[str, str]:
     return owning
 
 
-def test_relocated_shared_component_rules_are_present() -> None:
+@private_profile_test
+def test_relocated_shared_component_rules_are_present(request) -> None:
     """Relocated generic rules live in their owning sheet and reach the bundle.
 
     TASK-394's guarantee is unchanged: every rule moved out of a feature
@@ -693,7 +710,10 @@ def test_relocated_shared_component_rules_are_present() -> None:
     assert re.search(r"(?m)^VerticalScroll\s*\{", core_base)
 
 
-def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() -> None:
+@private_profile_test
+def test_console_inspector_handle_full_height_rule_reaches_generated_bundle(
+    request,
+) -> None:
     source = _sources_text(_CONSOLE_SOURCES)
     bundle = _generated_css_text()
 
@@ -705,7 +725,10 @@ def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() ->
         assert "background: $ds-surface-panel;" in inspector_handle
 
 
-def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle() -> None:
+@private_profile_test
+def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle(
+    request,
+) -> None:
     """Production CSS owns the narrow box model and its visible return seam."""
     source = _sources_text(_LIBRARY_SOURCES)
     bundle = _generated_css_text()
@@ -723,7 +746,8 @@ def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle() -
         assert emergency_return["border"] == "none"
 
 
-def test_console_edge_ownership_rules_reach_generated_bundle() -> None:
+@private_profile_test
+def test_console_edge_ownership_rules_reach_generated_bundle(request) -> None:
     """Source and bundle retain the edge-native Console shell contract."""
     source = _sources_text(_CONSOLE_SOURCES)
     bundle = _generated_css_text()
@@ -752,7 +776,8 @@ def test_console_edge_ownership_rules_reach_generated_bundle() -> None:
         assert transcript_focus["text-style"] == "bold underline"
 
 
-def test_settings_category_rules_have_source_and_bundle_integrity() -> None:
+@private_profile_test
+def test_settings_category_rules_have_source_and_bundle_integrity(request) -> None:
     source = _sources_text(_SETTINGS_SOURCES)
     bundle = _generated_css_text()
 
@@ -789,7 +814,8 @@ def _synthetic_agentic_split() -> "css_builder.ScreenOwnedSplit":
     )
 
 
-def test_split_partition_is_lossless_and_ownership_is_conservative() -> None:
+@private_profile_test
+def test_split_partition_is_lossless_and_ownership_is_conservative(request) -> None:
     """The splitter's classification rules, each on a minimal input.
 
     A block moves only when EVERY id/class token belongs to exactly one
@@ -833,7 +859,8 @@ def test_split_partition_is_lossless_and_ownership_is_conservative() -> None:
     assert "brace inside comment" in remainder + moved["console"]
 
 
-def test_split_demotes_moved_blocks_that_later_kept_blocks_tie_with() -> None:
+@private_profile_test
+def test_split_demotes_moved_blocks_that_later_kept_blocks_tie_with(request) -> None:
     """Intra-module cascade-order safety, both directions.
 
     A moved block parses after the whole bundle. A KEPT block later in the
@@ -867,8 +894,9 @@ def test_split_demotes_moved_blocks_that_later_kept_blocks_tie_with() -> None:
     )
 
 
+@private_profile_test
 def test_split_demotion_sees_later_modules(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    request, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Cross-module cascade-order safety (Qodo #2281 #8).
 
@@ -904,7 +932,8 @@ def test_split_demotion_sees_later_modules(
     assert ".console-x" in moved_none["console"]
 
 
-def test_split_sheets_carry_only_their_own_owners_rules() -> None:
+@private_profile_test
+def test_split_sheets_carry_only_their_own_owners_rules(request) -> None:
     """No sheet holds another surface's tokens (Qodo #2281 finding 8).
 
     The union harnesses deliberately model the steady-state app, so they
@@ -960,9 +989,10 @@ def _split_spec(module: str) -> "css_builder.ScreenOwnedSplit":
 
 @pytest.mark.parametrize(
     "module",
-    ["features/_evals.tcss", "features/_scheduling.tcss"],
+    ["features/_evals.tcss", "features/_scheduling.tcss", "features/_workflows.tcss"],
 )
-def test_screen_owned_module_is_exactly_partitioned(module: str) -> None:
+@private_profile_test
+def test_screen_owned_module_is_exactly_partitioned(request, module: str) -> None:
     """Every byte of a screen-owned module reaches exactly one output.
 
     The same contract the agentic module carries: the bundle's module
@@ -990,7 +1020,8 @@ def test_screen_owned_module_is_exactly_partitioned(module: str) -> None:
             )
 
 
-def test_screen_owned_splitter_multi_prefix_and_keep_shapes() -> None:
+@private_profile_test
+def test_screen_owned_splitter_multi_prefix_and_keep_shapes(request) -> None:
     """The scheduling spec's two prefixes are ONE owner; helpers stay.
 
     `scheduling-*` and `schedules-*` tokens both belong to the single
@@ -1020,8 +1051,9 @@ def test_screen_owned_splitter_multi_prefix_and_keep_shapes() -> None:
     assert ".pane-hidden { display: none; }" in remainder
 
 
+@private_profile_test
 def test_cross_split_selector_overlap_refuses_to_build(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    request, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two lazy sheets carrying the same selector must fail the build.
 
@@ -1071,7 +1103,8 @@ def test_cross_split_selector_overlap_refuses_to_build(
     css_builder.build_screen_owned_sheets(tmp_path, tmp_path)
 
 
-def test_screen_owned_sheets_are_wired_to_app_routes() -> None:
+@private_profile_test
+def test_screen_owned_sheets_are_wired_to_app_routes(request) -> None:
     """Every non-agentic split sheet is app-loaded by some route.
 
     A split whose sheet no route loads is dead CSS from the user's point
@@ -1116,7 +1149,8 @@ def test_screen_owned_sheets_are_wired_to_app_routes() -> None:
             )
 
 
-def test_screens_do_not_take_owned_sheets_onto_css_path() -> None:
+@private_profile_test
+def test_screens_do_not_take_owned_sheets_onto_css_path(request) -> None:
     """The harness-tier regression cannot quietly come back via CSS_PATH."""
     import importlib
 
@@ -1145,8 +1179,9 @@ def test_screens_do_not_take_owned_sheets_onto_css_path() -> None:
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_schedules_visit_loads_the_screen_owned_sheet(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """First navigation to Schedules parses the split sheet; boot does not.
 
@@ -1156,21 +1191,18 @@ async def test_schedules_visit_loads_the_screen_owned_sheet(
     """
     import asyncio
 
-    home = tmp_path / "home"
-    data = tmp_path / "data"
-    config = tmp_path / "config"
-    for sub in (home, data, config):
-        sub.mkdir(parents=True, exist_ok=True)
-    config_file = config / "tldw_cli" / "config.toml"
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(
-        "[first_run]\nsetup_completed = true\n\n[splash_screen]\nenabled = false\n"
+    # The child selected its private profile before importing config. Mutate
+    # that selected profile rather than changing source identity after import.
+    from tldw_chatbook.config import apply_settings_mutation_to_cli_config
+
+    outcome = apply_settings_mutation_to_cli_config(
+        {
+            "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
+            "general": {"default_tab": "chat"},
+        }
     )
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_DATA_HOME", str(data))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
-    monkeypatch.setenv("TLDW_TEST_MODE", "1")
+    assert outcome.fully_applied
 
     from tldw_chatbook.app import TldwCli
 
@@ -1201,8 +1233,9 @@ async def test_schedules_visit_loads_the_screen_owned_sheet(
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A configured `default_tab = schedules` boots with the sheet loaded.
 
@@ -1213,22 +1246,18 @@ async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
     """
     import asyncio
 
-    home = tmp_path / "home"
-    data = tmp_path / "data"
-    config = tmp_path / "config"
-    for sub in (home, data, config):
-        sub.mkdir(parents=True, exist_ok=True)
-    config_file = config / "tldw_cli" / "config.toml"
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(
-        "[first_run]\nsetup_completed = true\n\n[splash_screen]\n"
-        "enabled = false\n\n[general]\ndefault_tab = \"schedules\"\n"
+    # The child selected its private profile before importing config. Mutate
+    # that selected profile rather than changing source identity after import.
+    from tldw_chatbook.config import apply_settings_mutation_to_cli_config
+
+    outcome = apply_settings_mutation_to_cli_config(
+        {
+            "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
+            "general": {"default_tab": "schedules"},
+        }
     )
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_DATA_HOME", str(data))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
-    monkeypatch.setenv("TLDW_TEST_MODE", "1")
+    assert outcome.fully_applied
 
     from tldw_chatbook.app import TldwCli
 
@@ -1249,7 +1278,9 @@ async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
         )
 
 
+@private_profile_test
 def test_stale_split_sheets_are_removed_when_their_module_leaves(
+    request,
     tmp_path: Path,
 ) -> None:
     """A partial build must not leave a dead module's generated sheet behind.

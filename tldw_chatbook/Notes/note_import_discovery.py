@@ -226,6 +226,31 @@ Matched casefolded, like the skip map below: Windows and macOS preserve a
 marker's casing but compare it case-insensitively.
 """
 
+def folder_is_obsidian_vault(folder: str | Path) -> bool:
+    """Is this folder an Obsidian vault? The app's ONE answer to that question.
+
+    Extracted from ``library_notes_sync_controller`` (task-32535), which now
+    calls it, so the picker listing (task-32643 AC#4), the sync setup and the
+    import review all agree on what a vault is instead of each carrying a copy
+    of the marker test. Cheap enough to call per visible folder row: one
+    ``is_dir`` stat, no directory read, no recursion.
+
+    Args:
+        folder: The candidate root. A blank or whitespace-only value is not a
+            vault; neither is a missing or unreadable one -- whoever owns the
+            selection already has the say on those.
+
+    Returns:
+        True when Obsidian's own ``.obsidian/`` directory sits at the root.
+    """
+    if not str(folder).strip():
+        return False
+    try:
+        return (Path(folder) / OBSIDIAN_MARKER_DIRECTORY).is_dir()
+    except OSError:
+        return False
+
+
 OBSIDIAN_SKIPPED_ROOT_FOLDERS = {
     OBSIDIAN_MARKER_DIRECTORY: "obsidian_config",
     ".trash": "obsidian_trash",

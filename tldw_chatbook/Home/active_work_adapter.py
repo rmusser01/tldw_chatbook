@@ -458,12 +458,32 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
     def _unread_notification_count(self) -> int:
         if self.notification_service is None:
             return 0
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+        from tldw_chatbook.Notifications.client_notifications_db import (
+            ClientNotificationsDB,
+        )
+        from tldw_chatbook.Notifications.client_notifications_service import (
+            ClientNotificationsService,
+        )
+
+        service = self.notification_service
         try:
-            notifications = self.notification_service.list_queue(
-                limit=100,
-                include_dismissed=False,
-                category=None,
-            )
+            query = service.list_queue
+            if (
+                type(self) is LocalNotificationHomeActiveWorkAdapter
+                and type(service) is ClientNotificationsService
+                and type(service.store) is ClientNotificationsDB
+                and getattr(service.store.list_notifications, "__func__", None)
+                is ClientNotificationsDB.list_notifications
+                and getattr(query, "__func__", None) is ClientNotificationsService.list_queue
+            ):
+                notifications = run_finite_local_worker(
+                    query, limit=100, include_dismissed=False, category=None
+                )
+            else:
+                notifications = query(
+                    limit=100, include_dismissed=False, category=None
+                )
         except Exception:
             return 0
         return sum(
@@ -685,11 +705,26 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         """Fetch the watchlist run snapshot once per dashboard build."""
         if self.watchlist_service is None:
             return []
+        from threading import current_thread, main_thread
+        from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+        service = self.watchlist_service
+        db = None
         try:
-            return list(self.watchlist_service.list_home_run_snapshot(limit=20))
+            if (
+                type(self) is LocalNotificationHomeActiveWorkAdapter
+                and type(service) is LocalWatchlistsService
+                and current_thread() is not main_thread()
+            ):
+                db = service._db()
+            return list(service.list_home_run_snapshot(limit=20))
         except Exception as e:
             logger.warning(f"Failed to fetch local watchlist runs for Home: {e}")
             return []
+        finally:
+            if type(db) is SubscriptionsDB and not db.is_memory_db:
+                db.close()
 
     def _local_watchlist_run_items(self, runs: list[Any]) -> list[HomeActiveWorkItem]:
         items: list[HomeActiveWorkItem] = []

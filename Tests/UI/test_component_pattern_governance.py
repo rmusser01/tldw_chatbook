@@ -47,6 +47,7 @@ from pathlib import Path
 import pytest
 
 import tldw_chatbook
+from Tests.private_profile import private_profile_test
 from Tests.UI.python_style_inventory import inventory_styles
 from tldw_chatbook.css.build_css import CSS_MODULES
 from tldw_chatbook.css.widget_css import (
@@ -156,7 +157,8 @@ def _canonical() -> dict[str, str]:
     return out
 
 
-def test_canonical_classes_defined_only_in_owning_sheet() -> None:
+@private_profile_test
+def test_canonical_classes_defined_only_in_owning_sheet(request) -> None:
     """A bare Canonical-class rule may exist only in its owning sheet."""
     canonical = _canonical()
     sources = {**_sheet_sources(), **_bundled_sources()}
@@ -171,7 +173,8 @@ def test_canonical_classes_defined_only_in_owning_sheet() -> None:
     )
 
 
-def test_canonical_owning_sheets_are_bundled() -> None:
+@private_profile_test
+def test_canonical_owning_sheets_are_bundled(request) -> None:
     """Every sheet that owns a canonical class must be a bundle member.
 
     ``CSS_MODULES`` is the single source of truth for bundle membership;
@@ -185,7 +188,8 @@ def test_canonical_owning_sheets_are_bundled() -> None:
     )
 
 
-def test_deprecated_names_ratchet_down() -> None:
+@private_profile_test
+def test_deprecated_names_ratchet_down(request) -> None:
     """Python and sheet use sites of Deprecated names may only decrease.
 
     Counted with CSS-token boundaries (``(?<![\\w-])name(?![\\w-])``), not
@@ -227,7 +231,8 @@ def test_deprecated_names_ratchet_down() -> None:
         )
 
 
-def test_catalog_and_gallery_sync() -> None:
+@private_profile_test
+def test_catalog_and_gallery_sync(request) -> None:
     """Every canonical class is documented and rendered somewhere."""
     doc = CATALOG.read_text(encoding="utf-8")
     gallery = GALLERY.read_text(encoding="utf-8")
@@ -236,7 +241,8 @@ def test_catalog_and_gallery_sync() -> None:
         assert cls in gallery, f"{cls} missing from pattern gallery"
 
 
-def test_no_new_local_ds_fallbacks() -> None:
+@private_profile_test
+def test_no_new_local_ds_fallbacks(request) -> None:
     """Per-screen bundled blocks may not add local $ds-* fallbacks."""
     for key, css in _bundled_raw_screen_sources().items():
         if not key.endswith(SCREEN_ATTR):
@@ -256,7 +262,8 @@ def test_no_new_local_ds_fallbacks() -> None:
 TOKENS_SHEET = "core/_variables.tcss"
 
 
-def test_dimension_literal_ratchet() -> None:
+@private_profile_test
+def test_dimension_literal_ratchet(request) -> None:
     """The dimension floor is a HARD ZERO (ADR-161 task 11 close-out).
 
     Every baseline entry reached zero during the task-11 migration, so the
@@ -280,7 +287,8 @@ def test_dimension_literal_ratchet() -> None:
     )
 
 
-def test_python_style_ratchet() -> None:
+@private_profile_test
+def test_python_style_ratchet(request) -> None:
     """No token-covered static or unmarked Python visual writes remain."""
     offenders: list[str] = []
     for path in sorted(PKG.rglob("*.py")):
@@ -309,7 +317,8 @@ def test_python_style_ratchet() -> None:
 SHEET_ACTIVE_LINE_CEILING = 2_000
 
 
-def test_sheet_size_ceiling() -> None:
+@private_profile_test
+def test_sheet_size_ceiling(request) -> None:
     """No CSS_MODULES sheet exceeds 2,000 comment-stripped active lines.
 
     TASK-24451 close-out (ADR-161 spec 3.5): the ceiling ships in the same
@@ -329,7 +338,8 @@ def test_sheet_size_ceiling() -> None:
         )
 
 
-def test_ratchet_regexes_match_pin_script() -> None:
+@private_profile_test
+def test_ratchet_regexes_match_pin_script(request) -> None:
     """The counting regexes must stay byte-identical to the pin script's."""
     pin_source = (Path(__file__).parent / "pin_pattern_ratchets.py").read_text(
         encoding="utf-8"
@@ -352,8 +362,9 @@ def test_ratchet_regexes_match_pin_script() -> None:
         "height: +.25;",
     ],
 )
+@private_profile_test
 def test_dimension_floor_and_pin_reject_every_numeric_slot(
-    declaration, tmp_path, monkeypatch
+    request, declaration, tmp_path, monkeypatch
 ):
     """Mixed shorthand and signed/decimal literals cannot bypass either floor."""
     source = "Widget { " + declaration + " }"
@@ -363,7 +374,7 @@ def test_dimension_floor_and_pin_reject_every_numeric_slot(
         lambda: {"features/_probe.tcss": source},
     )
     with pytest.raises(AssertionError, match="Raw numeric dimension literals"):
-        test_dimension_literal_ratchet()
+        test_dimension_literal_ratchet.__wrapped__(request)
 
     test_dir = tmp_path / "Tests" / "UI"
     test_dir.mkdir(parents=True)
@@ -387,7 +398,8 @@ def test_dimension_floor_and_pin_reject_every_numeric_slot(
     assert not (test_dir / "pattern_ratchet_baseline.json").exists()
 
 
-def test_dimension_floor_ignores_tokens_and_token_definitions(monkeypatch):
+@private_profile_test
+def test_dimension_floor_ignores_tokens_and_token_definitions(request, monkeypatch):
     monkeypatch.setattr(
         sys.modules[__name__],
         "_sheet_sources",
@@ -399,10 +411,11 @@ def test_dimension_floor_ignores_tokens_and_token_definitions(monkeypatch):
             ),
         },
     )
-    test_dimension_literal_ratchet()
+    test_dimension_literal_ratchet.__wrapped__(request)
 
 
-def test_active_css_extension_is_in_dimension_floor(tmp_path, monkeypatch):
+@private_profile_test
+def test_active_css_extension_is_in_dimension_floor(request, tmp_path, monkeypatch):
     sheet = tmp_path / "components" / "active.css"
     sheet.parent.mkdir()
     sheet.write_text("Widget { padding: 1; }")
@@ -412,10 +425,11 @@ def test_active_css_extension_is_in_dimension_floor(tmp_path, monkeypatch):
     assert "components/active.css" in _sheet_sources()
     assert "components/unused.css" not in _sheet_sources()
     with pytest.raises(AssertionError, match="components/active.css"):
-        test_dimension_literal_ratchet()
+        test_dimension_literal_ratchet.__wrapped__(request)
 
 
-def test_pin_rejects_active_css_extension_without_writing_baseline(tmp_path):
+@private_profile_test
+def test_pin_rejects_active_css_extension_without_writing_baseline(request, tmp_path):
     test_dir = tmp_path / "Tests" / "UI"
     test_dir.mkdir(parents=True)
     for name in ("pin_pattern_ratchets.py", "python_style_inventory.py"):

@@ -1,0 +1,25 @@
+{
+  "scope": "Existing backup UAT remediation; concurrent config/Canvas lock corrections and contiguous synchronous Console projection grouping. No startup count/timing, native guard, new dependency or feature change.",
+  "base_revision": "d3082ef98211e3ad42273ac2d2dcbbf43b6d93cc",
+  "product_hashes": {
+    "tldw_chatbook/Backup_Recovery/config_participants.py": "37f9e4feeff45ff819bcd2b432e222e12cc05c0295c425a9c798d6b57d92644a",
+    "tldw_chatbook/config.py": "99aca34149611ab3a33b142fdf292826d84615ef381a76f873a7c9ac87e2f644",
+    "tldw_chatbook/Chat/console_runtime.py": "7de3ce6850847db3e146a3721e66b367726e19109794acb75397a39e9393dcf7",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "ceefda4d3139d09c31cb6544e1368745765cecacbfaf40528ee110dff87892d7"
+  },
+  "evidence": {
+    "console-canvas-lock-order-review-20260914.md": "14a360e2e81d72e0d79da0f48844069fbed14452ef758ef693749dd0698fc640",
+    "config-native-lock-order-review-20260914.md": "16e3054906a63b1da4ff4a20fdc6dc0d4616401f4f8eb0ed580d77363cd11fc9",
+    "config-legacy-baseline-review-20260914.md": "f32e90016f2209b3d3adf4791f4cc921aaa6dfde4013f84a2561d3d3ab3bf64c",
+    "config-legacy-baseline-comparison-20260914.json": "663ead0d7f070d0cbeaae3541f579ae3554940ed5188f3d49249ef07d00ba943",
+    "console-projection-review-20260914.md": "38bcce67a7936331d47e7ad6abe458acc9fb4e96ccb66a9eda9f387068d6cad7",
+    "console-projection-installed-macos-20260914.json": "e7eb92e1e2646fa597b4ca5c842518de8f7891a6cd3448c5e586247b8bee0e6d",
+    "console-projection-static-20260914.json": "8e067ae103bc278fce53a40b749c7512ea7860c327e5e7068683dca087cae02a",
+    "config-native-lock-static-20260914.json": "5d268040d7847db66f937b72cf966cdb025484cd3c3337dd87ed43b461809b3c",
+    "windows-support-d3082-review-20260914.md": "29d5debbb7d3a00ff7196b8cfb7fde8187d19e45a64f35cbea6f096d0320221b",
+    "windows-acl-failure-metadata-20260914.md": "293b3ba6943a3700ab99d7fcc63b4b60c615b7e9212f5ab57da6b1ea5239a82a"
+  },
+  "remaining": "Windows57 repeat and original Windows replacement run, actual keyboard later rollback, Linux diagnostic approval; no final acceptance or merge.",
+  "focused_native_selection_cases": 57,
+  "acl_metadata": "Failure-only owner equality/control flags/revision/lengths/DACL equality; exact restore check unchanged; helper10PASS independently rerun, native Windows cause pending."
+}

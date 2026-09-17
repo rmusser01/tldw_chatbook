@@ -3,6 +3,8 @@
 #
 from __future__ import annotations
 
+from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
+
 # Imports
 import asyncio
 import hashlib
@@ -239,6 +241,7 @@ class KokoroTTSBackend(LocalTTSBackend):
     - https://github.com/remsky/Kokoro-FastAPI
     """
 
+    @voice_files.call
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
 
@@ -1696,6 +1699,7 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         return word_timestamps
 
+    @voice_files.call
     def _load_saved_blends(self) -> Dict[str, Dict[str, Any]]:
         """Load saved voice blends from disk"""
         blends = {}
@@ -1703,7 +1707,7 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         if blend_file.exists():
             try:
-                with open(blend_file, "r") as f:
+                with voice_files.open_text(self, blend_file, "r") as f:
                     blends = json.load(f)
                 logger.info(f"Loaded {len(blends)} saved voice blends")
             except Exception as e:
@@ -1711,6 +1715,7 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         return blends
 
+    @voice_files.call
     def _save_blends(self) -> bool:
         """Atomically save voice blends to disk."""
         blend_file = self.voice_blends_dir / "voice_blends.json"
@@ -1730,6 +1735,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             logger.error(f"Failed to save voice blends: {e}")
             return False
 
+    @voice_files.call
     def _create_default_blends(self):
         """Create default voice blend presets"""
         default_blends = [
@@ -1789,6 +1795,7 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         logger.info(f"Created {len(default_blends)} default voice blends")
 
+    @voice_files.call
     def save_voice_blend(
         self,
         name: str,
@@ -1867,6 +1874,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             blends.append(blend_info)
         return blends
 
+    @voice_files.call
     def delete_voice_blend(self, name: str) -> bool:
         """Delete a saved voice blend"""
         if name not in self.saved_blends:

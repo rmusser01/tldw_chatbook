@@ -6,10 +6,10 @@ contracts so that another successful bounded review cannot accidentally close
 the whole workstream.
 
 Saved work: draft [PR #2704](https://github.com/rmusser01/tldw_chatbook/pull/2704),
-`feat/component-pattern-library` → `dev`. The last checked PR state has conflicts.
-The earlier integration of `fd30614dcdc` is historical evidence, not evidence of
-compatibility with current dev. No merge into dev or full-suite run is authorized
-by this ledger.
+`feat/component-pattern-library` → `dev`. TASK-32749 reconciles dev
+`1c0327b3bb3d95b61e3e1b9a83b30e7030453ad6`; the earlier integration of
+`fd30614dcdc` remains historical evidence. No merge into dev or full-suite run
+is authorized by this ledger.
 
 ADR required: no. Existing ADR-150/161 define the language and migration;
 ADR-031 governs interaction and ADR-097 governs startup budgets. This document
@@ -33,9 +33,11 @@ implementation, deviations, baseline failures and native gallery limitations.
 | Dark/light gallery makes component rendering reviewable | `Tests/UI/snapshots/pattern_gallery/{dark,light}.svg`; layout/snapshot tests; historical native gallery evidence | Implemented; not a claim of visual parity for every feature |
 | Generated CSS and boot budget remain valid | Bundle sync, selector/comment integrity and boot byte tests; 634,050-byte ceiling, 600,000-byte anti-vacuity floor | Must stay green after every style change and integration |
 
-Fresh verification for this checkpoint: 109 adjacent/governance cases pass in the
-[TASK-32748 regression receipt](../qa/2026-09-17-settings-generation-defaults/regressions.txt).
-Boot CSS is 616,786 bytes, below the unchanged 634,050-byte limit.
+Fresh integration verification: 280 distinct affected/governance cases pass in the
+[TASK-32749 receipt](../qa/2026-09-17-component-current-dev/README.md).
+Boot CSS is 620,062 bytes, below the unchanged 634,050-byte limit. Independent
+review found no integration-specific blocker; native inspection found the incoming
+empty Notes toolbar clipping tracked separately as TASK-32752.
 
 The approved Python property set is `background`, `color`, `border*`, `width`,
 `height`, `padding*`, `margin*`, and `opacity*`. Min/max dimensions and display/
@@ -60,7 +62,8 @@ or permission configuration.
 | Settings: generation defaults | TASK-32748: finite validation, retained disclosure/draft, visible compact controls and same-field focus after reflow | Qualified by 173 distinct targeted checks and four final native journeys; [QA receipt](../qa/2026-09-17-settings-generation-defaults/README.md) states provider and failure-injection limits |
 | Remaining Settings categories and modal patterns | Prior compact Providers/Network geometry is qualified, not all category behavior | Inventory and review Overview, Web Search, Speech/TTS, Appearance/Theme/Splash, Storage, Workspaces, Tool Profiles, Privacy, Network, Personal Context, Console Behavior, Library/RAG, Artifacts, Personas, Skills, Schedules, Watchlists, Workflows, MCP/ACP defaults, Diagnostics/About, Advanced Config, Internal Prompts, Image/Video Generation and Agents |
 | Roleplay, Watchlists, Artifacts, Schedules, Workflows, MCP, ACP, Lab, Logs, Research, Meetings | No whole-destination completion claim in this workstream | Bounded keyboard/state/resize/theme review, fix confirmed defects, and record representative native evidence |
-| Current dev integration | PR saved; earlier dev reconciliation is documented. Fresh dev is `1c0327b3bb3d95b61e3e1b9a83b30e7030453ad6` | Next step: reconcile 71 incoming commits. Read-only preflight at `94eea53465` found 12 conflict paths; recheck after TASK-32748 is committed, preserve upstream ownership, rebuild, run affected checks and inspect the integrated native app |
+| Current dev integration | TASK-32749 reconciles 71 commits through `1c0327b3bb3d95b61e3e1b9a83b30e7030453ad6`; generated artifacts, token floors, 280 cases, independent review and four native cells qualified | [Integration report](2026-09-17-component-current-dev-integration.md) records exact bounds; subsequent dev changes require their own review |
+| Empty Notes folder actions | Integration captures expose clipped disabled Remove placement copy at 170×48 in both themes | TASK-32752 is the next repair; add actual-width empty-selection coverage and verify native labels |
 
 ## How to close the workstream
 
@@ -74,7 +77,6 @@ A full repository sweep requires explicit user opt-in.
 Before declaring completion, reconcile every remaining row with linked evidence,
 check that PR integration is reviewable, and report any documented backend limits.
 Do not substitute a Done parent task, passing governance, or a single successful
-native journey for the broader review the user approved. Current-dev integration
-now comes before additional feature reviews: the fresh preflight shows conflicts
-in Console, Library, styles, tests and evidence documentation. Other Settings
-categories and destinations remain visible in this ledger until assessed.
+native journey for the broader review the user approved. After saving the current
+integration, repair TASK-32752, then continue the remaining Settings categories and
+destinations. Their rows remain visible in this ledger until assessed.

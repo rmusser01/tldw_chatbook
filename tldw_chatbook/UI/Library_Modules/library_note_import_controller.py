@@ -11,6 +11,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Library.library_note_import_state import (
     NoteImportPhase,
     NoteImportReviewEffect,
@@ -32,7 +34,9 @@ from tldw_chatbook.Library.library_note_import_state import (
     set_review_page,
     settle_import,
     show_review,
+    vault_recognition_line,
 )
+from tldw_chatbook.Notes.note_import_discovery import folder_is_obsidian_vault
 from tldw_chatbook.Notes.note_import_executor import LocalNoteImportTarget
 from tldw_chatbook.Notes.note_folder_models import (
     FolderValidationError,
@@ -45,6 +49,20 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     RootCollisionChoice,
     wikilink_only,
 )
+
+#: task-32641: the vault-owned folders a reader sees named on the
+#: recognition line, keyed by the skip reason ``note_import_discovery``
+#: already records for them. It is a SECOND hand-maintained map -- the
+#: labels keep Obsidian's own casing where the match keys are casefolded,
+#: so they cannot simply be derived -- and
+#: ``test_every_vault_skipped_folder_has_a_label`` is what stops a fourth
+#: entry in ``OBSIDIAN_SKIPPED_ROOT_FOLDERS`` going unnamed here (review
+#: round 1: this comment used to claim that coupling without having it).
+_VAULT_SKIPPED_FOLDER_LABELS = {
+    "obsidian_config": ".obsidian/",
+    "obsidian_trash": ".trash/",
+    "obsidian_template": "Templates/",
+}
 
 
 class LibraryNoteImportController:
@@ -110,6 +128,10 @@ class LibraryNoteImportController:
         self._review_note_reader = review_note_reader
 
         self._state = initial_note_import_snapshot()
+        #: task-32641: what the SELECTED FOLDER was recognised as, stated
+        #: before the review. Presentation only, like ``_error_message``
+        #: beside it -- it never enters the authority-bearing snapshot.
+        self._vault_recognition = ""
         self._before_check: NoteImportWorkflowSnapshot | None = None
         self._check_task: asyncio.Task[Any] | None = None
         self._cancel_event: threading.Event | None = None
@@ -125,6 +147,10 @@ class LibraryNoteImportController:
     def presentation_snapshot(self) -> Any:
         """Return the frozen redacted canvas projection."""
         projected = project_library_note_import_snapshot(self._state)
+        if self._vault_recognition:
+            projected = replace(
+                projected, vault_recognition=self._vault_recognition
+            )
         return (
             replace(projected, status_line=self._error_message)
             if self._error_message
@@ -170,6 +196,10 @@ class LibraryNoteImportController:
         if replace:
             self._state = clear_selection(self._state)
             self._existing_top_level_names = ()
+        # task-32641 AC#3: the recognition belongs to the selection that was
+        # scanned. A new pick has not been scanned yet, and last pick's
+        # sentence over this pick's folder is worse than no sentence.
+        self._vault_recognition = ""
         self._state = (
             select_folder(self._state, path)
             if folder
@@ -177,6 +207,73 @@ class LibraryNoteImportController:
         )
         self._error_message = ""
         self.publish()
+
+    async def recognise_selected_folder(self, *, already_synced: bool) -> None:
+        """Say a vault was recognised, before the review (task-32641).
+
+        Runs the SAME bounded discovery the review's check runs -- one
+        scanner, one vault predicate (``folder_is_obsidian_vault``), one
+        skip map -- so the counts on the confirmation line and the groups in
+        the review can never be two opinions. The scan is read-only and
+        happens on a thread; a folder that is not a vault costs one
+        ``is_dir`` and produces no line at all (AC#3).
+
+        Args:
+            already_synced: Whether a lasting-sync root already covers this
+                folder. Asked by the caller, which can see both the import
+                and the sync sides; the AC's other half (already imported)
+                is read here, from Import once's own receipt ledger.
+        """
+        state = self._state
+        if not state.selection_is_folder or not state.selected_paths:
+            return
+        folder = state.selected_paths[0]
+        revision = state.revision
+        try:
+            line = await asyncio.to_thread(
+                self._recognise_folder, folder, already_synced
+            )
+        except Exception:  # noqa: BLE001 - one advisory line, never the flow
+            # Metadata only: the thing that failed here is a path.
+            logger.debug("note_import_vault_recognition_failed")
+            return
+        # The user may have changed or cleared the selection while the scan
+        # ran; a sentence about the folder they left is worse than none.
+        if self._state.revision != revision or not self._state.selection_is_folder:
+            return
+        self._vault_recognition = line
+        self.publish()
+
+    def _recognise_folder(self, folder: Path, already_synced: bool) -> str:
+        """Scan one folder and build its recognition line, or ``""``."""
+        if not folder_is_obsidian_vault(folder):
+            return ""
+        discovery = self._discover((folder,), self._bounds, obsidian_mode=True)
+        if not discovery.vault_detected:
+            # The marker is at the root and the scanner disagreed -- say
+            # nothing rather than claim a vault the import will not read as
+            # one. (Both answers come from the same module; this is the
+            # guard for them ever drifting apart.)
+            return ""
+        skipped = tuple(
+            label
+            for reason, label in _VAULT_SKIPPED_FOLDER_LABELS.items()
+            if any(skip.reason_code == reason for skip in discovery.skips)
+        )
+        sources = tuple(candidate.source for candidate in discovery.candidates)
+        already_imported = 0
+        try:
+            already_imported = len(
+                self._receipt_repository().prior_imported_notes_read_only(sources)
+            )
+        except Exception:  # noqa: BLE001 - the ledger is advisory here
+            logger.debug("note_import_prior_observation_read_failed")
+        return vault_recognition_line(
+            notes=len(sources),
+            skipped_folders=skipped,
+            already_imported=already_imported,
+            already_synced=already_synced,
+        )
 
     def set_obsidian_mode(self, enabled: bool) -> None:
         """Retain the vault-reading choice; the caller re-runs the read-only check.
@@ -194,6 +291,7 @@ class LibraryNoteImportController:
         self._state = clear_selection(self._state)
         self._existing_top_level_names = ()
         self._error_message = ""
+        self._vault_recognition = ""
         self.publish()
 
     def set_group_action(self, classification: str, action: str) -> None:

@@ -1,0 +1,17 @@
+{
+  "scope": "Catalog, archive scope, selected capture, and native discovery; restore UAT remains pending",
+  "source_revision": "f591cc455e5b6a577c291b4e18cfa63e11e345f3",
+  "archive_sha256": "d83006a8c18c56295d5a9f21db82f5491caacc335cb3177f3a90265319f8ae81",
+  "execution": "Actual Linux SSH host, disposable offline source and profile trees",
+  "pytest_returncode": 0,
+  "source_files": 16779,
+  "source_unchanged": true,
+  "status": {
+    "collected": 56,
+    "passed": 56,
+    "failed": 0,
+    "skipped": 0,
+    "unfinished": 0
+  },
+  "raw_logs": "Retained on Linux; only numeric status and source hashes returned"
+}

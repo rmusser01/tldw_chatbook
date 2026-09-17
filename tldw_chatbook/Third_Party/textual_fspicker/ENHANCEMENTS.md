@@ -161,8 +161,9 @@ Live UAT of a keyboard-only export flow (Evals results-grid export, at a
 None of this touches a plain `FileOpen`'s own default focus behaviour (still
 the directory listing) or the separate `EnhancedFileDialog` picker in
 `Widgets/enhanced_file_picker.py`, which composes its own, differently-`id`d
-Input/Select and is unaffected. (`FileOpen(offer_select_folder=True)` DOES
-focus the field now -- see section 8 below.)
+Input/Select and is unaffected. (`FileOpen(offer_select_folder=True)`,
+`SelectDirectory` and `EnhancedSelectDirectory` DO focus the field now -- see
+section 8 below.)
 
 ### 7. The Filename Field Is Also the Path Field (task-32122, task-32229)
 
@@ -187,21 +188,79 @@ second field beside it:
   subclass whose only content is `Binding("ctrl+a", "select_all")`. `Home`
   is unchanged.
 
-`SelectDirectory` is not a `BaseFileDialog` and none of this reaches it.
+`SelectDirectory` is not a `BaseFileDialog` and none of this reaches it. (It
+does share the mount-time focus rule in section 8 -- that one lives on the
+common base precisely so a second directory dialog cannot miss it.)
 
 ### 8. Folder-Offering Open Dialogs Open on the Field (task-32540, task-32554)
 
-- **Initial focus** (task-32540): `FileOpen` overrides
-  `_focus_initial_widget` to focus the input bar's field when
-  `offer_select_folder=True`, exactly as `FileSave` does for its own reason
-  (section 6). Reproduced live at 235x52 before the change: Library ▸ Notes ▸
-  Add from files… ▸ Import once, then typing `/Users` -- every character went
-  into the directory listing's type-ahead and Enter opened `..`. A plain
-  file-only `FileOpen` (character import, skill folders, TTS model
-  directories) is deliberately untouched, since there Enter on a listing row
-  is the natural first keystroke. Both branches are pinned, the second as an
-  explicit negative control, in
-  `Tests/UI/test_library_notes_w4_import_keyboard.py`.
+- **Initial focus** (task-32540, generalised by task-32606): a dialog whose
+  result is a DIRECTORY opens on the input bar's field, with any pre-filled
+  value selected, instead of on the listing. Reproduced live at 235x52 before
+  the change: Library ▸ Notes ▸ Add from files… ▸ Import once, then typing
+  `/Users` -- every character went into the directory listing's type-ahead and
+  Enter opened `..`.
+
+  task-32540 shipped this as a `FileOpen._focus_initial_widget` override, and
+  critique #4 found the sibling it never reached: Library ▸ Notes ▸ Folder
+  files pushes the vendored `SelectDirectory`, which has no override at all
+  (nor does `EnhancedSelectDirectory`), so that door stayed mouse-only. The
+  behaviour now lives ONCE on `FileSystemPickerScreen._focus_initial_widget`,
+  keyed on a single declarative fact -- the `RETURNS_A_FOLDER` class
+  attribute, which `SelectDirectory` and `EnhancedSelectDirectory` set and
+  `FileOpen` answers per instance through its existing
+  `_offer_select_folder`. `FileOpen` no longer overrides the method. The
+  field is read generically as the input bar's one `Input`, the way
+  `_resolve_select_folder_target` already reads it, so the three differing ids
+  (`#path_input`, `#dir-path-input`, the anonymous `FileNameInput`) need no
+  special-casing.
+
+  `FileSave` keeps its own override: it is not folder-returning, and its
+  reason (section 6) is different. A plain file-only `FileOpen` (character
+  import, skill folders, TTS model directories) is deliberately untouched,
+  since there Enter on a listing row is the natural first keystroke. Both
+  branches are pinned, the second as an explicit negative control, in
+  `Tests/UI/test_library_notes_w4_import_keyboard.py` and
+  `Tests/UI/test_library_notes_w5_picker_keyboard.py`.
+- **The dialog's own footer** (task-32606): `compose` yields a `Footer` as a
+  direct child of the SCREEN (not of `Dialog`). A `ModalScreen` is
+  translucent, so the host screen's footer shows straight through it --
+  critique #4 pressed Tab three times inside this dialog and kept reading
+  Library's `/ focus search | F6 next pane | esc notes`. An opaque footer on
+  the bottom row replaces those chips for as long as the modal is up; mounted
+  inside `Dialog` it would instead add a second key row eight lines above a
+  contradicting one. `EnhancedFileDialog` mirrors the base layout by hand
+  rather than calling it, so the base's `Footer` does not reach it and
+  `EnhancedSelectDirectory` still shows the HOST screen's chips through the
+  modal. That is a known, deliberate gap, not an oversight: a screen-docked
+  footer takes the bottom terminal row, and that dialog is `height: 95%`
+  against this one's 80%, so at the 60x24 its pickers are pinned at, adding
+  it pushed the character-import picker's selection marker off the bottom
+  and turned three existing size pins red. Giving that family the chips
+  needs a layout answer for that row, not one more `yield`.
+
+  Three consequences of putting it at screen level, all handled:
+
+  1. It docks OUTSIDE `SAFE_MODAL_CONTENT`, so `SafeModalDismissMixin`
+     classified a chip click as a backdrop click and cancelled the dialog --
+     on `FileSave`, discarding a typed filename. `modal_dismissal.py` now
+     exempts a click landing inside any mounted `Footer` on the screen
+     (`target_is_modal_chrome`). Tested by POINT, not by the target's
+     ancestry: `FooterKey` fires its key from `on_mouse_down`, and a key
+     that moves focus changes the active bindings, so `Footer` recomposes
+     and the chip is already detached when the `Click` arrives.
+  2. `Footer` lays chips out in binding order and scrolls the overflow off
+     the right edge, so `BINDINGS` order IS the narrow-width priority:
+     `escape` leads, the path actions follow. At 100 columns `esc Cancel`
+     was otherwise off-screen entirely.
+  3. `Footer` renders every `show=True` binding and marks a
+     `check_action`-vetoed one dim rather than dropping it, so `^s Select
+     this folder` still appears (dimmed) on dialogs that do not offer it.
+     It is therefore ordered LAST, where a narrow terminal scrolls it off
+     first instead of spending 23 of 60 columns on it.
+
+  `Footer` is `can_focus=False, can_focus_children=False`, so no picker's
+  Tab order changes.
 - **A shape-based focus cue** (task-32540): the bar's buttons told a keyboard
   user which one Enter would press by colour and a label underline only. The
   rule that fixes it cannot live here -- the app's own
@@ -216,6 +275,81 @@ second field beside it:
   + the last few (`_MAX_VISIBLE_BREADCRUMBS`, matching
   `EnhancedFileDialog`'s own ceiling), each crumb keeping its absolute path
   as its tooltip.
+
+### 9. Folder-Returning Dialogs Are One Picker, Not Three (task-32611, task-32643)
+
+Critique #4 opened the three Library ▸ Notes folder doors in one sitting and
+found three dialogs for one decision. The fix keeps reading the SAME
+declarative fact section 8 introduced, `RETURNS_A_FOLDER`, rather than adding
+flags beside it.
+
+- **The third door was using the wrong one of the two.** "Keep a folder
+  synced" pushed `FileOpen(offer_select_folder=True)` -- the files-AND-folder
+  dialog -- while its callback dropped anything that was not a directory. So
+  its field was labelled "File name", its placeholder read "File name or
+  path", and every file in the folder was listed as though pickable, under
+  the title "Choose a folder to keep synced". It now pushes `SelectDirectory`,
+  the folder-only mode of the same family. Nothing in the picker changed for
+  it; the caller was asking the wrong question.
+- **One hint, one button name.** `FileOpen._hint_text` and
+  `SelectDirectory._hint_text` are both gone: `FileSystemPickerScreen.
+  _hint_text` returns the one sentence whenever `RETURNS_A_FOLDER`, and
+  `FOLDER_CONFIRM_LABEL` is the single literal behind both that sentence and
+  the "Select folder" button `compose` adds on a files-and-folder dialog.
+  `SELECT_BUTTON_DEFAULT` (a class attribute, `"Select folder"` on
+  `SelectDirectory`) is the folder-only half, so the button that commits a
+  folder is called the same thing on all three doors. A caller passing an
+  explicit `select_button` still wins.
+- **`_default_listing_sort`.** A new `"folders"` sort key (folders first,
+  name-ascending; `Descending` reverses the NAMES and keeps folders on top,
+  via a second stable sort on `not is_directory` rather than folding the flag
+  into the key) is the DEFAULT for a folder-returning dialog and only for one.
+  A file picker keeps "Discovery order", where rows arriving in disk order is
+  the point, and "Discovery order" stays on the menu for both. The Select's
+  initial `value=` and the navigation's `sort_key` are set from the one
+  method, the latter in `on_mount`, which Textual dispatches to every class in
+  the MRO -- so `EnhancedFileDialog`, which builds its own navigation in its
+  own `compose`, is covered without a second copy of the two lines.
+- **The folder badge is bounded, and off by default.** `FileRecord` gained
+  `note_count` / `note_count_partial` / `is_vault` / `folder_summary_loaded`,
+  rendered through `size_text` (the column a directory has always left blank)
+  and `display_name` -- so both the vendored row and `EnhancedFileDialog`'s
+  responsive one show them with no renderer change. The count is one
+  `os.scandir` of that folder, no recursion, capped at `NOTE_COUNT_CEILING`
+  (500) entries READ; it rides the existing visible-rows-only metadata
+  hydration worker. The bound is on reads rather than on matches because that
+  is where the work is -- review round 1 caught the first version capping on
+  matches, which walked a 20 000-entry folder of `.log` files to its end
+  looking for notes it had no reason to expect. A folder that runs out of
+  budget returns its notes-so-far as a floor and the badge says "48+ notes". `show_folder_notes` is off
+  unless the caller passed a `notes_context`, because "12 notes" is a useful
+  badge when choosing where notes live and noise in a model-file or
+  character-card picker. `_wants_hydration` asks the badge question
+  independently of `metadata_loaded`: a metadata sort stats every record
+  without counting notes, so keying the queue on `metadata_loaded` alone left
+  folders that first became visible under "Size" permanently badge-less.
+- **The vault predicate is CALLED, not copied.** `read_folder_summary` imports
+  `Notes.note_import_discovery.folder_is_obsidian_vault` -- the body lifted
+  out of `library_notes_sync_controller._carries_obsidian_marker`, which now
+  delegates to it -- so the listing and the sync setup cannot drift on what a
+  vault is. The import is lazy: this package is deliberately absent from the
+  app's boot import closure (`Tests/Packaging/test_app_import_diet_closure`)
+  and so is that module.
+- **Recent roots reuse the store that already exists.** `_get_recent_paths`
+  was a stub returning `[]`, which is why ctrl+r opened a permanently empty
+  box on every picker. With a `notes_context` it now reads
+  `RecentLocations(context=...)` -- the enhanced family's own
+  `[filepicker] recent_<context>` store -- written by
+  `Library.library_browse_location.remember_browse_directory`, which all three
+  doors already call on a worker, folded into the config write it was already
+  making. `watch_show_recent` focuses the list when it has entries, and
+  `_on_recent_selected` DISMISSES with the root on a folder-returning dialog
+  (navigating there and then requiring Select would leave it two keystrokes
+  away, not one). Two deliberate non-changes: ctrl+r still opens an empty
+  panel, because `test_fspicker_keyboard_save` pins the Escape-peel order by
+  opening all three transients on an empty picker; and `_add_to_recent` stays
+  a no-op here, because it fires on every `DirectoryNavigation.Changed`, i.e.
+  on merely passing through a folder.
 
 ## Contributing Upstream
 

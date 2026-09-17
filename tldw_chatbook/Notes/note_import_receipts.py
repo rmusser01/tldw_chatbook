@@ -19,6 +19,8 @@ from pathlib import Path
 from types import MappingProxyType
 from uuid import uuid4
 
+from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
+
 from tldw_chatbook.Notes.note_import_execution_models import (
     MAX_RECEIPT_LEDGER_ROWS,
     ApprovedNoteImportPlan,
@@ -29,6 +31,7 @@ from tldw_chatbook.Notes.note_import_execution_models import (
     _canonical_json_digest,
     _private_payload_fingerprint,
     _private_source_locator_digest,
+    _private_source_locator_digest_for_source,
     _receipt_ledger_row_count,
     _validate_reason_code,
 )
@@ -36,7 +39,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_ENTRIES,
     ImportAction,
     ImportMatchKind,
-    ImportPreviewItem,
+    ImportSource,
     NoteImportPlan,
     planned_change_count,
 )
@@ -445,8 +448,14 @@ class NoteImportReceiptRepository:
     """Own import receipts within the shared profile-local Notes state store."""
 
     def __init__(self, database_path: str | Path) -> None:
-        self._database_path = Path(database_path)
+        self.is_memory_db = str(database_path) == ":memory:"
+        self._database_path = Path(":memory:") if self.is_memory_db else lexical_path(database_path)
+
         self._store = NotesDeviceStateStore(self._database_path)
+
+    @property
+    def db_path(self) -> Path:
+        return self._database_path
 
     def __repr__(self) -> str:
         return "NoteImportReceiptRepository(<private>)"
@@ -2203,17 +2212,77 @@ class NoteImportReceiptRepository:
 
         if type(plan) is not NoteImportPlan:
             raise TypeError("plan must be a NoteImportPlan.")
+        return tuple(
+            self._prior_observations(
+                tuple(item.source for item in plan.items),
+                connection_context,
+            ).values()
+        )
+
+    def prior_imported_notes_read_only(
+        self,
+        sources: tuple[ImportSource, ...],
+    ) -> Mapping[str, PriorImportObservation]:
+        """Return the latest exact observation per discovered source path.
+
+        task-32605: lasting sync discovers a folder with the importer's own
+        walk, so the sources it holds carry the identical locator fields an
+        Import once of the same folder recorded. Reading the ledger by those
+        sources is how the sync planner learns a file already has a note,
+        without parsing or classifying anything. The ledger is never created
+        or migrated here: an absent or older database reports nothing.
+
+        Args:
+            sources: Discovered import sources to look up, in any order.
+
+        Returns:
+            Mapping of ``display_path`` to its latest exact observation.
+            Sources with no completed exact import are absent.
+
+        Raises:
+            ImportReceiptError: If the ledger cannot be read safely.
+        """
+
+        if type(sources) is not tuple or any(
+            type(source) is not ImportSource for source in sources
+        ):
+            raise TypeError("sources must be a tuple of ImportSource values.")
+        if not sources or not self._database_path.exists():
+            return {}
+        connection: sqlite3.Connection | None = None
         try:
-            digest_items: dict[str, list[ImportPreviewItem]] = {}
-            for item in plan.items:
-                digest = _private_source_locator_digest(item)
-                digest_items.setdefault(digest, []).append(item)
+            connection = self._connect(read_only=True, must_exist=True)
+            if not self._read_only_schema_is_available(connection):
+                return {}
+            return self._prior_observations(sources, nullcontext(connection))
+        except ImportReceiptError:
+            raise
+        except sqlite3.Error:
+            raise ImportReceiptError(
+                "Private receipt observations are unavailable."
+            ) from None
+        finally:
+            if connection is not None:
+                connection.close()
+
+    def _prior_observations(
+        self,
+        sources: tuple[ImportSource, ...],
+        connection_context: AbstractContextManager[sqlite3.Connection],
+    ) -> dict[str, PriorImportObservation]:
+        """Project observations for discovered sources, keyed by display path."""
+
+        try:
+            digest_items: dict[str, list[ImportSource]] = {}
+            for source in sources:
+                digest = _private_source_locator_digest_for_source(source)
+                digest_items.setdefault(digest, []).append(source)
         except Exception:  # noqa: BLE001 - source locator material is private
             raise ImportReceiptError(
                 "Prior import observations could not be matched safely."
             ) from None
         if not digest_items:
-            return ()
+            return {}
 
         # digest -> (ordering, session_id, {item rowid: its payload rows}).
         # task-32541: every payload row of an item is read, not just index 0,
@@ -2270,7 +2339,7 @@ class NoteImportReceiptRepository:
                     elif ordering == existing[0] and existing[1] == session_id:
                         existing[2].setdefault(item_rowid, []).append(tuple(row))
 
-        observations: list[PriorImportObservation] = []
+        observations: dict[str, PriorImportObservation] = {}
         for digest, items in digest_items.items():
             if len(items) != 1:
                 continue
@@ -2337,18 +2406,16 @@ class NoteImportReceiptRepository:
                     records[index][0] for index in range(payload_count)
                 )
             )
-            item = items[0]
-            observations.append(
-                _PrivatePriorImportObservation(
-                    display_path=item.source.display_path,
-                    match_kind=ImportMatchKind.EXACT,
-                    note_id=note_id,
-                    note_version=note_version,
-                    payload_fingerprint=fingerprint,
-                    payload_count=payload_count,
-                )
+            source = items[0]
+            observations[source.display_path] = _PrivatePriorImportObservation(
+                display_path=source.display_path,
+                match_kind=ImportMatchKind.EXACT,
+                note_id=note_id,
+                note_version=note_version,
+                payload_fingerprint=fingerprint,
+                payload_count=payload_count,
             )
-        return tuple(observations)
+        return observations
 
     @staticmethod
     def _validate_create_note_identities(snapshot: ImportSessionSnapshot) -> None:

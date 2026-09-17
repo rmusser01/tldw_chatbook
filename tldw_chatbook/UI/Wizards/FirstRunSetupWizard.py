@@ -1206,6 +1206,7 @@ class ProviderStep(SetupStep):
         self._credential_observation_key = os.urandom(32)
         self._sensitive_key_input: Input | None = None
         self._sensitive_endpoint_input: Input | None = None
+        self._subscription_readiness_status: str | None = None
         self._credential_observations: dict[str, _CredentialObservation] = {}
         self.probe_generation = 0
         self._discovery_visible = False
@@ -1529,6 +1530,22 @@ class ProviderStep(SetupStep):
         self._sensitive_endpoint_input = self.query_one(
             "#setup-provider-endpoint", Input
         )
+        self.set_interval(0.25, self._refresh_subscription_readiness)
+
+    def _refresh_subscription_readiness(self) -> None:
+        """Refresh only the visible selection from the bounded credential cache."""
+        if (
+            not self.is_attached
+            or not self._discovery_visible
+            or self.screen not in self.app.screen_stack
+            or self.selected_provider_key != "anthropic"
+        ):
+            return
+        status = self._current_provider_readiness().subscription_status
+        # Compare state, not just completion revision: credentials may expire
+        # during the cache lifetime without another file or Keychain read.
+        if status != self._subscription_readiness_status:
+            self._refresh_auth_readiness()
 
     def prepare_retry_after_failed_save(self) -> None:
         """Release the failed draft, then restore live boundary resolvers."""
@@ -1796,11 +1813,18 @@ class ProviderStep(SetupStep):
 
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         return get_provider_readiness(
-            provider_key, app_config, environ=self._environment()
+            provider_key,
+            app_config,
+            environ=self._environment(),
+            background_credentials=True,
         ).requires_api_key
 
     def _credential_at_request_boundary(self) -> tuple[str, str | None, object]:
-        """Resolve a credential once, immediately before a live request."""
+        """Resolve the current API key and nonblocking readiness snapshot.
+
+        Borrowed subscription tokens remain owned by the actual send path;
+        they never enter a first-run credential draft or saved config.
+        """
 
         from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
         from tldw_chatbook.config import is_valid_provider_api_key
@@ -1815,7 +1839,10 @@ class ProviderStep(SetupStep):
             else (ui_draft.api_key.strip() if ui_draft is not None else "")
         )
         base_readiness = get_provider_readiness(
-            provider_key, app_config, environ=self._environment()
+            provider_key,
+            app_config,
+            environ=self._environment(),
+            background_credentials=True,
         )
         if typed:
             if is_valid_provider_api_key(typed):
@@ -1916,7 +1943,10 @@ class ProviderStep(SetupStep):
         staged_config = dict(app_config)
         staged_config["api_settings"] = staged_api_settings
         return get_provider_readiness(
-            provider_key, staged_config, environ=self._environment()
+            provider_key,
+            staged_config,
+            environ=self._environment(),
+            background_credentials=True,
         )
 
     def _probe_target(self) -> str:
@@ -2092,6 +2122,7 @@ class ProviderStep(SetupStep):
         if not self.selected_provider_key or not self.is_mounted:
             return
         readiness = self._current_provider_readiness()
+        self._subscription_readiness_status = readiness.subscription_status
         auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
         auth.title = (
             "Authentication"
@@ -2104,6 +2135,11 @@ class ProviderStep(SetupStep):
         test_available = bool(target and identity is not None)
         test_button.disabled = not readiness.ready or not test_available
         status = self.query_one("#setup-provider-key-status", Static)
+        if readiness.subscription_status is not None:
+            status.update(
+                readiness.reason if readiness.ready else readiness.user_message
+            )
+            return
         if not readiness.ready:
             # TASK-21149 (UAT P-3): the input right above is the primary
             # path — lead with it and where to get a key; the env-var route
@@ -3205,6 +3241,8 @@ class ProviderStep(SetupStep):
             self._credential_semantics_changed()
         readiness = self._current_provider_readiness()
         if not readiness.ready:
+            if readiness.subscription_status is not None:
+                return False, readiness.user_message
             recovery = readiness.recovery or "Add a provider credential."
             return False, f"API key required. {recovery}"
         typed_key = bool(
@@ -6952,6 +6990,14 @@ class WelcomeStep(SetupStep):
                 yield SetupRadioButton(
                     "Full setup — configure everything", id="setup-track-full"
                 )
+            yield Button("Restore a backup", id="setup-backup-restore")
+            yield Static("", classes="setup-step-error")
+
+    @on(Button.Pressed, "#setup-backup-restore")
+    def open_backup_restore(self, event: Button.Pressed) -> None:
+        """Keep setup choices intact while the app owns the recovery view."""
+        event.stop()
+        self.app.action_backup_restore()
 
     def get_step_data(self) -> Dict[str, Any]:
         return {"track": self.chosen_track()}

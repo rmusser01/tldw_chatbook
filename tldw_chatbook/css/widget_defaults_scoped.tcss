@@ -1176,6 +1176,7 @@
     LibraryScreen #library-notes-status-row,
     LibraryScreen #library-note-heading,
     LibraryScreen #library-note-title-row,
+    LibraryScreen #library-note-keywords-row,
     LibraryScreen #library-note-context-keywords-row,
     LibraryScreen #library-notes-create-heading {
         layout: vertical;
@@ -1212,9 +1213,13 @@
         border: solid $surface-lighten-1;
     }
 
+    /* task-32613 AC#1: heavy, not solid -- the only shape change these two
+       scroll owners get on focus (see the app-sheet block for the
+       measurement). Same one-cell geometry. */
     LibraryScreen #library-note-preview-region:focus,
     LibraryScreen #library-note-context-region:focus {
-        border: solid $accent;
+        border: heavy $accent;
+        outline: none;
         background: $boost;
     }
 
@@ -1412,7 +1417,8 @@
         overflow-y: hidden;
     }
 
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-row {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-row,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-keywords-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1421,6 +1427,7 @@
     }
 
     LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-label,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-keywords-label,
     LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
         width: 10;
         height: 1;
@@ -1428,6 +1435,7 @@
     }
 
     LibraryScreen #library-shell-grid.library-notes-compact #library-note-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-keywords,
     LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords {
         width: 1fr;
         height: 1;
@@ -1482,9 +1490,19 @@
     }
 
     LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-meta,
     LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
         height: 1;
+        min-height: 1;
+        margin: 0;
+    }
+
+    /* task-32642 AC#2: Info's properties are one row each here too, unpadded --
+       the joined sentence they replaced ran to ~85 characters against this
+       `height: 1`, so the compact pane truncated the values it was stating.
+       `auto` is the smallest change that lets the rows exist; the zero margin
+       this Static shares with its compact siblings is kept. */
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-meta {
+        height: auto;
         min-height: 1;
         margin: 0;
     }

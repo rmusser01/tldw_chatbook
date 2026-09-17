@@ -1,0 +1,16 @@
+{
+  "method": "read-only SQLite after UI Abort",
+  "notes_unchanged": true,
+  "notes": [
+    [
+      "Backup",
+      "Diagnostic saved note before capture. NOTE-THEN-BACKUP-20260913."
+    ],
+    [
+      "Novice backup acceptance note",
+      "My first saved note must survive backup and restore. Reference NOVICE-REPEAT-20260913."
+    ]
+  ],
+  "database_sha256": "06dc2139fe79bd7a7e39d5a387cd65c5eda406a07648a323cd9a9856a8f3def0",
+  "config_sha256": "89e0854ded44e60965b65ad2beccb9554d5bd7e91423003b3e70378206d98eb0"
+}

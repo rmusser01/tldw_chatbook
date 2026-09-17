@@ -32,8 +32,10 @@ path the legacy play button drives today), not new logic introduced here.
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import threading
+import wave
 from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
@@ -72,6 +74,9 @@ from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
+    ConsoleAutoSpeakCoordinator,
+)
 
 
 class _FakeApp:
@@ -323,7 +328,7 @@ async def test_trusted_snapshot_rejection_reports_auto_speak_failure_once() -> N
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler.app = _FakeApp()
 
     await handler.handle_tts_request(event)
@@ -347,7 +352,7 @@ async def test_auto_speak_outcome_callback_reaches_admitted_generation() -> None
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(return_value="Ready.")
     handler._prepare_tts_text = AsyncMock(return_value="Ready.")
     handler._resolve_message_speech_request = AsyncMock(return_value=object())
@@ -379,7 +384,7 @@ async def test_automatic_request_rejects_destination_change_before_admission() -
         outcome_callback=outcomes.append,
         expected_destination_fingerprint=expected,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(return_value="Ready.")
     handler._prepare_tts_text = AsyncMock(return_value="Ready.")
     resolution = object()
@@ -404,7 +409,7 @@ async def test_automatic_request_rechecks_destination_immediately_before_synthes
     outcomes: list[bool] = []
     service = MagicMock()
     service.synthesize_default = AsyncMock()
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._tts_service = service
     handler._destination_for_resolution = AsyncMock(
         return_value=MagicMock(fingerprint=changed)
@@ -446,7 +451,7 @@ async def test_unexpected_trusted_request_failure_settles_once(failure_stage: st
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(return_value="Ready.")
     handler._prepare_tts_text = AsyncMock(return_value="Ready.")
     handler._resolve_message_speech_request = AsyncMock(return_value=object())
@@ -478,7 +483,7 @@ async def test_trusted_prepare_rejection_settles_once() -> None:
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(return_value="Ready.")
     handler._prepare_tts_text = AsyncMock(return_value=None)
 
@@ -503,7 +508,7 @@ async def test_trusted_request_cancellation_settles_once() -> None:
         store.validate_tts_message_speech_snapshot,
         outcome_callback=outcomes.append,
     )
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._validate_message_speech_snapshot = AsyncMock(
         side_effect=asyncio.CancelledError
     )
@@ -518,7 +523,7 @@ async def test_trusted_request_cancellation_settles_once() -> None:
 @pytest.mark.asyncio
 async def test_trusted_request_cooldown_settles_once() -> None:
     outcomes: list[bool] = []
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     now = asyncio.get_running_loop().time()
     handler._request_cooldown = {"message-1": now}
     handler._last_cooldown_cleanup = now
@@ -540,7 +545,7 @@ async def test_trusted_request_cooldown_settles_once() -> None:
 @pytest.mark.asyncio
 async def test_retry_failed_auto_bypasses_only_its_existing_message_cooldown() -> None:
     outcomes: list[bool] = []
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     now = asyncio.get_running_loop().time()
     handler._request_cooldown = {"message-1": now, "other-message": now}
     handler._last_cooldown_cleanup = now
@@ -564,7 +569,7 @@ async def test_retry_failed_auto_bypasses_only_its_existing_message_cooldown() -
 @pytest.mark.asyncio
 @pytest.mark.parametrize("post_result", [False, RuntimeError("queue closed")])
 async def test_post_tts_message_reports_queue_acceptance(post_result) -> None:
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     app = MagicMock()
     if isinstance(post_result, Exception):
         app.post_message.side_effect = post_result
@@ -701,6 +706,161 @@ def _accept_owned_stop(message: object) -> bool:
             message.playback_lifecycle.report_terminal("stopped")
         message.report_outcome(True)
     return True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["manual", "automatic", "retry", "empty"])
+async def test_console_markdown_reaches_adapter_through_speech_controls(
+    mode, monkeypatch, tmp_path
+) -> None:
+    """Exercise controller, consent/destination resolution and real TTS admission.
+
+    Args:
+        mode: Manual, automatic, retry or empty-output speech path to exercise.
+        monkeypatch: Fixture isolating provider and audio-output boundaries.
+        tmp_path: Fixture providing storage for the test conversation.
+    """
+    captured = []
+    audio = io.BytesIO()
+    with wave.open(audio, "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(24000)
+        writer.writeframes(b"\0\0" * 24)
+
+    class SpeechAdapter(FakeAdapter):
+        def admitted_outbound_endpoint(self):
+            return "https://speech.example.test/v1"
+
+        async def synthesize(self, request, progress_sink=None):
+            captured.append(request.text)
+            if mode == "retry" and len(captured) == 1:
+                raise RuntimeError("deliberate provider failure")
+            return await super().synthesize(request, progress_sink)
+
+    adapter = SpeechAdapter("openai", chunks=(audio.getvalue(),))
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor("openai", "OpenAI", False),
+                factory=lambda _config: adapter,
+                initial_config={
+                    "app_config": {
+                        "app_tts": {
+                            "OPENAI_BASE_URL": "https://speech.example.test/v1",
+                        }
+                    }
+                },
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot(
+            provider_id="openai",
+            model_mode="exact",
+            model_id="model",
+            voice_mode="exact",
+            voice_id="default",
+            response_format="wav",
+            speed=1.0,
+        ),
+    )
+    handler = TTSEventHandler()
+    handler._tts_service = service
+    store = ConsoleChatStore()
+    session = store.create_session()
+    controller = _SpeechRequestControllerStub(store, True)
+    controller.app_instance.console_runtime = None
+    queued = []
+    errors = []
+    drained = []
+
+    def schedule(coroutine):
+        queued.append(asyncio.create_task(coroutine))
+
+    def post(event):
+        if isinstance(event, TTSMessageSpeechRequestEvent):
+            schedule(handler.handle_tts_request(event))
+        elif isinstance(event, TTSCompleteEvent) and event.error:
+            errors.append(event.error)
+            if event.playback_lifecycle is not None:
+                event.playback_lifecycle.report("failed")
+        return True
+
+    async def drain_audio(_plan, byte_source, *, playback_lifecycle, **_kwargs):
+        playback_lifecycle.report("playing")
+        drained.append(b"".join([chunk async for chunk in byte_source]))
+        playback_lifecycle.report_terminal("stopped")
+        return "success"
+
+    async def settle():
+        while queued or handler._active_tasks:
+            tasks, queued[:] = [*queued, *handler._active_tasks], []
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=5)
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(handler, "_post_tts_message", AsyncMock(side_effect=post))
+    monkeypatch.setattr(handler, "_stream_response_via_sink", drain_audio)
+    monkeypatch.setattr(
+        handler, "_create_tts_artifact", lambda _format: tmp_path / "reply.wav"
+    )
+    monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
+    controller.app_instance.post_message.side_effect = post
+    coordinator = ConsoleAutoSpeakCoordinator(
+        store_accessor=lambda: store,
+        resolve_destination=handler.resolve_console_speech_destination,
+        issue_message_speech=lambda *args: (
+            ConsoleMessageController.request_console_message_speech(controller, *args)
+        ),
+        open_consent=lambda _modal, callback: callback(True),
+        hands_free_active=lambda: False,
+        sync_controls=lambda *_args: None,
+        notify=lambda *_args: None,
+        schedule=schedule,
+    )
+    coordinator.mount()
+    content = "## Summary\n\nRead **this** [guide](https://example.test/private).\n\n```python\nsecret_code()\n```\n\n<div>Visible<br>details</div>\n\n- [x] Reviewed"
+    if mode == "empty":
+        content = "---\n\n<!-- formatting only -->"
+    try:
+        if mode != "manual":
+            coordinator.request_enabled(True)
+            await settle()
+            assert session.speech_preferences.auto_speak
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        store.append_stream_chunk(message.id, content)
+        store.mark_message_complete(message.id)
+        if mode == "manual":
+            await ConsoleMessageController.request_console_message_speech(
+                controller, message.id
+            )
+        await settle()
+        if mode == "retry":
+            assert session.speech_preferences.paused
+            assert len(errors) == 1
+            coordinator.request_retry()
+            await settle()
+        expected = "Summary. Read this guide. Code block omitted. Visible. details. Checked: Reviewed"
+        assert captured == (
+            [] if mode == "empty" else [expected] * (2 if mode == "retry" else 1)
+        )
+        assert len(drained) == (0 if mode == "empty" else 1)
+        assert all(drained)
+        assert controller._console_speaking_message_id is None
+        assert store.get_message(message.id).content == content
+        if mode != "retry":
+            assert errors == []
+            assert not session.speech_preferences.paused
+    finally:
+        coordinator.unmount()
+        await settle()
+        await handler.cleanup_tts_resources()
+        await service.close()
+        await service.wait_closed()
 
 
 @pytest.mark.asyncio
@@ -2626,7 +2786,7 @@ async def test_adhoc_completion_autoplays_and_audio_is_cached_under_adhoc(tmp_pa
 
     # (b) handler-level: the "adhoc" cache key resolves in handle_tts_playback's
     # lookup table (the normalization upstream guarantees it was cached there).
-    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler = TTSEventHandler()
     handler._audio_files = {"adhoc": audio_file}
     assert handler._audio_files.get(playback_events[0].message_id) == audio_file
 

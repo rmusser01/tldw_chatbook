@@ -1,0 +1,41 @@
+{
+  "task": "TASK-32562",
+  "files": [
+    {
+      "file": "replacement-fe62-required-review-available.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/evidence/replacement-fresh-replacement-fresh-61-confirm-focus-after.txt",
+      "bytes": 8674,
+      "sha256": "3f4c06dbc67ec43cc8f7225b3e1cb91dc2e818365d55d6edbc77b9592cac9c26"
+    },
+    {
+      "file": "replacement-fe62-staging.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/evidence/replacement-fresh-replacement-fresh-62-confirm-reviewed-after.txt",
+      "bytes": 9112,
+      "sha256": "6a66ce8d6a80624a9b324bdf4d6e4f9ab009f0f8dbb1006403445b5b1bbccd1b"
+    },
+    {
+      "file": "replacement-fe62-failed-before-journal.txt",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/evidence/replacement-fresh-replacement-fresh-63-confirm-result-after.txt",
+      "bytes": 9102,
+      "sha256": "154ac045a1cc91b30a014383d01aaead7815c78732164794640efad2cdbf5b5a"
+    },
+    {
+      "file": "replacement-fe62-original-note-receipt.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/evidence/replacement-fresh-original-readback.json",
+      "bytes": 693,
+      "sha256": "2a39caaedec21e7387e2db3612e2bcb59ec0ba1a05ffba94e4b42639accf4810"
+    },
+    {
+      "file": "replacement-fe62-readonly-diagnosis.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/evidence/replacement-fresh-new-config-sibling-diagnosis.json",
+      "bytes": 1951,
+      "sha256": "e8eddf012790507f9e19e3eb73d333284bd3b8cd54b7a5de93100609b80ce91f"
+    },
+    {
+      "file": "replacement-fe62-installed-hashes.json",
+      "source": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/evidence/replacement-fresh-installed-verification.json",
+      "bytes": 284,
+      "sha256": "8f7738ff1e71cb6899d65620d1d3cca7729e3fab1f40956640e01e497fd8d6f8"
+    }
+  ]
+}

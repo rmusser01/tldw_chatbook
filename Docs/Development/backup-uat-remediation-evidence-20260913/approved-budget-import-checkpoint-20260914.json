@@ -1,0 +1,147 @@
+{
+  "base_revision": "bd6ba3b126588a59699308f71091e7a741bb83d3",
+  "authorization": "User explicitly approved both prepared patches: all are approved.",
+  "changes": [
+    "Linux positive Persona test redistributes unused setup allowance within860s child budget and existing900s outer limit, reserving final90s reopen+120s capture; non-Linux and all assertions unchanged.",
+    "Defer existing Notes parser and Console Select helper imports until first use; no module cap or other product behavior change.",
+    "Add12 budget regressions to existing full/support qualification selections."
+  ],
+  "tests": {
+    "budget_red": "6failed6passed before approved patch",
+    "budget_green": "12passed0.97s",
+    "independent_budget": "12passed1.09s",
+    "budget_and_existing_diagnostics": "55passed0.97s",
+    "census": "2passed17.03s;669/686 import,1022/1022 UI-ready",
+    "popover_first_use": "4passed3.11s",
+    "notes_original_bodies": [
+      {
+        "case": "test_setup_review_under_obsidian_mode_skips_vault_folders_and_lifts_frontmatter",
+        "passed": true,
+        "source": "/private/tmp/chatbook-backup-pr-20260912",
+        "test_sha256": "7d4eccd09e2837ece1e87e4cf5848a9d686510f677ef02d25e26d3c05796adba",
+        "fixed_selection": true,
+        "network_attempts": 0,
+        "test_mode_override": false,
+        "conftest_imported": false,
+        "app_imported": false,
+        "origin_count": 279,
+        "receipt_sha256": "fe31044577d0402299be530097d569d9a65dcaad5c7c12a4ce7a04be5baf8b79",
+        "receipt": "/private/tmp/uat-approved-notes-first-use-oim8us4o/test_notes_sync_runtime/receipt.json"
+      },
+      {
+        "case": "test_create_note_lifts_frontmatter_title_and_tags_into_the_note",
+        "passed": true,
+        "source": "/private/tmp/chatbook-backup-pr-20260912",
+        "test_sha256": "02f16804d4beda438b540f71ba5818d9c41ac053701bbe936bae06138d3ac7db",
+        "fixed_selection": true,
+        "network_attempts": 0,
+        "test_mode_override": false,
+        "conftest_imported": false,
+        "app_imported": false,
+        "origin_count": 155,
+        "receipt_sha256": "9c14836a6c62d3e8ac13349b4839f34a2b79ee676a0962048672a08bdc0cc129",
+        "receipt": "/private/tmp/uat-approved-notes-first-use-oim8us4o/test_notes_sync_executor/receipt.json"
+      }
+    ]
+  },
+  "static": {
+    "head": "bd6ba3b126588a59699308f71091e7a741bb83d3",
+    "root": "/private/tmp/uat-approved-static-hcnx09ch",
+    "sha256": {
+      "tldw_chatbook/Notes/notes_sync_runtime.py": "40919323806080d12fcbcd7fafd5170d38b37e26408bb26f3715c5799a231e07",
+      "tldw_chatbook/Widgets/Console/console_model_popover.py": "23c1ce28b98a86a17702cfdae3ae353c65ccef5bb790b94928e73a1480df1425",
+      "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py": "9cd678b3d6c04c423ba7937ef72877eda33c84c4660d1e5e76bef32b0eddc7d2",
+      "Tests/Backup_Recovery/test_persona_observation_budget.py": "43ec43f1bc77a812201d97aed5e9e3e72b0cf70690809d9b4333683f6a45ca72",
+      "Tests/Backup_Recovery/run_platform_product.py": "c8080134630534a234c25b7765c9f3f20bcc8f853bc33976165c8e164ed3b882"
+    },
+    "compile": {
+      "tldw_chatbook/Notes/notes_sync_runtime.py": true,
+      "tldw_chatbook/Widgets/Console/console_model_popover.py": true,
+      "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py": true,
+      "Tests/Backup_Recovery/test_persona_observation_budget.py": true,
+      "Tests/Backup_Recovery/run_platform_product.py": true
+    },
+    "ruff": {
+      "tldw_chatbook/Notes/notes_sync_runtime.py": {
+        "baseline": 28,
+        "current": 28,
+        "new": []
+      },
+      "tldw_chatbook/Widgets/Console/console_model_popover.py": {
+        "baseline": 4,
+        "current": 4,
+        "new": []
+      },
+      "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      },
+      "Tests/Backup_Recovery/test_persona_observation_budget.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      },
+      "Tests/Backup_Recovery/run_platform_product.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      }
+    },
+    "bandit": {
+      "tldw_chatbook/Notes/notes_sync_runtime.py": {
+        "baseline": 4,
+        "current": 4,
+        "new": []
+      },
+      "tldw_chatbook/Widgets/Console/console_model_popover.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      },
+      "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py": {
+        "baseline": 5,
+        "current": 5,
+        "new": []
+      },
+      "Tests/Backup_Recovery/test_persona_observation_budget.py": {
+        "baseline": 0,
+        "current": 5,
+        "new_test_assertions": 5,
+        "new_nonassert_findings": 0
+      },
+      "Tests/Backup_Recovery/run_platform_product.py": {
+        "baseline": 0,
+        "current": 0,
+        "new": []
+      }
+    },
+    "imports_only_ast": {
+      "tldw_chatbook/Notes/notes_sync_runtime.py": true,
+      "tldw_chatbook/Widgets/Console/console_model_popover.py": true
+    }
+  },
+  "windows_bd6": {
+    "run": 34908697549,
+    "native_passed": 42,
+    "product_passed": 303,
+    "product_failed": 2,
+    "skips": 0,
+    "missing": 0,
+    "artifact_hashes_verified": 163,
+    "installed_receipts": 2,
+    "files_per_install": 2867,
+    "python_per_install": 2475,
+    "new_sqlite_cases_passed": 12,
+    "remaining_failures": [
+      "Console preview WAL opened-state mtime/ctime mismatch, unknown writer",
+      "Library Scheduler drain29.485s then exclusive lease AdmissionTimeout"
+    ],
+    "settings_complete_capture_and_resumed_writes": "passed"
+  },
+  "remaining": [
+    "Actual Linux Persona completion on committed revision",
+    "Windows mounted Console/Library and60s startup qualification"
+  ],
+  "completion": false
+}

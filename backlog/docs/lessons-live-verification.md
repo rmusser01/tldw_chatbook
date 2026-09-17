@@ -1,5 +1,15 @@
 # Lessons: verifying against the real thing
 
+## Private config and data paths do not replace a private recovery HOME
+
+**TASK-32749, 2026-09-17.** The first integration probe selected private config
+and data paths before imports, but startup refused with `recovery_scope_uncertain`:
+incoming recovery ownership also derives a fixed control root from HOME. A fresh
+probe set HOME and USERPROFILE inside its owned profile before imports and reached
+the real app. Keep that refusal as an unqualified attempt; do not relax admission
+or reuse the user's recovery root to make a visual probe run. Verify the actual
+roots, process exit and default-file fingerprints separately.
+
 ## Keep Textual's rendering stream attached to the native terminal
 
 **TASK-2530, 2026-09-16.** Two private audit launches redirected stderr to a
@@ -57,6 +67,21 @@ that terminates in a minimal test harness need not terminate with the app's
 background services present. Confirm the old probe exited before reusing its
 profile; a successful second window does not prove sole ownership.
 
+
+## A dismissed modal may still report is_mounted
+
+**TASK-32709, 2026-09-16.** A mounted model-popover Escape regression showed
+`is_mounted=True` after the screen left the stack. A delayed resolver that
+suppressed cancellation then changed that dismissed popover's context window
+from 32,000 to 12,000. Another gated test exercised model A → B → A, where
+target equality alone accepted the original A's late result.
+
+Async modal publication must check screen-stack ownership and an operation
+generation, as well as mount state and target identity. Cancellation alone is
+not evidence that a callback cannot finish. The regression tests in
+`Tests/UI/test_console_popover_context_window.py` and
+`Tests/UI/test_console_context_window_modal.py` hold the old work across the
+navigation boundary before releasing it.
 
 ## A process's No route to host can be an app privacy denial
 
@@ -3030,3 +3055,169 @@ The query did not inspect the pushed Library screen. Waiting on
 suppressing notifications or changing product behavior. Scope screenshot-readiness
 checks to the surface actually being captured; a successful empty query alone
 is not evidence that the picture is unobscured.
+
+## A "Verified against" stamp verifies what it names, not the page around it (task-32558, 2026-09-14)
+
+**task-32558, 2026-09-14.** `Docs/User_Guide/library/file-notes.md` told
+readers the Session Git panel is headed "Prepare session for commit", with
+the scope line "Session paths only · stages complete file state" and the
+keyboard guide "Up/Down Select | Tab Actions | Enter Run | Esc Back". All
+three were true once. All three were rewritten by commit `67fec3f350`
+(task-15122) on **2026-08-11** and the page was never touched. Between then
+and the sweep this page received **fifteen** "Verified against" stamps,
+across **six** dates. Counted, not remembered: the pre-sweep file carries 17
+stamps and 2 of them predate the rewrite (both 2026-08-07), so 15 fall in the
+window —
+
+```
+git show <pre-sweep-rev>:Docs/User_Guide/library/file-notes.md \
+  | grep -o '^\*Verified against [^(]*— 20[0-9-]*' | sed 's/.*— //' \
+  | sort | uniq -c
+```
+
+**Three** of the fifteen named this panel. Two of those three were live walks
+against a real git-backed vault that drove it end to end —
+`fix/library-notes-w3-pickers-git` (2026-09-11, "keyboard staging and a real
+commit") and `fix/library-notes-wave3-docs` (2026-09-12, "Trust and check
+status → … → committed"). The third, `fix/library-notes-w4-import-kbd`
+(2026-09-14), **captured the panel's own header control** and cited the
+capture — and **all three true strings sit inside that same captured frame**.
+`wave4-caps/import-kbd/import-21-back-cue-files.txt` paints `‹ Files` (the
+control the stamp quoted) at `:16`, then `Review session changes` at `:17`,
+`Review and commit only notes changed during this Chatbook session.` at
+`:19`, and `Up/Down select · Tab actions · Enter run · Esc back` at `:20`.
+The stamp read one line of that frame, quoted it, and shipped — while the
+lines under it contradicted three sentences of the page it was stamping.
+Each stamp was honest: each verified the claim it named. None
+re-read the chapter it sat in. The false sentences survived all fifteen, and
+`grep -rF "Prepare session for commit" tldw_chatbook/` — no hits at all —
+would have found them in one second on any of those six days.
+
+Same sweep, same disease elsewhere: `file-notes.md` described a "Chunking
+Lab | Try selected text" strip under every Library canvas that task-32064 had
+already removed (and said its removal was "tracked as task-32064", which was
+Done); `console.md` said the Get started card has two actions, while its own
+task-32555 stamp, in the page's own stamp section, names three. The wave had
+already found eight authoritative-sounding false guide sentences before this
+sweep started; the sweep itself found nine more, on pages that between them
+carried dozens of stamps. None of the seventeen was found by the stamp
+process.
+
+**What to do.**
+
+1. **Grep the quoted strings, don't re-read the prose.** A guide sentence
+   that quotes what the app prints is falsifiable in one command. Extract
+   every quoted string on a page you are stamping and `grep -rF` each against
+   `tldw_chatbook/`; composed lines (f-strings) need the longest literal run.
+   Most hits are noise; the misses are the list worth reading.
+   `scripts/check_guide_claim_strings.py <page>` does exactly this and is in
+   the tree — run it before you stamp anything. It prints a read-list and
+   exits 0 on purpose, because a guide legitimately quotes strings no source
+   emits (historical "(Was …)" clauses, composed examples, the reader's own
+   input). Making it a `Tests/Docs/` gate, with those exceptions in a
+   reviewed allowlist, is **task-32589**.
+2. **A stamp should say what was CHECKED, not only what was fixed.** Listing
+   the claims that HELD is what makes the next sweep cheaper and what stops a
+   reader assuming an unstamped paragraph was looked at. The task-32558
+   stamps do this deliberately.
+3. **Say which half of a correction you walked.** Some of this sweep's fixes
+   came from a capture (the empty-profile rail, the 100x30 heading clip) and
+   some from reading the widget's `compose` (the Session Git strings, the
+   Console card's third action). The stamps name which is which, because a
+   stamp that implies a walk it did not do is the failure stamps exist to
+   prevent.
+4. **When a task that a guide cites as "tracked" closes, the citation is now
+   a claim.** `grep -n "tracked as task-" Docs/` and check each one's status
+   before stamping; three of this wave's false sentences were of exactly that
+   shape.
+
+## A correction in a lessons file must stay next to the entry it corrects (task-32558, 2026-09-14)
+
+**Wave 4, PR #2678 conflict resolution, 2026-09-14.** `dev` and the P0 branch
+had both appended sections to `lessons-live-verification.md`, and the house
+rule for that conflict is "compose both, dev's block first". Here that rule
+happened to be right for a reason bigger than the rule: dev's block contained
+a **correction to a lesson one of this wave's own earlier agents had
+written** — teeing the app's stderr into the tmux launch line makes the pane
+render blank and fills the log with rendered frames, which the earlier entry
+had recommended. Resolving the conflict by ordering the blocks any other way,
+or by deduplicating the two nearly-identical launch-recipe sections, would
+have parked the correction somewhere a reader of the original entry never
+reaches.
+
+These files are append-only and long. A reader arrives by grep, reads the
+entry the grep hit, and leaves. A correction three thousand lines away is a
+correction nobody receives, and the entry it corrects goes on being followed
+— which is exactly how the tee-stderr advice was still in use after it had
+been disproved.
+
+**What to do.** When composing lessons files across a merge, or adding a
+census, caveat or reversal to an existing entry: put it immediately under
+that entry's own heading, not in a new section at the end, and say what it
+corrects. The task-32558 wave-4 self-supplied-pin census in
+`lessons-testing-evidence.md` is placed that way on purpose and says so in
+its first line. Never reorder a block that contains a correction away from
+its subject to satisfy a merge convention; the convention is a tiebreaker for
+independent additions, not a licence to separate the two.
+
+## Cite by name inside the artefact you are editing; cite by number only into another file (task-32558, 2026-09-14)
+
+**Three occurrences in one task, 2026-09-14 — and the third was inside the fix
+for the second.** A pointer that says *where* something is decays the next time
+anything is inserted above it. A pointer that says *what* it is does not.
+
+1. A `console.md` stamp said the task-32555 stamp was "four paragraphs below"
+   the Get started card. It was ~455 lines below, in the page's own "Verified
+   against" section. Caught in review round 1.
+2. A lesson entry said "the false heading is three lines above the control it
+   captured". In the cited capture the real heading is one line *below* — the
+   direction inverted and the count wrong in both. Caught in re-review round 1,
+   after shipping into three committed files.
+3. Fixing (2), the replacement stamp cited the two corrected sentences as
+   `:22-25` and `:323-326` — **already off by one from its own rewrap in the
+   same commit**, and pointing *inside the page that contained them*, so every
+   future edit to that page would move them again. Caught by me, re-reading my
+   own fix.
+
+Each of the three was written by someone who had just looked at the thing. The
+position was true at the moment of writing and false by the time it was read.
+
+**The rule, and the reason it is not "be careful with line numbers".** A
+citation into the artefact you are editing is invalidated *by your own edit* —
+you cannot be careful enough, because the act of writing the citation can move
+what it points at. A citation into a different file, or into a frozen capture
+under `wave4-caps/`, is invalidated only by someone editing that other thing,
+which is a normal staleness problem and a much slower one.
+
+So:
+
+- **Inside the file you are editing** — name the section, the heading, the step
+  ("step 5 of Common tasks", "the Scoped exports paragraph", "this same
+  Verified-against section"). Never a line number, never "N paragraphs
+  above/below".
+- **Into another source file** — line numbers are good and worth keeping
+  (`library_notes_canvas.py:1842`), because the reader can check them and your
+  edit cannot move them.
+- **Into a capture** — line numbers are the *best* form, because the capture is
+  immutable evidence (`import-21-back-cue-files.txt:17`).
+- **Positional adjacency claims** ("three lines above", "four paragraphs
+  below") — do not write them at all. State the relationship that is checkable
+  instead: "all three true strings are inside that same captured frame" is both
+  stronger and unfalsifiable-by-drift.
+
+**Refinement (task-32605, 2026-09-15): "another file" is not far enough — it
+has to be a file your branch does not touch.** A review round on task-32605
+whose entire purpose was citation accuracy — its two findings were a wrong
+mechanism and an off-by-one — corrected an AC to cite
+`notes_sync_runtime.py:2154-2157`, `:3283-3284` and `:2692`. All three were
+exact when written. The *next commit in the same round* added two import lines
+and a three-line annotation above them, and shipped the AC two-to-three lines
+stale. The citation pointed into another file, which the rule above permits,
+but that file was one this branch was itself editing. So the decay mechanism is
+not "the artefact you are editing" — it is **any file your own commits move**,
+and a line number written mid-branch is a prediction about your own future
+diff. Cite those by symbol with the file and no line number
+(`_blocked_plan_status` in `notes_sync_runtime.py`, not `:2154-2157`); grep
+finds a symbol after any rewrite, and a reader who greps never learns the
+number was wrong. Line numbers stay right for files outside the branch's diff
+and best of all for frozen captures.

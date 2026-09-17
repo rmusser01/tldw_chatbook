@@ -238,6 +238,8 @@ from ...Chat.console_roleplay_identity import (
     resolve_send_system_prompt,
 )
 from ...Chat.prompt_history import PromptHistory
+from ...Backup_Recovery import raw_participants as raw
+from ...Backup_Recovery.async_file_participants import _FileJob
 from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
     ConsoleCostRow,
@@ -480,7 +482,7 @@ from ...config import (
     DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
-    _get_effective_config_path,
+    _get_effective_config_path as _get_effective_config_path,  # noqa: PLC0414 - raw owner selector re-export
     coerce_bool_setting,
     coerce_int_setting,
     delete_settings_from_cli_config,
@@ -2926,7 +2928,7 @@ class ChatScreen(BaseAppScreen):
             intent = build_console_default_intent(
                 generation=generation,
                 action=submission.action,
-                provider_config_key=provider_config_key(
+                provider_config_key=provider_identity_key(
                     submission.draft.settings.provider
                 ),
                 literal_model_id=str(submission.draft.settings.model or ""),
@@ -2994,7 +2996,7 @@ class ChatScreen(BaseAppScreen):
             intent = build_console_default_intent(
                 generation=generation,
                 action=submission.action,
-                provider_config_key=provider_config_key(
+                provider_config_key=provider_identity_key(
                     submission.draft.settings.provider
                 ),
                 literal_model_id=str(submission.draft.settings.model or ""),
@@ -3204,6 +3206,8 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     async def _test_console_connection(
         identity: ProviderDraftIdentity,
+        *,
+        app_config: Mapping[str, object] | None = None,
     ) -> ProviderProbeResult:
         """Run the existing bounded model-catalog probe for one exact draft."""
         from .settings_endpoint_probe import (
@@ -3212,10 +3216,32 @@ class ChatScreen(BaseAppScreen):
             provider_probe_result_from_settings_outcome,
         )
 
+        probe_kwargs = {}
+        if identity.custom_endpoint_id is not None:
+            from tldw_chatbook.Chat.custom_endpoint_registry import (
+                entry_for,
+                family_execution_key,
+                resolve_entry_credential,
+            )
+            from tldw_chatbook.Chat.provider_endpoint_contract import (
+                canonical_connection_identity,
+            )
+
+            entry = entry_for(app_config or {}, identity.custom_endpoint_id)
+            if (
+                entry is None
+                or canonical_connection_identity(
+                    family_execution_key(entry.family), entry.base_url
+                )
+                != identity.connection_identity
+            ):
+                return ProviderProbeResult("unreachable", (), "connection_error")
+            probe_kwargs["api_key"] = resolve_entry_credential(entry)[0]
         outcome = await probe_settings_endpoint(
             identity.connection_identity[1],
             provider=identity.provider_key,
             purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+            **probe_kwargs,
         )
         return provider_probe_result_from_settings_outcome(outcome)
 
@@ -3373,6 +3399,9 @@ class ChatScreen(BaseAppScreen):
             app_config=self._provider_readiness_app_config(),
             providers_models=providers_models,
             context_estimate=context_estimate,
+            context_window_resolver=lambda settings: (
+                self._ensure_console_provider_gateway().resolve_context_window(settings)
+            ),
             context_state=context_state,
             can_save=(
                 controller.run_state_for(session_id).is_send_allowed and not active_run
@@ -3394,7 +3423,9 @@ class ChatScreen(BaseAppScreen):
             default_durability_state=self._console_default_durability_state(),
             default_recovery_handler=self._handle_console_default_recovery,
             suspended_draft=suspended_draft,
-            connection_tester=self._test_console_connection,
+            connection_tester=lambda identity: self._test_console_connection(
+                identity, app_config=self._provider_readiness_app_config()
+            ),
             generation_tester=lambda request: self._test_console_generation(
                 session_id, request
             ),
@@ -4130,6 +4161,7 @@ class ChatScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             snapshot.settings.provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
         recovery_copy = ""
         if (
@@ -5491,6 +5523,7 @@ class ChatScreen(BaseAppScreen):
                 initial_draft=initial_draft,
                 providers_models=providers_models,
                 context_state=context_state,
+                context_window_resolver=lambda settings: self._ensure_console_provider_gateway().resolve_context_window(settings),
                 scope_copy="Applies to this conversation",
                 durability_copy=(
                     "Temporary until this chat is promoted"
@@ -7383,6 +7416,8 @@ class ChatScreen(BaseAppScreen):
         # collapse state IS persisted, via `_set_console_rail_preference`).
         self._console_environment_expanded: set[str] = set()
         self._console_environment_poll_timer: Any | None = None
+        self._console_credential_poll_timer: Any | None = None
+        self._console_credential_snapshot: tuple[int, str | None] | None = None
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -7507,6 +7542,9 @@ class ChatScreen(BaseAppScreen):
         # inspector block's Attach/Detach picker flow.
         self._console_worldbook_dialog_active = False
         self.ui_state = UIState()
+        self._sidebar_state_persist_lock = asyncio.Lock()
+        self._sidebar_state_revision = 0
+        self._sidebar_state_persistence_error: str | None = None
         # task-15470: debounce state for `watch_sidebar_state` -- see
         # `SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS`. Loading saved state can
         # invoke the reactive watcher, so its persistence fields must exist first.
@@ -8318,6 +8356,7 @@ class ChatScreen(BaseAppScreen):
             # no extra DB round trip. The actual send may shrink this after
             # its authority check.
             staged_text=console_prompted_evidence_text(pending_launch),
+            context_window=self._ensure_console_provider_gateway().cached_context_window(settings),
         )
 
     def _active_console_context_control_state(
@@ -9527,18 +9566,17 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleProviderSelection:
         """Return an owning-session provider selection without switching tabs.
 
-        Served from the per-pass memo inside a `_console_derivation_scope`
-        (task-15452): one draft-edit sync built this 7 times for the same
-        session.
+        Reuse an enclosing derivation memo, or share config reads only for
+        this synchronous selection. The next independent call remains fresh.
         """
-        memo = self._console_derivation_memo
-        memo_key = ("provider_selection", session_id)
-        if memo is not None and memo_key in memo:
-            return memo[memo_key]
-        selection = self._build_console_provider_selection_uncached(session_id)
-        if memo is not None:
+        with self._console_derivation_scope():
+            memo = self._console_derivation_memo
+            memo_key = ("provider_selection", session_id)
+            if memo_key in memo:
+                return memo[memo_key]
+            selection = self._build_console_provider_selection_uncached(session_id)
             memo[memo_key] = selection
-        return selection
+            return selection
 
     def _build_console_provider_selection_uncached(
         self, session_id: str | None = None
@@ -9946,14 +9984,16 @@ class ChatScreen(BaseAppScreen):
             if workspace_context is not None:
                 store.set_workspace_context(workspace_context)
         runtime = self._console_runtime()
-        if runtime.canvas_controller is not None:
-            runtime.bind_canvas_native_view(
-                scope_resolver=self._console_canvas_scope,
-                bridge_sink=self._prefill_console_canvas_repair,
-                bridge_prepare=self._prepare_console_canvas_submit,
-                auto_open=self._schedule_console_canvas_tool_open,
-                publication_guard=self._console_canvas_publication_is_current,
-            )
+        if runtime.canvas_controller is not None and runtime.view is self:
+            callbacks = {
+                "scope_resolver": self._console_canvas_scope,
+                "bridge_sink": self._prefill_console_canvas_repair,
+                "bridge_prepare": self._prepare_console_canvas_submit,
+                "auto_open": self._schedule_console_canvas_tool_open,
+                "publication_guard": self._console_canvas_publication_is_current,
+            }
+            if not runtime.canvas_native_view_is_bound(self, **callbacks):
+                runtime.bind_canvas_native_view(**callbacks)
         return store
 
     def _ensure_console_agent_bridge(self) -> Any:
@@ -11861,6 +11901,34 @@ class ChatScreen(BaseAppScreen):
             self._record_ui_timer_stopped("console-environment-poll")
             self._console_environment_poll_timer = None
 
+    def _poll_console_credential_readiness(self) -> None:
+        """Refresh send controls as background credentials complete or expire."""
+        from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+            subscription_readiness_revision,
+        )
+
+        if (
+            not self._console_attach_reconciled
+            or not self.is_attached
+            or not self.is_current
+        ):
+            return
+        _settings, readiness = self._active_console_settings_readiness()
+        snapshot = (subscription_readiness_revision(), readiness.subscription_status)
+        if snapshot == self._console_credential_snapshot:
+            return
+        self._console_credential_snapshot = snapshot
+        self._sync_console_settings_summary()
+        self._sync_console_control_bar()
+
+    def _stop_console_credential_poll_timer(self) -> None:
+        """Stop completion polling when the mounted Console view goes away."""
+        timer = getattr(self, "_console_credential_poll_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._console_credential_poll_timer = None
+            self._record_ui_timer_stopped("console-credential-poll")
+
     def _build_console_staged_context_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -12706,8 +12774,15 @@ class ChatScreen(BaseAppScreen):
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             return ""
+
+        def _read_card() -> dict[str, Any] | None:
+            from tldw_chatbook.DB.base_db import operation_owned_connection
+
+            with operation_owned_connection(db):
+                return db.get_character_card_by_id(character_id)
+
         try:
-            card = await asyncio.to_thread(db.get_character_card_by_id, character_id)
+            card = await asyncio.to_thread(_read_card)
         except Exception:
             logger.opt(exception=True).warning(
                 "Resume: character card fetch failed; identity row falls back."
@@ -13003,12 +13078,15 @@ class ChatScreen(BaseAppScreen):
             live = set(live_scope_ids)
             offset = 0
             page_size = 1000
-            while True:
-                rows = db.list_all_active_conversations(limit=page_size, offset=offset)
-                live.update(str(row["id"]) for row in rows if row.get("id"))
-                if len(rows) < page_size:
-                    break
-                offset += page_size
+            from tldw_chatbook.DB.base_db import operation_owned_connection
+
+            with operation_owned_connection(db):
+                while True:
+                    rows = db.list_all_active_conversations(limit=page_size, offset=offset)
+                    live.update(str(row["id"]) for row in rows if row.get("id"))
+                    if len(rows) < page_size:
+                        break
+                    offset += page_size
             prunable = collect_prunable_console_rail_keys(
                 stored_keys, live_scope_ids=live
             )
@@ -13228,6 +13306,13 @@ class ChatScreen(BaseAppScreen):
         )
         serialized = serialize_console_rail_stored_preferences(source)
         rail_state_config[selected_key.value] = serialized
+        if persist and source is None:
+            from ...Backup_Recovery.profile_open import unchanged_selected_config
+            from ...config import get_cli_config_path
+
+            # Mounting a recovered Console must not rewrite its verified config
+            # merely to serialize defaults; explicit rail edits still save below.
+            persist = not unchanged_selected_config(get_cli_config_path())
         if persist:
             self._save_console_rail_preferences(
                 selected_key.value,
@@ -14209,10 +14294,15 @@ class ChatScreen(BaseAppScreen):
             ephemeral=self._console_active_session_is_ephemeral(),
             staged_source_count=console_staged_source_count(pending_launch),
         )
-        setup_blocker_copy = self._console_provider_blocker_copy()
+        setup_settings_readiness = self._active_console_settings_readiness()
+        setup_blocker_copy = self._console_provider_blocker_copy(
+            settings_readiness=setup_settings_readiness
+        )
         if setup_blocker_copy:
             action_label, _action_target, _action_tooltip = (
-                self._console_provider_recovery_action()
+                self._console_provider_recovery_action(
+                    settings_readiness=setup_settings_readiness
+                )
             )
             setup_rows = (
                 ConsoleDisplayRow(
@@ -14859,9 +14949,6 @@ class ChatScreen(BaseAppScreen):
 
     def _build_console_workbench_state(self, control_state: ConsoleControlState):
         blocker_copy = self._console_provider_blocker_copy()
-        action_label, _action_target, _action_tooltip = (
-            self._console_provider_recovery_action()
-        )
         composer = self._console_composer_or_none()
         has_draft = bool(composer and composer.draft_text().strip())
         controller = self._console_chat_controller
@@ -14889,7 +14976,6 @@ class ChatScreen(BaseAppScreen):
         return build_console_workbench_state(
             control_state=control_state,
             provider_blocker_copy=blocker_copy,
-            provider_action_label=action_label,
             can_send=can_send,
             can_stop=can_stop,
             density=self._console_workbench_density(),
@@ -14897,7 +14983,11 @@ class ChatScreen(BaseAppScreen):
             ephemeral=self._console_active_session_is_ephemeral(),
         )
 
-    def _console_provider_blocker_copy(self) -> str:
+    def _console_provider_blocker_copy(
+        self,
+        *,
+        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness] | None = None,
+    ) -> str:
         """Return concise Console recovery copy for provider/model setup gaps.
 
         task-32345: ``wait_for_active_run`` means "a turn is already in
@@ -14947,7 +15037,11 @@ class ChatScreen(BaseAppScreen):
           dedicated constructor dependency on ``ConsolePromptsController``)
           so its behavior does not depend on this copy's definition.
         """
-        _settings, readiness = self._active_console_settings_readiness()
+        _settings, readiness = (
+            self._active_console_settings_readiness()
+            if settings_readiness is None
+            else settings_readiness
+        )
         if (
             readiness.operability == "ready_to_send"
             or readiness.recovery_action == "wait_for_active_run"
@@ -14984,6 +15078,10 @@ class ChatScreen(BaseAppScreen):
         if readiness.recovery_action == "select_model":
             return "Choose a model in Console Settings before sending."
         if readiness.recovery_action == "configure_credential":
+            if readiness.subscription_status == "pending":
+                return "Checking Claude subscription credential."
+            if readiness.subscription_status in {"missing", "expired"}:
+                return "Log in with Claude Code to refresh the subscription credential."
             return "Add API key in Settings > Providers & Models before sending."
         if readiness.recovery_action == "save_endpoint":
             return "Save provider endpoint in Conversation settings before sending."
@@ -14998,20 +15096,36 @@ class ChatScreen(BaseAppScreen):
             return "endpoint"
         return ""
 
-    def _console_provider_recovery_action(self) -> tuple[str, str, str]:
+    def _console_provider_recovery_action(
+        self,
+        *,
+        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness] | None = None,
+    ) -> tuple[str, str, str]:
         """Return the label, target, and tooltip for Console provider recovery."""
-        _settings, readiness = self._active_console_settings_readiness()
+        _settings, readiness = (
+            self._active_console_settings_readiness()
+            if settings_readiness is None
+            else settings_readiness
+        )
         if readiness.operability == "ready_to_send":
             return ("Open Settings", "hidden", "Open provider settings")
         presentation = build_console_readiness_presentation(readiness)
         label = presentation.action_label
-        if readiness.recovery_action == "configure_credential":
+        if readiness.recovery_action == "configure_credential" and readiness.subscription_status is None:
             label = CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         return label, presentation.action_target, presentation.action_tooltip
 
-    def _build_console_setup_card_state(self) -> ConsoleSetupCardState:
+    def _build_console_setup_card_state(
+        self,
+        *,
+        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness] | None = None,
+    ) -> ConsoleSetupCardState:
         """Build the empty-transcript onboarding state from current readiness."""
-        settings, readiness = self._active_console_settings_readiness()
+        settings, readiness = (
+            self._active_console_settings_readiness()
+            if settings_readiness is None
+            else settings_readiness
+        )
         has_model = _has_selected_text(getattr(settings, "model", None))
         return build_console_setup_card_state(
             readiness=readiness,
@@ -15078,9 +15192,15 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
-        blocker_copy = self._console_provider_blocker_copy()
+        # These synchronous presentation helpers consume one result. Keep the
+        # acquisition (including session convergence) complete before sharing
+        # it, and acquire afresh on the next update or independent helper call.
+        settings_readiness = self._active_console_settings_readiness()
+        blocker_copy = self._console_provider_blocker_copy(
+            settings_readiness=settings_readiness
+        )
         action_label, _action_target, action_tooltip = (
-            self._console_provider_recovery_action()
+            self._console_provider_recovery_action(settings_readiness=settings_readiness)
         )
         if blocker_copy:
             empty_action_label, empty_action_tooltip = (
@@ -15097,7 +15217,9 @@ class ChatScreen(BaseAppScreen):
             # default-label fallback, so card mode is unaffected.
             empty_action_label, empty_action_tooltip = "", ""
 
-        card_state = self._build_console_setup_card_state()
+        card_state = self._build_console_setup_card_state(
+            settings_readiness=settings_readiness
+        )
         try:
             surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
         except QueryError:
@@ -15130,7 +15252,7 @@ class ChatScreen(BaseAppScreen):
         # TASK-2154.10 (AC-04): vestibular-accessible static backdrop when the
         # user opts into reduced motion; refreshed with every guidance sync.
         modal.reduced_motion = bool(
-            get_cli_setting("appearance", "reduce_motion", False)
+            self.app_instance.app_config.get("appearance", {}).get("reduce_motion", False)
         )
         modal.sync_card_state(
             card_state,
@@ -16669,6 +16791,10 @@ class ChatScreen(BaseAppScreen):
             CONSOLE_ENVIRONMENT_POLL_SECONDS, self._poll_console_environment
         )
         self._record_ui_timer_created("console-environment-poll")
+        self._console_credential_poll_timer = self.set_interval(
+            0.25, self._poll_console_credential_readiness
+        )
+        self._record_ui_timer_created("console-credential-poll")
         # task-15475: claim this visit's refreshes; the ScreenResume Textual
         # posts for this very mount consumes the token and skips its own copy.
         self._console_mount_visit_refreshed = True
@@ -16854,6 +16980,7 @@ class ChatScreen(BaseAppScreen):
         self._fleet._stop_console_fleet_survivor_tick()
         self._stop_console_cost_ttl_timer()
         self._stop_console_environment_poll_timer()
+        self._stop_console_credential_poll_timer()
         self._console_draft_spend_refresh.stop()
         await self._teardown_console_roleplay_persistence()
         # The pipeline hands-free loop's own two-statement abandon teardown
@@ -18330,6 +18457,37 @@ class ChatScreen(BaseAppScreen):
         active_run_copy = self._console_active_run_copy()
         status_chips.sync_run_chip(bool(active_run_copy), active_run_copy)
 
+    def _console_sync_maintenance_close_admission(self) -> None:
+        """Defer new UI sync passes while an admitted pass finishes naturally."""
+        self._console_sync_maintenance_paused = True
+
+    async def _console_sync_maintenance_drain(self, deadline: float) -> bool:
+        """Observe actual sync completion without cancelling its publication."""
+        if not getattr(self, "_console_sync_maintenance_paused", False):
+            raise RuntimeError("console_sync_maintenance_not_paused")
+        while self._console_sync_in_progress:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.01))
+        return True
+
+    def _console_sync_maintenance_resume(self) -> None:
+        """Replay a coalesced request after ordinary storage admission resumes."""
+        if not getattr(self, "_console_sync_maintenance_paused", False):
+            return
+        self._console_sync_maintenance_paused = False
+        if getattr(self, "_console_control_bar_replay_whole_sync", False):
+            return  # Its coalesced timer already owns the fresh replay.
+        if self._console_sync_requested and not self._console_sync_in_progress:
+            self._console_sync_requested = False
+            if not _console_screen_is_torn_down(self):
+                self.run_worker(
+                    self._sync_native_console_chat_ui(),
+                    exclusive=True,
+                    group="console-sync",
+                )
+
     async def _sync_native_console_chat_ui(self) -> None:
         """Refresh visible Console-native state after send/stop transitions.
 
@@ -18359,7 +18517,11 @@ class ChatScreen(BaseAppScreen):
             # coalesced request.
             self._console_sync_requested = False
             return
-        if self._console_sync_in_progress:
+        if (
+            getattr(self, "_console_sync_maintenance_paused", False)
+            or self._console_sync_in_progress
+            or getattr(self, "_console_control_bar_replay_whole_sync", False)
+        ):
             self._console_sync_requested = True
             return
         self._console_sync_in_progress = True
@@ -18432,9 +18594,9 @@ class ChatScreen(BaseAppScreen):
             # THIS coroutine's task reads the cache — workers and handlers
             # interleaving during the awaits keep building live.
             with self._workspace.tick_workspace_build_scope():
-                rail_state = self._current_console_rail_state()
-                self._sync_console_settings_summary()
-                self._sync_console_control_bar(rail_state)
+                if self._sync_console_rail_and_controls() is False:
+                    self._console_control_bar_replay_whole_sync = True
+                    return
                 # Settings failures may arrive after Apply has returned:
                 # ordinary first persistence and temporary-chat promotion
                 # both update the session ledger on their own later path.
@@ -18475,7 +18637,11 @@ class ChatScreen(BaseAppScreen):
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
-            if self._console_sync_requested:
+            if (
+                self._console_sync_requested
+                and not getattr(self, "_console_sync_maintenance_paused", False)
+                and not getattr(self, "_console_control_bar_replay_whole_sync", False)
+            ):
                 self._console_sync_requested = False
                 # A dead screen must not re-arm itself: `run_worker` here
                 # runs AFTER Textual's unmount sweep
@@ -18699,6 +18865,10 @@ class ChatScreen(BaseAppScreen):
             # while the turn is preparing and admits Queue after acceptance;
             # only actual provider setup gaps belong in this gate.
             if readiness.recovery_action == "configure_credential":
+                if readiness.subscription_status == "pending":
+                    return "Checking Claude subscription credential. Your draft is preserved."
+                if readiness.subscription_status in {"missing", "expired"}:
+                    return "Console send blocked: Log in with Claude Code to refresh the subscription credential."
                 provider = readiness.provider_display_name or "this provider"
                 return (
                     f"Console send blocked: Add an API key for {provider} before "
@@ -21319,7 +21489,7 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return None
 
-    def _request_console_control_bar_sync(self) -> None:
+    def _request_console_control_bar_sync(self, *, delayed: bool = False) -> None:
         """Coalesce control-bar syncs into one trailing run (task-3010).
 
         Every direct caller of `_sync_console_control_bar` was individually
@@ -21330,10 +21500,15 @@ class ChatScreen(BaseAppScreen):
         run always computes fresh state, so the last-writer semantics every
         caller relied on are preserved.
         """
-        if getattr(self, "_console_control_bar_sync_scheduled", False):
+        if _console_screen_is_torn_down(self) or getattr(
+            self, "_console_control_bar_sync_scheduled", False
+        ):
             return
         self._console_control_bar_sync_scheduled = True
-        self.call_after_refresh(self._run_coalesced_control_bar_sync)
+        if delayed:
+            self.set_timer(0.2, self._run_coalesced_control_bar_sync)
+        else:
+            self.call_after_refresh(self._run_coalesced_control_bar_sync)
 
     @on(ConsoleAutoSpeakChanged)
     def on_console_auto_speak_changed(self, event: ConsoleAutoSpeakChanged) -> None:
@@ -21372,12 +21547,27 @@ class ChatScreen(BaseAppScreen):
     def _run_coalesced_control_bar_sync(self) -> None:
         """Execute one coalesced control-bar sync (task-3010)."""
         self._console_control_bar_sync_scheduled = False
-        self._sync_console_control_bar()
+        if _console_screen_is_torn_down(self):
+            self._console_control_bar_replay_whole_sync = False
+            return
+        if getattr(self, "_console_control_bar_replay_whole_sync", False):
+            if self._console_sync_in_progress or getattr(
+                self, "_console_sync_maintenance_paused", False
+            ):
+                self._request_console_control_bar_sync(delayed=True)
+                return
+            self._console_control_bar_replay_whole_sync = False
+            self._console_sync_requested = False
+            self.run_worker(
+                self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            )
+        else:
+            self._sync_console_control_bar()
 
     def _sync_console_control_bar(
         self,
         rail_state: Optional[ConsoleRailState] = None,
-    ) -> None:
+    ) -> bool:
         """Refresh Console-owned control labels from current selection state.
 
         Args:
@@ -21387,7 +21577,68 @@ class ChatScreen(BaseAppScreen):
                 recomputing it -- which itself rebuilds workspace-context
                 and inspector state). Other callers may omit it; it is
                 computed on demand when not given.
+
+        Returns:
+            True after rendering; False when entry was deferred and a fresh
+            coalesced replay owns the unfinished refresh.
         """
+        return self._run_console_config_sync(
+            lambda: self._sync_console_control_bar_under_config(rail_state)
+        )
+
+    def _sync_console_rail_and_controls(self) -> bool:
+        """Share current config across the tick's synchronous projections."""
+
+        def sync() -> None:
+            rail_state = self._current_console_rail_state()
+            self._sync_console_settings_summary()
+            self._sync_console_control_bar_under_config(rail_state)
+
+        return self._run_console_config_sync(sync)
+
+    def _run_console_config_sync(self, sync: Callable[[], None]) -> bool:
+        """Render synchronously, or defer entry to the existing coalesced retry."""
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+        from tldw_chatbook.Backup_Recovery.config_participants import operation
+
+        if getattr(self, "_console_sync_maintenance_paused", False):
+            self._request_console_control_bar_sync(delayed=True)
+            return False
+        # Nested readers still check the current source; keep its native
+        # lifetime continuous for this synchronous refresh, never an await.
+        failure: BaseException | None = None
+        entered = False
+        try:
+            with operation(config):
+                entered = True
+                try:
+                    sync()
+                except BaseException as error:  # noqa: BLE001 - re-raised after native owner exit.
+                    # A UI error must not mark config persistence as failed.
+                    # Nested config failures retain their own failure state.
+                    failure = error
+        except BaseException as error:
+            if (
+                not entered
+                and type(error) is RecoveryRequired
+                and error.args == ("storage_locally_paused",)
+            ):
+                # Native intent can precede the local monitor. Recompute on
+                # one trailing timer even if that intent is canceled unseen.
+                self._request_console_control_bar_sync(delayed=True)
+                return False
+            if failure is not None and error is not failure:
+                raise error from failure
+            raise
+        if failure is not None:
+            raise failure
+        return True
+
+    def _sync_console_control_bar_under_config(
+        self, rail_state: ConsoleRailState | None = None
+    ) -> None:
+        """Refresh the controls under the caller's checked config lifetime."""
         self._sync_console_pending_delete_confirmation()
         self._library_activity.sync_projection()
         control_state = self._build_console_control_state(
@@ -24435,6 +24686,7 @@ class ChatScreen(BaseAppScreen):
         a pending write is unconditionally scheduled.
         """
         self._sidebar_state_dirty = True
+        self._sidebar_state_revision += 1
         if self._sidebar_state_save_timer is not None:
             self._sidebar_state_save_timer.stop()
         self._sidebar_state_save_timer = self.set_timer(
@@ -24451,94 +24703,86 @@ class ChatScreen(BaseAppScreen):
             group="sidebar-state-persist",
         )
 
-    async def _persist_sidebar_state_off_loop(self) -> None:
-        """Write `ui_state.toml` on a worker thread, off the event loop.
+    async def _persist_sidebar_state_off_loop(self) -> bool:
+        """Serialize native IO through result delivery, including cancellation."""
+        async with self._sidebar_state_persist_lock:
+            if not self._sidebar_state_dirty:
+                return self._sidebar_state_persistence_error is None
+            try:
+                with _FileJob(self, "sidebar_state") as job:
+                    revision = self._sidebar_state_revision
+                    snapshot = self._sidebar_state_snapshot()
+                    outcome = await job.run(snapshot)
+                    self._sidebar_state_persistence_error = (
+                        type(outcome.error).__name__
+                        if outcome.error is not None
+                        else None
+                    )
+                    if (
+                        outcome.error is None
+                        and revision == self._sidebar_state_revision
+                    ):
+                        self._sidebar_state_dirty = False
+                    if outcome.cancelled:
+                        raise asyncio.CancelledError
+                    if outcome.error is not None:
+                        logger.error(
+                            "Sidebar-state write failed: {}",
+                            self._sidebar_state_persistence_error,
+                        )
+                    return outcome.error is None
+            except Exception as error:
+                self._sidebar_state_persistence_error = type(error).__name__
+                logger.error(
+                    "Sidebar-state write failed: {}",
+                    self._sidebar_state_persistence_error,
+                )
+                return False
 
-        Snapshots `self.ui_state` here, on the main thread, before handing
-        the write to `to_thread` -- a further toggle can still arrive and
-        mutate `collapsible_states` while this write is in flight, and it
-        must not race the worker thread's read of that same dict.
+    async def _flush_sidebar_state_now(self) -> bool:
+        """Reach the actual source safe point and persist the latest dirty revision.
 
-        Clears `_sidebar_state_dirty` immediately after taking the
-        snapshot, NOT after the write completes (review round,
-        task-15470): the awaited `to_thread` call below yields to the
-        event loop, and a further toggle can land while this write is
-        still in flight. Clearing dirty only after the write finished
-        would blindly stamp it False again on completion -- clobbering
-        the True a mid-flight toggle had just set -- so a quit landing
-        before that toggle's own new debounce timer fires would see
-        `dirty=False` and lose it. Clearing right here instead means the
-        dirty flag always answers "is there a toggle newer than the
-        snapshot this worker is holding", which a mid-flight toggle
-        correctly flips back to True.
-        """
-        snapshot = self._sidebar_state_snapshot()
-        self._sidebar_state_dirty = False
-        await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
-
-    async def _flush_sidebar_state_now(self) -> None:
-        """Force-flush a pending sidebar-state write (unmount/quit path).
-
-        Cancels any pending debounce timer and writes off the loop via
-        `to_thread` so the screen never unmounts with an unpersisted toggle
-        -- the AC #2 flush-on-quit guarantee. If a debounced write is
-        already in flight (the timer fired moments before quit), this waits
-        for it rather than dispatching a second writer against the same
-        file -- `_write_sidebar_state_snapshot` does an unlocked
-        read-modify-write of `ui_state.toml`, so two concurrent writers
-        could interleave.
+        A Textual worker's finished/cancelled flag does not establish native
+        retirement. The source lock remains held through real IO and bookkeeping.
+        Refusal leaves dirty data/error available to later maintenance composition;
+        this method grants no permission to flush after admission closes.
         """
         if self._sidebar_state_save_timer is not None:
             self._sidebar_state_save_timer.stop()
             self._sidebar_state_save_timer = None
-        worker = self._sidebar_state_persist_worker
-        if worker is not None and not worker.is_finished:
-            try:
-                await worker.wait()
-            except Exception as error:
-                logger.error(
-                    "Pending sidebar-state write failed: {}", type(error).__name__
-                )
-            # Falls through to the dirty re-check below (review round,
-            # task-15470) rather than returning here: a toggle can land
-            # while THIS await was in flight, re-dirtying the state after
-            # the awaited worker already took its own snapshot. Returning
-            # unconditionally after the wait would silently drop it.
-        if self._sidebar_state_dirty:
-            snapshot = self._sidebar_state_snapshot()
-            await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
-            self._sidebar_state_dirty = False
+        while True:
+            if not await self._persist_sidebar_state_off_loop():
+                return False
+            if not self._sidebar_state_dirty:
+                return True
 
     def _load_sidebar_state(self) -> None:
-        """Load sidebar state from config file."""
-        config_path = _get_effective_config_path().parent / "ui_state.toml"
-
+        """Read the selected UI-state owner under ordinary source admission."""
         try:
-            if config_path.exists():
-                with open(config_path, "r") as f:
-                    data = toml.load(f)
-                    sidebar_data = data.get("sidebar", {})
-
-                    # Load collapsible states into UIState
-                    self.ui_state.collapsible_states = sidebar_data.get(
-                        "collapsible_states", {}
-                    )
-                    self.ui_state.sidebar_search_query = sidebar_data.get(
-                        "search_query", ""
-                    )
-                    self.ui_state.last_active_section = sidebar_data.get(
-                        "last_active_section", None
-                    )
-
-                    # Update reactive property
-                    self.sidebar_state = dict(self.ui_state.collapsible_states)
-
-                    logger.debug(
-                        f"Loaded sidebar state with {len(self.ui_state.collapsible_states)} collapsibles"
-                    )
-        except Exception as e:
-            logger.error(f"Failed to load sidebar state: {e}")
-            self.sidebar_state = {}
+            with raw._scope(self, "sidebar_state") as operation:
+                try:
+                    with raw._file(operation, raw._selected(operation), "r") as f:
+                        data = toml.load(f)
+                except FileNotFoundError:
+                    return
+                sidebar_data = data.get("sidebar", {})
+                self.ui_state.collapsible_states = sidebar_data.get(
+                    "collapsible_states", {}
+                )
+                self.ui_state.sidebar_search_query = sidebar_data.get(
+                    "search_query", ""
+                )
+                self.ui_state.last_active_section = sidebar_data.get(
+                    "last_active_section", None
+                )
+                self.sidebar_state = dict(self.ui_state.collapsible_states)
+                self._sidebar_state_persistence_error = None
+        except Exception as error:
+            self._sidebar_state_persistence_error = type(error).__name__
+            logger.error(
+                "Failed to load sidebar state: {}",
+                self._sidebar_state_persistence_error,
+            )
 
     def _sidebar_state_snapshot(self) -> Dict[str, Any]:
         """Copy the sidebar-persisted fields off `self.ui_state`.
@@ -24555,46 +24799,48 @@ class ChatScreen(BaseAppScreen):
             "last_active_section": self.ui_state.last_active_section,
         }
 
-    def _write_sidebar_state_snapshot(self, snapshot: Dict[str, Any]) -> None:
-        """Write a pre-captured sidebar-state snapshot to `ui_state.toml`.
-
-        Safe to call from a worker thread: touches only the passed-in
-        `snapshot`, never `self.ui_state`.
-        """
-        config_path = _get_effective_config_path().parent / "ui_state.toml"
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Load existing config or create new
-            if config_path.exists():
-                with open(config_path, "r") as f:
+    def _write_sidebar_state_snapshot(
+        self, snapshot: Dict[str, Any], *, _selected=None
+    ) -> None:
+        """Own the real fixed-target merge/publication scope on the calling thread."""
+        with raw._scope(
+            self, "sidebar_state", writing=True, selected_read=_selected
+        ) as operation:
+            selected = raw._selected(operation)
+            raw._mkdirs(operation)
+            try:
+                with raw._file(operation, selected, "r") as f:
                     data = toml.load(f)
-            else:
+            except FileNotFoundError:
                 data = {}
-
-            # Update sidebar section
             data["sidebar"] = snapshot
+            temporary = selected.with_suffix(selected.suffix + ".tmp")
+            try:
+                with raw._file(operation, temporary, "w") as f:
+                    toml.dump(data, f)
+                raw._replace(operation, temporary, selected)
+            finally:
+                raw._remove_temporary(operation, temporary)
 
-            # Save back to file
-            with open(config_path, "w") as f:
-                toml.dump(data, f)
-
-            logger.debug(
-                f"Saved sidebar state with {len(snapshot['collapsible_states'])} collapsibles"
+    def _save_sidebar_state(self) -> bool:
+        """Legacy synchronous source entry; errors remain visible for maintenance."""
+        try:
+            # Admission/path selection precedes even the snapshot copy.
+            with raw._scope(self, "sidebar_state", writing=True) as operation:
+                snapshot = self._sidebar_state_snapshot()
+                ChatScreen._write_sidebar_state_snapshot(
+                    self, snapshot, _selected=raw._selected(operation)
+                )
+                self._sidebar_state_persistence_error = None
+                return True
+        except Exception as error:
+            self._sidebar_state_persistence_error = type(error).__name__
+            self._sidebar_state_dirty = True
+            logger.error(
+                "Failed to save sidebar state: {}",
+                self._sidebar_state_persistence_error,
             )
-        except Exception as e:
-            logger.error(f"Failed to save sidebar state: {e}")
-
-    def _save_sidebar_state(self) -> None:
-        """Save sidebar state to config file, synchronously, on this thread.
-
-        Convenience wrapper around `_sidebar_state_snapshot` +
-        `_write_sidebar_state_snapshot` for a caller that is already off the
-        event loop (a worker thread via `to_thread`) or does not care (a
-        direct test call). Callers on the event loop that must NOT block it
-        should go through `watch_sidebar_state`'s debounce instead.
-        """
-        self._write_sidebar_state_snapshot(self._sidebar_state_snapshot())
+            return False
 
     def _restore_collapsible_states(self) -> None:
         """Restore collapsible states from saved state."""
@@ -24832,190 +25078,14 @@ class ChatScreen(BaseAppScreen):
             if handled:
                 return
 
-    def watch_sidebar_state(self, new_state: dict) -> None:
-        """Debounce persistence when sidebar state changes.
 
-        task-15470: this used to call `_save_sidebar_state()` directly --
-        synchronous open+parse+rewrite of `ui_state.toml` on the event loop,
-        once per `Collapsible.Toggled`. Now it only marks the state dirty and
-        (re)arms one debounce timer; a burst of toggles collapses into a
-        single write, dispatched off the loop by
-        `_flush_sidebar_state_after_debounce`. `on_unmount` force-flushes any
-        pending write so a toggle immediately followed by quit is not lost.
-        """
-        self._schedule_sidebar_state_save()
 
-    def _schedule_sidebar_state_save(self) -> None:
-        """Mark the sidebar state dirty and (re)arm the debounce timer.
 
-        The single scheduling point -- `watch_sidebar_state` and any direct
-        caller that mutates `ui_state.collapsible_states` without going
-        through the reactive (e.g. a bulk reset that may reassign an
-        already-`{}` `sidebar_state`, which the reactive would then treat as
-        a no-op and never call the watcher for) both route through here so
-        a pending write is unconditionally scheduled.
-        """
-        self._sidebar_state_dirty = True
-        if self._sidebar_state_save_timer is not None:
-            self._sidebar_state_save_timer.stop()
-        self._sidebar_state_save_timer = self.set_timer(
-            SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS,
-            self._flush_sidebar_state_after_debounce,
-        )
 
-    def _flush_sidebar_state_after_debounce(self) -> None:
-        """Debounce timer callback: hand the actual write to a worker."""
-        self._sidebar_state_save_timer = None
-        self._sidebar_state_persist_worker = self.run_worker(
-            self._persist_sidebar_state_off_loop(),
-            exclusive=True,
-            group="sidebar-state-persist",
-        )
 
-    async def _persist_sidebar_state_off_loop(self) -> None:
-        """Write `ui_state.toml` on a worker thread, off the event loop.
 
-        Snapshots `self.ui_state` here, on the main thread, before handing
-        the write to `to_thread` -- a further toggle can still arrive and
-        mutate `collapsible_states` while this write is in flight, and it
-        must not race the worker thread's read of that same dict.
 
-        Clears `_sidebar_state_dirty` immediately after taking the
-        snapshot, NOT after the write completes (review round,
-        task-15470): the awaited `to_thread` call below yields to the
-        event loop, and a further toggle can land while this write is
-        still in flight. Clearing dirty only after the write finished
-        would blindly stamp it False again on completion -- clobbering
-        the True a mid-flight toggle had just set -- so a quit landing
-        before that toggle's own new debounce timer fires would see
-        `dirty=False` and lose it. Clearing right here instead means the
-        dirty flag always answers "is there a toggle newer than the
-        snapshot this worker is holding", which a mid-flight toggle
-        correctly flips back to True.
-        """
-        snapshot = self._sidebar_state_snapshot()
-        self._sidebar_state_dirty = False
-        await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
 
-    async def _flush_sidebar_state_now(self) -> None:
-        """Force-flush a pending sidebar-state write (unmount/quit path).
-
-        Cancels any pending debounce timer and writes off the loop via
-        `to_thread` so the screen never unmounts with an unpersisted toggle
-        -- the AC #2 flush-on-quit guarantee. If a debounced write is
-        already in flight (the timer fired moments before quit), this waits
-        for it rather than dispatching a second writer against the same
-        file -- `_write_sidebar_state_snapshot` does an unlocked
-        read-modify-write of `ui_state.toml`, so two concurrent writers
-        could interleave.
-        """
-        if self._sidebar_state_save_timer is not None:
-            self._sidebar_state_save_timer.stop()
-            self._sidebar_state_save_timer = None
-        worker = self._sidebar_state_persist_worker
-        if worker is not None and not worker.is_finished:
-            try:
-                await worker.wait()
-            except Exception as error:
-                logger.error(
-                    "Pending sidebar-state write failed: {}", type(error).__name__
-                )
-            # Falls through to the dirty re-check below (review round,
-            # task-15470) rather than returning here: a toggle can land
-            # while THIS await was in flight, re-dirtying the state after
-            # the awaited worker already took its own snapshot. Returning
-            # unconditionally after the wait would silently drop it.
-        if self._sidebar_state_dirty:
-            snapshot = self._sidebar_state_snapshot()
-            await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
-            self._sidebar_state_dirty = False
-
-    def _load_sidebar_state(self) -> None:
-        """Load sidebar state from config file."""
-        config_path = _get_effective_config_path().parent / "ui_state.toml"
-
-        try:
-            if config_path.exists():
-                with open(config_path, "r") as f:
-                    data = toml.load(f)
-                    sidebar_data = data.get("sidebar", {})
-
-                    # Load collapsible states into UIState
-                    self.ui_state.collapsible_states = sidebar_data.get(
-                        "collapsible_states", {}
-                    )
-                    self.ui_state.sidebar_search_query = sidebar_data.get(
-                        "search_query", ""
-                    )
-                    self.ui_state.last_active_section = sidebar_data.get(
-                        "last_active_section", None
-                    )
-
-                    # Update reactive property
-                    self.sidebar_state = dict(self.ui_state.collapsible_states)
-
-                    logger.debug(
-                        f"Loaded sidebar state with {len(self.ui_state.collapsible_states)} collapsibles"
-                    )
-        except Exception as e:
-            logger.error(f"Failed to load sidebar state: {e}")
-            self.sidebar_state = {}
-
-    def _sidebar_state_snapshot(self) -> Dict[str, Any]:
-        """Copy the sidebar-persisted fields off `self.ui_state`.
-
-        `collapsible_states` is a plain mutable dict; taking this copy on
-        the caller's thread (always the main/event-loop thread -- see
-        `_persist_sidebar_state_off_loop`) before handing the write to a
-        worker thread means the worker never reads `self.ui_state` directly,
-        so a toggle arriving while that write is in flight cannot race it.
-        """
-        return {
-            "collapsible_states": dict(self.ui_state.collapsible_states),
-            "search_query": self.ui_state.sidebar_search_query,
-            "last_active_section": self.ui_state.last_active_section,
-        }
-
-    def _write_sidebar_state_snapshot(self, snapshot: Dict[str, Any]) -> None:
-        """Write a pre-captured sidebar-state snapshot to `ui_state.toml`.
-
-        Safe to call from a worker thread: touches only the passed-in
-        `snapshot`, never `self.ui_state`.
-        """
-        config_path = _get_effective_config_path().parent / "ui_state.toml"
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Load existing config or create new
-            if config_path.exists():
-                with open(config_path, "r") as f:
-                    data = toml.load(f)
-            else:
-                data = {}
-
-            # Update sidebar section
-            data["sidebar"] = snapshot
-
-            # Save back to file
-            with open(config_path, "w") as f:
-                toml.dump(data, f)
-
-            logger.debug(
-                f"Saved sidebar state with {len(snapshot['collapsible_states'])} collapsibles"
-            )
-        except Exception as e:
-            logger.error(f"Failed to save sidebar state: {e}")
-
-    def _save_sidebar_state(self) -> None:
-        """Save sidebar state to config file, synchronously, on this thread.
-
-        Convenience wrapper around `_sidebar_state_snapshot` +
-        `_write_sidebar_state_snapshot` for a caller that is already off the
-        event loop (a worker thread via `to_thread`) or does not care (a
-        direct test call). Callers on the event loop that must NOT block it
-        should go through `watch_sidebar_state`'s debounce instead.
-        """
-        self._write_sidebar_state_snapshot(self._sidebar_state_snapshot())
 
     def _restore_collapsible_states(self) -> None:
         """Restore collapsible states from saved state."""

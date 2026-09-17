@@ -938,6 +938,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: none;
 }
 
+/* TASK-32623: reserve the widest action row so toggling Discard cannot move
+   its sibling mode controls. Compact rows already have fixed geometry. */
+#library-note-task-actions {
+    min-width: $ds-library-note-task-actions-min-width;
+}
+
+#library-shell-grid.library-notes-compact #library-note-task-actions {
+    min-width: $ds-size-0;
+}
+
 /* Branch continuations are list rows, not toolbar actions. Keep their full
    status and recovery copy visible when the compact toolbar geometry above
    collapses ordinary actions to one line. */
@@ -1035,7 +1045,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-y: hidden;
 }
 
-#library-shell-grid.library-notes-compact #library-note-title-row {
+#library-shell-grid.library-notes-compact #library-note-title-row,
+#library-shell-grid.library-notes-compact #library-note-keywords-row {
     layout: horizontal;
     height: $ds-size-1;
     min-height: $ds-size-1;
@@ -1044,6 +1055,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-shell-grid.library-notes-compact #library-note-title-label,
+#library-shell-grid.library-notes-compact #library-note-keywords-label,
 #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
     width: $ds-size-10;
     height: $ds-size-1;
@@ -1051,6 +1063,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-shell-grid.library-notes-compact #library-note-title,
+#library-shell-grid.library-notes-compact #library-note-keywords,
 #library-shell-grid.library-notes-compact #library-note-context-keywords {
     width: $ds-width-fill;
     height: $ds-size-1;
@@ -1112,9 +1125,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
    else in this canvas has. */
 #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
 #library-shell-grid.library-notes-compact #library-note-preview-region .destination-section,
-#library-shell-grid.library-notes-compact #library-note-context-meta,
 #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
     height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+/* TASK-32642: each Info property gets a complete row at compact widths. */
+#library-shell-grid.library-notes-compact #library-note-context-meta {
+    height: auto;
     min-height: $ds-size-1;
     margin: $ds-space-0;
 }

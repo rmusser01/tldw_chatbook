@@ -313,8 +313,11 @@ def test_user_fd_stream_read_is_bounded_to_expected_bytes_plus_one(
     read_sizes: list[int] = []
     original_read = os.read
 
+    image_identity = path.stat()
     def recording_read(fd: int, size: int) -> bytes:
-        read_sizes.append(size)
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) == (image_identity.st_dev, image_identity.st_ino):
+            read_sizes.append(size)
         return original_read(fd, size)
 
     monkeypatch.setattr(os, "read", recording_read)
@@ -568,10 +571,12 @@ def test_user_leaf_swap_to_external_symlink_fails_without_leaking(
     outside.write_bytes(b"PRIVATE-EXTERNAL-CONTENT")
     original_read = os.read
     swapped = False
+    image_identity = path.stat()
 
     def swap_then_read(fd: int, size: int) -> bytes:
         nonlocal swapped
-        if not swapped:
+        opened = os.fstat(fd)
+        if not swapped and (opened.st_dev, opened.st_ino) == (image_identity.st_dev, image_identity.st_ino):
             swapped = True
             path.unlink()
             path.symlink_to(outside)

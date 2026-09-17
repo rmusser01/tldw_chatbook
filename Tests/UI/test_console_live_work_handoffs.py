@@ -11,6 +11,7 @@ import pytest
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -42,7 +43,7 @@ from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
-from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
+from tldw_chatbook.UI.Workflows_Modules.console_context import WorkflowConsoleContext
 
 #: One poll of a UI condition. Small enough that a satisfied condition exits
 #: promptly, large enough not to spin the event loop.
@@ -354,14 +355,7 @@ async def _wait_for_destination_recovery_state(
             "#workflows-launch-in-console",
             "#workflows-console-unavailable",
             "empty-workflows",
-            (
-                "Select an active run",
-                "Unavailable: Console launch for Workflows.",
-                "Why: no active workflow run is available.",
-                "Next: Start or select a workflow run before opening it in Console.",
-                "Recovery: Workflows.",
-                "Owner: local workflow data.",
-            ),
+            ("No active workflow run",),
             "Start or select a workflow run before opening it in Console.",
         ),
         (
@@ -382,7 +376,9 @@ async def _wait_for_destination_recovery_state(
     ],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_phase_five_destination_blockers_expose_taxonomy_recovery_fields(
+    request,
     route,
     button_selector,
     static_selector,
@@ -436,7 +432,8 @@ class StaticReadItLaterSnapshotService:
         return {"items": [], "total": 0}
 
 
-def test_app_exposes_open_console_for_live_work_helper():
+@private_profile_test
+def test_app_exposes_open_console_for_live_work_helper(request):
     app = _build_test_app()
 
     assert hasattr(app, "open_console_for_live_work")
@@ -498,7 +495,8 @@ def test_console_setup_staged_receipt_names_the_launch_source():
     assert "finish provider setup" in receipt.lower()
 
 
-def test_open_console_for_live_work_routes_to_chat_route():
+@private_profile_test
+def test_open_console_for_live_work_routes_to_chat_route(request):
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     seen = []
@@ -531,7 +529,8 @@ def test_open_console_for_live_work_routes_to_chat_route():
     assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
-def test_open_console_for_live_work_preserves_minimal_call_defaults():
+@private_profile_test
+def test_open_console_for_live_work_preserves_minimal_call_defaults(request):
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     app.post_message = lambda message: None
@@ -790,7 +789,8 @@ def test_console_live_work_primary_action_routes_acp_session_details():
     assert card_state.primary_action.target_id == "local:acp_session:session-1"
 
 
-def test_app_console_live_work_primary_action_routes_wc_run_details():
+@private_profile_test
+def test_app_console_live_work_primary_action_routes_wc_run_details(request):
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     app.post_message = Mock()
@@ -821,7 +821,8 @@ def test_app_console_live_work_primary_action_routes_wc_run_details():
 
 
 @pytest.mark.asyncio
-async def test_schedules_console_follow_uses_home_dashboard_app_inputs():
+@private_profile_test
+async def test_schedules_console_follow_uses_home_dashboard_app_inputs(request):
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}
     app.screen_state_store.save(
@@ -860,7 +861,7 @@ async def test_schedules_console_follow_uses_home_dashboard_app_inputs():
         (
             "workflows",
             "workflows-launch-in-console",
-            "Unavailable: Console launch for Workflows.",
+            "No active workflow run",
         ),
         (
             "acp",
@@ -870,7 +871,9 @@ async def test_schedules_console_follow_uses_home_dashboard_app_inputs():
     ],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_skeletal_destination_console_actions_are_disabled_with_recovery_copy(
+    request,
     route,
     button_id,
     expected_copy,
@@ -889,7 +892,11 @@ async def test_skeletal_destination_console_actions_are_disabled_with_recovery_c
             await pilot.pause(0.01)
         button = host.screen.query_one(f"#{button_id}")
         assert button.disabled is True
-        assert "unavailable" in str(button.label).lower()
+        assert (
+            str(button.label) == "Open in Console"
+            if route == "workflows"
+            else "unavailable" in str(button.label).lower()
+        )
         assert expected_copy in _screen_static_text(host.screen)
         await pilot.click(f"#{button_id}")
         await pilot.pause(0.1)
@@ -898,7 +905,10 @@ async def test_skeletal_destination_console_actions_are_disabled_with_recovery_c
 
 
 @pytest.mark.asyncio
-async def test_schedules_destination_keeps_console_follow_disabled_without_active_run():
+@private_profile_test
+async def test_schedules_destination_keeps_console_follow_disabled_without_active_run(
+    request,
+):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.open_active_home_item_in_console = Mock()
@@ -919,7 +929,8 @@ async def test_schedules_destination_keeps_console_follow_disabled_without_activ
 
 
 @pytest.mark.asyncio
-async def test_schedules_destination_routes_latest_active_run_to_console():
+@private_profile_test
+async def test_schedules_destination_routes_latest_active_run_to_console(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -961,7 +972,8 @@ async def test_schedules_destination_routes_latest_active_run_to_console():
     )
 
 
-def test_workflows_console_launch_uses_home_dashboard_app_inputs():
+@private_profile_test
+def test_workflows_console_launch_uses_home_dashboard_app_inputs(request):
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}
     app.screen_state_store.save(
@@ -981,9 +993,10 @@ def test_workflows_console_launch_uses_home_dashboard_app_inputs():
             ),
         )
     )
-    screen = WorkflowsScreen(app)
-
-    item = screen._latest_console_follow_item()
+    context = WorkflowConsoleContext(app)
+    item = context.latest_item(
+        app.screen_state_store.has_snapshots(app._current_runtime_identity())
+    )
 
     assert getattr(item, "item_id", None) == "workflow:run:11"
     assert app.home_active_work_adapter.build_calls == [
@@ -994,7 +1007,8 @@ def test_workflows_console_launch_uses_home_dashboard_app_inputs():
     ]
 
 
-def test_workflows_console_launch_accepts_route_style_source():
+@private_profile_test
+def test_workflows_console_launch_accepts_route_style_source(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1008,15 +1022,17 @@ def test_workflows_console_launch_accepts_route_style_source():
             ),
         )
     )
-    screen = WorkflowsScreen(app)
-
-    item = screen._latest_console_follow_item()
+    context = WorkflowConsoleContext(app)
+    item = context.latest_item(
+        app.screen_state_store.has_snapshots(app._current_runtime_identity())
+    )
 
     assert getattr(item, "item_id", None) == "workflow:run:12"
 
 
 @pytest.mark.asyncio
-async def test_workflows_destination_loads_console_follow_item_off_main_thread():
+@private_profile_test
+async def test_workflows_destination_loads_console_follow_item_off_main_thread(request):
     main_thread_id = threading.get_ident()
     app = _build_test_app()
     app.home_active_work_adapter = ThreadRecordingHomeActiveWorkAdapter(
@@ -1041,7 +1057,10 @@ async def test_workflows_destination_loads_console_follow_item_off_main_thread()
 
 
 @pytest.mark.asyncio
-async def test_workflows_destination_keeps_console_launch_disabled_without_active_run():
+@private_profile_test
+async def test_workflows_destination_keeps_console_launch_disabled_without_active_run(
+    request,
+):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.open_active_home_item_in_console = Mock()
@@ -1053,21 +1072,18 @@ async def test_workflows_destination_keeps_console_launch_disabled_without_activ
         button = screen.query_one("#workflows-launch-in-console")
 
         assert button.disabled is True
-        assert str(button.label) == "Console launch unavailable"
+        assert str(button.label) == "Open in Console"
         screen_text = _screen_static_text(screen)
-        assert "Unavailable: Console launch for Workflows." in screen_text
-        assert (
-            "Next: Start or select a workflow run before opening it in Console."
-            in screen_text
-        )
-        assert "State: blocked" in screen_text
-        assert "Console: blocked" in screen_text
+        assert "No active workflow run" in screen_text
+        assert "Run unavailable in this authoring release" in screen_text
+        assert "Start or select a workflow run" in str(button.tooltip)
 
     app.open_active_home_item_in_console.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_workflows_destination_routes_latest_active_run_to_console():
+@private_profile_test
+async def test_workflows_destination_routes_latest_active_run_to_console(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1098,11 +1114,10 @@ async def test_workflows_destination_routes_latest_active_run_to_console():
         button = screen.query_one("#workflows-launch-in-console")
 
         assert button.disabled is False
-        assert "Daily digest workflow" in str(button.label)
+        assert str(button.label) == "Open in Console"
         screen_text = _screen_static_text(screen)
-        assert "failed" in screen_text
-        assert "State: failed" in screen_text
-        assert "State: ready" not in screen_text
+        assert "Daily digest workflow · failed" in screen_text
+        assert screen.query_one("#workflow-run").disabled
 
         await pilot.click("#workflows-launch-in-console")
         await pilot.pause(0.1)
@@ -1114,7 +1129,8 @@ async def test_workflows_destination_routes_latest_active_run_to_console():
 
 
 @pytest.mark.asyncio
-async def test_workflows_destination_treats_pending_status_as_pending_approval():
+@private_profile_test
+async def test_workflows_destination_preserves_existing_pending_status(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1135,13 +1151,16 @@ async def test_workflows_destination_treats_pending_status_as_pending_approval()
         screen = _active_console_screen(host)
         screen_text = _screen_static_text(screen)
 
-        assert "State: pending" in screen_text
-        assert "Approvals: pending" in screen_text
-        assert "Approvals: none pending" not in screen_text
+        assert "Approval workflow · pending" in screen_text
+        assert not screen.query_one("#workflows-launch-in-console").disabled
+        assert screen.query_one("#workflow-run").disabled
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_keeps_console_follow_disabled_without_active_run():
+@private_profile_test
+async def test_watchlists_destination_keeps_console_follow_disabled_without_active_run(
+    request,
+):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.open_active_home_item_in_console = Mock()
@@ -1166,7 +1185,8 @@ async def test_watchlists_destination_keeps_console_follow_disabled_without_acti
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_routes_latest_active_run_to_console():
+@private_profile_test
+async def test_watchlists_destination_routes_latest_active_run_to_console(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1216,7 +1236,9 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
+    request,
     monkeypatch,
 ):
     from tldw_chatbook.UI.Watchlists_Modules import watchlists_console_handoff
@@ -1254,7 +1276,10 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_retries_console_follow_after_initial_adapter_failure():
+@private_profile_test
+async def test_watchlists_destination_retries_console_follow_after_initial_adapter_failure(
+    request,
+):
     """Console follow recovers after the adapter's first build fails.
 
     **task-2769 -- this test is load-sensitive, and the residue is real.**
@@ -1366,7 +1391,8 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_click_uses_item_promised_by_button_label():
+@private_profile_test
+async def test_watchlists_destination_click_uses_item_promised_by_button_label(request):
     app = _build_test_app()
     app.home_active_work_adapter = RotatingHomeActiveWorkAdapter(
         (
@@ -1413,7 +1439,8 @@ async def test_watchlists_destination_click_uses_item_promised_by_button_label()
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_escapes_console_follow_markup_labels():
+@private_profile_test
+async def test_watchlists_destination_escapes_console_follow_markup_labels(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1442,7 +1469,10 @@ async def test_watchlists_destination_escapes_console_follow_markup_labels():
 
 
 @pytest.mark.asyncio
-async def test_schedules_destination_keeps_console_launch_disabled_without_digest_output():
+@private_profile_test
+async def test_schedules_destination_keeps_console_launch_disabled_without_digest_output(
+    request,
+):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.local_media_reading_service = StaticReadingDigestService(())
@@ -1471,7 +1501,8 @@ async def test_schedules_destination_keeps_console_launch_disabled_without_diges
 
 
 @pytest.mark.asyncio
-async def test_schedules_destination_routes_latest_digest_output_to_console():
+@private_profile_test
+async def test_schedules_destination_routes_latest_digest_output_to_console(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.local_media_reading_service = StaticReadingDigestService(
@@ -1520,7 +1551,10 @@ async def test_schedules_destination_routes_latest_digest_output_to_console():
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_keeps_console_launch_disabled_without_chatbooks():
+@private_profile_test
+async def test_artifacts_destination_keeps_console_launch_disabled_without_chatbooks(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(())
     app.open_console_for_live_work = Mock()
@@ -1553,7 +1587,8 @@ async def test_artifacts_destination_keeps_console_launch_disabled_without_chatb
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_launches_latest_local_chatbook_in_console():
+@private_profile_test
+async def test_artifacts_destination_launches_latest_local_chatbook_in_console(request):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1617,7 +1652,10 @@ async def test_artifacts_destination_launches_latest_local_chatbook_in_console()
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_reopens_console_saved_chatbook_with_provenance():
+@private_profile_test
+async def test_artifacts_destination_reopens_console_saved_chatbook_with_provenance(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1685,7 +1723,10 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_provena
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_reopens_console_saved_chatbook_with_citation_metadata():
+@private_profile_test
+async def test_artifacts_destination_reopens_console_saved_chatbook_with_citation_metadata(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1755,7 +1796,10 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_citatio
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_launch():
+@private_profile_test
+async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_launch(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1815,7 +1859,10 @@ async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbook():
+@private_profile_test
+async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbook(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1852,7 +1899,10 @@ async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbo
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback():
+@private_profile_test
+async def test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback(
+    request,
+):
     app = _build_test_app()
     chatbook_service = StaticLocalChatbookService(
         (
@@ -1904,7 +1954,10 @@ async def test_artifacts_destination_consumes_pending_chatbook_target_before_lat
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_distinguishes_chatbook_service_failure_from_empty_state():
+@private_profile_test
+async def test_artifacts_destination_distinguishes_chatbook_service_failure_from_empty_state(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = RaisingLocalChatbookService()
     app.open_console_for_live_work = Mock()
@@ -1931,7 +1984,8 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
 
 
 @pytest.mark.asyncio
-async def test_console_renders_pending_launch_context():
+@private_profile_test
+async def test_console_renders_pending_launch_context(request):
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     app.pending_handoffs.stage(
@@ -2070,7 +2124,10 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
 
 
 @pytest.mark.asyncio
-async def test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it():
+@private_profile_test
+async def test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it(
+    request,
+):
     """D3: a staged live-work launch (with its real evidence bundle) must
     survive screen re-creation; PR-T1 C1: a launch staged AFTER it must
     supersede it on the next consume.
@@ -2206,7 +2263,8 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
 
 
 @pytest.mark.asyncio
-async def test_locked_console_shows_staged_evidence_receipt_task_2852():
+@private_profile_test
+async def test_locked_console_shows_staged_evidence_receipt_task_2852(request):
     """Task-2852 AC#2, end to end: a Library "Use in Console" handoff that
     lands on a locked (setup-incomplete) Console must show a visible
     receipt naming what's staged -- the original UAT repro found zero trace
@@ -2249,7 +2307,8 @@ async def test_locked_console_shows_staged_evidence_receipt_task_2852():
 
 
 @pytest.mark.asyncio
-async def test_configured_console_staged_strip_unaffected_by_receipt_task_2852():
+@private_profile_test
+async def test_configured_console_staged_strip_unaffected_by_receipt_task_2852(request):
     """Task-2852 AC#3 regression guard: once Console is configured, PR
     #1320's staged-evidence strip must render exactly as before, and the
     new locked-Console receipt (which only exists inside the setup modal's
@@ -2300,7 +2359,8 @@ async def test_configured_console_staged_strip_unaffected_by_receipt_task_2852()
 
 
 @pytest.mark.asyncio
-async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel():
+@private_profile_test
+async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel(request):
     """PR-T1 C1: superseding is scoped to an actually-pending store entry.
 
     The C1 fix loosened ``_consume_pending_console_launch``'s resident-wins
@@ -2347,7 +2407,9 @@ async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resident_launch", [True, False])
+@private_profile_test
 async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch(
+    request,
     resident_launch,
 ):
     """A first or replacement live-work launch paints on the reused Console."""
@@ -2443,7 +2505,9 @@ async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_
 
 
 @pytest.mark.parametrize("resident_launch", [True, False])
+@private_profile_test
 def test_console_live_work_presentation_failure_keeps_owned_claim_settled(
+    request,
     resident_launch,
 ):
     """A failed repaint cannot put already-owned evidence back in the queue."""
@@ -2567,7 +2631,8 @@ def test_console_native_state_restore_tolerates_legacy_payload_without_launch_or
 
 
 @pytest.mark.asyncio
-async def test_console_renders_source_readiness_summary_without_pending_launch():
+@private_profile_test
+async def test_console_renders_source_readiness_summary_without_pending_launch(request):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2614,7 +2679,8 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
 
 
 @pytest.mark.asyncio
-async def test_console_wc_live_work_action_button_routes_run_details():
+@private_profile_test
+async def test_console_wc_live_work_action_button_routes_run_details(request):
     app = _build_test_app()
     app.pending_handoffs.stage(
         HandoffChannel.CONSOLE_LIVE_WORK,
@@ -2698,7 +2764,10 @@ def _spy_screen_recompose(screen):
 
 
 @pytest.mark.asyncio
-async def test_stage_console_library_rag_launch_swaps_card_without_screen_recompose():
+@private_profile_test
+async def test_stage_console_library_rag_launch_swaps_card_without_screen_recompose(
+    request,
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2735,7 +2804,8 @@ async def test_stage_console_library_rag_launch_swaps_card_without_screen_recomp
 
 
 @pytest.mark.asyncio
-async def test_stage_console_library_rag_launch_restage_replaces_single_card():
+@private_profile_test
+async def test_stage_console_library_rag_launch_restage_replaces_single_card(request):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2765,7 +2835,10 @@ async def test_stage_console_library_rag_launch_restage_replaces_single_card():
 
 
 @pytest.mark.asyncio
-async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom():
+@private_profile_test
+async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom(
+    request,
+):
     """Task-400: swaps keep the pre-move card slot; the tray stays on top.
 
     ``_frame_console_region`` styles the tray IN PLACE (adds a class and an
@@ -2838,7 +2911,8 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
 
 
 @pytest.mark.asyncio
-async def test_stage_console_library_rag_launch_still_auto_opens_inspector():
+@private_profile_test
+async def test_stage_console_library_rag_launch_still_auto_opens_inspector(request):
     """The blocked-outcome auto-open must survive the recompose removal."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2935,7 +3009,10 @@ def _conversation_handoff_payload() -> ChatHandoffPayload:
     (_media_handoff_payload, _notes_handoff_payload, _conversation_handoff_payload),
     ids=("media", "notes", "conversation"),
 )
-async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(build_payload):
+@private_profile_test
+async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(
+    request, build_payload
+):
     """A Library/Notes handoff (no "rag" token in its source) must still
     carry a real, non-empty `evidence_bundle` after staging -- the strip and
     the model must agree on what content is staged."""
@@ -2968,7 +3045,10 @@ async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(build_payload)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("summary", [None, "Retrieved exact passage."])
-async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged(summary):
+@private_profile_test
+async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged(
+    request, summary
+):
     """Pin: dropping the `"rag" in source` gate so every handoff builds a
     bundle must not change the bundle a RAG-labeled handoff already built.
     The expected shape below is hand-derived from the branch's own formula
@@ -3069,7 +3149,8 @@ class _ExistingChaChaDBDouble:
 
 
 @pytest.mark.asyncio
-async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():
+@private_profile_test
+async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(request):
     """The send-time capture contains media text, not its display label."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -3094,7 +3175,8 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():
 
 
 @pytest.mark.asyncio
-async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context():
+@private_profile_test
+async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context(request):
     """Same round trip as the media case, for a Library note handoff."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -3120,7 +3202,10 @@ async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context():
 
 
 @pytest.mark.asyncio
-async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context():
+@private_profile_test
+async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context(
+    request,
+):
     """Same round trip as the media/notes cases, for a Library conversation
     handoff -- the third of the three brief-named kinds. Rounds out the
     suite so all three kinds this task actually fixes (media, notes,
@@ -3156,7 +3241,10 @@ async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_cont
 
 
 @pytest.mark.asyncio
-async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle():
+@private_profile_test
+async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle(
+    request,
+):
     """Send-gating blast radius: `_console_send_blocked_reason` only checks
     available evidence for a RAG-labeled source (`_source_mentions_rag`).
     `"library"` never matches that token, so a media handoff gaining a real
@@ -3189,7 +3277,10 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["media", "conversation"])
-async def test_source_body_is_capped_and_sanitized_before_evidence_staging(kind):
+@private_profile_test
+async def test_source_body_is_capped_and_sanitized_before_evidence_staging(
+    request, kind
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:

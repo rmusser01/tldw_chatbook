@@ -1,0 +1,82 @@
+{
+  "audit_utc": "2026-09-14T15:31:34.724389+00:00",
+  "scope": "Saved evidence only; no app control or installed-file changes. SQLite reads used only verified sealed-payload evidence copies with immutable/read-only mode.",
+  "revision": "4a50a22cffd5ae0ca029dad4c1e10eada8a2c3a5",
+  "archives": [
+    {
+      "kind": "original",
+      "path": "/private/tmp/chatbook-backup-final-uat-20260914-v2wzmm74/evidence/original-complete.tldw-backup.zip",
+      "sha256": "e1ec35252b0908ef706db7c171452590e29101a7f3c6a3960079744a64eaf719",
+      "matches_saved_readback": true
+    },
+    {
+      "kind": "new_safety",
+      "path": "/private/tmp/chatbook-backup-final-uat-20260914-v2wzmm74/power/home/.config/tldw_cli/recovery/control/replacement-fb3bbb20a3f34d058b57ed85276538b2/rollback.tldw-backup.zip.age",
+      "sha256": "99a6cc5afccb0b7fdff0aee617829582bd2db03f1e6699151bf8dc69b3037f26",
+      "matches_saved_readback": true
+    },
+    {
+      "kind": "final_complete",
+      "path": "/private/tmp/chatbook-backup-final-uat-20260914-v2wzmm74/evidence/after-rollback-complete.tldw-backup.zip",
+      "sha256": "b4c4485ea7b00091aca0f16d2ed9edca34352394717e6f2f7f4ce54f07f8baac",
+      "matches_saved_readback": true
+    }
+  ],
+  "sealed_payload_checks": [
+    {
+      "kind": "original",
+      "file_records": 135,
+      "payload_hash_mismatches": 0,
+      "consistency": "coherent",
+      "note_count": 1
+    },
+    {
+      "kind": "new_safety",
+      "file_records": 186,
+      "payload_hash_mismatches": 0,
+      "consistency": "coherent",
+      "note_count": 3
+    },
+    {
+      "kind": "final_complete",
+      "file_records": 136,
+      "payload_hash_mismatches": 0,
+      "consistency": "coherent",
+      "note_count": 1
+    }
+  ],
+  "decrypted_safety_hash_matches": true,
+  "readback_relations": {
+    "original_archive_matches_readback": true,
+    "abort_matches_original": true,
+    "new_safety_matches_readback": true,
+    "new_safety_preserves_pre_rollback": true,
+    "post_rollback_matches_original": true,
+    "final_archive_matches_readback": true,
+    "final_archive_matches_original": true
+  },
+  "installed_receipt": {
+    "initial_receipt_sha256": "a109a021f554ab1953e31ff4bf04e925a6a9e5bd7441f6c8608fbf49c15d64fe",
+    "prior_final_receipt_sha256": "e9a59f794ccf2b22df371a4d2d083270998d96306337971a343c4e2ad36ad09e",
+    "verified_files": 5349,
+    "mismatches": [],
+    "matches_prior_final_count": true,
+    "prior_final_reported_no_changes": true,
+    "prior_recorded_session_count": 5,
+    "prior_recorded_sessions_all_exit_zero": true
+  },
+  "password_evidence": {
+    "current_retained_secret_count": 2,
+    "action_records_checked": 540,
+    "current_secret_matches_in_action_log": 0,
+    "current_secret_matches_in_saved_launch_environment": 0,
+    "generic_controller_type_exposes_its_value_in_arguments_and_action_log": true,
+    "launcher_arguments_fixed_without_password": true,
+    "historical_process_arguments_environments_not_fully_retained": true,
+    "overwritten_historical_password_values_unavailable": true
+  },
+  "findings": [
+    "Absolute never-in-arguments/logs/environment assurance exceeds retained evidence; completion report narrowed. No current retained secret match found."
+  ],
+  "content_and_integrity_checks_pass": true
+}

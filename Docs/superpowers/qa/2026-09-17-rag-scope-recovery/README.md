@@ -110,7 +110,7 @@ record to control timing; this does not qualify database deletion or source-snap
 producers. The real searches are local keyword searches, not semantic retrieval,
 provider generation or remote access. No full suite, push or merge was performed.
 
-The captures expose a separate keyboard issue, now TASK-32707: result reveal
+The captures expose a separate keyboard issue, now TASK-32751: result reveal
 scrolls the still-focused query outside its viewport (y=-19 at 80×24), while the
 footer still says typing in field. This is the next bounded review; the scope
 cache repair does not claim to fix result-arrival focus.

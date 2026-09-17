@@ -1,17 +1,18 @@
 ---
 id: TASK-32004
 title: Restore and reopen an isolated profile
-status: To Do
+status: Done
 assignee: []
-created_date: '2026-09-08 00:00'
+created_date: 2026-09-08 00:00
 labels:
-  - backup-recovery
+- backup-recovery
 dependencies:
-  - task-31978
-  - task-32000
-  - task-32001
-  - task-32002
-  - task-32003
+- task-31978
+- task-32000
+- task-32001
+- task-32002
+- task-32003
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -22,10 +23,16 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Isolated recovery creates and reopens a separate profile without altering original local data.
-- [ ] #2 Damaged current configuration and databases do not prevent archive-only recovery.
-- [ ] #3 Fresh launch respects relocated paths, credential/device isolation, durable activation, and projection readiness.
+- [x] #1 Isolated recovery creates and reopens a separate profile without altering original local data.
+- [x] #2 Damaged current configuration and databases do not prevent archive-only recovery.
+- [x] #3 Fresh launch respects relocated paths, credential/device isolation, durable activation, and projection readiness.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Execute original component04 Task21 only: (1) implement inert private ProfileCatalog register/resolve with opaque IDs and checked explicit config/data locators, test source-preserving restart and corrupt/linked/changed mapping refusals; (2) compose stage/publication/installed validation/activation/catalog under native maintenance after dependency contracts are ready, with fresh local identities; (3) fresh-process launch verifies catalog/admission/activation and filters inherited selectors; (4) focused isolated archive-only/reopen fixtures, scoped guards/Ruff/Bandit, review and docs. No task completion or launch exposure from the catalog primitive alone.
+<!-- SECTION:PLAN:END -->
 
 ## Design references
 
@@ -40,3 +47,28 @@ ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: direct implementation of the approved recovery ownership, archive, and lifecycle contract; reuse ADR-126.
 
 Before implementation, move this task to In Progress and copy its linked task steps into an Implementation Plan section. Keep implementation notes and completion evidence for after the work is finished. Do not mark criteria complete from this planning document.
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Starting independent ProfileCatalog primitive from original Task21 while publication/activation integration dependencies finish. Existing task found; no duplicate. Catalog is a convenience locator registry, never restoration/activation authority, and cannot authorize a launch on its own. Constructor and lookup create no files; private immutable per-ID records, repeated exact registration may be verified durably; changed mappings refuse. No edits to cli/isolated executor yet; ADR-126.
+ProfileCatalog primitive implemented and independently reviewed, no launch/executor exposed. Private per-opaque-ID strict records persist explicit config/data locators only; constructor/resolve never write; exact registration retries revalidate and reflush file/catalog/control/ancestor associations, changed ID mappings refuse. Locators checked without config parsing; linked/damaged/public records refuse, targets remain unchanged. Initial18 behavioral reds ->18green; review identified absentcontroldir and missingparentretrybarrier, both proven2reds thenfixed. Final23passed .72s (/private/tmp/chatbook-catalog-reviewed.log), fulltouchedRuff/formatclean/Bandit0. Review /private/tmp/chatbook-profile-catalog-review.md approved scopedfixes. Exactnewproducerrow ProfileCatalog.register/open1 generic_boundary. This conveniencecatalog is not restoration/activation authority; catalogrebuild and isolatedexecutor/freshlaunch remain required originalTask21work. ADR126.
+Read-only Task21 preflight /private/tmp/chatbook-isolated-executor-preflight.md inspected. Ruling: fixed bootstrap admission remains canonical regardless of custom control_root; spec rev4 lines244–267 mandates custom root associations there. Reject proposed default_bootstrap_root override. Catalog-before-commit typed seam, fresh process selectors, and inert encrypted credentials still require scoped implementation after Unit5 review/release. No Task21 source edits authorized yet.
+Task21 isolated executor implementation released after Unit5 committedb71a37edb and independent review. Author rag_publication owns new isolated_restore.py/test_isolated_restore.py and narrow journal/publication typed catalog-before-commit seam; staging/credentials isolated retain-encrypted no-shared-keyring policy before candidate hashes; cli/__main__ explicit verified process selectors; config runtime installation identity; profile_catalog observation if needed. Fixed bootstrap stays canonical; custom controls register existing associations. Archive_reader/archive_models narrow acquisition-bound encrypted copy metadata and crypto.transform optional streamed input digest check authorized if needed to retain real encrypted credentials without password. Ruling: original§6 declared/protocol-aware threat model, no arbitrary Python-object forgery defense or weak-reference attestation registry required; use existing typed acquired-archive metadata minted by real authenticated acquire, recheck actual cipher bytes before retention, no inference from sibling filename or imported manifest. A small private sealed receipt is acceptable only if existing trust boundary actually requires it, not speculative. Tests real archive-only restore/corruptambient/originalbytes/untrustedlaunch/cataloginterruptions/credentialcollision/multiprofile, no broadsuite/model/network. Root owns tracking/docs/census/staging/commit. No replacement/laterrollback/UI edits.
+Task21 real config-only/partial isolated positive found explicit selected paths.data_dir is absent after current planned publication, so catalog correctly refuses. Extend author ownership narrowly to restore_plan.py: represent that explicitly selected isolated data directory as an empty planned container only when no selected publication root already supplies it. Include normal fingerprint/metadata/absence/native scope validation and show it in immutable plan; never mkdir implicitly during finalization, overwrite existing roots, infer ambient data or force unrelated payload selection. Original partial validated-group separate-profile contract only.
+Real explicit CLI launch --help passed selector verification but existing app runner rebuilt generated package CSS before help, creating only a generated timestamp diff in tldw_chatbook/css/tldw_cli_modular.tcss. Root verified no other CSS changes/preexisting dirty CSS; restoring that exact incidental timestamp only. Future CLI runtime fixture uses disposable exact feature export to avoid tracked generated writes. Real config-only/partial publication/catalog3cases passed; read services must use actual explicit owner, since --help intentionally does not initialize global DB owner.
+Task21 bounded13file freeze independently APPROVED /private/tmp/chatbook-isolated-executor-independent-review.md, no findings. Report /private/tmp/chatbook-isolated-executor-report.md, patch cfdaf12981aff2f9a12ca4406f1876d71e4cb0334761a7178eb04f3b3a28e429.18 distinct focused cases across documented runs,13 compatibility; final credentials3pass13.14s and interpreter-start network guarded real launcher/reader1pass15.48s. Fixed bootstrap/custom association, catalog-before-commit under held session, actual fresh selected process reads Notes/Chat/Media and writes fresh client ID; retained authenticated ciphertext remains after staging removal, shared keyring forbidden. Not interactive TUI qualification. Ruff130→127 and Bandit4→4 no added findings. Root census two added actual private retention sinks: retain_encrypted create_private_file/write, qualified operation-owned encrypted credential archive retained after authenticated acquisition. No arbitrary object attestation. Root exact-index gate and scoped commit follow.
+Root exact staged export Architecture inventory11passed15.85s. Two new retained-cipher sink census rows independently APPROVED rag_enhanced_qualification; exact13source/test hashes match. Scoped15path commit approved. Original downstream runtime/replacement/service/UI qualification remains; no whole backup completion claim.
+2026-09-11: Independent service review confirmed original isolated interruption recovery defect with real fresh child exit91 after _publish_activation_record. Restart service discovers pending but Finish and direct _finish_isolated both refuse activation_update_pending: /private/tmp/service-isolated-pair-review.log expected-success1fail2.83s. Released C bounded correction for isolated_restore.py, finite isolated support in existing control_records pair-reconciliation, exact isolated service caller branch, and focused tests. Must reuse operation-bound pending/native maintenance and existing pair intents; ordinary startup remains fenced, no new attestation/control registry. Root owns tracking/staging; author must freeze report for independent review.
+2026-09-11: Corrected base RecoveryService and isolated split-pair dependency ready for scoped combined commit so the new facade-dependent crash test lands with its service. Root exact committed-production snapshot (no pending A UI/CLI sources): full service19 + isolated pair4 =23passed46.59s /private/tmp/recovery-service-combined-final.log; census11passed14.69s /private/tmp/recovery-service-combined-census.log, no census delta. P independent original service review/C second review findings corrected; P approved C exact pair correction /private/tmp/chatbook-isolated-pair-recovery-independent-review.md. Final service/tests Ruff clean, service/isolated/control production Bandit0. Updated root report /private/tmp/chatbook-recovery-service-corrected-report.md; hashes /private/tmp/recovery-service-corrected-frozen-hashes.json and /private/tmp/isolated-pair-frozen-hashes.json. Original Task25 extraction facade/opened-owner-state integrations and broader UI/release qualification remain pending.
+Original finite two-profile Stage2b now released TEST ONLY after322aea0c2 planner support qualified. Extend actual committed Stage1→Stage2a fixture through actual restore_isolated using separate private restoreHOME/bootstrap/control, then fresh paired mounted selected app processes for both profiles and semantic/metadata/Needssetup readback per /private/tmp/two-profile-stage2-preflight.md. Real archive54roots, no handcrafted inventory/receipts/activation/mountack, no changing sourceguard/enrollment or workaroundpaths. No production edits initially: preserve first concrete executor/open prerequisite and stop for rootreview. Task remains In Progress, no completion claim.
+Stage2b exact test-only isolated execution/fresh paired mounted two-profile opens independently APPROVED /private/tmp/two-profile-stage2b-independent-review.md. Clean6bee8367a+testSHA8b585160b46a1cbdb5159c461e674b0f8874a5c78e2ec41438c696459a372104:1passed56.74s /private/tmp/two-profile-stage2b-native-corrected.log. Real restore_isolated, all selected root mappings, actual service launch and native opened receipts, separate installation IDs/core DBs, shared prompts, saved notes/messages/media/research/deletions, queued-before-open→existing interrupted-on-restart behavior, ordinary restored writes and unchanged selected original hashes. Required setup remains; no owner approval. First1failed37.25s preserved: test expected captured0755 instead of planned private0700; narrow correction independently checks desired/archive/applied/disclosure/mtime, no production edits. Actual production launch env and select_profile explicitly NullKeyring before app imports, guard sees zero network attempts. Ruff0/AST/diff clean, Bandit7→8 only testB101. Frozen /private/tmp/two-profile-stage2b-report.md. Existing seed/capture/plan programs unchanged. This proves finite isolated/open cohort only; richer owners/fullF9/replacement/later/multivolume/release remain open.
+Actual next-generation MCP backup/restore regression reaches isolated stage credential processing and fails storage_scope_not_enrolled (/private/tmp/mcp-next-generation-red2.log,1failed11.74s). Root source review confirms ordinary unbound mounted apps hold UNBOUND leases, so unconditional exclusive UNBOUND staging would add an unnecessary drain/contention. Release isolated_restore.py finite composition: inspect actual acquired source lease.execution_context(None), retain unchanged session=None preview staging for UNBOUND/unqualified context, use existing native UNBOUND private staging maintenance/session only for positively bound source namespaces excluding UNBOUND. Retain/recheck real source selection as appropriate through stage, close source lease before existing publication maintenance. No config parsing/default fallback, storage/admission APIs, namespace enrollment or archive/stage guard changes. Validate actual bound next-restore prerequisite, existing ordinary mounted startup-readmission success/pendingfailure, and malformed-source service isolated route. Mapping of repeated MCP definition data remains separate owner unit; no new qualification claim.
+Root independently APPROVED isolated private-stage two-file unit after source/context/ordinary-live-lock analysis and full new native test review. Exact working and clean7fde+only2 snapshot hashes verified; patch7b28a480f4a66f00329b410bd58ce738478821b7d563b6497bec52ea1fcda1cc. New actual replacement-bound source→new isolated restore+verified descriptor/source unchanged1passed7.30s /private/tmp/isolated-stage-only-bound.log. Separate combined receipt has existing mounted ordinary success+pendingfailure and malformed-source service3passes17.69s, new case initially failed only expected str/Path comparison after successful publication; correct type rerun above. Ruff0/Bandit0/compile/diff clean. Report /private/tmp/chatbook-isolated-bound-stage-report.md. Commit only source/test2+task. Actual MCP next restore now reaches distinct finite mcp.context retained destination refusal, not completed by this prerequisite.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed isolated publication and separate profile reopening with explicit selectors, new identities, source preservation and inactive setup. Evidence: 2aec95fd3,6f7dd9dab,bfb1d437a,782e7becd,763183fd5,fb64239ad and retained cohorts through7db576163. Metadata normalization and ordinary SQLite reopen effects remain disclosed. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

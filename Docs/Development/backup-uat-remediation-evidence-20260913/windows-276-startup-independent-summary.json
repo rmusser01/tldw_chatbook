@@ -1,0 +1,1564 @@
+{
+  "revision": "27603954403930eb1ee9551995aef784dd97b9c8",
+  "run": 34920997447,
+  "job": 104228893861,
+  "log_sha256": "dde7249eae2e53262563d4c03fc6a38da136a681d2c3418ef7cad8817afb03c5",
+  "outcomes": {
+    "non_ui_pass": 31,
+    "non_ui_seconds": 10.07,
+    "primary_timeouts": 4,
+    "primary_deadline_seconds": 60,
+    "dev_diagnostic_pass": 1,
+    "dev_seconds": 49.03,
+    "dev_warnings": 1,
+    "candidate_diagnostic_timeout": true
+  },
+  "profiles": [
+    {
+      "log_line": 1983,
+      "log_timestamp": "2026-09-15T02:29:58.6152986Z",
+      "label": "dev",
+      "elapsed_seconds": 13.36,
+      "source_matches": true,
+      "observer_errors": [],
+      "config_operations": {
+        "active": [],
+        "completed": [],
+        "counts": {},
+        "slowest": {},
+        "dropped_active": 0,
+        "errors": []
+      }
+    },
+    {
+      "log_line": 2038,
+      "log_timestamp": "2026-09-15T02:30:17.0595228Z",
+      "label": "dev",
+      "elapsed_seconds": 31.797,
+      "source_matches": true,
+      "observer_errors": [],
+      "config_operations": {
+        "active": [],
+        "completed": [
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.001453,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.00151,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.001856,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.001976,
+            "thread_cpu_seconds": 0.015625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.001492,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.001843,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.00166,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 5620,
+            "elapsed_seconds": 0.003557,
+            "thread_cpu_seconds": 0.015625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.00179,
+            "thread_cpu_seconds": 0.015625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.001753,
+            "thread_cpu_seconds": 0.015625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.001853,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "settings_rebuild",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.094637,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "publication",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.130774,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "config_lock",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723122,
+            "thread_cpu_seconds": 0.140625,
+            "acquisition_seconds": 0.092964,
+            "body_and_release_seconds": 0.630157
+          },
+          {
+            "function": "transaction",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723258,
+            "thread_cpu_seconds": 0.140625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.155398,
+            "thread_cpu_seconds": 0.0
+          }
+        ],
+        "counts": {
+          "settings_rebuild": 2,
+          "user_directory": 17,
+          "transaction": 1,
+          "config_lock": 1,
+          "publication": 1
+        },
+        "slowest": {
+          "user_directory": {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.155398,
+            "thread_cpu_seconds": 0.0
+          },
+          "settings_rebuild": {
+            "function": "settings_rebuild",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.094637,
+            "thread_cpu_seconds": 0.0
+          },
+          "publication": {
+            "function": "publication",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.130774,
+            "thread_cpu_seconds": 0.0
+          },
+          "config_lock": {
+            "function": "config_lock",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723122,
+            "thread_cpu_seconds": 0.140625,
+            "acquisition_seconds": 0.092964,
+            "body_and_release_seconds": 0.630157
+          },
+          "transaction": {
+            "function": "transaction",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723258,
+            "thread_cpu_seconds": 0.140625
+          }
+        },
+        "dropped_active": 0,
+        "errors": []
+      }
+    },
+    {
+      "log_line": 2039,
+      "log_timestamp": "2026-09-15T02:30:34.3600563Z",
+      "label": "dev",
+      "elapsed_seconds": 49.11,
+      "source_matches": true,
+      "observer_errors": [],
+      "config_operations": {
+        "active": [],
+        "completed": [
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.001753,
+            "thread_cpu_seconds": 0.015625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.001853,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "settings_rebuild",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.094637,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "publication",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.130774,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "config_lock",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723122,
+            "thread_cpu_seconds": 0.140625,
+            "acquisition_seconds": 0.092964,
+            "body_and_release_seconds": 0.630157
+          },
+          {
+            "function": "transaction",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723258,
+            "thread_cpu_seconds": 0.140625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.155398,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 5200,
+            "elapsed_seconds": 0.018923,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.00255,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.003594,
+            "thread_cpu_seconds": 0.015625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.003592,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 2492,
+            "elapsed_seconds": 0.475131,
+            "thread_cpu_seconds": 0.03125
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.006294,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.003951,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.0015,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 2492,
+            "elapsed_seconds": 1.082835,
+            "thread_cpu_seconds": 0.015625
+          }
+        ],
+        "counts": {
+          "settings_rebuild": 2,
+          "user_directory": 26,
+          "transaction": 1,
+          "config_lock": 1,
+          "publication": 1
+        },
+        "slowest": {
+          "user_directory": {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 2492,
+            "elapsed_seconds": 1.082835,
+            "thread_cpu_seconds": 0.015625
+          },
+          "settings_rebuild": {
+            "function": "settings_rebuild",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.094637,
+            "thread_cpu_seconds": 0.0
+          },
+          "publication": {
+            "function": "publication",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.130774,
+            "thread_cpu_seconds": 0.0
+          },
+          "config_lock": {
+            "function": "config_lock",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723122,
+            "thread_cpu_seconds": 0.140625,
+            "acquisition_seconds": 0.092964,
+            "body_and_release_seconds": 0.630157
+          },
+          "transaction": {
+            "function": "transaction",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723258,
+            "thread_cpu_seconds": 0.140625
+          }
+        },
+        "dropped_active": 0,
+        "errors": []
+      }
+    },
+    {
+      "log_line": 2043,
+      "log_timestamp": "2026-09-15T02:30:37.3152450Z",
+      "label": "dev",
+      "elapsed_seconds": 52.063,
+      "source_matches": true,
+      "observer_errors": [],
+      "config_operations": {
+        "active": [],
+        "completed": [
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.001753,
+            "thread_cpu_seconds": 0.015625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.001853,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "settings_rebuild",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.094637,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "publication",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.130774,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "config_lock",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723122,
+            "thread_cpu_seconds": 0.140625,
+            "acquisition_seconds": 0.092964,
+            "body_and_release_seconds": 0.630157
+          },
+          {
+            "function": "transaction",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723258,
+            "thread_cpu_seconds": 0.140625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.155398,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 5200,
+            "elapsed_seconds": 0.018923,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.00255,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.003594,
+            "thread_cpu_seconds": 0.015625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10192,
+            "elapsed_seconds": 0.003592,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 2492,
+            "elapsed_seconds": 0.475131,
+            "thread_cpu_seconds": 0.03125
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.006294,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.003951,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.0015,
+            "thread_cpu_seconds": 0.0
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 2492,
+            "elapsed_seconds": 1.082835,
+            "thread_cpu_seconds": 0.015625
+          }
+        ],
+        "counts": {
+          "settings_rebuild": 2,
+          "user_directory": 26,
+          "transaction": 1,
+          "config_lock": 1,
+          "publication": 1
+        },
+        "slowest": {
+          "user_directory": {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 2492,
+            "elapsed_seconds": 1.082835,
+            "thread_cpu_seconds": 0.015625
+          },
+          "settings_rebuild": {
+            "function": "settings_rebuild",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.094637,
+            "thread_cpu_seconds": 0.0
+          },
+          "publication": {
+            "function": "publication",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.130774,
+            "thread_cpu_seconds": 0.0
+          },
+          "config_lock": {
+            "function": "config_lock",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723122,
+            "thread_cpu_seconds": 0.140625,
+            "acquisition_seconds": 0.092964,
+            "body_and_release_seconds": 0.630157
+          },
+          "transaction": {
+            "function": "transaction",
+            "outcome": "returned",
+            "thread": 10184,
+            "elapsed_seconds": 0.723258,
+            "thread_cpu_seconds": 0.140625
+          }
+        },
+        "dropped_active": 0,
+        "errors": []
+      }
+    },
+    {
+      "log_line": 2082,
+      "log_timestamp": "2026-09-15T02:30:52.8688772Z",
+      "label": "candidate",
+      "elapsed_seconds": 14.203,
+      "source_matches": true,
+      "observer_errors": [],
+      "config_operations": {
+        "active": [
+          {
+            "function": "user_directory",
+            "thread": 1560,
+            "phase": "running",
+            "elapsed_seconds": 4.402579
+          }
+        ],
+        "completed": [
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.413573,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.39839,
+            "thread_cpu_seconds": 0.390625
+          }
+        ],
+        "counts": {
+          "user_directory": 3
+        },
+        "slowest": {
+          "user_directory": {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.413573,
+            "thread_cpu_seconds": 0.390625
+          }
+        },
+        "dropped_active": 0,
+        "errors": []
+      }
+    },
+    {
+      "log_line": 2114,
+      "log_timestamp": "2026-09-15T02:31:08.0935386Z",
+      "label": "candidate",
+      "elapsed_seconds": 29.437,
+      "source_matches": true,
+      "observer_errors": [],
+      "config_operations": {
+        "active": [],
+        "completed": [
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.413573,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.39839,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 4.599254,
+            "thread_cpu_seconds": 0.484375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.414145,
+            "thread_cpu_seconds": 0.40625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.397542,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.40332,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.415545,
+            "thread_cpu_seconds": 0.375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.427611,
+            "thread_cpu_seconds": 0.421875
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.429824,
+            "thread_cpu_seconds": 0.40625
+          }
+        ],
+        "counts": {
+          "user_directory": 9
+        },
+        "slowest": {
+          "user_directory": {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 4.599254,
+            "thread_cpu_seconds": 0.484375
+          }
+        },
+        "dropped_active": 0,
+        "errors": []
+      }
+    },
+    {
+      "log_line": 2115,
+      "log_timestamp": "2026-09-15T02:31:24.6841414Z",
+      "label": "candidate",
+      "elapsed_seconds": 46.015,
+      "source_matches": true,
+      "observer_errors": [],
+      "config_operations": {
+        "active": [],
+        "completed": [
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.413573,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.39839,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 4.599254,
+            "thread_cpu_seconds": 0.484375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.414145,
+            "thread_cpu_seconds": 0.40625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.397542,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.40332,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.415545,
+            "thread_cpu_seconds": 0.375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.427611,
+            "thread_cpu_seconds": 0.421875
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.429824,
+            "thread_cpu_seconds": 0.40625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.45991,
+            "thread_cpu_seconds": 0.4375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.435024,
+            "thread_cpu_seconds": 0.4375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.435025,
+            "thread_cpu_seconds": 0.421875
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.443348,
+            "thread_cpu_seconds": 0.421875
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1104,
+            "elapsed_seconds": 1.488126,
+            "thread_cpu_seconds": 0.78125
+          }
+        ],
+        "counts": {
+          "user_directory": 14
+        },
+        "slowest": {
+          "user_directory": {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 4.599254,
+            "thread_cpu_seconds": 0.484375
+          }
+        },
+        "dropped_active": 0,
+        "errors": []
+      }
+    },
+    {
+      "log_line": 2116,
+      "log_timestamp": "2026-09-15T02:31:41.6198668Z",
+      "label": "candidate",
+      "elapsed_seconds": 62.953,
+      "source_matches": true,
+      "observer_errors": [],
+      "config_operations": {
+        "active": [
+          {
+            "function": "transaction",
+            "thread": 8620,
+            "phase": "running",
+            "elapsed_seconds": 7.188033
+          },
+          {
+            "function": "config_lock",
+            "thread": 8620,
+            "phase": "running",
+            "elapsed_seconds": 7.18795
+          }
+        ],
+        "completed": [
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.413573,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.39839,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 4.599254,
+            "thread_cpu_seconds": 0.484375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.414145,
+            "thread_cpu_seconds": 0.40625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.397542,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.40332,
+            "thread_cpu_seconds": 0.390625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.415545,
+            "thread_cpu_seconds": 0.375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.427611,
+            "thread_cpu_seconds": 0.421875
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.429824,
+            "thread_cpu_seconds": 0.40625
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.45991,
+            "thread_cpu_seconds": 0.4375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.435024,
+            "thread_cpu_seconds": 0.4375
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.435025,
+            "thread_cpu_seconds": 0.421875
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.443348,
+            "thread_cpu_seconds": 0.421875
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1104,
+            "elapsed_seconds": 1.488126,
+            "thread_cpu_seconds": 0.78125
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.444998,
+            "thread_cpu_seconds": 0.421875
+          },
+          {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 0.458021,
+            "thread_cpu_seconds": 0.453125
+          }
+        ],
+        "counts": {
+          "user_directory": 16,
+          "transaction": 1,
+          "config_lock": 1
+        },
+        "slowest": {
+          "user_directory": {
+            "function": "user_directory",
+            "outcome": "returned",
+            "thread": 1560,
+            "elapsed_seconds": 4.599254,
+            "thread_cpu_seconds": 0.484375
+          }
+        },
+        "dropped_active": 0,
+        "errors": []
+      }
+    }
+  ],
+  "candidate_completed_stats": {
+    "completed_user_directory_count": 16,
+    "wall_min": 0.397542,
+    "wall_median": 0.43242400000000003,
+    "wall_max": 4.599254,
+    "thread_cpu_median": 0.421875
+  },
+  "candidate_timeout_threads": [
+    {
+      "name": "asyncio_6",
+      "native_id": 1552,
+      "log_line": 2121,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ]
+    },
+    {
+      "name": "asyncio_5",
+      "native_id": 8496,
+      "log_line": 2130,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ]
+    },
+    {
+      "name": "asyncio_4",
+      "native_id": 3640,
+      "log_line": 2139,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ]
+    },
+    {
+      "name": "ui-stall-persist",
+      "native_id": 8456,
+      "log_line": 2148,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "ui_responsiveness.py",
+          "line": 118,
+          "function": "_drain_stalls"
+        },
+        {
+          "file": "queue.py",
+          "line": 180,
+          "function": "get"
+        },
+        {
+          "file": "threading.py",
+          "line": 359,
+          "function": "wait"
+        }
+      ]
+    },
+    {
+      "name": "asyncio_3",
+      "native_id": 1848,
+      "log_line": 2161,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ]
+    },
+    {
+      "name": "asyncio_2",
+      "native_id": 8620,
+      "log_line": 2170,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ]
+    },
+    {
+      "name": "asyncio_1",
+      "native_id": 5232,
+      "log_line": 2179,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ]
+    },
+    {
+      "name": "asyncio_0",
+      "native_id": 1104,
+      "log_line": 2188,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "thread.py",
+          "line": 90,
+          "function": "_worker"
+        }
+      ]
+    },
+    {
+      "name": "chatbook-storage-admission",
+      "native_id": 5540,
+      "log_line": 2197,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "storage_admission.py",
+          "line": 512,
+          "function": "_run"
+        },
+        {
+          "file": "threading.py",
+          "line": 655,
+          "function": "wait"
+        },
+        {
+          "file": "threading.py",
+          "line": 355,
+          "function": "wait"
+        }
+      ]
+    },
+    {
+      "name": "backup-startup-profile",
+      "native_id": 1536,
+      "log_line": 2210,
+      "frames": [
+        {
+          "file": "threading.py",
+          "line": 1032,
+          "function": "_bootstrap"
+        },
+        {
+          "file": "threading.py",
+          "line": 1075,
+          "function": "_bootstrap_inner"
+        },
+        {
+          "file": "threading.py",
+          "line": 1012,
+          "function": "run"
+        },
+        {
+          "file": "startup_timing_diagnostic.py",
+          "line": 261,
+          "function": "sample"
+        },
+        {
+          "file": "threading.py",
+          "line": 655,
+          "function": "wait"
+        },
+        {
+          "file": "threading.py",
+          "line": 359,
+          "function": "wait"
+        }
+      ]
+    },
+    {
+      "name": "MainThread",
+      "native_id": 1560,
+      "log_line": 2223,
+      "frames": [
+        {
+          "file": "startup_timing_diagnostic.py",
+          "line": 286,
+          "function": "<module>"
+        },
+        {
+          "file": "startup_timing_diagnostic.py",
+          "line": 273,
+          "function": "main"
+        },
+        {
+          "file": "__init__.py",
+          "line": 201,
+          "function": "main"
+        },
+        {
+          "file": "__init__.py",
+          "line": 229,
+          "function": "_main"
+        },
+        {
+          "file": "_hooks.py",
+          "line": 512,
+          "function": "__call__"
+        },
+        {
+          "file": "_manager.py",
+          "line": 120,
+          "function": "_hookexec"
+        },
+        {
+          "file": "_callers.py",
+          "line": 121,
+          "function": "_multicall"
+        },
+        {
+          "file": "main.py",
+          "line": 377,
+          "function": "pytest_cmdline_main"
+        },
+        {
+          "file": "main.py",
+          "line": 330,
+          "function": "wrap_session"
+        },
+        {
+          "file": "main.py",
+          "line": 384,
+          "function": "_main"
+        },
+        {
+          "file": "_hooks.py",
+          "line": 512,
+          "function": "__call__"
+        },
+        {
+          "file": "_manager.py",
+          "line": 120,
+          "function": "_hookexec"
+        },
+        {
+          "file": "_callers.py",
+          "line": 121,
+          "function": "_multicall"
+        },
+        {
+          "file": "main.py",
+          "line": 408,
+          "function": "pytest_runtestloop"
+        },
+        {
+          "file": "_hooks.py",
+          "line": 512,
+          "function": "__call__"
+        },
+        {
+          "file": "_manager.py",
+          "line": 120,
+          "function": "_hookexec"
+        },
+        {
+          "file": "_callers.py",
+          "line": 121,
+          "function": "_multicall"
+        },
+        {
+          "file": "runner.py",
+          "line": 118,
+          "function": "pytest_runtest_protocol"
+        },
+        {
+          "file": "runner.py",
+          "line": 139,
+          "function": "runtestprotocol"
+        },
+        {
+          "file": "runner.py",
+          "line": 249,
+          "function": "call_and_report"
+        },
+        {
+          "file": "runner.py",
+          "line": 361,
+          "function": "from_call"
+        },
+        {
+          "file": "runner.py",
+          "line": 250,
+          "function": "<lambda>"
+        },
+        {
+          "file": "_hooks.py",
+          "line": 512,
+          "function": "__call__"
+        },
+        {
+          "file": "_manager.py",
+          "line": 120,
+          "function": "_hookexec"
+        },
+        {
+          "file": "_callers.py",
+          "line": 121,
+          "function": "_multicall"
+        },
+        {
+          "file": "runner.py",
+          "line": 184,
+          "function": "pytest_runtest_call"
+        },
+        {
+          "file": "plugin.py",
+          "line": 569,
+          "function": "runtest"
+        },
+        {
+          "file": "python.py",
+          "line": 1707,
+          "function": "runtest"
+        },
+        {
+          "file": "_hooks.py",
+          "line": 512,
+          "function": "__call__"
+        },
+        {
+          "file": "_manager.py",
+          "line": 120,
+          "function": "_hookexec"
+        },
+        {
+          "file": "_callers.py",
+          "line": 121,
+          "function": "_multicall"
+        },
+        {
+          "file": "python.py",
+          "line": 167,
+          "function": "pytest_pyfunc_call"
+        },
+        {
+          "file": "plugin.py",
+          "line": 905,
+          "function": "inner"
+        },
+        {
+          "file": "runners.py",
+          "line": 118,
+          "function": "run"
+        },
+        {
+          "file": "base_events.py",
+          "line": 678,
+          "function": "run_until_complete"
+        },
+        {
+          "file": "windows_events.py",
+          "line": 322,
+          "function": "run_forever"
+        },
+        {
+          "file": "base_events.py",
+          "line": 645,
+          "function": "run_forever"
+        },
+        {
+          "file": "base_events.py",
+          "line": 1999,
+          "function": "_run_once"
+        },
+        {
+          "file": "events.py",
+          "line": 88,
+          "function": "_run"
+        },
+        {
+          "file": "console_runtime.py",
+          "line": 2992,
+          "function": "_watch_canvas_policy"
+        },
+        {
+          "file": "console_runtime.py",
+          "line": 2845,
+          "function": "_canvas_enabled"
+        },
+        {
+          "file": "console_runtime.py",
+          "line": 2831,
+          "function": "_read_canvas_enabled"
+        },
+        {
+          "file": "config.py",
+          "line": 401,
+          "function": "get_canvas_execution_enabled"
+        },
+        {
+          "file": "config.py",
+          "line": 6261,
+          "function": "load_cli_config_and_ensure_existence"
+        },
+        {
+          "file": "config_participants.py",
+          "line": 419,
+          "function": "wrapped"
+        },
+        {
+          "file": "contextlib.py",
+          "line": 137,
+          "function": "__enter__"
+        },
+        {
+          "file": "config_participants.py",
+          "line": 352,
+          "function": "operation"
+        },
+        {
+          "file": "contextlib.py",
+          "line": 137,
+          "function": "__enter__"
+        },
+        {
+          "file": "raw_participants.py",
+          "line": 703,
+          "function": "_scope"
+        },
+        {
+          "file": "storage_admission.py",
+          "line": 840,
+          "function": "acquire_storage"
+        },
+        {
+          "file": "storage_admission.py",
+          "line": 907,
+          "function": "_acquire_storage"
+        },
+        {
+          "file": "control_records.py",
+          "line": 137,
+          "function": "admission_authority"
+        },
+        {
+          "file": "pathlib.py",
+          "line": 868,
+          "function": "exists"
+        },
+        {
+          "file": "pathlib.py",
+          "line": 840,
+          "function": "stat"
+        }
+      ]
+    }
+  ],
+  "observation_gap_seconds_approx": 3.81,
+  "fix_proven": false
+}

@@ -1,0 +1,26 @@
+{
+  "revision": "4a50a22cffd5ae0ca029dad4c1e10eada8a2c3a5",
+  "collected": 78,
+  "passed": 76,
+  "failed": 2,
+  "skipped": 0,
+  "unfinished": 0,
+  "pytest_returncode": 1,
+  "failed_zero_based_public_ordinals": [
+    {
+      "ordinal": 36,
+      "nodeid": "Tests/Backup_Recovery/test_mounted_console_backup.py::test_mounted_console_complete_capture_and_resumed_writes[console]"
+    },
+    {
+      "ordinal": 49,
+      "nodeid": "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py::test_native_nested_persona_pack_survives_reopen_and_later_rollback"
+    }
+  ],
+  "driver_sha256": "9625c3500df9c258846f2d2c02d557fa83ae5604e640a6ed84d3b06f0794e2e6",
+  "method": "Only numeric pytest-hook status was returned. Failed positions map to the separately collected public local78-case selection. No remote diagnostic-log contents were read.",
+  "limits": [
+    "Exact failure exceptions/causes are not established by counts.",
+    "A separate metadata-only diagnostic-log read awaits explicit approval after earlier automatic-review rejections.",
+    "Repeat against current product86ad9993dc has started with the same reviewed numeric-only driver."
+  ]
+}

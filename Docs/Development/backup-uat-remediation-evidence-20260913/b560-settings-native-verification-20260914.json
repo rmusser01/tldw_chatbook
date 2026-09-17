@@ -1,0 +1,15 @@
+{
+  "revision": "b560d806b4f5601d0f760a00864cba546d167ef8",
+  "passed": 1,
+  "seconds": 43.16,
+  "installed_files": 2866,
+  "python_sources_verified": 2474,
+  "wheel_sha256": "3498ce63e793bdf6596343d087ae7dc3a3bc7776311fcf27d97211e1f3cd5ab5",
+  "admission_observer": {
+    "available": true,
+    "threads": 13,
+    "truncated": false
+  },
+  "workflow": "Installed Settings Complete capture, coherent archive note readback, resumed live write",
+  "source_mismatches": []
+}

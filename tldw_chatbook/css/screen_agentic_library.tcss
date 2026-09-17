@@ -76,6 +76,8 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
+$ds-library-note-task-actions-min-width: 61;
+$ds-workflow-navigator-width: 27;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -1161,6 +1163,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: none;
 }
 
+/* TASK-32623: reserve the widest action row so toggling Discard cannot move
+   its sibling mode controls. Compact rows already have fixed geometry. */
+#library-note-task-actions {
+    min-width: $ds-library-note-task-actions-min-width;
+}
+
+#library-shell-grid.library-notes-compact #library-note-task-actions {
+    min-width: $ds-size-0;
+}
+
 /* Branch continuations are list rows, not toolbar actions. Keep their full
    status and recovery copy visible when the compact toolbar geometry above
    collapses ordinary actions to one line. */
@@ -1258,7 +1270,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-y: hidden;
 }
 
-#library-shell-grid.library-notes-compact #library-note-title-row {
+#library-shell-grid.library-notes-compact #library-note-title-row,
+#library-shell-grid.library-notes-compact #library-note-keywords-row {
     layout: horizontal;
     height: $ds-size-1;
     min-height: $ds-size-1;
@@ -1267,6 +1280,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-shell-grid.library-notes-compact #library-note-title-label,
+#library-shell-grid.library-notes-compact #library-note-keywords-label,
 #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
     width: $ds-size-10;
     height: $ds-size-1;
@@ -1274,6 +1288,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-shell-grid.library-notes-compact #library-note-title,
+#library-shell-grid.library-notes-compact #library-note-keywords,
 #library-shell-grid.library-notes-compact #library-note-context-keywords {
     width: $ds-width-fill;
     height: $ds-size-1;
@@ -1325,6 +1340,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: $ds-space-0;
     overflow-y: auto;
     overflow-x: hidden;
+}
+
+/* TASK-32642: each Info property gets a complete row at compact widths. */
+#library-shell-grid.library-notes-compact #library-note-context-meta {
+    height: auto;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
 }
 
 #library-shell-grid.library-notes-compact #library-note-context-keywords-row {
@@ -2569,7 +2591,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
    (tall border, focus accent) rather than defaulting to Textual's bare
    Input styling. */
 #library-note-title,
-#library-note-keywords {
+#library-note-keywords,
+#library-note-context-keywords {
     width: $ds-width-full;
     height: $ds-size-3;
     min-height: $ds-size-3;
@@ -2581,12 +2604,19 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-note-title:focus,
-#library-note-keywords:focus {
+#library-note-keywords:focus,
+#library-note-context-keywords:focus {
     border: tall $ds-input-focus-accent;
     outline: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+/* TASK-32607: the live Info keywords field shares Title's field treatment;
+   its destructive action uses the readable error tier, not muted chrome. */
+#library-note-context-delete {
+    color: $ds-status-error-readable;
 }
 
 /* task-32217 (critique #9 density rule): the Body is the primary content
@@ -2623,7 +2653,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-note-preview-region:focus,
 #library-note-context-region:focus {
-    border: solid $ds-input-focus-accent;
+    border: heavy $ds-input-focus-accent;
+    outline: none;
     background: $ds-input-focus-bg;
 }
 
@@ -2656,6 +2687,21 @@ with stray left-edge border fragments), and padding 0 1 so the full
    `margin: 0` there with a more specific selector. */
 #library-note-context-meta {
     color: $ds-text-muted;
+}
+
+/* TASK-32620: body headings remain body content beneath the note title. */
+#library-note-preview-body MarkdownH1 {
+    content-align: left middle;
+}
+
+/* TASK-32640: elided path provenance occupies exactly one row. */
+#library-note-location {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* task-32143: the editor chrome strip -- one row at the bottom of the body
@@ -4154,6 +4200,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 #library-notes-status-row,
 #library-note-heading,
 #library-note-title-row,
+#library-note-keywords-row,
 #library-note-context-keywords-row,
 #library-notes-create-heading {
     layout: vertical;
@@ -4192,6 +4239,12 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     width: $ds-width-full;
     height: auto;
     min-height: $ds-size-1;
+}
+
+/* TASK-32625: safe review rows have no body requiring a trailing gap.
+   Both class tokens stay in the same Library-owned split as the base row. */
+.library-notes-sync-review-row.library-notes-sync-review-plain {
+    margin: $ds-space-0;
 }
 
 .library-notes-sync-conflict-choices,
