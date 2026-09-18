@@ -44,6 +44,7 @@ import json
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -87,6 +88,131 @@ from tldw_chatbook.MCP.tool_results import (
 )
 from .tool_catalog import ToolExecutionPolicy
 from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
+
+
+@dataclass(frozen=True)
+class MCPBridgeObservation:
+    """Existing invocation observations, not a resource owner.
+
+    `completed` records the ACTUAL service coroutine's finally block, never
+    concurrent Future cancellation. Owned nested requests additionally require
+    their exact PluginRunOwnership.completed terminal evidence.
+    """
+
+    future: concurrent.futures.Future
+    dispatch: MCPDispatchObservation
+    completed: threading.Event
+
+
+@dataclass(frozen=True)
+class MCPInvocationPolicy:
+    """Request-local narrowing supplied by an existing hook delivery owner.
+
+    No field authorizes a tool or grants a connection. Deadlines are absolute;
+    callbacks suspend existing tickets and observe existing lower custody only.
+    """
+
+    current: Callable[[], bool]
+    deadline: float
+    cancel_event: Any
+    allow_approval: bool
+    wait_scope: Callable
+    approval_deadline: Callable[[], float] | None = None
+    on_bridge: Callable | None = None
+    on_owned_request: Callable | None = None
+
+    def check(self) -> None:
+        try:
+            accepted = (
+                not self.cancel_event.is_set()
+                and time.monotonic() < self.deadline
+                and self.current()
+            )
+        except Exception:  # noqa: BLE001 -- unavailable authority is refusal
+            accepted = False
+        if not accepted:
+            raise PermissionError("hook_mcp_authority_refused")
+
+
+_invocation_policies: ContextVar[tuple[MCPInvocationPolicy, ...]] = ContextVar(
+    "mcp_invocation_policies", default=()
+)
+
+
+def current_mcp_invocation_policies() -> tuple[MCPInvocationPolicy, ...]:
+    """Return host constraints inherited by the current normal MCP invocation."""
+    return _invocation_policies.get()
+
+
+def check_mcp_invocation_policies() -> None:
+    for policy in current_mcp_invocation_policies():
+        policy.check()
+
+
+@contextlib.contextmanager
+def restrict_mcp_invocation(policy: MCPInvocationPolicy):
+    """Add narrowing constraints; nested work cannot replace parent constraints."""
+    policy.check()
+    token = _invocation_policies.set((*current_mcp_invocation_policies(), policy))
+    try:
+        yield
+    finally:
+        _invocation_policies.reset(token)
+
+
+class MCPResultCapture:
+    """One normal invocation's pre-display evidence; grants no authority.
+
+    Only the exact final ToolResult may claim its corresponding payload. A
+    replaced late-revocation/refusal result cannot inherit earlier wire evidence.
+    Closing a capture prevents a late worker from repopulating it.
+    """
+
+    def __init__(self, provider: MCPToolProvider):
+        self._provider = provider
+        self._lock = threading.Lock()
+        self._value = None
+        self._closed = False
+
+    def _record(self, provider, raw, projected):
+        with self._lock:
+            if not self._closed and provider is self._provider:
+                if self._value is not None:
+                    self._closed = True
+                    self._value = None
+                else:
+                    self._value = (raw, projected)
+
+    def consume(self, result: ToolResult) -> MCPToolResult | None:
+        """Consume once, only after the enclosing normal invoker has returned."""
+        with self._lock:
+            value, self._value = self._value, None
+            accepted = not self._closed and value is not None and value[1] is result
+            self._closed = True
+            return value[0] if accepted else None
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._value = None
+
+
+_result_capture: ContextVar[MCPResultCapture | None] = ContextVar(
+    "mcp_result_capture", default=None
+)
+
+
+@contextlib.contextmanager
+def capture_mcp_result(provider: MCPToolProvider):
+    """Capture typed evidence through the SAME normal provider invocation."""
+    capture = MCPResultCapture(provider)
+    token = _result_capture.set(capture)
+    try:
+        yield capture
+    finally:
+        capture.close()
+        _result_capture.reset(token)
+
 
 SOURCE = "mcp"
 
@@ -847,6 +973,15 @@ class MCPToolProvider:
 
     # -- invocation (WORKER THREAD) ----------------------------------------
 
+    def hook_target(self, server_key: str, tool_name: str) -> str | None:
+        """Resolve an exact existing catalog identity; never discover or connect."""
+        matches = [
+            name
+            for name, (tool, _state) in self._entry_by_llm_name.items()
+            if tool.server_key == server_key and tool.name == tool_name
+        ]
+        return matches[0] if len(matches) == 1 else None
+
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         """Execute one tool call. WORKER THREAD. Never raises, never hangs unbounded.
 
@@ -881,7 +1016,13 @@ class MCPToolProvider:
         """
         from .automatic_work_runtime import current_automatic_work
 
-        with self._invoke_lock:
+        with self._serialized_invocation() as admitted:
+            if not admitted:
+                return ToolResult.blocked("hook_mcp_authority_refused")
+            try:
+                check_mcp_invocation_policies()
+            except PermissionError:
+                return ToolResult.blocked("hook_mcp_authority_refused")
             automatic_work = current_automatic_work()
             if automatic_work is not None:
                 try:
@@ -893,6 +1034,32 @@ class MCPToolProvider:
                         dispatch_state="not_started",
                     )
             return self._invoke_locked(tool_id, args)
+
+    @contextlib.contextmanager
+    def _serialized_invocation(self):
+        """Retain hook lifetime custody while waiting for this normal owner."""
+        policies = current_mcp_invocation_policies()
+        if not policies:
+            with self._invoke_lock:
+                yield True
+            return
+        acquired = False
+        try:
+            try:
+                with contextlib.ExitStack() as waits:
+                    for policy in policies:
+                        waits.enter_context(policy.wait_scope("provider"))
+                    while not acquired:
+                        check_mcp_invocation_policies()
+                        acquired = self._invoke_lock.acquire(timeout=0.05)
+                check_mcp_invocation_policies()
+            except PermissionError:
+                yield False
+                return
+            yield True
+        finally:
+            if acquired:
+                self._invoke_lock.release()
 
     def _invoke_locked(self, tool_id: str, args: dict) -> ToolResult:
         """``invoke()``'s actual body -- entered ONLY while holding
@@ -965,7 +1132,11 @@ class MCPToolProvider:
         # any run this is `""`, which matches no stamp a review hook ever
         # writes, so such a call falls through to the fresh gate below --
         # the same path it took before batch review existed.
-        stamped = self.stamped_decision(current_run_id(), tool_id)
+        stamped = (
+            None
+            if current_mcp_invocation_policies()
+            else self.stamped_decision(current_run_id(), tool_id)
+        )
         if stamped is not None:
             return self._apply_verdict(stamped, tool, call_args)
 
@@ -1008,7 +1179,9 @@ class MCPToolProvider:
         # state == "ask"
         if self._arg_rule_allows_safe(tool, call_args):
             return self._execute(tool, call_args, decision="allowed")
-        if self._approval_callback is None:
+        if self._approval_callback is None or any(
+            not policy.allow_approval for policy in current_mcp_invocation_policies()
+        ):
             # Same `DENY_REFUSAL` copy, same audit token (task-32280): there
             # was no surface to ask on, so nobody was shown a card and
             # nobody said no.
@@ -1026,7 +1199,12 @@ class MCPToolProvider:
             effects=approval_effects_for_tool(tool),
         )
         try:
-            decisions = self._approval_callback([pending])
+            with contextlib.ExitStack() as waits:
+                for policy in current_mcp_invocation_policies():
+                    policy.check()
+                    waits.enter_context(policy.wait_scope("approval"))
+                decisions = self._approval_callback([pending])
+            check_mcp_invocation_policies()
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(
                 ok=False,
@@ -1292,6 +1470,7 @@ class MCPToolProvider:
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
         observation = MCPDispatchObservation()
+        execution_completed = threading.Event()
         started = time.monotonic()
         typed_entry = getattr(self._service, "execute_hub_tool_result", None)
         execute = (
@@ -1320,23 +1499,43 @@ class MCPToolProvider:
                     registered_argument_names=schema_argument_names(tool.input_schema),
                 )
 
+            async def execute_observed():
+                try:
+                    check_mcp_invocation_policies()
+                    return await create_execution()
+                finally:
+                    execution_completed.set()
+
+            policies = current_mcp_invocation_policies()
+            # Ordinary submissions retain their exact original coroutine and
+            # transfer/close contract. Only hooks need this completion observer.
+            execution_factory = execute_observed if policies else create_execution
+
             if automatic_work is not None:
                 async def execute_authorized():
                     # Scheduling on the main loop can itself wait. Bind the
                     # captured authority and check again at actual dispatch.
-                    with automatic_work.scope():
-                        automatic_work.check()
-                        return await create_execution()
+                    try:
+                        with automatic_work.scope():
+                            automatic_work.check()
+                            return await execution_factory()
+                    finally:
+                        execution_completed.set()
 
                 execution_coroutine = execute_authorized()
             else:
-                execution_coroutine = create_execution()
+                execution_coroutine = execution_factory()
             with observe_dispatch(observation):
                 future = asyncio.run_coroutine_threadsafe(
                     execution_coroutine,
                     self._main_loop,
                 )
+            if policies and policies[-1].on_bridge is not None:
+                policies[-1].on_bridge(
+                    MCPBridgeObservation(future, observation, execution_completed)
+                )
             raw_result = future.result(timeout=timeout)
+            check_mcp_invocation_policies()
         except Exception as exc:  # noqa: BLE001 -- the never-raise/never-hang contract
             if future is None and execution_coroutine is not None:
                 try:
@@ -1405,6 +1604,13 @@ class MCPToolProvider:
         return self._format_result(raw_result)
 
     def _format_result(self, raw_result: Any) -> ToolResult:
+        projected = self._format_display_result(raw_result)
+        capture = _result_capture.get()
+        if capture is not None and isinstance(raw_result, MCPToolResult):
+            capture._record(self, raw_result, projected)
+        return projected
+
+    def _format_display_result(self, raw_result: Any) -> ToolResult:
         dispatch_state = "settled"
         try:
             if isinstance(raw_result, MCPToolResult):

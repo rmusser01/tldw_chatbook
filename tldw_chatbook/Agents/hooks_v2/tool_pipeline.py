@@ -218,6 +218,8 @@ class ToolHookRun:
         workspace_id=None,
         lifecycle=None,
         parent_scope=None,
+        context_owner=None,
+        containing_hook=None,
     ):
         from .checkpoints import HookCheckpointStore
 
@@ -231,6 +233,8 @@ class ToolHookRun:
         self.should_cancel = should_cancel
         self.required_handler_ids = required_handler_ids
         self.render_context = render_context or self._render_user_context
+        self.context_owner = context_owner
+        self.containing_hook = containing_hook
         self._prepared = {}
         self._event_definitions = {}
         self._post_installed = set()
@@ -319,6 +323,28 @@ class ToolHookRun:
                 )
         # Whole event and shared turn contributions must fit BEFORE release.
         check_host_context(self._accepted_rows + rows, strip=False)
+        if self.containing_hook is not None:
+            if self.lifecycle is None or self.context_owner is None:
+                if rows:
+                    raise ValueError("nested hook context has no input owner")
+                return
+            container, handler_id = self.containing_hook
+            self.lifecycle.context.stage_nested(
+                container,
+                handler_id,
+                self.context_owner,
+                event,
+                outcome,
+                rows,
+                current=lambda: self._current(event),
+            )
+        elif self.lifecycle is not None:
+            self.lifecycle.context.commit_nested(
+                event,
+                outcome,
+                current=lambda: self._current(event),
+                additional_rows=self._accepted_rows + rows,
+            )
         self._accepted_rows.extend(rows)
         self._rendered[event.event_id] = tuple(rows)
 
@@ -326,6 +352,9 @@ class ToolHookRun:
         from datetime import datetime
         from uuid import uuid4
 
+        from .causality import current_chain
+
+        chain = current_chain()
         value = {
             "protocol_version": 2,
             "event_id": uuid4().hex,
@@ -336,8 +365,8 @@ class ToolHookRun:
             "turn_id": self.turn_id,
             "initiator": "child" if self.parent_run_id else "manual",
             "origin": "host_tool_dispatch",
-            "causal_chain_id": self.run_id,
-            "causal_depth": 0,
+            "causal_chain_id": chain.visits[0][0] if chain.visits else self.run_id,
+            "causal_depth": len(chain.visits),
             "data": {
                 "tool_id": definition.tool_id,
                 "provider": definition.provider,
@@ -361,6 +390,22 @@ class ToolHookRun:
         if retained is not call:
             raise HookPreparationError("unowned tool call")
         return prepared
+
+    def preview_call(self, call):
+        """Project prospective dispatch identity without executing any handlers."""
+        definition = self.resolve_definition(call)
+        return (
+            self._event(
+                "PreToolUse",
+                definition,
+                {
+                    "tool_args": call.args,
+                    "original_arguments": call.args,
+                    "candidate_arguments": call.args,
+                },
+            ),
+            definition,
+        )
 
     def prepare_call(self, call):
         from dataclasses import replace

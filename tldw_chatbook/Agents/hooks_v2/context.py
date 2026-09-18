@@ -30,6 +30,7 @@ class ContextLedger:
         self._events = {}
         self._rows = {}
         self._delivered = {}
+        self._nested = {}
 
     @staticmethod
     def render(event: HookEvent, handler_id: str, block: ContextBlock) -> str:
@@ -94,6 +95,120 @@ class ContextLedger:
             check_host_context(existing + rows, strip=False)
             self._rows[event.event_id] = tuple(rows)
             self._accepted[event.event_id] = (event, result)
+            try:
+                self.commit_nested(event, result, current=current)
+            except BaseException:
+                self._rows.pop(event.event_id, None)
+                self._accepted.pop(event.event_id, None)
+                raise
+
+    def stage_nested(
+        self, container, handler_id, owner, event, result, rows, *, current
+    ):
+        """Stage an internal tool event until its enclosing handler is accepted."""
+        with self._lock:
+            self._owners(owner)  # Positively require the exact live input scope.
+            if not current() or not self._effects_current(event, result):
+                raise ValueError("nested hook context stale")
+            children = self._selected_nested(event, result)
+            batch = [(handler_id, owner, event, result, tuple(rows), current)]
+            for (
+                _handler,
+                child_owner,
+                child_event,
+                child_result,
+                child_rows,
+                child_current,
+            ) in children:
+                if child_owner != owner:
+                    raise ValueError("nested hook input owner changed")
+
+                def probe(previous=child_current):
+                    return (
+                        current()
+                        and previous()
+                        and self._effects_current(event, result)
+                    )
+
+                batch.append(
+                    (handler_id, owner, child_event, child_result, child_rows, probe)
+                )
+            existing = [
+                row
+                for key, value in self._rows.items()
+                if self._events[key][0] in self._owners(owner)
+                for row in value
+            ]
+            pending = [
+                row
+                for values in self._nested.values()
+                for item in values
+                if item[1] == owner
+                for row in item[4]
+            ]
+            # Children move, they are not counted twice in the pending batch.
+            moving = [
+                row for item in self._nested.get(event.event_id, ()) for row in item[4]
+            ]
+            if moving:
+                for row in moving:
+                    pending.remove(row)
+            check_host_context(
+                existing + pending + [row for item in batch for row in item[4]],
+                strip=False,
+            )
+            self._nested.pop(event.event_id, None)
+            self._nested.setdefault(container.event_id, []).extend(batch)
+
+    def _selected_nested(self, event, result):
+        if not result.allowed or result.outstanding_cleanup:
+            return ()
+        accepted = {handler for handler, _value in result.accepted}
+        return tuple(
+            item for item in self._nested.get(event.event_id, ()) if item[0] in accepted
+        )
+
+    def commit_nested(self, event, result, *, current=lambda: True, additional_rows=()):
+        """Publish a complete accepted nested batch into its exact input scope."""
+        with self._lock:
+            batch = self._selected_nested(event, result)
+            owners = {owner for _handler, owner, *_rest in batch}
+            ancestry = {
+                ancestor for owner in owners for ancestor in self._owners(owner)
+            }
+            existing = [
+                row
+                for key, rows in self._rows.items()
+                if self._events[key][0] in ancestry
+                for row in rows
+            ]
+            for _handler, _owner, nested_event, nested_result, _rows, probe in batch:
+                if (
+                    not current()
+                    or not probe()
+                    or not self._effects_current(nested_event, nested_result)
+                ):
+                    raise ValueError("nested hook context stale")
+            check_host_context(
+                existing
+                + list(additional_rows)
+                + [row for item in batch for row in item[4]],
+                strip=False,
+            )
+            for _handler, owner, nested_event, nested_result, rows, probe in batch:
+
+                def accepted_current(previous=probe):
+                    return (
+                        current()
+                        and previous()
+                        and self._effects_current(event, result)
+                    )
+
+                key = nested_event.event_id
+                self._events[key] = (owner, accepted_current)
+                self._rows[key] = rows
+                self._accepted[key] = (nested_event, nested_result)
+            self._nested.pop(event.event_id, None)
 
     def blocks(self, owner_id: str, boundary: str) -> tuple[dict, ...]:
         """Deliver each contribution once per exact receiving input owner."""
@@ -122,6 +237,12 @@ class ContextLedger:
 
     def close(self, owner_id: str) -> None:
         with self._lock:
+            for key, batch in tuple(self._nested.items()):
+                kept = [item for item in batch if item[1] != owner_id]
+                if kept:
+                    self._nested[key] = kept
+                else:
+                    self._nested.pop(key, None)
             for key, (owner, _current) in tuple(self._events.items()):
                 if owner == owner_id:
                     self._events.pop(key, None)

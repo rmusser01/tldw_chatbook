@@ -8963,6 +8963,7 @@ class ConsoleChatController:
             try:
                 lifecycle = await hook_runtime.prepare_hooks_v2(
                     session.id,
+                    configuration=configuration,
                     reason="resume" if session.persisted_conversation_id else "startup",
                     initiator=(
                         "manual"
@@ -8971,7 +8972,7 @@ class ConsoleChatController:
                     ),
                 )
                 if lifecycle is not None:
-                    scope = lifecycle.open_scope()
+                    scope = lifecycle.turn_scope or lifecycle.open_scope()
                     lifecycle.turn_scope = scope
                     submissions[asyncio.current_task()] = (lifecycle, scope, session.id)
                     await lifecycle.wait(scope)
@@ -13736,6 +13737,24 @@ class ConsoleChatController:
             else (self.store.active_session_id or "")
         )
         round_cancel_event = self._bind_round_cancel_signal(session_id)
+        from tldw_chatbook.Agents.mcp_tool_provider import (
+            current_mcp_invocation_policies,
+        )
+
+        hook_policies = current_mcp_invocation_policies()
+        if hook_policies:
+            if any(not policy.allow_approval for policy in hook_policies):
+                return ApprovalDecisions({key: "deny" for key in unique_keys})
+            original_cancel_event = round_cancel_event
+
+            class HookRoundCancellation:
+                def is_set(self):
+                    return (
+                        original_cancel_event is not None
+                        and original_cancel_event.is_set()
+                    ) or any(policy.cancel_event.is_set() for policy in hook_policies)
+
+            round_cancel_event = HookRoundCancellation()
         visit_cancel_event = self._bind_visit_cancel_signal()
         owning_run_id = current_run_id()
         round_state: dict[str, Any] = {
@@ -13765,6 +13784,21 @@ class ConsoleChatController:
             if session_id is None and timeout_seconds > 0
             else None
         )
+        if hook_policies:
+            deadline = min(
+                ([deadline] if deadline is not None else [])
+                + [
+                    min(
+                        policy.deadline,
+                        (
+                            policy.approval_deadline()
+                            if policy.approval_deadline is not None
+                            else policy.deadline
+                        ),
+                    )
+                    for policy in hook_policies
+                ]
+            )
         payload = _build_approval_payload(
             round_id,
             owning_session_id,
@@ -13786,6 +13820,8 @@ class ConsoleChatController:
         unresolved_keys: set[str] = set()
 
         def _on_cancelled() -> None:
+            if hook_policies:
+                decisions.clear()
             cancelled_keys = [key for key in unique_keys if key not in decisions]
             for key in unique_keys:
                 decisions.setdefault(key, "deny")
@@ -13793,6 +13829,8 @@ class ConsoleChatController:
             self._record_cancelled_approval_decisions(cancelled_keys, call_by_key)
 
         def _on_timeout() -> None:
+            if hook_policies:
+                decisions.clear()
             for key in unique_keys:
                 decisions.setdefault(key, "timeout")
 
@@ -13806,6 +13844,14 @@ class ConsoleChatController:
             # Commit the whole batch under the sweep lock. Cancellation can
             # win before this snapshot, but cannot retract a completed one.
             with self._approval_state_lock:
+                if hook_policies:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        outcome = "timeout"
+                        decisions.update({key: "timeout" for key in unique_keys})
+                    elif round_cancel_event.is_set():
+                        outcome = "cancelled"
+                        decisions.update({key: "deny" for key in unique_keys})
+                        unresolved_keys.update(unique_keys)
                 revoked = outcome == "revoked" or bool(round_state.get("revoked"))
                 if revoked:
                     unresolved_keys.update(unique_keys)
@@ -13878,6 +13924,7 @@ class ConsoleChatController:
             owning_session_id=owning_session_id,
             deadline=deadline,
             is_parked=is_parked,
+            **({"hard_deadline": deadline} if hook_policies else {}),
             announce_detached=_announce_if_detached,
             human_wait_run_id=owning_run_id,
             on_cancelled=_on_cancelled,
@@ -15050,6 +15097,67 @@ class ConsoleChatController:
         if not callable(getter):
             return None
         return lambda: bool(getter())
+
+    async def compose_prospective_hook_context(
+        self, configuration, lifecycle, input_scope
+    ):
+        """Bind the real pending submission and captured Console ceilings."""
+        from tldw_chatbook.Agents.persona_policy import parse_persona_policy_from_rules
+
+        from .console_agent_bridge import _compose_prospective_hook_context
+
+        session_id = configuration.session_id
+        task = asyncio.current_task()
+        reservation = (lifecycle, input_scope, session_id)
+        if getattr(self, "_hooks_v2_submissions", {}).get(task) != reservation:
+            raise PermissionError("hook admission reservation missing")
+        session = next(row for row in self.store.sessions() if row.id == session_id)
+        policy = parse_persona_policy_from_rules(configuration.persona_policy_rules)
+
+        def runtime_current():
+            if not lifecycle.current():
+                return False
+            fresh = self.resolve_turn_configuration_snapshot(session_id)
+            return all(
+                getattr(fresh, key) == getattr(configuration, key)
+                for key in (
+                    "workspace_roots",
+                    "project_authority",
+                    "tool_policy_profile_id",
+                    "persona_policy_rules",
+                    "mcp_tool_maximum",
+                    "mcp_definition_maximum",
+                )
+            )
+
+        def current():
+            return (
+                getattr(self, "_hooks_v2_submissions", {}).get(task) == reservation
+                and not task.done()
+                and not task.cancelling()
+                and runtime_current()
+            )
+
+        provider = await self._compose_mcp_provider(
+            session_id,
+            publish_counts=False,
+            profile_id_provider=lambda: configuration.tool_policy_profile_id,
+            persona_policy_provider=lambda: policy,
+            maximum_tool_ids=configuration.mcp_tool_maximum,
+            maximum_definition_hashes=configuration.mcp_definition_maximum,
+        )
+        if not current():
+            raise PermissionError("hook admission changed")
+        return _compose_prospective_hook_context(
+            configuration,
+            mcp_provider=provider,
+            lifecycle=lifecycle,
+            input_scope=input_scope,
+            current=current,
+            runtime_current=runtime_current,
+            workspace_id=session.workspace_id,
+            ephemeral=self.store.session_is_ephemeral(session_id),
+        )
 
     async def _compose_mcp_provider(
         self,

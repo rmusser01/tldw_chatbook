@@ -115,6 +115,7 @@ class HookSessionLifecycle:
             lock=self.checkpoints._condition,
         )
         self.live = False
+        self._sealed = False
         self._reservations = {}
         self._executions = {}
         self.turn_scope = None
@@ -379,6 +380,8 @@ class HookSessionLifecycle:
         )
 
     def close_scope(self, owner: str) -> None:
+        if self.engine.mcp_executor is not None:
+            self.engine.mcp_executor.retire_scope(owner)
         self.context.close(owner)
         self.checkpoints.retire_owner(owner)
 
@@ -398,6 +401,21 @@ class HookSessionLifecycle:
             return self.context.blocks(owner, "model")
 
     def seal(self) -> None:
+        if self._sealed:
+            return
+        self._sealed = True
+        self.engine.begin_close()
+        teardown_scope = None
+        if self.live and self.engine.mcp_executor is not None:
+            # Same owner/store, independent bounded scope; retain the exact
+            # source readiness before closing ordinary scopes and dependencies.
+            candidate = "teardown:" + uuid4().hex
+            with self.checkpoints._condition:
+                self.checkpoints.bind_owner(candidate)
+                if self.engine.mcp_executor.capture_teardown(self, candidate):
+                    teardown_scope = candidate
+                else:
+                    self.close_scope(candidate)
         self.checkpoints.close_owner(self.scope_id)
         self._reservations.clear()
         for _event, execution, _plans in self._executions.values():
@@ -408,7 +426,8 @@ class HookSessionLifecycle:
         self.terminal_budget_times.clear()
         self.inherited_budgets.clear()
         for owner in reversed(tuple(self.checkpoints._parents)):
-            self.close_scope(owner)
+            if owner != teardown_scope:
+                self.close_scope(owner)
         if self.live:
             self.live = False
             self.engine.notify_teardown(
