@@ -178,9 +178,9 @@ async def test_persona_revision_and_retirement_revoke_queued_speech(change):
 
 @pytest.mark.asyncio
 async def test_speech_controls_only_change_presentation():
-    from textual.app import App
     from textual.widgets import Button
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Widgets.Persona_Widgets.buddy_speech_controls import (
         BuddySpeechControls,
     )
@@ -203,8 +203,7 @@ async def test_speech_controls_only_change_presentation():
 
 @pytest.mark.asyncio
 async def test_rebind_dismisses_owned_destination_confirmation_without_consent():
-    from textual.app import App
-
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
         AutoSpeakConsentModal,
     )

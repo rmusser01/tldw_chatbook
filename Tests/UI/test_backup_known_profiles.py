@@ -18,9 +18,9 @@ def _disable_model_catalog_refresh():
 async def test_default_profile_review_keeps_known_profiles_and_added_selection(
     tmp_path, monkeypatch, helper_resource_root
 ):
-    from textual.app import App
     from textual.widgets import Button, Checkbox, Input, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery import bootstrap, crypto
     from tldw_chatbook.Backup_Recovery.control_records import (
         admission_authority,

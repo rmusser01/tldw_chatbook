@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import inspect
 import asyncio
+import inspect
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -144,13 +144,13 @@ class SkillTrustPassphraseModal(SafeModalDismissMixin, ModalScreen[str | None]):
 class SkillRecoveryReviewModal(SafeModalDismissMixin, ModalScreen[bool]):
     """Confirm the actual immutable current bundles before fresh trust setup."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     SkillRecoveryReviewModal { align: center middle; }
     #skills-recovery-review { width: 90%; max-width: 110; height: 90%; border: tall $accent; padding: 1 2; background: $surface; }
     #skills-recovery-scroll { height: 1fr; }
-    #skills-recovery-scroll Static { height: auto; margin-bottom: 1; }
+    #skills-recovery-scroll Static.skill-recovery-review-modal-static { height: auto; margin-bottom: 1; }
     #skills-recovery-actions { height: 3; align-horizontal: right; }
-    #skills-recovery-actions Button { width: auto; margin-left: 1; }
+    #skills-recovery-actions Button.skill-recovery-review-modal-button { width: auto; margin-left: 1; }
     #skills-recovery-status { height: auto; color: $warning; }
     """
     BINDINGS: ClassVar = [("escape", "request_safe_cancel", "Cancel")]
@@ -176,11 +176,16 @@ class SkillRecoveryReviewModal(SafeModalDismissMixin, ModalScreen[bool]):
             for name, content in snapshot.text_files.items():
                 files.append(f"\n{snapshot.skill_name}/{name}\n{content}")
         with Vertical(id="skills-recovery-review"):
-            yield Static("Review restored skills", markup=False)
+            yield Static(
+                "Review restored skills",
+                markup=False,
+                classes="skill-recovery-review-modal-static",
+            )
             with VerticalScroll(id="skills-recovery-scroll"):
                 yield Static(
                     "Review these current local files. Setup preserves the imported trust files and creates fresh local trust. If finishing an interrupted setup, use the same passphrase you chose then. Script execution still requires a separate explicit grant.",
                     markup=False,
+                    classes="skill-recovery-review-modal-static",
                 )
                 yield Static(
                     "Local trust folder: "
@@ -193,27 +198,43 @@ class SkillRecoveryReviewModal(SafeModalDismissMixin, ModalScreen[bool]):
                     ),
                     id="skills-recovery-root",
                     markup=False,
+                    classes="skill-recovery-review-modal-static",
                 )
                 yield Static(
                     "Retained script grants (inactive):\n"
                     + ("\n".join(review.historical_script_grants) or "None"),
                     id="skills-recovery-history",
                     markup=False,
+                    classes="skill-recovery-review-modal-static",
                 )
                 yield Static(
                     "This setup uses a local file marker. Protection against restoring an older copy of the entire trust folder is reduced.",
                     markup=False,
+                    classes="skill-recovery-review-modal-static",
                 )
                 yield Static(
                     "\n\n".join(files) or "No current Skills bundles.",
                     id="skills-recovery-files",
                     markup=False,
+                    classes="skill-recovery-review-modal-static",
                 )
-            yield Static("", id="skills-recovery-status", markup=False)
+            yield Static(
+                "",
+                id="skills-recovery-status",
+                markup=False,
+                classes="skill-recovery-review-modal-static",
+            )
             with Horizontal(id="skills-recovery-actions"):
-                yield Button("Cancel", id="skills-recovery-cancel")
                 yield Button(
-                    "Confirm review", id="skills-recovery-continue", variant="primary"
+                    "Cancel",
+                    id="skills-recovery-cancel",
+                    classes="skill-recovery-review-modal-button",
+                )
+                yield Button(
+                    "Confirm review",
+                    id="skills-recovery-continue",
+                    variant="primary",
+                    classes="skill-recovery-review-modal-button",
                 )
 
     def on_mount(self) -> None:

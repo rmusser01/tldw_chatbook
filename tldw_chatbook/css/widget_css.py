@@ -899,6 +899,34 @@ def _stream_has_rules(text: str) -> bool:
     return "{" in _RULE_BRACE_RE.sub("", text)
 
 
+_SOURCE_COMMENT_OR_STRING = re.compile(
+    r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/""",
+    re.DOTALL,
+)
+_TRAILING_SPACE_OR_STRING = re.compile(
+    r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[ \t]+(?=\n|$)""",
+    re.DOTALL,
+)
+
+
+def without_source_comments(css: str) -> str:
+    """Remove comment bytes without changing Textual's selector boundaries.
+
+    Textual skips comments without inserting whitespace, so ``Button/*x*/.on``
+    must remain a compound selector. Existing surrounding whitespace stays
+    intact. Quoted text is protected in both the comment and trailing-space
+    passes, including strings containing comment markers or trailing spaces.
+    Module provenance banners are added separately by the builder.
+    """
+    without_comments = _SOURCE_COMMENT_OR_STRING.sub(
+        lambda match: "" if match.group().startswith("/*") else match.group(), css
+    )
+    return _TRAILING_SPACE_OR_STRING.sub(
+        lambda match: match.group() if match.group()[0] in "\"'" else "",
+        without_comments,
+    )
+
+
 def render_stylesheets(
     blocks: list[BundledBlock], title: str, *, scope_every_selector: bool = False
 ) -> tuple[str, str]:
@@ -945,6 +973,6 @@ def render_stylesheets(
             # Class-body indentation appears on otherwise blank lines before
             # a closing triple quote. Never publish that Python indentation as
             # trailing whitespace in generated CSS.
-            text = "\n".join(line.rstrip() for line in text.splitlines()) + "\n"
+            text = without_source_comments(text).rstrip() + "\n"
             rendered[stream] += banner + text
     return rendered[0], rendered[1]

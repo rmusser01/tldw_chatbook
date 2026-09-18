@@ -22,13 +22,16 @@ Token migration alone does not qualify a complete workflow.
 ## Remaining review
 
 - **Remote verification:** all applicable checks passed on saved head
-  9a4ba3cef3, including Fast Lane, UI latency, derived artifacts and all six GGUF
-  checks. Fresh rail-repair head verification follows push.
+  9a4ba3cef3. Rail head bc1b1215 failed only the stale ASCII ellipsis assertion
+  in Fast Lane (and its dependent aggregate). TASK-32814 aligns it with the
+  existing terminal-cell glyph; its exact targeted case passes. Fresh remote
+  checks are required after the consolidation/ellipsis push.
 - **Existing test debt:** four Audit CSS literal assertions fail against unchanged
   token-based CSS; two Speech harness cases failed during profile setup before UI
   creation. Both boundaries are recorded in TASK-32796 evidence. TASK-32812 also
-  records 26 baseline CSS-consolidation ratchet offenders and an unqualified
-  destination-tour profile-setup failure; see its evidence and the broader ledger.
+  recorded 26 baseline CSS-consolidation ratchet offenders and a destination-tour
+  profile-setup failure; TASK-32813 now closes those two boundaries with
+  [computed-style, guard and native evidence](../qa/2026-09-18-css-consolidation/README.md).
 - **Inspector refresh and execution:** selected tool definition/currentness,
   argument drafts across background refresh, diagnostic empty-state action routing,
   disconnected/stale tools, schema/raw arguments, execution and inspector recovery.

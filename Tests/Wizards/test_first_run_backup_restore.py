@@ -12,7 +12,7 @@ install()
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 selector.write_text('[general]\nusers_name="default_user"\n')
 selector.chmod(0o600)
-from textual.app import App
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from textual.screen import Screen
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
 from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen

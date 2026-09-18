@@ -11,52 +11,23 @@ from typing import Any
 
 import pytest
 from textual import events
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Library.library_prompts_state import (
+    begin_prompt_collection_catalog,
+)
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactPreflightEntry,
     PreflightReport,
 )
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef, ProvenanceClass
-from tldw_chatbook.Prompt_Management.prompt_variables import (
-    PromptVariableApplication,
-)
-from tldw_chatbook.Third_Party.textual_fspicker import (
-    FileOpen,
-    FileSave,
-    SelectDirectory,
-)
-from tldw_chatbook.Library.library_prompts_state import (
-    begin_prompt_collection_catalog,
-)
-from tldw_chatbook.UI.Library_Modules.prompt_collections import (
-    PromptCollectionManagerResult,
-)
-from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
-    PromptCollectionManagerModal,
-)
-from tldw_chatbook.UI.Library_Modules.skill_import_choice_modal import (
-    SkillImportChoiceModal,
-)
-from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
-from tldw_chatbook.UI.Screens.skills_screen import (
-    SkillTrustBootstrapModal,
-    SkillTrustPassphraseModal,
-)
-from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
-    LibraryNoteFolderNameDialog,
-    LibraryNoteFolderTargetDialog,
-)
-from tldw_chatbook.Widgets.Library.library_review_set_picker import (
-    LibraryReviewSetPickerDialog,
-)
 from tldw_chatbook.Notes.file_notes_conflict_compare import (
     ConflictSide,
     build_conflict_comparison,
@@ -65,6 +36,37 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushAuthorizationProjection,
     PushCandidateProjection,
     PushDestinationProjection,
+)
+from tldw_chatbook.Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+)
+from tldw_chatbook.Third_Party.textual_fspicker import (
+    FileOpen,
+    FileSave,
+    SelectDirectory,
+)
+from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
+    PromptCollectionManagerModal,
+)
+from tldw_chatbook.UI.Library_Modules.prompt_collections import (
+    PromptCollectionManagerResult,
+)
+from tldw_chatbook.UI.Library_Modules.skill_import_choice_modal import (
+    SkillImportChoiceModal,
+)
+from tldw_chatbook.UI.Screens.skills_screen import (
+    SkillTrustBootstrapModal,
+    SkillTrustPassphraseModal,
+)
+from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
+    PromptVariablesDialog,
+    PromptVariablesDialogRequest,
+)
+from tldw_chatbook.Widgets.enhanced_file_picker import (
+    EnhancedFileOpen,
+    EnhancedFileSave,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     PushDestinationAuthorizationDialog,
@@ -75,25 +77,22 @@ from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     FileNotesConflictCompareDialog,
     FileNotesRootDetailsDialog,
 )
+from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
+    LibraryNoteFolderNameDialog,
+    LibraryNoteFolderTargetDialog,
+)
+from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+    LibraryReviewSetPickerDialog,
+)
 from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
-    PromptDeleteDecision,
     PromptDeleteConfirmationModal,
+    PromptDeleteDecision,
     PromptDeleteItem,
     PromptDeleteRequest,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.ModelArtifacts.install_modal import ModelInstallModal
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
-from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
-    PromptVariablesDialog,
-    PromptVariablesDialogRequest,
-)
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-from tldw_chatbook.Widgets.enhanced_file_picker import (
-    EnhancedFileOpen,
-    EnhancedFileSave,
-)
-from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
-
 
 _STABLE_OPENER_ID = "library-stable-opener"
 

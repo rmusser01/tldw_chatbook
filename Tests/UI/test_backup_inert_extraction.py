@@ -14,10 +14,10 @@ def _disable_model_catalog_refresh():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["extract", "destination_changed", "source_changed"])
 async def test_real_inert_extraction_requires_current_visible_review(tmp_path, change):
-    from textual.app import App
     from textual.widgets import Button, Checkbox, Input, Static
 
     from Tests.Backup_Recovery.test_inert_extraction import _archive
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 

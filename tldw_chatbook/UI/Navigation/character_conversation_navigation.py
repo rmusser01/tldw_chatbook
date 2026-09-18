@@ -234,14 +234,14 @@ class RoleplayDraftNavigationDialog(ModalScreen[str | None]):
     """Exactly-three-choice aggregate draft veto owned by app navigation."""
 
     BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "stay", "Stay", show=False)]
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     RoleplayDraftNavigationDialog { align: center middle; }
     RoleplayDraftNavigationDialog > Container {
         width: 72; max-width: 96%; height: auto; border: thick $accent;
         background: $surface; padding: 1 2;
     }
-    RoleplayDraftNavigationDialog Vertical { height: auto; }
-    RoleplayDraftNavigationDialog Button { width: 100%; margin-top: 1; }
+    RoleplayDraftNavigationDialog Vertical.roleplay-draft-navigation-dialog-vertical { height: auto; }
+    RoleplayDraftNavigationDialog Button.roleplay-draft-navigation-dialog-button { width: 100%; margin-top: 1; }
     """
 
     def __init__(self, domains: tuple[str, ...]) -> None:
@@ -255,12 +255,22 @@ class RoleplayDraftNavigationDialog(ModalScreen[str | None]):
                 "Affected: " + ", ".join(self.domains),
                 id="roleplay-draft-navigation-domains",
             )
-            with Vertical():
-                yield Button("Save and continue", id="roleplay-draft-save-continue")
+            with Vertical(classes="roleplay-draft-navigation-dialog-vertical"):
                 yield Button(
-                    "Discard and continue", id="roleplay-draft-discard-continue"
+                    "Save and continue",
+                    id="roleplay-draft-save-continue",
+                    classes="roleplay-draft-navigation-dialog-button",
                 )
-                yield Button("Stay", id="roleplay-draft-stay")
+                yield Button(
+                    "Discard and continue",
+                    id="roleplay-draft-discard-continue",
+                    classes="roleplay-draft-navigation-dialog-button",
+                )
+                yield Button(
+                    "Stay",
+                    id="roleplay-draft-stay",
+                    classes="roleplay-draft-navigation-dialog-button",
+                )
 
     @on(Button.Pressed)
     def _choice(self, event: Button.Pressed) -> None:
@@ -280,7 +290,7 @@ class RoleplayDraftRecoveryDialog(ModalScreen[str | None]):
     """Recover a partial aggregate save without losing the pending navigation."""
 
     BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "stay", "Stay", show=False)]
-    DEFAULT_CSS = RoleplayDraftNavigationDialog.DEFAULT_CSS
+    # The former NavigationDialog CSS alias matched no RecoveryDialog nodes.
 
     def __init__(self, failed_domains: tuple[str, ...]) -> None:
         super().__init__()

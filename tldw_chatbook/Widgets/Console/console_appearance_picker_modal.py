@@ -100,7 +100,7 @@ class ConsoleAppearancePickerModal(
 ):
     """Pick one conversation's icon glyph and palette color."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleAppearancePickerModal {
         align: center middle;
     }
@@ -185,7 +185,7 @@ class ConsoleAppearancePickerModal(
         margin-top: 1;
     }
 
-    #console-appearance-picker-actions Button {
+    #console-appearance-picker-actions Button.console-appearance-picker-modal-button {
         width: 1fr;
         height: 3;
         border: none;
@@ -238,14 +238,12 @@ class ConsoleAppearancePickerModal(
                 placeholder="Search icons by name…",
                 id=FILTER_INPUT_ID,
             )
-            yield EmojiGrid(
-                self._all_emojis, id=GRID_ID, can_focus=False
-            )
+            yield EmojiGrid(self._all_emojis, id=GRID_ID, can_focus=False)
             with HorizontalScroll(id=COLORS_ID):
                 yield Button(
                     "none",
                     id=SWATCH_NONE_ID,
-                    classes=SWATCH_CLASS,
+                    classes=(SWATCH_CLASS) + " console-appearance-picker-modal-button",
                     compact=True,
                 )
                 for label, hex_color in CONSOLE_APPEARANCE_PALETTE:
@@ -253,7 +251,8 @@ class ConsoleAppearancePickerModal(
                         _swatch_label(hex_color),
                         id=f"console-appearance-swatch-"
                         f"{label.lower().replace(' ', '-')}",
-                        classes=SWATCH_CLASS,
+                        classes=(SWATCH_CLASS)
+                        + " console-appearance-picker-modal-button",
                         compact=True,
                         tooltip=label,
                     )
@@ -264,9 +263,24 @@ class ConsoleAppearancePickerModal(
                 id=HEX_INPUT_ID,
             )
             with Horizontal(id="console-appearance-picker-actions"):
-                yield Button("Apply", id=APPLY_ID, compact=True)
-                yield Button("Clear", id=CLEAR_ID, compact=True)
-                yield Button("Cancel", id=CANCEL_ID, compact=True)
+                yield Button(
+                    "Apply",
+                    id=APPLY_ID,
+                    compact=True,
+                    classes="console-appearance-picker-modal-button",
+                )
+                yield Button(
+                    "Clear",
+                    id=CLEAR_ID,
+                    compact=True,
+                    classes="console-appearance-picker-modal-button",
+                )
+                yield Button(
+                    "Cancel",
+                    id=CANCEL_ID,
+                    compact=True,
+                    classes="console-appearance-picker-modal-button",
+                )
 
     async def on_mount(self) -> None:  # type: ignore[override]
         # EmojiGrid populates itself from its constructor list on mount;
@@ -304,9 +318,7 @@ class ConsoleAppearancePickerModal(
             first = grid.query(EmojiButton).first()
         except NoMatches:
             return
-        char = str(
-            getattr(first, "emoji_data", {}).get("char", "") or ""
-        )
+        char = str(getattr(first, "emoji_data", {}).get("char", "") or "")
         if char:
             self._select_icon(char)
 
@@ -343,7 +355,9 @@ class ConsoleAppearancePickerModal(
         else:
             hex_color = getattr(button, "hex_color", None)
             self._selected_color = (
-                hex_color if hex_color and is_valid_console_appearance_color(hex_color) else None
+                hex_color
+                if hex_color and is_valid_console_appearance_color(hex_color)
+                else None
             )
         self._sync_preview()
         self._sync_swatch_highlight()
@@ -367,9 +381,7 @@ class ConsoleAppearancePickerModal(
         # the recent-emoji side effect, so a rejected icon cannot leave a
         # stray recents entry (selection-time rejection makes this belt and
         # braces for foreign callers of `_select_icon`).
-        result = ConsoleConversationAppearance(
-            icon=icon, color=self._selected_color
-        )
+        result = ConsoleConversationAppearance(icon=icon, color=self._selected_color)
         if icon is not None:
             save_recent_emoji(icon)
         self.dismiss(result)
@@ -449,8 +461,7 @@ class ConsoleAppearancePickerModal(
         for button in self.query(f".{SWATCH_CLASS}"):
             hex_color = getattr(button, "hex_color", None)
             is_selected = (
-                self._selected_color is not None
-                and hex_color == self._selected_color
+                self._selected_color is not None and hex_color == self._selected_color
             )
             button.set_class(is_selected, SWATCH_SELECTED_CLASS)
 
@@ -476,7 +487,9 @@ class ConsoleAppearancePickerModal(
                 )
             )
         else:
-            preview.update(Content.assemble((f"{icon} ", "dim"), (f"{title}  no color", None)))
+            preview.update(
+                Content.assemble((f"{icon} ", "dim"), (f"{title}  no color", None))
+            )
 
     def _focus_filter(self) -> None:
         try:

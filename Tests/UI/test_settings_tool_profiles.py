@@ -8,14 +8,17 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from textual.app import App, ComposeResult
+import pytest
+from textual.app import ComposeResult
 from textual.widgets import Button, Input, Static, TextArea
 
-import pytest
-
-from tldw_chatbook.Tool_Packs.service import (
-    ToolProfileListing,
-    ToolProfilePresentation,
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
+from Tests.UI.test_settings_configuration_hub import (
+    DestinationHarness,
+    _active_destination_screen,
+    _build_test_app,
+    _open_settings_category,
 )
 from tldw_chatbook.Tool_Packs.activation import (
     InstalledToolProfile,
@@ -29,29 +32,33 @@ from tldw_chatbook.Tool_Packs.contracts import (
     TOOL_PROFILE_SCHEMA,
     PortableFallback,
     PortableToolRule,
+    ToolPackError,
     ToolProfilePayload,
 )
 from tldw_chatbook.Tool_Packs.export import (
     ToolPackExportReview,
     ToolPackExportSnapshot,
 )
+from tldw_chatbook.Tool_Packs.importer import (
+    MappedToolRule,
+    ServerMapping,
+    ToolPackImportReview,
+)
 from tldw_chatbook.Tool_Packs.publication import ToolPackPublicationResult
 from tldw_chatbook.Tool_Packs.removal import (
     RemovedToolProfile,
     ToolProfileRemovalResult,
 )
-from tldw_chatbook.Tool_Packs.contracts import ToolPackError
+from tldw_chatbook.Tool_Packs.service import (
+    ToolProfileListing,
+    ToolProfilePresentation,
+)
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen,
     EnhancedFileSave,
-)
-from tldw_chatbook.Tool_Packs.importer import (
-    MappedToolRule,
-    ServerMapping,
-    ToolPackImportReview,
 )
 from tldw_chatbook.Widgets.Settings_Widgets.tool_pack_import_review import (
     ToolPackExportReviewModal,
@@ -60,19 +67,10 @@ from tldw_chatbook.Widgets.Settings_Widgets.tool_pack_import_review import (
     ToolPackImportReviewModal,
     ToolProfileFirstBindReviewModal,
 )
-from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
 from tldw_chatbook.Widgets.Settings_Widgets.tool_profiles_panel import (
     ToolProfilesPanel,
 )
-
-from Tests.private_profile import private_profile_test
-
-from Tests.UI.test_settings_configuration_hub import (
-    DestinationHarness,
-    _active_destination_screen,
-    _build_test_app,
-    _open_settings_category,
-)
+from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
 
 
 def _profile(
@@ -336,7 +334,10 @@ def _export_review() -> ToolPackExportReview:
 
 
 @pytest.mark.asyncio
-async def test_panel_lists_truthful_profiles_without_policy_editor() -> None:
+@private_profile_test
+async def test_panel_lists_truthful_profiles_without_policy_editor(
+    request,
+) -> None:
     listing = ToolProfileListing(
         profiles=(
             _profile(
@@ -387,7 +388,10 @@ async def test_panel_lists_truthful_profiles_without_policy_editor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_profile_ids_render_as_plain_text() -> None:
+@private_profile_test
+async def test_profile_ids_render_as_plain_text(
+    request,
+) -> None:
     profile_id = "[bold]local-profile[/bold]"
     panel = ToolProfilesPanel(
         ToolProfileListing(
@@ -410,7 +414,10 @@ async def test_profile_ids_render_as_plain_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_receipt_unavailable_preserves_non_removal_actions() -> None:
+@private_profile_test
+async def test_receipt_unavailable_preserves_non_removal_actions(
+    request,
+) -> None:
     panel = ToolProfilesPanel(
         ToolProfileListing(
             profiles=(
@@ -437,7 +444,10 @@ async def test_receipt_unavailable_preserves_non_removal_actions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_panel_emits_exact_captured_action_contexts() -> None:
+@private_profile_test
+async def test_panel_emits_exact_captured_action_contexts(
+    request,
+) -> None:
     profile = _profile("research", origin="imported", binding_state="unbound")
     panel = ToolProfilesPanel(ToolProfileListing(profiles=(profile,)))
     app = _PanelHarness(panel)
@@ -468,7 +478,10 @@ async def test_panel_emits_exact_captured_action_contexts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_panel_has_explicit_empty_and_unavailable_states() -> None:
+@private_profile_test
+async def test_panel_has_explicit_empty_and_unavailable_states(
+    request,
+) -> None:
     empty = ToolProfilesPanel(ToolProfileListing())
     async with _PanelHarness(empty).run_test(size=(80, 20)) as pilot:
         await pilot.pause()
@@ -485,7 +498,10 @@ async def test_panel_has_explicit_empty_and_unavailable_states() -> None:
 
 
 @pytest.mark.asyncio
-async def test_panel_can_apply_one_fresh_immutable_listing() -> None:
+@private_profile_test
+async def test_panel_can_apply_one_fresh_immutable_listing(
+    request,
+) -> None:
     panel = ToolProfilesPanel(ToolProfileListing(unavailable_category="loading"))
     async with _PanelHarness(panel).run_test(size=(90, 24)) as pilot:
         await panel.apply_listing(ToolProfileListing(profiles=(_profile("fresh"),)))
@@ -714,7 +730,10 @@ async def test_edit_policy_deep_link_captures_exact_profile_authority(request) -
 
 
 @pytest.mark.asyncio
-async def test_import_review_discloses_policy_identity_mapping_and_no_install() -> None:
+@private_profile_test
+async def test_import_review_discloses_policy_identity_mapping_and_no_install(
+    request,
+) -> None:
     review = _import_review()
     app = _ModalHarness()
     async with app.run_test(size=(100, 32)) as pilot:
@@ -752,7 +771,10 @@ async def test_import_review_discloses_policy_identity_mapping_and_no_install() 
 
 
 @pytest.mark.asyncio
-async def test_import_review_returns_only_explicit_unbound_confirmation() -> None:
+@private_profile_test
+async def test_import_review_returns_only_explicit_unbound_confirmation(
+    request,
+) -> None:
     app = _ModalHarness()
     results: list[ToolPackImportReview | None] = []
     async with app.run_test(size=(80, 24)) as pilot:
@@ -768,7 +790,10 @@ async def test_import_review_returns_only_explicit_unbound_confirmation() -> Non
 
 
 @pytest.mark.asyncio
-async def test_import_options_capture_destination_and_explicit_mappings() -> None:
+@private_profile_test
+async def test_import_options_capture_destination_and_explicit_mappings(
+    request,
+) -> None:
     results: list[ToolPackImportOptions | None] = []
     app = _ModalHarness()
     options = ToolPackImportOptions(
@@ -800,7 +825,10 @@ async def test_import_options_capture_destination_and_explicit_mappings() -> Non
 
 
 @pytest.mark.asyncio
-async def test_import_review_change_action_never_returns_a_commit_review() -> None:
+@private_profile_test
+async def test_import_review_change_action_never_returns_a_commit_review(
+    request,
+) -> None:
     results: list[ToolPackImportReview | str | None] = []
     app = _ModalHarness()
 
@@ -814,7 +842,10 @@ async def test_import_review_change_action_never_returns_a_commit_review() -> No
 
 
 @pytest.mark.asyncio
-async def test_export_review_discloses_portable_scope_and_exact_source() -> None:
+@private_profile_test
+async def test_export_review_discloses_portable_scope_and_exact_source(
+    request,
+) -> None:
     review = _export_review()
     results: list[ToolPackExportReview | None] = []
     app = _ModalHarness()
@@ -850,9 +881,10 @@ async def test_export_review_discloses_portable_scope_and_exact_source() -> None
 
 
 @pytest.mark.asyncio
-async def test_first_bind_review_discloses_exact_authority_and_separate_memory_gate() -> (
-    None
-):
+@private_profile_test
+async def test_first_bind_review_discloses_exact_authority_and_separate_memory_gate(
+    request,
+) -> None:
     review = _binding_review()
     intended = WorkspaceAssistantDefaults(
         assistant_kind="persona",
@@ -891,7 +923,10 @@ async def test_first_bind_review_discloses_exact_authority_and_separate_memory_g
 
 
 @pytest.mark.asyncio
-async def test_first_bind_review_returns_only_the_exact_review_object() -> None:
+@private_profile_test
+async def test_first_bind_review_returns_only_the_exact_review_object(
+    request,
+) -> None:
     review = _binding_review()
     intended = WorkspaceAssistantDefaults(
         assistant_kind="persona",
@@ -915,7 +950,11 @@ async def test_first_bind_review_returns_only_the_exact_review_object() -> None:
     assert results == [review]
 
 
-def test_management_operations_are_exclusive_workers() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_management_operations_are_exclusive_workers(
+    request,
+) -> None:
     for name in (
         "_tool_profile_import_flow",
         "_tool_profile_export_flow",
@@ -1183,7 +1222,11 @@ async def test_bind_request_without_explicit_workspace_shows_recovery_guidance(
         assert "Choose a non-default workspace" in str(result.renderable)
 
 
-def test_publication_unsupported_has_a_distinct_truthful_outcome() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_publication_unsupported_has_a_distinct_truthful_outcome(
+    request,
+) -> None:
     copy = SettingsScreen._tool_pack_failure_copy(
         "export", ToolPackError("export", "publication_unsupported")
     )

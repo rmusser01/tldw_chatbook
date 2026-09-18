@@ -13,11 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 from loguru import logger as loguru_logger
 from textual import events
-
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.geometry import Region
 from textual.widgets import (
@@ -34,9 +30,16 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
+)
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text as _screen_visible_text,
 )
 from tldw_chatbook.Chat.console_chat_models import (
@@ -64,9 +67,6 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
 )
-from tldw_chatbook.Widgets.Console.console_context_controls import (
-    build_console_context_control_state,
-)
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
@@ -91,13 +91,22 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
     SettingsEndpointProbePurpose,
 )
-from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Console import (
     console_settings_summary as settings_summary_module,
+)
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
+from tldw_chatbook.Widgets.Console.console_context_controls import (
+    build_console_context_control_state,
+)
+from tldw_chatbook.Widgets.Console.console_provider_picker import (
+    ConsoleProviderPicker,
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
@@ -106,26 +115,22 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODEL_DISCOVER_BUTTON_ID,
     MODEL_DISCOVER_STATUS_ID,
     PROVIDER_CHOICE_NO_EFFECT_SUFFIX,
-    ConsoleSettingsInput,
-    ConsoleSettingsCredentialRequest,
     ConsoleModelDiscoveryIdentity,
+    ConsoleSettingsCredentialRequest,
     ConsoleSettingsDraftSnapshot,
+    ConsoleSettingsInput,
     ConsoleSettingsModal,
     ConsoleSettingsResult,
     ConsoleUnverifiedModelDecision,
     _settings_screen_region,
 )
-from tldw_chatbook.Widgets.Console.console_provider_picker import (
-    ConsoleProviderPicker,
-)
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
 )
-from tldw_chatbook.Widgets.Console.console_bounded_section import (
-    ConsoleBoundedSection,
-)
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     APPLY_BUTTON_ID as SYSTEM_PROMPT_APPLY_BUTTON_ID,
+)
+from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker

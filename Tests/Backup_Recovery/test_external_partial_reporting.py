@@ -181,9 +181,9 @@ async def test_ui_labels_external_archive_partial_and_requires_existing_checkbox
     """This focused component test exercises the real screen with inert service IO."""
     from pathlib import Path
 
-    from textual.app import App
     from textual.widgets import Button, Checkbox, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 

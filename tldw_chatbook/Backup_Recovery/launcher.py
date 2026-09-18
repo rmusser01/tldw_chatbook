@@ -104,6 +104,19 @@ def recovery_app(reason: str, *, restart_request=None):
             super().__init__()
             self.recovery_service = RecoveryService(default_control_root())
 
+        def _get_default_css(self):
+            # Recovery cannot import the normal app/config or its boot bundle.
+            # Register only this host's screen at its original default tier.
+            return [
+                (
+                    (__file__, "BackupRestoreScreen.BUNDLED_CSS"),
+                    BackupRestoreScreen.BUNDLED_CSS,
+                    0,
+                    "BackupRestoreScreen",
+                ),
+                *super()._get_default_css(),
+            ]
+
         def compose(self):
             yield Static(
                 "Recovery mode — review replacement" if reason == "replacement_requested"

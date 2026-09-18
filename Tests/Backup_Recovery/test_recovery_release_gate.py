@@ -496,9 +496,9 @@ def test_cli_replacement_refuses_before_confirmation_and_new_password(monkeypatc
 @pytest.mark.asyncio
 async def test_ui_displays_backup_availability_separately_and_disables_create():
     """Ignoring availability would enable Create from coverage and capacity alone."""
-    from textual.app import App
     from textual.widgets import Button, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
     class Service:
@@ -549,9 +549,9 @@ async def test_ui_replacement_and_later_refuse_before_reading_new_passwords(
     monkeypatch,
 ):
     """Discarding stored decisions would let both handlers read new secrets."""
-    from textual.app import App
     from textual.widgets import Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
     class Service:
@@ -597,8 +597,7 @@ async def test_ui_replacement_and_later_refuse_before_reading_new_passwords(
 @pytest.mark.asyncio
 async def test_ui_invalidates_stale_availability_decisions():
     """Retaining a decision across input changes would enable a stale operation."""
-    from textual.app import App
-
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
     class Service:
@@ -630,9 +629,9 @@ async def test_ui_starts_new_operations_off_the_ui_thread(monkeypatch):
     import asyncio
     import threading
 
-    from textual.app import App
     from textual.widgets import Checkbox
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
     calls = []
@@ -709,9 +708,9 @@ async def test_ui_password_clear_preserves_only_current_worker_association(
     import asyncio
     import threading
 
-    from textual.app import App
     from textual.widgets import Input
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
     release = threading.Event()
@@ -792,9 +791,9 @@ async def test_ui_replacement_password_clear_preserves_only_current_worker_assoc
     import asyncio
     import threading
 
-    from textual.app import App
     from textual.widgets import Input
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
     release = threading.Event()
@@ -868,9 +867,9 @@ async def test_ui_password_clear_preserves_current_worker_refusal_message():
     import asyncio
     import threading
 
-    from textual.app import App
     from textual.widgets import Input, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
     release = threading.Event()

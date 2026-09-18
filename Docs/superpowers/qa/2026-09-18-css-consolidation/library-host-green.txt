@@ -1,0 +1,13 @@
+.                                                                        [100%]
+==================================== PASSES ====================================
+_______ test_the_commit_form_traps_tab_and_reaches_its_terminal_actions ________
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 11:51:10.882 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 11:51:10.888 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 11:51:10.889 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 11:51:10.889 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+1.78s call     Tests/UI/test_library_notes_w5_kbd_focus.py::test_the_commit_form_traps_tab_and_reaches_its_terminal_actions
+
+(2 durations < 1s hidden.)
+1 passed in 3.33s

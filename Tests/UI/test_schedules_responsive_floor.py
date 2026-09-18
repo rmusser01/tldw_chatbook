@@ -22,10 +22,10 @@ alone stopped being the app tier for this file).
 from __future__ import annotations
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, DataTable, Input, Select
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.UI.schedules_test_helpers import settle_schedules_workbench
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService

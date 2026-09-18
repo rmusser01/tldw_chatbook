@@ -27,8 +27,7 @@ def _rows(name):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["same_revision", "navigation", "new_revision"])
 async def test_list_delivery_keeps_only_current_widgets(tmp_path, monkeypatch, change):
-    from textual.app import App
-
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 

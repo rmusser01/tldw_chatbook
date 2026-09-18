@@ -34,7 +34,7 @@ _SUMMARY = _SERVICE_ISOLATED.replace(
   assert row['required_owners'] is None and row['pending_owners'] is None
  else:raise AssertionError('unknown fixture route')
  import asyncio
- from textual.app import App
+ from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
  from textual.widgets import Button,Static
  from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
  class Harness(App):

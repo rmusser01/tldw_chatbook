@@ -42,10 +42,10 @@ class WorkspacePersonaSelection:
 class WorkspacePersonaPicker(Vertical):
     """Select None or a saved Persona without changing the registry."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     WorkspacePersonaPicker { height: auto; }
     WorkspacePersonaPicker Static { height: auto; }
-    WorkspacePersonaPicker Select { height: 3; }
+    WorkspacePersonaPicker Select.workspace-persona-picker-select { height: 3; }
     """
 
     def __init__(
@@ -104,6 +104,7 @@ class WorkspacePersonaPicker(Vertical):
             allow_blank=False,
             id="workspace-default-persona",
             compact=True,
+            classes="workspace-persona-picker-select",
         )
         yield Static(
             "Existing, copied and moved conversations keep their Persona.", markup=False
@@ -119,6 +120,7 @@ class WorkspacePersonaPicker(Vertical):
             allow_blank=False,
             id="workspace-default-memory",
             compact=True,
+            classes="workspace-persona-picker-select",
         )
         yield Checkbox(
             "Confirm this Persona may write memory across sessions",
@@ -203,7 +205,7 @@ class WorkspacePersonaPicker(Vertical):
 class WorkspacePersonaDefaultModal(SafeModalDismissMixin, ModalScreen[bool]):
     """Edit one explicit workspace's default; Cancel never mutates it."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     WorkspacePersonaDefaultModal { align: center middle; }
     #workspace-default-dialog { width: 68; max-width: 95%; height: auto; max-height: 95%;
         background: $surface; border: tall $primary; padding: 1 2; }

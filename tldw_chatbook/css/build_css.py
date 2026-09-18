@@ -902,32 +902,7 @@ def build_screen_owned_sheets(css_dir: Path, output_dir: Path) -> None:
                 seen[selector] = filename
 
 
-_SOURCE_COMMENT_OR_STRING = re.compile(
-    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/''',
-    re.DOTALL,
-)
-_TRAILING_SPACE_OR_STRING = re.compile(
-    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[ \t]+(?=\n|$)''',
-    re.DOTALL,
-)
-
-
-def _without_source_comments(css: str) -> str:
-    """Remove comment bytes without changing Textual's selector boundaries.
-
-    Textual skips comments without inserting whitespace, so ``Button/*x*/.on``
-    must remain a compound selector. Existing surrounding whitespace stays
-    intact. Quoted text is protected in both the comment and trailing-space
-    passes, including strings containing comment markers or trailing spaces.
-    Module provenance banners are added separately by the builder.
-    """
-    without_comments = _SOURCE_COMMENT_OR_STRING.sub(
-        lambda match: "" if match.group().startswith("/*") else match.group(), css
-    )
-    return _TRAILING_SPACE_OR_STRING.sub(
-        lambda match: match.group() if match.group()[0] in "\"'" else "",
-        without_comments,
-    )
+_without_source_comments = widget_css.without_source_comments
 
 
 def build_css(css_dir: Path, output_file: Path) -> None:

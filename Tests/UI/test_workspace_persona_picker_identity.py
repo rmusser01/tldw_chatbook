@@ -6,7 +6,7 @@ import pytest
 from textual.widgets import Button, Input, OptionList, Select
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.Workspaces.test_agent_provisioning import build
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
@@ -19,7 +19,7 @@ from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
 
 
 class _Host(ConsolidatedCSSApp):
-    CSS_PATH: ClassVar = [BUNDLED_STYLESHEET]
+    CSS_PATH: ClassVar = list(APP_STYLESHEETS)
 
 
 def _personas(tmp_path, ids):

@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Res  More ▾
+──────────────────────────────▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎──────────────────────────────
+                       *      ▊                                                                                                            ▎               *
+                           •  ▊  Review restored skills                                                                                    ▎
+                       •      ▊  Review these current local files. Setup preserves the imported trust files and creates fresh local        ▎·
+                *             ▊  trust. If finishing an interrupted setup, use the same passphrase you chose then. Script execution still  ▎
+              *               ▊  requires a separate explicit grant.                                                                       ▎
+                              ▊                                                                                                            ▎
+     ·                    ·   ▊  Local trust folder: /private/tmp/tldw-32813-native-002                                                    ▎          ·
+                          •  *▊                                                                                                            ▎                       •
+                              ▊  Retained script grants (inactive):                                                                        ▎
+                   *          ▊  None                                                                                                      ▎
+    •                         ▊                                                                                                            ▎
+          ·                   ▊  This setup uses a local file marker. Protection against restoring an older copy of the entire trust       ▎
+                              ▊  folder is reduced.                                                                                        ▎
+                              ▊                                                                                                            ▎
+                *             ▊  No current Skills bundles.                                                                                ▎
+                              ▊                                                                                                            ▎
+                              ▊                                                                                                            ▎
+                             *▊                                                                                                            ▎
+                     *        ▊                                                                                                            ▎
+    ·                 •       ▊                                                                                                            ▎
+             *                ▊                                                                                                            ▎                      •     *
+           ·                  ▊                                                                                                            ▎
+                              ▊                                                                                                            ▎
+                              ▊                                                                                                            ▎    *
+                              ▊                                                                                                            ▎
+                              ▊                                                                                                            ▎
+          •  **               ▊                                                                                                            ▎
+     ·           ·            ▊                                                                                                            ▎                     •
+                       ·      ▊                                                                                                            ▎         •
+                              ▊                                                                                                            ▎
+                              ▊                                                                                                            ▎                  •
+                              ▊                                                                                                            ▎          •       •
+                              ▊                                                                                                            ▎              ·         *
+                              ▊                                                                                                            ▎
+  *                           ▊                                                                                                            ▎
+                              ▊                                                                                                            ▎
+                              ▊                                                                                                            ▎                **
+                              ▊                                                                              Cancel       Confirm review   ▎
+                              ▊                                                                                                            ▎
+                              ▊                                                                                                            ▎
+                              ▊                                                                                                            ▎
+  *                           ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ *                                 *
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter continue setup | Y trace | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

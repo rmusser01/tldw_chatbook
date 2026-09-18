@@ -1,0 +1,2893 @@
+{
+  "executed_cases": 194,
+  "cases": [
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_initial_vllm_setup_is_guided_and_blocks_start",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/001",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_guided_readiness_keeps_four_recoverable_rows_and_python_browse",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/002",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_advanced_structured_profile_values_are_visible_editable_and_adjacent",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/003",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_existing_server_discovery_requires_explicit_model_selection",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/004",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_checking_exposes_generation_bound_cancel_action",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/005",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_current_server_is_separate_from_modified_next_restart_without_path_leak",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/006",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_only",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/007",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_existing_server_mode_disables_local_profile_mutations_with_explanation",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/008",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_existing_mode_forged_profile_events_preserve_repository",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/009",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_model_repair_focuses_visible_source_specific_control[hugging_face-vllm-hf-model-Hugging Face]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/010",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_model_repair_focuses_visible_source_specific_control[local_directory-vllm-local-model-directory-local model directory]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/011",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_async_profile_validation_routes_to_adjacent_recovery[profile names must be unique-vllm-profile-name-help-vllm-profile-name-unique profile name]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/012",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_async_profile_validation_routes_to_adjacent_recovery[profile store is capped at 32-vllm-profile-help-vllm-profile-select-Profile limit reached]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/013",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_async_profile_validation_routes_to_adjacent_recovery[profile is unavailable-vllm-profile-help-vllm-profile-select-no longer available]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/014",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_rename_and_duplicate_validation_stays_action_adjacent",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/015",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_validation_classifier_maps_every_editable_schema_field",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/016",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_selected_profile_immediately_projects_local_repair_without_probing[python]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/017",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_selected_profile_immediately_projects_local_repair_without_probing[local_model]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/018",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_selected_profile_projects_invalid_bind_repair_without_any_probe",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/019",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_invalid_nonselected_profile_enters_nonpersisting_repair_state",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/020",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_invalid_nonselected_profile_can_be_saved_or_deleted_from_repair_state[save]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/021",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_invalid_nonselected_profile_can_be_saved_or_deleted_from_repair_state[delete]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/022",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_multiple_invalid_profiles_can_be_repaired_one_at_a_time_without_probe",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/023",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_multiple_invalid_profiles_can_be_deleted_sequentially_after_reopen",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/024",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_forged_repair_save_draft_is_rejected_before_worker_or_write",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/025",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_preflight_exception_settles_current_generation_for_retry",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/026",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_invalid_existing_url_settles_without_probe_dispatch[malformed-ipv6]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/027",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_invalid_existing_url_settles_without_probe_dispatch[oversized]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/028",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_probe_request_construction_exception_settles_without_dispatch",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/029",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_name_only_profile_refresh_preserves_stronger_full_preflight",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/030",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_delete_cancel_or_escape_preserves_exact_document[cancel]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/031",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_delete_cancel_or_escape_preserves_exact_document[escape]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/032",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_delete_cancel_or_escape_preserves_exact_document[backdrop]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/033",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_confirmed_profile_delete_executes_selected_claim_once_and_recreates_default",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/034",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_delete_queued_terminal_actions_settle_once[terminal_actions0-True]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/035",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_delete_queued_terminal_actions_settle_once[terminal_actions1-True]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/036",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_delete_queued_terminal_actions_settle_once[terminal_actions2-False]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/037",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_delete_confirmation_rejects_stale_selection_claim",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/038",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_profile_repository_io_is_threaded_and_selected_profile_restores",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/039",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_restart_proves_old_process_dead_and_released_before_new_generation",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/040",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_edit_check_and_restart_uses_exact_live_claim",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/041",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_restart_termination_failure_keeps_old_snapshot_and_never_reserves",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/042",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_source_specific_controls_and_mode_drafts_are_preserved",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/043",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_vllm_inputs_use_shared_lexical_caps_and_restore_rejected_events",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/044",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-port-port-]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/045",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-port-port--]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/046",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-port-port-08000]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/047",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-tensor-parallel-size-tensor_parallel_size-]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/048",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-tensor-parallel-size-tensor_parallel_size--]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/049",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-tensor-parallel-size-tensor_parallel_size-02]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/050",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-maximum-model-length-maximum_model_length-]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/051",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-maximum-model-length-maximum_model_length-1.]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/052",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-maximum-model-length-maximum_model_length-08192]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/053",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-gpu-memory-utilization-gpu_memory_utilization-]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/054",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-gpu-memory-utilization-gpu_memory_utilization-.]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/055",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness[#vllm-gpu-memory-utilization-gpu_memory_utilization-1.]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/056",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_action_boundary_normalizes_exact_values_before_messages",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/057",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_invalid_numeric_action_stays_adjacent_and_posts_no_raw_draft",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/058",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_programmatic_state_projection_resets_numeric_lexemes_from_draft",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/059",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_numeric_action_revalidates_forged_hydration_without_echo",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/060",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_vllm_raw_arguments_reject_nul_or_oversize_without_echo[RAW_ARGUMENT_CANARY\\x00]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/061",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_vllm_raw_arguments_reject_nul_or_oversize_without_echo[RAW_ARGUMENT_CANARYxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/062",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_vllm_raw_arguments_preserve_blank_and_nonblank_text_exactly",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/063",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_vllm_semantic_classes_and_input_caps_are_mounted",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/064",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_success",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/065",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_lifecycle_projection_enables_stop_only_while_runtime_is_active",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/066",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_child_view_requires_explicit_profile_hydration_for_ready_projection",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/067",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_activity_renders_ready_and_expands_bounded_failure",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/068",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_fresh_screen_initial_hydration_preserves_exact_live_ready_target",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/069",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/070",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_delayed_profile_hydration_interaction_fence_preserves_exact_ready",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/071",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_fresh_screen_profile_load_failure_invalidates_ready_with_recovery",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/072",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_staged_owned_handoff_is_discarded_without_positive_liveness[cancelled]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/073",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_staged_owned_handoff_is_discarded_without_positive_liveness[dead]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/074",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_staged_owned_handoff_is_discarded_without_positive_liveness[poll_exception]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/075",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_exact_external_handoff_preserves_ready_departure[pending]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/076",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_exact_external_handoff_preserves_ready_departure[in_flight]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/077",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_superseded_external_handoff_cannot_preserve_ready_departure",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/078",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_external_handoff_revision_lookup_error_fails_closed",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/079",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_external_departure_receipts_are_validated_independently[mixed_stale_valid]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/080",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_external_departure_receipts_are_validated_independently[lookup_error_valid]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/081",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_external_departure_receipts_are_validated_independently[no_valid]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/082",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_staged_owned_handoff_survives_exact_live_unmount_for_consumption",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/083",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_fresh_screen_mismatched_profile_invalidates_ready_target_safely",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/084",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_draft_edit_fences_old_readiness_generation",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/085",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_external_selection_starts_fresh_exact_probe",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/086",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_external_changed_list_requires_fresh_bounded_rediscovery",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/087",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_cancel_check_only_cancels_current_generation",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/088",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_profile_validation_error_is_field_adjacent",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/089",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_python_environment_browse_updates_the_guided_field",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/090",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_outer_lab_chrome_tracks_verified_vllm_context_without_focus_theft",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/091",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_mounted_recomposition_preserves_exact_readiness_but_detach_invalidates",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/092",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_stop_before_process_publication_settles_cancel_and_retry_refuses_claim",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/093",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_live_owned_claim_keeps_stop_enabled_across_edit_and_screen_replacement",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/094",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_preflight_issue_settles_owner_view_and_recovery",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/095",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_probe_deadline_reports_overall_thirty_second_elapsed_bucket",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/096",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_vllm_failure_details_never_cross_logs_notifications_or_global_state",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/097",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_vllm_handoff_intents_are_secret_free_exact_and_strict",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/098",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_vllm_handoff_intents_reject_mutable_string_subclasses",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/099",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_handoff_buttons_enable_only_for_current_verified_target",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/100",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_explicit_vllm_state_transition_focuses_phase_action[ready_to_start-vllm-start]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/101",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_explicit_vllm_state_transition_focuses_phase_action[launching-vllm-stop]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/102",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_explicit_vllm_state_transition_focuses_phase_action[loading_model-vllm-stop]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/103",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_explicit_vllm_state_transition_focuses_phase_action[ready-vllm-use-console]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/104",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_explicit_vllm_state_transition_focuses_phase_action[needs_attention-vllm-recovery-primary]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/105",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_vllm_lab_workflow.py::test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/106",
+      "classes": [
+        "VllmSetupView"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_library_character_repair.py::test_real_textual_pilot_shows_explicit_repair_and_stale_refresh[size0]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/107",
+      "classes": [
+        "LibraryCharacterRepairDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_library_character_repair.py::test_real_textual_pilot_shows_explicit_repair_and_stale_refresh[size1]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/108",
+      "classes": [
+        "LibraryCharacterRepairDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Skills/test_skill_import_choice_modal.py::test_choice_modal_lists_bounded_candidates_and_imports_highlighted[size0]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/109",
+      "classes": [
+        "SkillImportChoiceModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Skills/test_skill_import_choice_modal.py::test_choice_modal_lists_bounded_candidates_and_imports_highlighted[size1]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/110",
+      "classes": [
+        "SkillImportChoiceModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Skills/test_skill_import_choice_modal.py::test_choice_modal_cancel_returns_none",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/111",
+      "classes": [
+        "SkillImportChoiceModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_roleplay_character_conversation_browse.py::test_real_textual_pilot_exposes_exact_draft_choices[size0]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/112",
+      "classes": [
+        "RoleplayDraftNavigationDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_roleplay_character_conversation_browse.py::test_real_textual_pilot_exposes_exact_draft_choices[size1]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/113",
+      "classes": [
+        "RoleplayDraftNavigationDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[False]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[False]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[False]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[False]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/001",
+      "classes": [
+        "BackupRestoreScreen"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[True]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[True]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[True]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[True]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/002",
+      "classes": [
+        "BackupRestoreScreen"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/UI/test_backup_restore_screen.py::test_password_mismatch_stays_in_view_and_inputs_clear_on_back",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_backup_restore_screen.py::test_password_mismatch_stays_in_view_and_inputs_clear_on_back",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_backup_restore_screen.py::test_password_mismatch_stays_in_view_and_inputs_clear_on_back",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_backup_restore_screen.py::test_password_mismatch_stays_in_view_and_inputs_clear_on_back",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/003",
+      "classes": [
+        "BackupRestoreScreen"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/UI/test_automation_definition_form.py::test_form_renders_expected_fields",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/117",
+      "classes": [
+        "AutomationDefinitionForm"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_automation_definition_form.py::test_scope_sources_checkboxes_hidden_until_sources_mode",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/118",
+      "classes": [
+        "AutomationDefinitionForm"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_automation_definition_form.py::test_save_invalid_shows_errors_and_stays_open",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/119",
+      "classes": [
+        "AutomationDefinitionForm"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_schedules_new_button.py::test_new_button_exists_and_opens_choice_chooser",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/120",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_schedules_new_button.py::test_new_button_chooser_reminder_choice_opens_reminder_form",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/121",
+      "classes": [
+        "NewTaskChoiceModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_schedules_new_button.py::test_new_button_chooser_recurring_choice_opens_automation_form",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/122",
+      "classes": [
+        "AutomationDefinitionForm",
+        "NewTaskChoiceModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_schedules_new_button.py::test_new_button_row_flattens_to_one_line_in_compact_mode",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/123",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/004",
+      "classes": [
+        "ConsoleSaveMarkdownModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-roleplay]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/125",
+      "classes": [
+        "RoleplayDraftRecoveryDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-notes]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/126",
+      "classes": [
+        "NotesRecoveryDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-skills]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/127",
+      "classes": [
+        "SkillRecoveryReviewModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/005",
+      "classes": [
+        "ConsoleSaveMarkdownModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-roleplay]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/129",
+      "classes": [
+        "RoleplayDraftRecoveryDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-notes]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/130",
+      "classes": [
+        "NotesRecoveryDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-skills]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/131",
+      "classes": [
+        "SkillRecoveryReviewModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/006",
+      "classes": [
+        "ConsoleSaveMarkdownModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-roleplay]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/133",
+      "classes": [
+        "RoleplayDraftRecoveryDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-notes]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/134",
+      "classes": [
+        "NotesRecoveryDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-skills]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/135",
+      "classes": [
+        "SkillRecoveryReviewModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/007",
+      "classes": [
+        "ConsoleSaveMarkdownModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-roleplay]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/137",
+      "classes": [
+        "RoleplayDraftRecoveryDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-notes]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/138",
+      "classes": [
+        "NotesRecoveryDialog"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-skills]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/139",
+      "classes": [
+        "SkillRecoveryReviewModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Chat/test_console_edit_message_modal.py::test_thinking_modal_prefills_text_and_names_the_block_scope",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/140",
+      "classes": [
+        "ConsoleEditThinkingModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Chat/test_console_edit_message_modal.py::test_thinking_modal_save_dismisses_result_with_text",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/141",
+      "classes": [
+        "ConsoleEditThinkingModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Chat/test_console_edit_message_modal.py::test_thinking_modal_blank_save_blocked_inline",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/142",
+      "classes": [
+        "ConsoleEditThinkingModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Chat/test_console_edit_message_modal.py::test_thinking_modal_cancel_dismisses_none",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/143",
+      "classes": [
+        "ConsoleEditThinkingModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/009",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_validation_inline",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_validation_inline",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_validation_inline",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_validation_inline",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/010",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/011",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_hides_error_banner_on_untouched_blank_form",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_hides_error_banner_on_untouched_blank_form",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_hides_error_banner_on_untouched_blank_form",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_hides_error_banner_on_untouched_blank_form",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/012",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_error_banner_after_first_edit",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_error_banner_after_first_edit",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_error_banner_after_first_edit",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_error_banner_after_first_edit",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/013",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_from_entry_preselects_same_family_starter",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_from_entry_preselects_same_family_starter",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_from_entry_preselects_same_family_starter",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_from_entry_preselects_same_family_starter",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/014",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_builtin_template_provider_unchanged",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_builtin_template_provider_unchanged",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_builtin_template_provider_unchanged",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_builtin_template_provider_unchanged",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/015",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_llama_url_placeholder_explains_both_defaults",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_llama_url_placeholder_explains_both_defaults",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_llama_url_placeholder_explains_both_defaults",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_llama_url_placeholder_explains_both_defaults",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/016",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_prefill_filters_placeholder_model_sentinels",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_prefill_filters_placeholder_model_sentinels",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_prefill_filters_placeholder_model_sentinels",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_prefill_filters_placeholder_model_sentinels",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/017",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_parsed_models_drop_placeholder_entries",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_parsed_models_drop_placeholder_entries",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_parsed_models_drop_placeholder_entries",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_parsed_models_drop_placeholder_entries",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/018",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_rederives_slug_when_concurrent_create_takes_it",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_rederives_slug_when_concurrent_create_takes_it",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_rederives_slug_when_concurrent_create_takes_it",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_rederives_slug_when_concurrent_create_takes_it",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/019",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhaust",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhaust",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhaust",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhaust",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/020",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/021",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_create_runs_registry_derivation_off_the_event_loop",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_create_runs_registry_derivation_off_the_event_loop",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_create_runs_registry_derivation_off_the_event_loop",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_create_runs_registry_derivation_off_the_event_loop",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/022",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/023",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_prefill_respects_display_name_limit",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_prefill_respects_display_name_limit",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_prefill_respects_display_name_limit",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_prefill_respects_display_name_limit",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/024",
+      "classes": [
+        "ConsoleEndpointTemplateModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/Widgets/test_console_provider_picker.py::test_picker_groups_providers_in_connection_order_with_disabled_headings",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/160",
+      "classes": [
+        "ConsoleProviderPicker"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Widgets/test_console_provider_picker.py::test_picker_filters_case_insensitively_by_display_name_and_config_key",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/161",
+      "classes": [
+        "ConsoleProviderPicker"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Widgets/test_console_provider_picker.py::test_down_then_enter_selects_first_match_without_accepting_typed_ids",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/162",
+      "classes": [
+        "ConsoleProviderPicker"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Widgets/test_console_provider_picker.py::test_up_then_enter_selects_last_match_and_retains_committed_display",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/163",
+      "classes": [
+        "ConsoleProviderPicker"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Widgets/test_console_provider_picker.py::test_escape_from_results_restores_input_without_bubbling",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/164",
+      "classes": [
+        "ConsoleProviderPicker"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Widgets/test_console_provider_picker.py::test_escape_restores_current_value_and_no_match_copy_is_explicit",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/165",
+      "classes": [
+        "ConsoleProviderPicker"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Widgets/test_console_provider_picker.py::test_picker_accessible_metadata_and_selected_state_are_explicit",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/166",
+      "classes": [
+        "ConsoleProviderPicker"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Widgets/test_console_provider_picker.py::test_leaving_picker_restores_committed_provider_copy",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/167",
+      "classes": [
+        "ConsoleProviderPicker"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Widgets/test_console_provider_picker.py::test_picker_caps_visible_providers_at_thirty",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/168",
+      "classes": [
+        "ConsoleProviderPicker"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_console_terminal_session_modal.py::test_default_name_uses_first_normalized_unique_terminal_number",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/169",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_console_terminal_session_modal.py::test_form_result_is_a_strict_pydantic_boundary",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/170",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_console_terminal_session_modal.py::test_new_modal_defaults_to_name_default_shell_and_selected_root",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/171",
+      "classes": [
+        "ConsoleTerminalSessionModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_console_terminal_session_modal.py::test_new_modal_keeps_values_and_explains_name_and_directory_errors",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/172",
+      "classes": [
+        "ConsoleTerminalSessionModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_console_terminal_session_modal.py::test_rename_modal_exposes_only_name_and_normalizes_submission",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/173",
+      "classes": [
+        "ConsoleTerminalSessionModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_console_terminal_session_modal.py::test_modal_shell_choices_are_exactly_the_discovered_allowlist",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/174",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size0]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/175",
+      "classes": [
+        "WorkspaceArchiveReceiptModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-consumer-rerun-003/008",
+      "classes": [
+        "WorkspaceArchiveReceiptModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+    },
+    {
+      "node": "Tests/UI/test_buddy_conversation_modal.py::test_buddy_send_targets_bound_session_and_survives_modal_close",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/177",
+      "classes": [
+        "BuddyConversationModal",
+        "BuddySpeechControls"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_buddy_conversation_modal.py::test_buddy_drafts_and_approval_use_exact_binding",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/178",
+      "classes": [
+        "BuddyConversationModal",
+        "BuddySpeechControls"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_buddy_speech.py::test_speech_controls_only_change_presentation",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/179",
+      "classes": [
+        "BuddySpeechControls"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_buddy_workspace_modal.py::test_workspace_open_is_read_only_and_actions_fit[size0]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/180",
+      "classes": [
+        "BuddySpeechControls",
+        "BuddyWorkspaceModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_buddy_workspace_modal.py::test_workspace_open_is_read_only_and_actions_fit[size1]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/181",
+      "classes": [
+        "BuddySpeechControls",
+        "BuddyWorkspaceModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_buddy_workspace_modal.py::test_refresh_preserves_selected_result_and_focus_without_acknowledging",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/182",
+      "classes": [
+        "BuddyWorkspaceModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_buddy_workspace_modal.py::test_failed_refresh_blocks_enter_highlight_and_acknowledgement_until_recovery",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/183",
+      "classes": [
+        "BuddyWorkspaceModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_settings_tool_profiles.py::test_panel_lists_truthful_profiles_without_policy_editor",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/184",
+      "classes": [
+        "ToolProfilesPanel"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_settings_tool_profiles.py::test_tool_profile_actions_remain_focusable_at_narrow_size",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/185",
+      "classes": [
+        "ToolProfilesPanel"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_settings_tool_profiles.py::test_import_review_returns_only_explicit_unbound_confirmation",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/186",
+      "classes": [
+        "ToolPackImportReviewModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_settings_tool_profiles.py::test_import_options_capture_destination_and_explicit_mappings",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/187",
+      "classes": [
+        "ToolPackImportOptionsModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_settings_tool_profiles.py::test_export_review_discloses_portable_scope_and_exact_source",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/188",
+      "classes": [
+        "ToolPackExportReviewModal"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_settings_change_review_journeys.py::test_change_review_keyboard_conflict_preparation_and_retry[size0-textual-dark]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/189",
+      "classes": [
+        "WorkspaceChangeReviewPanel"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_settings_change_review_journeys.py::test_change_review_keyboard_conflict_preparation_and_retry[size0-textual-light]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/190",
+      "classes": [
+        "WorkspaceChangeReviewPanel"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_settings_change_review_journeys.py::test_change_review_keyboard_conflict_preparation_and_retry[size1-textual-dark]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/191",
+      "classes": [
+        "WorkspaceChangeReviewPanel"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/UI/test_settings_change_review_journeys.py::test_change_review_keyboard_conflict_preparation_and_retry[size1-textual-light]",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/192",
+      "classes": [
+        "WorkspaceChangeReviewPanel"
+      ],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Backup_Recovery/test_launcher.py::test_recover_abort_preserves_actual_pre_safety_originals",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/193",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    },
+    {
+      "node": "Tests/Backup_Recovery/test_launcher.py::test_recover_command_replays_actual_stopped_native_rollback",
+      "returncode": 0,
+      "directory": "/private/tmp/32813-consumer-matrix-002/194",
+      "classes": [],
+      "mismatches": 0,
+      "outcome_evidence": "Original per-case pytest summary: 1 passed, no skip/xfail."
+    }
+  ],
+  "mounted_classes": {
+    "AutomationDefinitionForm": {
+      "observed_node_states": 71,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "BackupRestoreScreen": {
+      "observed_node_states": 131,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "BuddyConversationModal": {
+      "observed_node_states": 75,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "BuddySpeechControls": {
+      "observed_node_states": 14,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "BuddyWorkspaceModal": {
+      "observed_node_states": 22,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "ConsoleEditThinkingModal": {
+      "observed_node_states": 13,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "ConsoleEndpointTemplateModal": {
+      "observed_node_states": 39,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "ConsoleProviderPicker": {
+      "observed_node_states": 8,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "ConsoleSaveMarkdownModal": {
+      "observed_node_states": 38,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "hover",
+        "last-child",
+        "last-of-type",
+        "light",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "ConsoleTerminalSessionModal": {
+      "observed_node_states": 21,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "LibraryCharacterRepairDialog": {
+      "observed_node_states": 20,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "NewTaskChoiceModal": {
+      "observed_node_states": 10,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "NotesRecoveryDialog": {
+      "observed_node_states": 40,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "hover",
+        "last-child",
+        "last-of-type",
+        "light",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "RoleplayDraftNavigationDialog": {
+      "observed_node_states": 11,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "RoleplayDraftRecoveryDialog": {
+      "observed_node_states": 26,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "hover",
+        "last-child",
+        "last-of-type",
+        "light",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "SkillImportChoiceModal": {
+      "observed_node_states": 8,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "SkillRecoveryReviewModal": {
+      "observed_node_states": 40,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "hover",
+        "last-child",
+        "last-of-type",
+        "light",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "ToolPackExportReviewModal": {
+      "observed_node_states": 11,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "ToolPackImportOptionsModal": {
+      "observed_node_states": 13,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "ToolPackImportReviewModal": {
+      "observed_node_states": 15,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "ToolProfilesPanel": {
+      "observed_node_states": 34,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "VllmSetupView": {
+      "observed_node_states": 217,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "WorkspaceArchiveReceiptModal": {
+      "observed_node_states": 8,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "nocolor",
+        "odd"
+      ]
+    },
+    "WorkspaceChangeReviewPanel": {
+      "observed_node_states": 42,
+      "pseudo_states": [
+        "blur",
+        "can-focus",
+        "dark",
+        "disabled",
+        "empty",
+        "enabled",
+        "even",
+        "first-child",
+        "first-of-type",
+        "focus",
+        "focus-within",
+        "last-child",
+        "last-of-type",
+        "light",
+        "nocolor",
+        "odd"
+      ]
+    }
+  },
+  "note": "First matrix 180 passed / 14 failed. Corrected harness checks and rerun24 all passed. Original failures retained, including one unchanged Console teardown race."
+}
