@@ -402,6 +402,14 @@ _MISSING = object()
 
 _MAX_PROVIDER_TRACE_SETTLEMENT_WORK = 64
 
+# TASK-32801.4: how long ``begin_capture_quiescence`` waits for exchange
+# writers already inside the persistence adapter to finish. One adapter
+# busy timeout (``CharactersRAGDB`` opens its connections with
+# ``timeout=15``) plus a small margin: a writer still running past that is
+# not draining, so the fence reports "in progress" instead of letting a
+# purge delete rows the writer is about to re-add.
+_CAPTURE_QUIESCENCE_DRAIN_TIMEOUT = 16.0
+
 
 class _ProviderTraceSettlementQueueFull(RuntimeError):
     """The bounded settlement scheduler has no admission slot yet."""
@@ -2001,6 +2009,19 @@ class ConsoleChatStore:
         self._exchange_blob_cache: dict[str, dict[tuple[str, int, str], bytes]] = {}
         self._capture_quiescence_lock = threading.RLock()
         self._capture_quiescent_sessions: set[str] = set()
+        # TASK-32801.4: the fence used to be inherited from mutual
+        # exclusion -- a writer held the lock above across the adapter's own
+        # ``BEGIN IMMEDIATE``, so ``begin_capture_quiescence`` blocking on
+        # the lock meant no writer was mid-write. That made this lock the
+        # lock-then-sqlite half of an ABBA against
+        # ``_dispatch_branch_mutation``, which reaches the exchange flush
+        # while already holding the sqlite write lock. Writers now do their
+        # DB work outside the lock and announce themselves here instead; the
+        # fence arms first (rejecting new writers) and then drains these.
+        self._capture_exchange_writers: dict[str | None, int] = {}
+        self._capture_quiescence_idle = threading.Condition(
+            self._capture_quiescence_lock
+        )
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
@@ -2048,7 +2069,13 @@ class ConsoleChatStore:
         # (first token, at the chunk seam); rows are written through the
         # persistence adapter in ONE batched upsert per turn. Every write is
         # best-effort: a sidecar failure must never fail the turn.
-        self._trajectory_lock = threading.Lock()
+        #
+        # TASK-32801.4 removed a ``_trajectory_lock`` that used to wrap the
+        # adapter call here. It serialized nothing the DB did not already
+        # serialize -- ``upsert_trajectory_rows`` assigns ``seq`` inside its
+        # own ``BEGIN IMMEDIATE`` -- and it supplied the lock-then-sqlite
+        # half of an ABBA against ``_dispatch_branch_mutation``, which takes
+        # the sqlite write lock first and only then reaches this code.
         self._trajectory_timing: dict[str, dict[str, Any]] = {}
         self._trajectory_written_ids: set[str] = set()
         self._session_turn_ids: dict[str, str] = {}
@@ -9707,12 +9734,35 @@ class ConsoleChatStore:
         return self._session_or_raise(session_id).capture_revision
 
     def begin_capture_quiescence(self, session_id: str) -> bool:
-        """Block exchange attachment/flush for one live session."""
+        """Block exchange attachment/flush for one live session.
+
+        Arming the fence rejects every writer that has not started yet.
+        Writers already inside the persistence adapter are then drained
+        explicitly (TASK-32801.4): returning True has always meant "no
+        exchange write is in flight for this session", and the purge that
+        follows deletes rows on that promise. A writer that has not
+        finished within ``_CAPTURE_QUIESCENCE_DRAIN_TIMEOUT`` leaves the
+        fence un-armed and this returns False, which the caller reports as
+        ``purge_in_progress`` -- the safe direction, since the alternative
+        is deleting rows an admitted writer is about to re-add.
+        """
         with self._capture_quiescence_lock:
             self._session_or_raise(session_id)
             if session_id in self._capture_quiescent_sessions:
                 return False
             self._capture_quiescent_sessions.add(session_id)
+            deadline = time.monotonic() + _CAPTURE_QUIESCENCE_DRAIN_TIMEOUT
+            while self._capture_exchange_writers.get(session_id):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._capture_quiescence_idle.wait(
+                    remaining
+                ):
+                    if self._capture_exchange_writers.get(session_id):
+                        self._capture_quiescent_sessions.discard(session_id)
+                        logger.bind(session_id=session_id).warning(
+                            "capture_quiescence_drain_timeout"
+                        )
+                        return False
             return True
 
     def capture_quiescent(self, session_id: str) -> bool:
@@ -14357,25 +14407,30 @@ class ConsoleChatStore:
     def write_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> bool:
         """Route sidecar rows through the persistence adapter; never raises.
 
-        Serialized by an in-process lock so concurrent Console writers
-        (hands-free sessions, compaction auxiliary turns) cannot interleave
-        ``seq`` assignments. Fakes without the adapter method are skipped
-        silently (pre-existing test doubles keep working).
+        Concurrent Console writers (hands-free sessions, compaction
+        auxiliary turns) are serialized by the adapter's own transaction,
+        not here: ``upsert_trajectory_rows`` assigns ``seq`` inside a
+        ``BEGIN IMMEDIATE``, and ``chat_persistence_service`` retries the
+        writer that loses the race so it re-derives its seqs. Holding an
+        in-process lock across that call instead inverted against
+        ``_dispatch_branch_mutation``, which already holds the sqlite write
+        lock when it reaches this method (TASK-32801.4). Fakes without the
+        adapter method are skipped silently (pre-existing test doubles keep
+        working).
         """
         if self.persistence is None or not rows:
             return False
         writer = getattr(self.persistence, "write_trajectory_rows", None)
         if not callable(writer):
             return False
-        with self._trajectory_lock:
-            try:
-                result = writer(list(rows))
-            except Exception:
-                logger.warning("trajectory_rows_write_failed")
-                result = False
-            if result is False:
-                self._write_capture_failed_diagnostic(writer, rows)
-                return False
+        try:
+            result = writer(list(rows))
+        except Exception:
+            logger.warning("trajectory_rows_write_failed")
+            result = False
+        if result is False:
+            self._write_capture_failed_diagnostic(writer, rows)
+            return False
         if result is not False:
             # task-5: a successful sidecar write is trajectory-visible state.
             # Bump the revision bus (conversation key + every live session
@@ -15107,14 +15162,23 @@ class ConsoleChatStore:
         harmless.
         """
         with self._capture_quiescence_lock:
-            self._attach_message_exchanges_locked(message_id, captures)
+            pending = self._attach_message_exchanges_locked(message_id, captures)
+        # TASK-32801.4: the flush goes through the persistence adapter's own
+        # transaction, so it must not run under the lock above.
+        if pending is not None:
+            self._persist_exchanges_only(pending)
 
     def _attach_message_exchanges_locked(
         self, message_id: str, captures: Sequence["ExchangeCapture"]
-    ) -> None:
+    ) -> ConsoleChatMessage | None:
+        """Merge the captures in memory; return the message needing a flush.
+
+        The caller flushes after releasing the lock (TASK-32801.4), so this
+        returns the message instead of persisting it.
+        """
         message = self._message_or_raise(message_id)
         if self._message_session_index[message_id] in self._capture_quiescent_sessions:
-            return
+            return None
         abandoned = message.id in self._variant_restored_message_ids
         merged = {(c.run_tag, c.seq): c for c in message.exchanges}
         for capture in captures:
@@ -15134,7 +15198,8 @@ class ConsoleChatStore:
                 self._abandoned_exchange_run_tags[message.id] = abandoned_tags
             abandoned_tags.update(c.run_tag for c in captures)
         if message.status not in {"pending", "streaming"}:
-            self._persist_exchanges_only(message)
+            return message
+        return None
 
     def abandoned_exchange_run_tags(self, message_id: str) -> frozenset[str]:
         """Public read of ``_abandoned_exchange_run_tags`` for one message.
@@ -20184,10 +20249,31 @@ class ConsoleChatStore:
         or nothing to write bails out silently rather than falling back to
         ``_persist_existing_message``.
         """
+        session_id = self._message_session_index.get(message.id)
         with self._capture_quiescence_lock:
-            self._persist_exchanges_only_locked(message)
+            if session_id in self._capture_quiescent_sessions:
+                return
+            self._capture_exchange_writers[session_id] = (
+                self._capture_exchange_writers.get(session_id, 0) + 1
+            )
+        try:
+            self._persist_exchanges_only_admitted(message)
+        finally:
+            with self._capture_quiescence_lock:
+                remaining = self._capture_exchange_writers.get(session_id, 1) - 1
+                if remaining > 0:
+                    self._capture_exchange_writers[session_id] = remaining
+                else:
+                    self._capture_exchange_writers.pop(session_id, None)
+                self._capture_quiescence_idle.notify_all()
 
-    def _persist_exchanges_only_locked(self, message: ConsoleChatMessage) -> None:
+    def _persist_exchanges_only_admitted(self, message: ConsoleChatMessage) -> None:
+        """The flush body, past the quiescence fence and outside its lock.
+
+        Keeps its own quiescence check: the admitting caller is the only
+        one that counts this writer in flight, so any other entry point
+        must still fail closed here.
+        """
         session_id = self._message_session_index.get(message.id)
         if session_id in self._capture_quiescent_sessions:
             return
