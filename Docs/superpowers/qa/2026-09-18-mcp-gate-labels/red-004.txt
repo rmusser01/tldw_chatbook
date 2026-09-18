@@ -1,0 +1,90 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-False] _
+
+request = <FixtureRequest for <Coroutine test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-False]>>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x116194500>
+enabled = False, theme = 'textual-light', size = (80, 24)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    @pytest.mark.parametrize("size", [(80, 24), (170, 48)])
+    @private_profile_test
+    async def test_each_tool_switch_paints_complete_label_and_state(
+        request, monkeypatch, enabled, theme, size
+    ):
+        """A one-row/clipped gate must fail even if its label property is complete."""
+        original_get = config.get_cli_setting
+    
+        def get_setting(section, key=None, default=None):
+            if (section == "tools" and key and key.endswith("_enabled")) or (
+                section == "console" and key == "local_tools_enabled"
+            ):
+                return enabled
+            return original_get(section, key, default)
+    
+        monkeypatch.setattr(config, "get_cli_setting", get_setting)
+        monkeypatch.setattr(mcp_workbench, "get_cli_setting", get_setting)
+        app = WorkbenchAppWithBundledCSS()
+        app.theme = theme
+        async with app.run_test(size=size) as pilot:
+            workbench, _ = await _open(pilot)
+            await workbench._select_server_key(
+                next(s.server_key for s in workbench._snapshots if s.source == "builtin")
+            )
+            workbench.set_mode("servers")
+            await _settle(pilot)
+            canvas = workbench.query_one(MCPServersMode)
+            buttons = list(canvas.query("#mcp-detail-tool-gates Button"))
+            assert len(buttons) >= 9
+            reachable = [button for button in buttons if not button.disabled]
+            reachable[0].focus()
+            await _settle(pilot)
+            for index, button in enumerate(reachable):
+                assert app.focused is button
+                region, clip = app.screen._compositor.visible_widgets[button]
+                assert region.intersection(clip) == region
+                painted = "".join(
+                    strip.crop(region.x, region.right).text
+                    for strip in app.screen._compositor.render_strips()[
+                        region.y : region.bottom
+                    ]
+                )
+                assert "".join(button.label.plain.split()) in "".join(painted.split())
+                if index + 1 < len(reachable):
+                    await pilot.press("tab")
+                    await _settle(pilot)
+    
+            dependent = canvas.query_one("#mcp-gate-web_deep_search_enabled", Button)
+            assert dependent.disabled is (not enabled)
+            if dependent.disabled:
+                dependent.scroll_visible(animate=False, immediate=True)
+                await _settle(pilot)
+                region, clip = app.screen._compositor.visible_widgets[dependent]
+>               assert region.intersection(clip) == region
+E               AssertionError: assert Region(x=20, ...=35, height=1) == Region(x=20, ...=44, height=1)
+E                 
+E                 Omitting 3 identical items, use -vv to show
+E                 Differing attributes:
+E                 ['width']
+E                 
+E                 Drill down into differing attribute width:
+E                   width: 35 != 44
+E                 Use -v to get more diff
+
+Tests/UI/test_mcp_gate_label_layout.py:71: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 14:29:22.639 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 14:29:22.645 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 14:29:22.646 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 14:29:22.646 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 14:29:23.069 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+2026-09-18 14:29:23.093 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+2026-09-18 14:29:23.274 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+============================= slowest 25 durations =============================
+2.79s call     Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-False]
+
+(2 durations < 1s hidden.)
+1 failed in 4.56s

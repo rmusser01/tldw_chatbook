@@ -273,3 +273,15 @@ capture are retained with their exact evidence limits. Final native exit, lock,
 ten private databases, unchanged defaults and source hashes pass independently.
 The broader destination review remains open; PR2707 stays draft/unmerged and
 requires its own visual review and merge approval.
+
+TASK-32822 extends the existing MCP tool-switch wrapping rule to the complete
+gate group. [Thirty-seven distinct targeted cases and eight inspected native
+captures](../qa/2026-09-18-mcp-gate-labels/README.md) qualify complete names/states,
+keyboard traversal, disabled dependencies and private Deep research save/reversal
+at compact/wide sizes in both themes. CSS bytes are 584,112/608,090 and selector
+candidates remain 274/274; all seven preflight guards pass. Native exit, released
+lock, ten healthy databases, unchanged defaults and twelve source hashes pass.
+The initial compact failures and harness-only native selection failure remain
+in the receipt. This closes the label clipping retained by TASK-32793; broader
+MCP server lifecycles, execution and remaining destination review stay open.
+PR2707 remains draft/unmerged, subject to its own visual approval.

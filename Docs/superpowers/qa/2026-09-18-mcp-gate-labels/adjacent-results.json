@@ -1,0 +1,89 @@
+[
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-adjacent-001/001",
+    "classes": [],
+    "mismatches": 0,
+    "log": "adjacent-001.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_focus_is_preserved_across_a_gate_toggle_save_and_resync",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_focus_is_preserved_across_a_gate_toggle_save_and_resync",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_focus_is_preserved_across_a_gate_toggle_save_and_resync",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_focus_is_preserved_across_a_gate_toggle_save_and_resync",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-adjacent-001/002",
+    "classes": [],
+    "mismatches": 0,
+    "log": "adjacent-002.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_double_activation_of_a_gate_row_never_writes_an_mcp_key",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_double_activation_of_a_gate_row_never_writes_an_mcp_key",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_double_activation_of_a_gate_row_never_writes_an_mcp_key",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_double_activation_of_a_gate_row_never_writes_an_mcp_key",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-adjacent-001/003",
+    "classes": [],
+    "mismatches": 0,
+    "log": "adjacent-003.txt"
+  }
+]

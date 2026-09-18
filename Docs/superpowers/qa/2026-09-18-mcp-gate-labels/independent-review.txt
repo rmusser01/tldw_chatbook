@@ -1,0 +1,7 @@
+Read-only review by /root/mcp_gate_label_review, 2026-09-18.
+No actionable findings in the selector, regression coverage, native runner or final receipts.
+All 12 source hashes match; four native cells each cover 11 labels and real save/reversal.
+All 37 distinct cases passed setup/call/teardown; seven preflight guards pass.
+Lifecycle records clean exit, released lock, unchanged defaults and healthy private databases.
+Initial runner selector failure is preserved. Reviewer launched no app/tests and changed no files.
+All eight final rendered captures were separately inspected by the parent.

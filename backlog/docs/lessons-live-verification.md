@@ -762,6 +762,13 @@ without a dependency, the warning must state the actual current consequences —
 written for an old architecture ("commands execute when you stop") becomes actively
 misleading after a rework and nobody re-reads it unless a review targets it.
 
+**Later incident (TASK-32822, 2026-09-18).** A shutdown database probe run with
+bare `python3`/SQLite 3.51.0 could not open six private databases read-only. The
+identical probe using the app's `.venv` Python 3.12/SQLite 3.49.1 passed all ten
+without changing the database files. Run lifecycle probes with the same explicit
+interpreter as the app and record the runtime; this observation alone does not
+establish a SQLite compatibility defect or database corruption.
+
 ---
 
 ## Scratch-profile live launches: copy `chromadb/` too, expect a config rewrite, and the real provider lever is `[API] default_api` (PR-3 Task 8, 2026-08-03)
