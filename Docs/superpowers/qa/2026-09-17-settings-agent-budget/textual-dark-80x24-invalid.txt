@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Unsaved changes | Save (s) or   │
+│  Core                        │  │  │  Revert (r) — switching categories      │
+│     Overview (view)          │  │  │  keeps this draft.                      │
+│     Providers & Models       │  │  │ │ │Intensity                       │ │  │
+│     Web Search               │  │  │ │ │┌──────────────────────────────┐│ │  │
+│     Speech & TTS             │  │  │ │ ││ Low                        ▼ ││ │  │
+│  Interface                   │  │  │ │ │└──────────────────────────────┘│ │  │
+│     Appearance               │  │  │ │ │                                │ │  │
+│     Theme                  ▁ │  │  │ │ │Frame rate                      │ │  │
+│     Splash Screen            │  │  │ │ ││ 6                             │ │  │
+│   > Console Behavior *       │  │  │ │ │                                │ │  │
+│  Data & Privacy              │  │  │ │ │ Steps (backstop) must be at    │ │  │
+│     Storage                  │  │  │ │ │ most 199,999 steps.            │ │  │
+│     Workspaces               │  │  │ │ └────────────────────────────────┘ │▆ │
+│     Tool Profiles            │  │  │ │                                    │▆ │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q
