@@ -1,0 +1,28 @@
+..................................................................       [100%]
+============================= slowest 25 durations =============================
+24.37s call     Tests/UI/test_mcp_permissions_handoff.py::test_edit_routes_to_visible_current_profile_and_keyboard_rows[size0-textual-light]
+23.97s call     Tests/UI/test_mcp_permissions_handoff.py::test_edit_routes_to_visible_current_profile_and_keyboard_rows[size0-textual-dark]
+20.00s call     Tests/UI/test_mcp_permissions_handoff.py::test_edit_routes_to_visible_current_profile_and_keyboard_rows[size1-textual-light]
+18.96s call     Tests/UI/test_mcp_permissions_handoff.py::test_edit_routes_to_visible_current_profile_and_keyboard_rows[size1-textual-dark]
+2.35s call     Tests/UI/test_mcp_permissions_mode.py::test_legend_and_breadcrumb_are_fully_readable_at_100_columns
+2.26s call     Tests/UI/test_mcp_permissions_mode.py::test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css
+2.21s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_input_has_nonzero_geometry_with_bundled_css
+2.16s call     Tests/UI/test_mcp_permissions_mode.py::test_space_after_filter_cycles_the_row_actually_under_the_cursor
+2.15s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_text_input_has_nonzero_geometry_with_bundled_css
+2.13s call     Tests/UI/test_mcp_permissions_mode.py::test_echo_prefixed_preview_survives_a_refilter
+2.13s call     Tests/UI/test_mcp_permissions_mode.py::test_clearing_the_filter_after_narrowing_restores_every_row
+2.12s call     Tests/UI/test_mcp_permissions_mode.py::test_cursor_falls_back_to_row_zero_when_its_row_is_filtered_out
+2.10s call     Tests/UI/test_mcp_permissions_mode.py::test_cursor_row_key_survives_a_refilter_that_still_shows_it
+2.06s call     Tests/UI/test_mcp_permissions_mode.py::test_tags_column_omitted_when_no_row_has_tags
+2.06s call     Tests/UI/test_mcp_permissions_mode.py::test_update_matrix_renders_discovery_hint_line
+2.04s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_matching_across_two_servers_keeps_both_pinned_server_rows
+2.04s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target
+2.02s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_persists_across_a_full_matrix_resync
+2.02s call     Tests/UI/test_mcp_permissions_mode.py::test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend
+1.99s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_matches_server_label_reveals_every_tool_under_that_server
+1.99s call     Tests/UI/test_mcp_permissions_mode.py::test_update_server_profiles_empty_list_still_shows_pointer_with_no_rows
+1.97s call     Tests/UI/test_mcp_permissions_mode.py::test_empty_filter_shows_every_row
+1.96s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_is_case_insensitive
+1.95s call     Tests/UI/test_mcp_permissions_mode.py::test_update_server_profiles_defensive_reads_handle_missing_and_malformed_entries
+1.93s call     Tests/UI/test_mcp_permissions_mode.py::test_tags_column_shown_when_any_row_has_tags
+66 passed in 208.27s (0:03:28)

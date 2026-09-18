@@ -1,0 +1,183 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_child_height_change_reveals_selected_row_without_rebuilding _______
+
+self = <Coroutine test_child_height_change_reveals_selected_row_without_rebuilding>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_child_height_change_reveals_selected_row_without_rebuilding>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x11233ef90>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1951/test_child_height_change_revea0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _______ test_child_height_change_reveals_selected_row_without_rebuilding _______
+E
+E           request = <FixtureRequest for <Coroutine test_child_height_change_reveals_selected_row_without_rebuilding>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111ac3e30>
+E
+E               @private_profile_test
+E               async def test_child_height_change_reveals_selected_row_without_rebuilding(
+E                   request, monkeypatch
+E               ):
+E                   app = PermissionsModeApp()
+E                   rows = [
+E                       _tool_row(
+E                           server_key="local:docs", server_label="Docs", tool_name=f"read_resource_{i:02}"
+E                       )
+E                       for i in range(60)
+E                   ]
+E                   async with app.run_test(size=(90, 60)) as pilot:
+E                       canvas = app.query_one(MCPPermissionsMode)
+E                       await canvas.update_matrix(rows, kill_switch=False, preview="")
+E                       table = canvas.query_one(DataTable)
+E                       table.styles.height = 20
+E                       table.focus()
+E                       table.move_cursor(row=59)
+E                       await _settle(pilot)
+E                       _readable(table, rows[-1])
+E                       geometry = (canvas.size, canvas.virtual_size)
+E                       render = Mock(wraps=canvas._render_rows)
+E                       monkeypatch.setattr(canvas, "_render_rows", render)
+E                       app.events.clear()
+E                       table.styles.height = 10
+E                       await _settle(pilot)
+E                       assert (canvas.size, canvas.virtual_size) == geometry
+E                       assert app.focused is table
+E           >           _readable(table, rows[-1])
+E
+E           Tests/UI/test_mcp_permission_reflow.py:232:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           Tests/UI/test_mcp_permission_reflow.py:40: in _readable
+E               _cell_paint(table, table.cursor_row, 0)
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           table = MCPPermissionsTable(id='mcp-perm-table'), row_index = 59
+E           column_index = 0
+E
+E               def _cell_paint(table, row_index, column_index):
+E                   cell = table._get_cell_region(Coordinate(row_index, column_index))
+E                   region = cell.translate(
+E                       Offset(
+E                           table.content_region.x - int(table.scroll_x),
+E                           table.content_region.y - int(table.scroll_y),
+E                       )
+E                   )
+E                   clip = table.screen._compositor.visible_widgets[table][1]
+E                   assert region.intersection(clip) == region
+E           >       assert region.intersection(table.scrollable_content_region) == region
+E           E       AssertionError: assert Region(x=0, y...=20, height=0) == Region(x=0, y...=20, height=1)
+E           E
+E           E         Omitting 2 identical items, use -vv to show
+E           E         Differing attributes:
+E           E         ['y', 'height']
+E           E
+E           E         Drill down into differing attribute y:
+E           E           y: 22 != 31...
+E           E
+E           E         ...Full output truncated (4 lines hidden), use '-vv' to show
+E
+E           Tests/UI/test_mcp_compact_readability.py:70: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 07:46:32.020 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 07:46:32.028 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 07:46:32.028 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 07:46:32.029 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_permission_reflow.py::test_child_height_change_reveals_selected_row_without_rebuilding
+E           1 failed in 2.30s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 07:46:29.978 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 07:46:29.985 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 07:46:29.985 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 07:46:29.985 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+3.14s call     Tests/UI/test_mcp_permission_reflow.py::test_child_height_change_reveals_selected_row_without_rebuilding
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_permission_reflow.py::test_child_height_change_reveals_selected_row_without_rebuilding
+1 failed in 5.14s
