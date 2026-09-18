@@ -1112,6 +1112,15 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
         "save_setting_to_cli_config",
         fake_save_setting_to_cli_config,
     )
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+
+    def fake_mutate(payload, **kwargs):
+        for section, settings in payload.items():
+            for key, value in settings.items():
+                fake_save_setting_to_cli_config(section, key, value)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate)
 
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -1201,6 +1210,15 @@ def _fake_tool_gate_config_seam(monkeypatch):
         "save_setting_to_cli_config",
         fake_save_setting_to_cli_config,
     )
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+
+    def fake_mutate(payload, **kwargs):
+        for section, settings in payload.items():
+            for key, value in settings.items():
+                fake_save_setting_to_cli_config(section, key, value)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate)
     return flags, save_calls
 
 
@@ -11003,7 +11021,8 @@ async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatc
 
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get)
     monkeypatch.setattr(
-        mcp_workbench_module, "save_setting_to_cli_config", lambda *args: False
+        mcp_workbench_module, "apply_settings_mutation_to_cli_config",
+        lambda *args, **kwargs: ConfigMutationResult(False, False, "before_replace")
     )
 
     app = WorkbenchApp()

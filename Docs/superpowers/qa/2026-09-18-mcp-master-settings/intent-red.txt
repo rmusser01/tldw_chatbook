@@ -1,0 +1,360 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_projection_between_two_master_presses_cannot_lose_reversal ________
+
+self = <Coroutine test_projection_between_two_master_presses_cannot_lose_reversal>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_projection_between_two_master_presses_cannot_lose_reversal>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x111878d10>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1964/test_projection_between_two_ma0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _______ test_projection_between_two_master_presses_cannot_lose_reversal ________
+E
+E           pilot = <Pilot app=WorkbenchAppWithBundledCSS(title='WorkbenchAppWithBundledCSS', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})>
+E           predicate = <function test_projection_between_two_master_presses_cannot_lose_reversal.<locals>.<lambda> at 0x11684f7e0>
+E
+E               async def _wait(pilot, predicate):
+E                   async with asyncio.timeout(5):
+E                       while not predicate():
+E           >               await pilot.pause(0.025)
+E
+E           Tests/UI/test_tool_profile_review_lifetime.py:30:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           .venv/lib/python3.12/site-packages/textual/pilot.py:546: in pause
+E               await asyncio.sleep(delay)
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           delay = 0.025, result = None
+E
+E               async def sleep(delay, result=None):
+E                   """Coroutine that completes after a given time (in seconds)."""
+E                   if delay <= 0:
+E                       await __sleep0()
+E                       return result
+E
+E                   loop = events.get_running_loop()
+E                   future = loop.create_future()
+E                   h = loop.call_later(delay,
+E                                       futures._set_result_unless_cancelled,
+E                                       future, result)
+E                   try:
+E           >           return await future
+E                              ^^^^^^^^^^^^
+E           E           asyncio.exceptions.CancelledError
+E
+E           ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:665: CancelledError
+E
+E           The above exception was the direct cause of the following exception:
+E
+E           request = <FixtureRequest for <Coroutine test_projection_between_two_master_presses_cannot_lose_reversal>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x115739310>
+E
+E               @private_profile_test
+E               async def test_projection_between_two_master_presses_cannot_lose_reversal(request, monkeypatch):
+E                   calls = []
+E                   _persistence(monkeypatch, lambda value: calls.append(value) or ConfigMutationResult(True, True, None))
+E                   app = WorkbenchAppWithBundledCSS()
+E                   async with app.run_test() as pilot:
+E                       workbench, canvas = await _open(pilot)
+E                       button = canvas.query_one("#mcp-tools-local-enabled", Button)
+E                       canvas.on_button_pressed(Button.Pressed(button))
+E                       workbench._sync_master_save_status()
+E                       canvas.on_button_pressed(Button.Pressed(button))
+E           >           await _wait(pilot, lambda: len(calls) == 2)
+E
+E           Tests/UI/test_mcp_master_settings.py:397:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           Tests/UI/test_tool_profile_review_lifetime.py:28: in _wait
+E               async with asyncio.timeout(5):
+E                          ^^^^^^^^^^^^^^^^^^
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = <Timeout [expired]>
+E           exc_type = <class 'asyncio.exceptions.CancelledError'>
+E           exc_val = CancelledError(), exc_tb = <traceback object at 0x116830ac0>
+E
+E               async def __aexit__(
+E                   self,
+E                   exc_type: Optional[Type[BaseException]],
+E                   exc_val: Optional[BaseException],
+E                   exc_tb: Optional[TracebackType],
+E               ) -> Optional[bool]:
+E                   assert self._state in (_State.ENTERED, _State.EXPIRING)
+E
+E                   if self._timeout_handler is not None:
+E                       self._timeout_handler.cancel()
+E                       self._timeout_handler = None
+E
+E                   if self._state is _State.EXPIRING:
+E                       self._state = _State.EXPIRED
+E
+E                       if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+E                           # Since there are no new cancel requests, we're
+E                           # handling this.
+E           >               raise TimeoutError from exc_val
+E           E               TimeoutError
+E
+E           ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 08:17:45.548 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 08:17:45.553 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 08:17:45.554 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 08:17:45.554 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 08:17:46.052 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:17:46.235 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:17:46.507 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           =============================== warnings summary ===============================
+E           Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal
+E             /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/css/stylesheet.py:557: RuntimeWarning: coroutine 'MCPWorkbench._observe_local_master_save' was never awaited
+E               rule_attributes[key].append((rule_specificity, value))
+E             Enable tracemalloc to get traceback where the object was allocated.
+E             See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+E
+E           -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E           ============================= slowest 25 durations =============================
+E           5.81s call     Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal
+E           1 failed, 1 warning in 7.62s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 08:17:43.732 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 08:17:43.738 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 08:17:43.738 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 08:17:43.739 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_________ test_queued_master_button_does_not_retarget_after_projection _________
+
+self = <Coroutine test_queued_master_button_does_not_retarget_after_projection>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_master_button_does_not_retarget_after_projection>>, 'monkeypatc...te/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1964/test_queued_master_button_does0')}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1964/test_queued_master_button_does0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _________ test_queued_master_button_does_not_retarget_after_projection _________
+E
+E           request = <FixtureRequest for <Coroutine test_queued_master_button_does_not_retarget_after_projection>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x113cad430>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1964/test_queued_master_button_does0/private-profile-process/pytest/test_queued_master_button_does0')
+E
+E               @private_profile_test
+E               async def test_queued_master_button_does_not_retarget_after_projection(request, monkeypatch, tmp_path):
+E                   calls = []
+E                   _persistence(monkeypatch, lambda value: calls.append(value) or ConfigMutationResult(True, True, None))
+E                   app = WorkbenchAppWithBundledCSS()
+E                   async with app.run_test() as pilot:
+E                       workbench, canvas = await _open(pilot)
+E                       button = canvas.query_one("#mcp-tools-local-enabled", Button)
+E                       messages = []
+E                       original = Button.post_message
+E                       def capture(self, message):
+E                           if self is button and isinstance(message, Button.Pressed):
+E                               messages.append(message)
+E                               return True
+E                           return original(self, message)
+E                       monkeypatch.setattr(Button, "post_message", capture)
+E                       button.press()
+E                       assert len(messages) == 1
+E                       monkeypatch.setattr(module, "get_cli_config_path", lambda: tmp_path / "other.toml")
+E                       workbench._sync_master_save_status()
+E                       canvas.on_button_pressed(messages[0])
+E                       await _settle(pilot)
+E           >           assert calls == []
+E           E           assert [False] == []
+E           E
+E           E             Left contains one more item: False
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_master_settings.py:425: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 08:17:54.096 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 08:17:54.101 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 08:17:54.102 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 08:17:54.102 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 08:17:54.609 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:17:54.787 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:17:55.066 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           1.08s call     Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection
+E           1 failed in 2.84s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+8.45s call     Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal
+3.68s call     Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal
+FAILED Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection
+2 failed, 11 deselected in 14.00s

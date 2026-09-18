@@ -1,0 +1,16 @@
+Tests/MCP/test_root_settings.py inherited: 1 current: 0 introduced: {}
+Tests/UI/test_mcp_root_settings.py inherited: 3 current: 0 introduced: {}
+Tests/UI/test_mcp_workbench.py inherited: 4 current: 4 introduced: {}
+Tests/conftest.py inherited: 20 current: 20 introduced: {}
+tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py inherited: 4 current: 4 introduced: {}
+tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py inherited: 0 current: 0 introduced: {}
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py inherited: 66 current: 65 introduced: {}
+tldw_chatbook/app.py inherited: 491 current: 491 introduced: {}
+All checks passed!
+
+5 files already formatted
+
+No duplicate task IDs across 4144 task files in backlog/tasks, backlog/completed, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.
+
+
+Changed production methods formatted; unrelated inherited formatter debt untouched.

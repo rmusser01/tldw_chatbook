@@ -1,0 +1,16 @@
+Independent reviewer: /root/mcp_tools_access_review
+Scope: TASK32793 shared owner, config/file receipts, synchronous admission,
+queued activation, root input isolation, shutdown and final view projection.
+
+Findings fixed:
+1. Poll between child choice and parent message admission lost a reversal.
+2. Master poll refreshed root input before Input.Changed and discarded its edit.
+
+Final review: no actionable production findings. The callback closes admission
+without retaining UI in the save owner; activation captures target/config before
+repaint; master polling leaves root input untouched. Five regression cases and
+two independent Servers activation probes passed. Owner/partial/context checks
+passed. Four final paint cases passed. The final cross-control assertion needed
+the existing web_deep_search_enabled widget ID; corrected replay passed.
+Pending dependent state is limited to the local group; other gates and runtime
+authority remain unchanged. The wrapping selector covers only the two masters.

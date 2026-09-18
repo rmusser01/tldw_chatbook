@@ -59,6 +59,13 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     local_tools_from_record,
     server_tools_from_inventory,
 )
+from tldw_chatbook.MCP.local_config_saves import (
+    ConfigSaveRequest,
+    ConfigSaveResult,
+    ConfigSaveUnavailable,
+    config_file_revision,
+    get_mcp_local_config_saves,
+)
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.local_server_tools import resolve_server_workspace_root
@@ -87,13 +94,6 @@ from tldw_chatbook.MCP.readiness import (
     server_target_readiness,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
-from tldw_chatbook.MCP.root_settings import (
-    RootSaveRequest,
-    RootSaveResult,
-    RootSaveUnavailable,
-    get_mcp_root_saves,
-    root_config_file_revision,
-)
 from tldw_chatbook.MCP.unified_control_plane_service import (
     MCPServerSourceDisplayOnlyError,
 )
@@ -133,9 +133,9 @@ _STALE_PROFILE_CATEGORIES = frozenset(
 )
 
 
-def _persist_mcp_workspace_root(request: RootSaveRequest) -> RootSaveResult:
+def _persist_mcp_workspace_root(request: ConfigSaveRequest) -> ConfigSaveResult:
     """Validate and save a captured root without retaining its originating UI."""
-    requested = request.raw_root.strip()
+    requested = request.value.strip()
     stored = ""
     if requested:
         try:
@@ -146,47 +146,55 @@ def _persist_mcp_workspace_root(request: RootSaveRequest) -> RootSaveResult:
                 candidate, candidate.parent, redact_paths=True, allow_hidden=True
             )
             if not resolved.is_dir():
-                return RootSaveResult("invalid")
+                return ConfigSaveResult("invalid")
             stored = str(resolved)
         except (OSError, RuntimeError, ValueError):
-            return RootSaveResult("invalid")
+            return ConfigSaveResult("invalid")
+    return _persist_mcp_local_setting(request, stored)
+
+
+def _persist_mcp_local_setting(
+    request: ConfigSaveRequest, stored: str | bool
+) -> ConfigSaveResult:
+    """Commit one captured local setting and its before/after publication fences."""
     generation = None
+    previous_file_revision = None
     file_revision = None
 
     def capture_file_revision() -> None:
         nonlocal file_revision
-        file_revision = root_config_file_revision(request.config_path)
+        file_revision = config_file_revision(request.config_path)
 
     def same_configuration() -> bool:
-        nonlocal generation
+        nonlocal generation, previous_file_revision
         generation = current_config_identity()[0]
         capture_file_revision()
+        previous_file_revision = file_revision
         return get_cli_config_path() == request.config_path
 
     mutation = apply_settings_mutation_to_cli_config(
-        {"console": {"workspace_root": stored}},
+        {"console": {request.key: stored}},
         mutation_precondition=same_configuration,
         after_replace=capture_file_revision,
     )
     if mutation.conflict:
-        return RootSaveResult("changed")
+        return ConfigSaveResult("changed")
     if mutation.file_replaced and not mutation.caches_reloaded:
-        return RootSaveResult(
-            "cache_refresh",
-            stored,
-            cache_generation=generation,
-            file_revision=file_revision,
-        )
-    if mutation.failure_phase is not None:
-        return RootSaveResult("failed")
-    return RootSaveResult(
-        "saved",
+        phase = "cache_refresh"
+    elif mutation.failure_phase is not None:
+        return ConfigSaveResult("failed")
+    else:
+        phase = "saved"
+    return ConfigSaveResult(
+        phase,
         stored,
         mutation.caches_reloaded,
         generation + 1
         if generation is not None and mutation.caches_reloaded
         else generation,
         file_revision,
+        generation,
+        previous_file_revision,
     )
 
 
@@ -699,6 +707,7 @@ class MCPWorkbench(Container):
         # `show_form()` on an EDIT_CONFIG hub action looks the record up
         # here instead.
         self._catalog_records: dict[str, dict[str, Any]] = {}
+        self._master_catalog_failure: tuple[int, Path] | None = None
         # T6: True while a profile-save worker is in flight. Mirrors
         # `_start_lifecycle()`'s synchronous-registration pattern: set in the
         # (sync) SubmitRequested handler before the worker is dispatched and
@@ -974,7 +983,7 @@ class MCPWorkbench(Container):
         # F-057: set the initial compact-mode class once the first layout
         # gives the grid a real width (`on_resize` keeps it current after).
         self.call_after_refresh(self._sync_compact_class)
-        self.set_interval(0.25, self._sync_root_save_status)
+        self.set_interval(0.25, self._sync_local_config_save_status)
 
     async def on_unmount(self) -> None:
         """Invalidate preview work and revoke the visible nonce best effort."""
@@ -1151,6 +1160,8 @@ class MCPWorkbench(Container):
             self._preselect_single_problem_on_load()
             await self._sync_children()
             self._rebind_inspector_advanced_context(service)
+            self._master_catalog_failure = None
+            self._sync_master_save_status()
         finally:
             self._reloading = False
             self.is_loading = False
@@ -1707,6 +1718,7 @@ class MCPWorkbench(Container):
             visible=self._source == "local",
             config_path=get_cli_config_path(),
         )
+        self._sync_master_save_status()
         await canvas.update_tools(
             tools,
             empty_diagnosis=diagnosis,
@@ -1719,19 +1731,16 @@ class MCPWorkbench(Container):
 
     def _local_tools_config_values(self) -> tuple[bool, str]:
         """Read the persisted values rendered by Tools mode."""
-        enabled = coerce_bool_setting(
-            get_cli_setting("console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED),
-            LOCAL_TOOLS_DEFAULT_ENABLED,
-        )
-        raw_root = get_cli_setting("console", "workspace_root", "")
-        workspace_root = raw_root.strip() if isinstance(raw_root, str) else ""
-        owner = getattr(self.app_instance, "_mcp_root_saves", None)
+        enabled = self._master_save_projection()[0]
+        value = get_cli_setting("console", "workspace_root", "")
+        workspace_root = value.strip() if isinstance(value, str) else ""
+        owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
         if owner is not None:
             workspace_root = owner.known_root(
                 get_cli_config_path(),
                 workspace_root,
                 current_config_identity()[0],
-                root_config_file_revision(get_cli_config_path()),
+                config_file_revision(get_cli_config_path()),
             )
         return enabled, workspace_root
 
@@ -4129,55 +4138,159 @@ class MCPWorkbench(Container):
     def on_mcp_tools_mode_local_tools_enabled_changed(
         self, event: MCPToolsMode.LocalToolsEnabledChanged
     ) -> None:
-        """Persist the workspace, web, and Watchlists master switch."""
+        """Admit the explicit master choice before a UI observer can be cancelled."""
         event.stop()
+        self._admit_local_master_save(event.enabled, event.config_path)
+
+    def _admit_local_master_save(self, enabled: bool, config_path: Path | None) -> None:
+        if config_path is None or config_path != get_cli_config_path():
+            self._sync_master_save_status()
+            return
+        request = ConfigSaveRequest(
+            enabled, None, config_path, key="local_tools_enabled"
+        )
+        try:
+            owner = get_mcp_local_config_saves(self.app_instance)
+            task = owner.submit(
+                request, partial(_persist_mcp_local_setting, request, enabled)
+            )
+        except ConfigSaveUnavailable:
+            canvas = self._refresh_local_tools_controls()
+            if canvas is not None:
+                canvas.set_local_config_status(
+                    "Changes are unavailable while the app is closing.", error=True
+                )
+            return
+        self._sync_master_save_status()
         self.run_worker(
-            self._save_tools_mode_local_enabled(event.enabled),
+            self._observe_local_master_save(task),
             group="mcp-tools-local-enabled",
             exclusive=True,
         )
 
-    async def _save_tools_mode_local_enabled(self, enabled: bool) -> None:
-        try:
-            saved = await asyncio.to_thread(
-                save_setting_to_cli_config,
-                "console",
-                "local_tools_enabled",
-                enabled,
-            )
-        except Exception as exc:
-            logger.warning(
-                "MCP Tools-mode local master save failed (error_type={}).",
-                type(exc).__name__,
-            )
-            canvas = self._refresh_local_tools_controls()
-            if canvas is not None:
-                canvas.set_local_config_status(
-                    "Save failed. The persisted setting is shown.", error=True
-                )
-            self.app.notify(
-                _toast(f"Failed to save local tool setting: {exc}"),
-                severity="error",
-            )
-            return
-        if not saved:
-            canvas = self._refresh_local_tools_controls()
-            if canvas is not None:
-                canvas.set_local_config_status(
-                    "Save failed. The persisted setting is shown.", error=True
-                )
-            self.app.notify("Failed to save local tool setting.", severity="error")
-            return
-
-        self._snapshots = await self._collect_snapshots()
-        await self._sync_children()
-        canvas = self.query_one(MCPToolsMode)
-        state = "Enabled" if enabled else "Disabled"
-        canvas.set_local_config_status(
-            f"{state}. The next Console agent run will use this setting; "
-            "calls still follow Ask, Allow, or Off permissions.",
-            error=False,
+    def _master_save_projection(self) -> tuple[bool, str, bool]:
+        """Describe the latest choice without changing runtime tool authority."""
+        enabled = coerce_bool_setting(
+            get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            ),
+            LOCAL_TOOLS_DEFAULT_ENABLED,
         )
+        owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
+        config_path = get_cli_config_path()
+        generation = current_config_identity()[0]
+        file_revision = config_file_revision(config_path)
+        default = "Applies immediately - no Save needed."
+        if owner is None:
+            return enabled, default, False
+        enabled = bool(
+            owner.known_value(
+                "local_tools_enabled", config_path, enabled, generation, file_revision
+            )
+        )
+        state = owner.state_for("local_tools_enabled")
+        if state is None or state.request.config_path != config_path:
+            return enabled, default, False
+        if state.result is None:
+            requested = bool(state.request.value)
+            return requested, f"Saving tools {'on' if requested else 'off'}…", False
+        result = state.result
+        label = "on" if enabled else "off"
+        superseded = (
+            result.cache_generation is not None
+            and result.cache_generation != generation
+        ) or (
+            result.file_revision is not None and result.file_revision != file_revision
+        )
+        if result.phase in {"saved", "cache_refresh"} and superseded:
+            return (
+                enabled,
+                "Saved earlier; settings have since changed. Current setting is shown.",
+                False,
+            )
+        if result.phase == "cache_refresh":
+            text = f"Tools {label} saved to file. Restart to refresh live settings."
+        elif result.phase == "saved":
+            text = f"Tools {label} saved. The next Console run uses this setting; permissions still apply."
+        else:
+            text = ""
+        if text:
+            catalog_failed = self._master_catalog_failure == (
+                state.revision,
+                config_path,
+            )
+            if catalog_failed:
+                text += " Catalog refresh failed; use r to refresh."
+            return enabled, text, catalog_failed or result.phase == "cache_refresh"
+        if result.phase == "changed":
+            return (
+                enabled,
+                "Configuration changed. Choice not saved; review the current setting before retrying.",
+                True,
+            )
+        return (
+            enabled,
+            "Save failed. The persisted setting is shown; press the toggle to retry.",
+            True,
+        )
+
+    def _sync_master_save_status(self) -> None:
+        if not self.is_attached or not self.query(MCPToolsMode):
+            return
+        enabled, text, error = self._master_save_projection()
+        owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
+        state = owner.state_for("local_tools_enabled") if owner is not None else None
+        pending = bool(
+            state is not None
+            and state.result is None
+            and state.request.config_path == get_cli_config_path()
+        )
+        for canvas_type in (MCPToolsMode, MCPServersMode):
+            if self.query(canvas_type):
+                canvas = self.query_one(canvas_type)
+                canvas.submit_local_master = self._admit_local_master_save
+                canvas.project_local_master(
+                    enabled,
+                    text,
+                    error=error,
+                    config_path=get_cli_config_path(),
+                    pending=pending,
+                )
+
+    def _sync_local_config_save_status(self) -> None:
+        self._sync_root_save_status()
+        self._sync_master_save_status()
+
+    async def _observe_local_master_save(self, task) -> None:
+        outcome = await asyncio.shield(task)
+        self._sync_master_save_status()
+        if not self.is_attached or outcome.result.phase not in {
+            "saved",
+            "cache_refresh",
+        }:
+            return
+        try:
+            self._snapshots = await self._collect_snapshots()
+            await self._sync_children()
+        except Exception:  # noqa: BLE001 - presentation cannot reverse persistence
+            owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
+            if (
+                self.is_attached
+                and owner is not None
+                and owner.state_for("local_tools_enabled") == outcome
+                and outcome.request.config_path == get_cli_config_path()
+            ):
+                self._master_catalog_failure = (
+                    outcome.revision,
+                    outcome.request.config_path,
+                )
+        else:
+            if self._master_catalog_failure == (
+                outcome.revision,
+                outcome.request.config_path,
+            ):
+                self._master_catalog_failure = None
+        self._sync_master_save_status()
 
     def on_mcp_tools_mode_workspace_root_save_requested(
         self, event: MCPToolsMode.WorkspaceRootSaveRequested
@@ -4191,13 +4304,13 @@ class MCPWorkbench(Container):
             or event.config_path != get_cli_config_path()
         ):
             return
-        request = RootSaveRequest(
+        request = ConfigSaveRequest(
             event.workspace_root, event.draft_identity, event.config_path, Path.cwd()
         )
         try:
-            owner = get_mcp_root_saves(self.app_instance)
+            owner = get_mcp_local_config_saves(self.app_instance)
             task = owner.submit(request, partial(_persist_mcp_workspace_root, request))
-        except RootSaveUnavailable:
+        except ConfigSaveUnavailable:
             canvas.set_workspace_root_status(
                 "Root changes are unavailable while the app is closing.", error=True
             )
@@ -4213,8 +4326,8 @@ class MCPWorkbench(Container):
         """Project current-profile receipts, including after screen recreation."""
         if not self.is_attached or not self.query(MCPToolsMode):
             return
-        owner = getattr(self.app_instance, "_mcp_root_saves", None)
-        state = owner.state if owner is not None else None
+        owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
+        state = owner.state_for("workspace_root") if owner is not None else None
         if state is None:
             return
         stamp = (
@@ -4222,7 +4335,7 @@ class MCPWorkbench(Container):
             state.result is None,
             owner.completion_revision,
             current_config_identity(),
-            root_config_file_revision(get_cli_config_path()),
+            config_file_revision(get_cli_config_path()),
         )
         if stamp == getattr(self, "_root_save_projection", None):
             return
@@ -4232,35 +4345,39 @@ class MCPWorkbench(Container):
             canvas.project_workspace_root_save(
                 state,
                 generation=current_config_identity()[0],
-                file_revision=root_config_file_revision(get_cli_config_path()),
+                file_revision=config_file_revision(get_cli_config_path()),
             )
 
     async def _observe_workspace_root_save(self, task) -> None:
         """Publish persistence before best-effort catalog presentation refresh."""
         outcome = await asyncio.shield(task)
         self._sync_root_save_status()
-        if not self.is_attached or outcome.result.phase not in {"saved", "cache_refresh"}:
+        if not self.is_attached or outcome.result.phase not in {
+            "saved",
+            "cache_refresh",
+        }:
             return
         try:
             self._snapshots = await self._collect_snapshots()
             await self._sync_children()
         except Exception:  # noqa: BLE001 - presentation cannot reverse an admitted save
-            owner = getattr(self.app_instance, "_mcp_root_saves", None)
+            owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
             if (
                 self.is_attached
                 and owner is not None
-                and owner.state == outcome
+                and owner.state_for("workspace_root") == outcome
                 and outcome.request.config_path == get_cli_config_path()
             ):
                 canvas = self.query_one(MCPToolsMode)
                 canvas.project_workspace_root_save(
                     outcome,
                     generation=current_config_identity()[0],
-                    file_revision=root_config_file_revision(get_cli_config_path()),
+                    file_revision=config_file_revision(get_cli_config_path()),
                 )
                 status = canvas.query_one("#mcp-tools-workspace-status")
                 canvas.set_workspace_root_status(
-                    str(status.renderable) + " Catalog refresh failed; use r to refresh.",
+                    str(status.renderable)
+                    + " Catalog refresh failed; use r to refresh.",
                     error=True,
                 )
 
@@ -5845,16 +5962,11 @@ class MCPWorkbench(Container):
     def on_mcp_servers_mode_tool_gate_changed(
         self, event: MCPServersMode.ToolGateChanged
     ) -> None:
-        """Dispatch a `[tools]`/`[console]` gate toggle in the background.
-
-        task-3240 sibling of `on_mcp_servers_mode_builtin_flag_changed()` --
-        identical shape (sync handler, `exclusive=True` group so a rapid
-        second toggle simply cancels and restarts from the latest event),
-        just routed to `_save_tool_gate()` instead of `_save_builtin_flag()`
-        so the write targets the event's own `section`, not a hardcoded
-        `"mcp"`.
-        """
+        """Admit the shared master choice or dispatch an existing per-tool gate."""
         event.stop()
+        if (event.section, event.key) == ("console", "local_tools_enabled"):
+            self._admit_local_master_save(event.value, event.config_path)
+            return
         self.run_worker(
             self._save_tool_gate(event.section, event.key, event.value),
             group="mcp-tool-gate",
@@ -5866,9 +5978,9 @@ class MCPWorkbench(Container):
 
         Mirrors `_save_builtin_flag()` exactly (same offload-then-resync
         shape) except `section` is a parameter rather than hardcoded --
-        task-3240's gates span both `[tools]` (the `_GATEABLE_BUILTINS` rows
-        plus `web_deep_search`) and `[console]` (the local group's master
-        switch, `local_tools_enabled`). The resync's `_show_selected_detail()`
+        task-3240's gates include the `[tools]` `_GATEABLE_BUILTINS` rows
+        and `web_deep_search`. The local master uses the app-owned queue.
+        The resync's `_show_selected_detail()`
         call rebuilds the gate buttons fresh from `all_tool_gates()`
         (via `MCPServersMode._rebuild_tool_gate_buttons()`), so the rows
         always end up showing persisted truth.

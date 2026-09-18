@@ -14,15 +14,16 @@ Token migration alone does not qualify a complete workflow.
 | Root drafts, ordered saves and truthful scope | TASK-32791, [targeted checks and ten native captures](../qa/2026-09-18-mcp-root-settings/README.md) | Exact draft ownership, app lifetime/shutdown, cache warnings and later config/external-file supersession; original Permissions resize failure retained and repaired below |
 | Permissions final viewport and selected-row continuity | TASK-32792, [targeted checks and twelve native captures](../qa/2026-09-18-mcp-permission-reflow/README.md) | Child width/height reflow, full Tool/State paint, selected row/focus/filter retention and fresh-context Enter; no policy changes or tool execution |
 
+| Shared local-tools master controls | TASK-32793, [177 distinct targeted cases and sixteen native captures](../qa/2026-09-18-mcp-master-settings/README.md) | Ordered saves across both entry points, activation/config identity, pending refresh/recreation, truthful partial receipts and shutdown; no runtime authority changes |
+
 ## Remaining review
 
-- **Local-tools master toggle:** verify ordering, lifetime and truthful outcomes
-  under overlapping saves; the root-specific owner does not change this path.
 - **Tools refresh and execution:** retained selection/filter drafts across
   background refresh, diagnostic empty-state actions, disconnected/stale tools,
   schema forms/raw arguments, test execution and inspector recovery.
 - **Servers:** source transitions, add/edit/remove and connection lifecycles,
-  built-in enable/expose controls, errors and recovery.
+  built-in enable/expose controls, errors and recovery. Compact non-master gate
+  labels still clip (visible in TASK-32793 captures).
 - **Audit and remaining permissions:** filtering, exact tool/event drilldown,
   restored roots, bulk actions, review/approval and connected-runtime journeys.
 

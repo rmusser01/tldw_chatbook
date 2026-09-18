@@ -1,0 +1,28 @@
+............................................                             [100%]
+============================= slowest 25 durations =============================
+4.73s call     Tests/UI/test_mcp_master_settings.py::test_master_outcome_survives_workbench_recreation[True]
+4.66s call     Tests/UI/test_mcp_master_settings.py::test_master_outcome_survives_workbench_recreation[False]
+4.60s call     Tests/UI/test_mcp_master_settings.py::test_servers_reversal_uses_pending_tools_choice_and_same_queue
+4.47s call     Tests/UI/test_mcp_root_settings.py::test_root_save_survives_recreated_workbench[True]
+4.44s call     Tests/UI/test_mcp_root_settings.py::test_root_save_survives_recreated_workbench[False]
+4.43s call     Tests/UI/test_mcp_master_settings.py::test_master_catalog_failure_remains_distinct_from_persistence
+4.38s call     Tests/UI/test_mcp_root_settings.py::test_explicit_root_saves_finish_in_submission_order
+4.35s call     Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft[False]
+4.35s call     Tests/UI/test_mcp_root_settings.py::test_read_only_refresh_preserves_root_draft_and_validation_receipt
+4.31s call     Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal[servers]
+4.25s call     Tests/UI/test_mcp_root_settings.py::test_failed_root_save_keeps_draft_for_retry
+4.16s call     Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft[True]
+4.12s call     Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection[servers]
+4.10s call     Tests/UI/test_mcp_master_settings.py::test_committed_master_with_failed_cache_is_not_reported_unsaved
+4.04s call     Tests/UI/test_mcp_master_settings.py::test_master_reversal_waits_for_older_admitted_write
+3.94s call     Tests/UI/test_mcp_master_settings.py::test_pending_master_choice_survives_read_only_refresh
+3.90s call     Tests/UI/test_mcp_master_settings.py::test_master_poll_does_not_overwrite_unprocessed_root_edit
+3.88s call     Tests/UI/test_mcp_master_settings.py::test_old_configuration_events_from_both_controls_are_refused
+3.86s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[file-saved]
+3.85s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[file-cache_refresh]
+3.84s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[generation-saved]
+3.83s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[generation-cache_refresh]
+3.72s call     Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal[tools]
+3.64s call     Tests/UI/test_mcp_root_settings.py::test_catalog_refresh_failure_does_not_report_save_failure
+3.59s call     Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection[tools]
+44 passed in 127.74s (0:02:07)

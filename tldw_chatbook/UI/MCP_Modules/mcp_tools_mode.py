@@ -12,6 +12,7 @@ through the workbench.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +25,9 @@ from textual.widgets import Button, DataTable, Input, Select, Static
 from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
+from tldw_chatbook.MCP.local_config_saves import ConfigSaveState
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-from tldw_chatbook.MCP.root_settings import RootSaveState
+from tldw_chatbook.UI.MCP_Modules.mcp_local_master_button import MCPLocalMasterButton
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     format_tool_state_label,
     state_text,
@@ -220,9 +222,10 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
     class LocalToolsEnabledChanged(Message, namespace="mcp_tools_mode"):
         """Persist the workspace, web, and Watchlists provider master switch."""
 
-        def __init__(self, enabled: bool) -> None:
+        def __init__(self, enabled: bool, *, config_path: Path | None = None) -> None:
             super().__init__()
             self.enabled = enabled
+            self.config_path = config_path
 
     class WorkspaceRootSaveRequested(Message, namespace="mcp_tools_mode"):
         """Request validation and persistence of the workspace root."""
@@ -271,6 +274,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         # (mirrors `mcp_servers_mode._tool_gates_by_id`'s same read-not-
         # widget-state pattern; a Button carries no `.value` of its own).
         self._local_tools_enabled: bool = False
+        self.submit_local_master: Callable[[bool, Path | None], None] | None = None
         self._workspace_root_saved: str | None = None
         self._workspace_root_draft = ""
         self._workspace_root_dirty = False
@@ -281,7 +285,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-tools-local-config"):
-            yield Button(
+            yield MCPLocalMasterButton(
                 _local_tools_toggle_label(False),
                 id="mcp-tools-local-enabled",
                 classes="console-action-secondary",
@@ -290,6 +294,12 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
                     "Toggle the workspace, web, and Watchlists tool master "
                     "switch. Calls still follow Ask, Allow, or Off permissions."
                 ),
+            )
+            yield Static(
+                "",
+                id="mcp-tools-local-config-status",
+                classes="h-auto ds-text-muted",
+                markup=False,
             )
             yield Static(
                 "Available by default. Calls still follow Ask, Allow, or Off permissions.",
@@ -311,11 +321,6 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
                         "Blank uses the serving process's current folder."
                     ),
                 )
-            yield Static(
-                "",
-                id="mcp-tools-local-config-status",
-                markup=False,
-            )
             yield Static(
                 "",
                 id="mcp-tools-workspace-status",
@@ -496,9 +501,9 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         panel = self.query_one("#mcp-tools-local-config", Vertical)
         panel.display = visible
         self._local_tools_enabled = bool(enabled)
-        self.query_one(
-            "#mcp-tools-local-enabled", Button
-        ).label = _local_tools_toggle_label(self._local_tools_enabled)
+        button = self.query_one("#mcp-tools-local-enabled", MCPLocalMasterButton)
+        button.enabled, button.config_path = bool(enabled), config_path
+        button.label = _local_tools_toggle_label(self._local_tools_enabled)
         root_input = self.query_one("#mcp-tools-workspace-root", Input)
         if config_path != self._workspace_root_config:
             self._workspace_root_saved = None
@@ -528,7 +533,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
 
     def project_workspace_root_save(
         self,
-        state: RootSaveState,
+        state: ConfigSaveState,
         *,
         generation: int | None = None,
         file_revision: tuple[int, int, int, int] | None = None,
@@ -563,12 +568,17 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
                 result.cache_generation is not None
                 and result.cache_generation != generation
             ) or (
-                result.file_revision is not None and result.file_revision != file_revision
+                result.file_revision is not None
+                and result.file_revision != file_revision
             )
             if result.phase in {"saved", "cache_refresh"} and superseded:
                 text = "Root saved earlier; live settings have since changed."
                 newer_draft = self._workspace_root_dirty
-            if result.phase in {"saved", "cache_refresh"} and same_draft and not superseded:
+            if (
+                result.phase in {"saved", "cache_refresh"}
+                and same_draft
+                and not superseded
+            ):
                 with field.prevent(Input.Changed):
                     field.value = result.stored or ""
                 self._workspace_root_draft = field.value
@@ -599,7 +609,8 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         """
         status = self.query_one("#mcp-tools-local-config-status", Static)
         status.update(message)
-        status.set_class(error, "is-error")
+        status.set_class(error, "is-error", "ds-text-error")
+        status.set_class(not error, "ds-text-muted")
 
     def _request_workspace_root_save(self) -> None:
         value = self.query_one("#mcp-tools-workspace-root", Input).value
@@ -900,30 +911,39 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         if event.row_key is not None and event.row_key.value is not None:
             self.post_message(self.ToolSelected(str(event.row_key.value)))
 
+    def project_local_master(
+        self,
+        enabled: bool,
+        message: str,
+        *,
+        error: bool,
+        config_path: Path,
+        pending: bool = False,
+    ) -> None:
+        """Refresh only the master control; root input events may still be queued."""
+        self._local_tools_enabled = enabled
+        button = self.query_one("#mcp-tools-local-enabled", MCPLocalMasterButton)
+        button.enabled, button.config_path = enabled, config_path
+        button.label = _local_tools_toggle_label(enabled)
+        self.set_local_config_status(message, error=error)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "mcp-tools-local-enabled":
-            # task-32286: the Button states its own current value in its
-            # label (see `_local_tools_toggle_label()`), so a press asks
-            # for the OPPOSITE of what it's currently showing -- read from
-            # `_local_tools_enabled` (the last `update_local_config()`
-            # value), never a fresh config read, which could race the
-            # workbench's own save/resync.
-            #
-            # Qodo #2600 #15: the cached value and the label are updated
-            # OPTIMISTICALLY, before the save is posted. Without that, a
-            # second press landing before the save/resync round trip read
-            # the stale value and posted the SAME request again -- an
-            # accidental toggle could not be reversed until the first one
-            # finished. A failed save calls `update_local_config()` back
-            # (`MCPWorkbench._refresh_local_tools_controls()`), which
-            # overwrites both with the persisted truth.
             event.stop()
-            requested = not self._local_tools_enabled
-            self._local_tools_enabled = requested
-            self.query_one("#mcp-tools-local-enabled", Button).label = (
-                _local_tools_toggle_label(requested)
+            requested, config_path = getattr(
+                event,
+                "mcp_local_master_choice",
+                (not self._local_tools_enabled, self._workspace_root_config),
             )
-            self.post_message(self.LocalToolsEnabledChanged(requested))
+            self._local_tools_enabled = requested
+            event.button.enabled = requested
+            event.button.label = _local_tools_toggle_label(requested)
+            if self.submit_local_master is not None:
+                self.submit_local_master(requested, config_path)
+            else:
+                self.post_message(
+                    self.LocalToolsEnabledChanged(requested, config_path=config_path)
+                )
             return
         if event.button.id == "mcp-tools-workspace-save":
             event.stop()
