@@ -1,0 +1,22 @@
+.............................                                            [100%]
+============================= slowest 25 durations =============================
+9.08s call     Tests/UI/test_console_background_effects.py::test_console_transcript_scope_mounts_effect_without_hiding_transcript
+8.16s call     Tests/UI/test_console_native_transcript.py::test_mounted_console_repaints_when_transcript_style_changes
+7.59s call     Tests/UI/test_console_background_effects.py::test_console_background_disabled_does_not_start_active_effect
+7.57s call     Tests/UI/test_console_background_effects.py::test_console_workbench_scope_does_not_start_transcript_effect
+5.58s call     Tests/UI/test_settings_context_memory_controls.py::test_summary_prompt_route_focuses_existing_internal_prompt_editor
+5.17s call     Tests/UI/test_settings_context_memory_controls.py::test_console_memory_controls_mount_stage_and_fit_narrow_settings
+4.63s call     Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_routes_normalized_values_to_console_section
+4.38s call     Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_blocks_invalid_trigger_target_pair
+2.02s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.74s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.66s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+1.63s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.63s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.60s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.58s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.57s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+1.05s call     Tests/test_config_console_defaults.py::test_load_settings_normalizes_console_background_effects
+
+(8 durations < 1s hidden.)
+29 passed in 71.97s (0:01:11)

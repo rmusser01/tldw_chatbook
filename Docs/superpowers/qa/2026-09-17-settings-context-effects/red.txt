@@ -1,0 +1,510 @@
+FF.F                                                                     [100%]
+=================================== FAILURES ===================================
+_______ test_nonfinite_background_rate_keeps_configuration_loadable[inf] _______
+
+self = <Coroutine test_nonfinite_background_rate_keeps_configuration_loadable[inf]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_nonfinite_background_rate_keeps_configuration_loadable[inf]>>, 'raw': 'inf'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1600/test_nonfinite_background_rate0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _______ test_nonfinite_background_rate_keeps_configuration_loadable[inf] _______
+E
+E           request = <FixtureRequest for <Coroutine test_nonfinite_background_rate_keeps_configuration_loadable[inf]>>
+E           raw = 'inf'
+E
+E               @pytest.mark.parametrize("raw", ["inf", "-inf", "nan"])
+E               @private_profile_test
+E               async def test_nonfinite_background_rate_keeps_configuration_loadable(request, raw):
+E                   """A legal TOML nonfinite float must not stop config/Settings startup."""
+E                   import toml
+E                   from tldw_chatbook import config
+E
+E                   path = Path(config.get_cli_config_path())
+E                   values = toml.loads(path.read_text())
+E                   values.setdefault("console", {})["background_effects"] = {
+E                       "enabled": True, "effect": "rain", "fps": float(raw),
+E                   }
+E                   path.write_text(toml.dumps(values))
+E                   before = path.read_bytes()
+E           >       loaded = config.load_settings(force_reload=True)
+E                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_settings_console_context_effects_journeys.py:30:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           tldw_chatbook/Backup_Recovery/config_participants.py:420: in wrapped
+E               return function(*args, **kwargs)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+E           tldw_chatbook/config.py:1806: in load_settings
+E               return _load_settings_uncached(
+E           tldw_chatbook/Backup_Recovery/config_participants.py:420: in wrapped
+E               return function(*args, **kwargs)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+E           tldw_chatbook/config.py:2101: in _load_settings_uncached
+E               normalize_console_background_effects(background_effects).to_config()
+E               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           tldw_chatbook/Utils/console_background_effects.py:84: in normalize_console_background_effects
+E               fps=_coerce_fps(raw.get("fps")),
+E                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           value = inf
+E
+E               def _coerce_fps(value: object) -> int:
+E                   if isinstance(value, bool):
+E                       return DEFAULT_CONSOLE_BACKGROUND_FPS
+E                   try:
+E           >           fps = int(value)
+E                             ^^^^^^^^^^
+E           E           OverflowError: cannot convert float infinity to integer
+E
+E           tldw_chatbook/Utils/console_background_effects.py:64: OverflowError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 20:10:05.949 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 20:10:05.955 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 20:10:05.955 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 20:10:05.956 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 20:10:05.976 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-17 20:10:05.976 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-17 20:10:05.977 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6134 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1600/test_nonfinite_background_rate0/private-profile-process/profile/config/config.toml
+E           2026-09-17 20:10:05.981 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6155 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1600/test_nonfinite_background_rate0/private-profile-process/profile/config/config.toml
+E           2026-09-17 20:10:05.982 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6239 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server']
+E           2026-09-17 20:10:05.982 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6243 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E           2026-09-17 20:10:05.983 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[inf]
+E           1 failed in 1.79s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 20:10:04.157 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 20:10:04.163 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 20:10:04.163 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 20:10:04.163 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+______ test_nonfinite_background_rate_keeps_configuration_loadable[-inf] _______
+
+self = <Coroutine test_nonfinite_background_rate_keeps_configuration_loadable[-inf]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_nonfinite_background_rate_keeps_configuration_loadable[-inf]>>, 'raw': '-inf'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1600/test_nonfinite_background_rate1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ______ test_nonfinite_background_rate_keeps_configuration_loadable[-inf] _______
+E
+E           request = <FixtureRequest for <Coroutine test_nonfinite_background_rate_keeps_configuration_loadable[-inf]>>
+E           raw = '-inf'
+E
+E               @pytest.mark.parametrize("raw", ["inf", "-inf", "nan"])
+E               @private_profile_test
+E               async def test_nonfinite_background_rate_keeps_configuration_loadable(request, raw):
+E                   """A legal TOML nonfinite float must not stop config/Settings startup."""
+E                   import toml
+E                   from tldw_chatbook import config
+E
+E                   path = Path(config.get_cli_config_path())
+E                   values = toml.loads(path.read_text())
+E                   values.setdefault("console", {})["background_effects"] = {
+E                       "enabled": True, "effect": "rain", "fps": float(raw),
+E                   }
+E                   path.write_text(toml.dumps(values))
+E                   before = path.read_bytes()
+E           >       loaded = config.load_settings(force_reload=True)
+E                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_settings_console_context_effects_journeys.py:30:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           tldw_chatbook/Backup_Recovery/config_participants.py:420: in wrapped
+E               return function(*args, **kwargs)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+E           tldw_chatbook/config.py:1806: in load_settings
+E               return _load_settings_uncached(
+E           tldw_chatbook/Backup_Recovery/config_participants.py:420: in wrapped
+E               return function(*args, **kwargs)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+E           tldw_chatbook/config.py:2101: in _load_settings_uncached
+E               normalize_console_background_effects(background_effects).to_config()
+E               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           tldw_chatbook/Utils/console_background_effects.py:84: in normalize_console_background_effects
+E               fps=_coerce_fps(raw.get("fps")),
+E                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           value = -inf
+E
+E               def _coerce_fps(value: object) -> int:
+E                   if isinstance(value, bool):
+E                       return DEFAULT_CONSOLE_BACKGROUND_FPS
+E                   try:
+E           >           fps = int(value)
+E                             ^^^^^^^^^^
+E           E           OverflowError: cannot convert float infinity to integer
+E
+E           tldw_chatbook/Utils/console_background_effects.py:64: OverflowError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 20:10:08.488 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 20:10:08.494 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 20:10:08.494 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 20:10:08.494 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 20:10:08.514 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-17 20:10:08.515 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-17 20:10:08.516 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6134 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1600/test_nonfinite_background_rate1/private-profile-process/profile/config/config.toml
+E           2026-09-17 20:10:08.520 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6155 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1600/test_nonfinite_background_rate1/private-profile-process/profile/config/config.toml
+E           2026-09-17 20:10:08.520 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6239 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server']
+E           2026-09-17 20:10:08.520 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6243 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E           2026-09-17 20:10:08.521 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[-inf]
+E           1 failed in 1.77s
+
+Tests/private_profile.py:84: Failed
+________________ test_context_percentage_label_is_fully_painted ________________
+
+self = <Coroutine test_context_percentage_label_is_fully_painted>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_context_percentage_label_is_fully_painted>>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1600/test_context_percentage_label_0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ________________ test_context_percentage_label_is_fully_painted ________________
+E
+E           request = <FixtureRequest for <Coroutine test_context_percentage_label_is_fully_painted>>
+E
+E               @private_profile_test
+E               async def test_context_percentage_label_is_fully_painted(request):
+E                   app = _build_test_app()
+E                   host = _StyledDestinationHarness(app, "settings")
+E                   async with host.run_test(size=(170, 48)) as pilot:
+E                       await _category(host, pilot, "Console Behavior")
+E                       control = host.screen.query_one("#settings-console-context-target-percent", Input)
+E                       control.focus()
+E                       await _settle(host, pilot)
+E                       label = control.parent.query_one(".settings-input-label", Static)
+E                       _assert_painted(host.screen, label)
+E           >           assert str(label.renderable) in _painted(host, label)
+E           E           AssertionError: assert 'Reduce conversation to (%)' in 'Reduce conversation to  '
+E           E            +  where 'Reduce conversation to (%)' = str('Reduce conversation to (%)')
+E           E            +    where 'Reduce conversation to (%)' = Static(classes='settings-input-label').renderable
+E           E            +  and   'Reduce conversation to  ' = _painted(_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'}), Static(classes='settings-input-label'))
+E
+E           Tests/UI/test_settings_console_context_effects_journeys.py:47: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 20:10:13.604 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 20:10:13.610 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 20:10:13.610 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 20:10:13.610 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 20:10:13.701 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 20:10:13.727 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 20:10:13.727 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 20:10:13.727 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 20:10:13.728 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 20:10:13.812 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1600/test_context_percentage_label_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 20:10:13.885 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pcjirqt4/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 20:10:14.068 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pcjirqt4/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 20:10:14.082 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 20:10:14.083 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pcjirqt4/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 20:10:14.083 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pcjirqt4/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 20:10:14.216 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 20:10:14.259 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 20:10:14.303 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 20:10:14.337 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 20:10:14.372 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 20:10:14.417 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 20:10:14.418 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pcjirqt4/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 20:10:14.470 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 20:10:14.470 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 20:10:14.479 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 20:10:14.554 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 20:10:14.554 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1600/test_context_percentage_label_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 20:10:14.555 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 20:10:14.621 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 20:10:14.621 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E           2026-09-17 20:10:14.621 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 20:10:14.622 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.998 seconds
+E           2026-09-17 20:10:14.622 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.101s (10.1%)
+E           2026-09-17 20:10:14.622 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 20:10:14.622 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.002s (0.2%)
+E           2026-09-17 20:10:14.623 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 20:10:14.623 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 20:10:14.623 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-09-17 20:10:14.623 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 20:10:14.624 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E           2026-09-17 20:10:14.832 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 20:10:14.931 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 20:10:17.929 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           4.32s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_context_percentage_label_is_fully_painted
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_context_effects_journeys.py::test_context_percentage_label_is_fully_painted
+E           1 failed in 6.31s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+7.45s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_context_percentage_label_is_fully_painted
+2.41s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[inf]
+2.40s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[-inf]
+2.38s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[nan]
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[inf]
+FAILED Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[-inf]
+FAILED Tests/UI/test_settings_console_context_effects_journeys.py::test_context_percentage_label_is_fully_painted
+3 failed, 1 passed in 16.71s

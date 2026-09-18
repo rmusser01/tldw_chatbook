@@ -1,0 +1,24 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 A  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handof… Speak replies   ▌   Hands-free   ▌     Blocked
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────
+ Conversation | Chat 1
+         Chat 1         ✕    New tab     Temporary
+
+                                           b
+  ────────────────────────────────────────────────────────────────────────────
+   User
+   Keep this sample question visible.
+  ────────────────────────────────────────────────────────────────────────────
+  ▊ Assistant
+  ▊
+  ▊  Keep this sample answer unchanged.
+  ▊
+  ▊
+  ────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: openai     Model:
+█  Composer ▾  Menu  ▌Ask, command, or paste       Send         Dictate
+  Ctrl+Shift+F focus | Alt+I inspect | F1 · F6 · Ctrl+P · Ctrl+Q

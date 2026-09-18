@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+18.18s call     Tests/UI/test_settings_agent_budget_journeys.py::test_over_limit_steps_are_refused_without_saving_a_different_runtime_budget
+4.99s call     Tests/UI/test_settings_agent_run_budget.py::test_an_edit_saves_and_reaches_the_run_budget_resolver
+
+(4 durations < 1s hidden.)
+2 passed in 25.19s

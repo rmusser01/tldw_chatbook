@@ -7,6 +7,8 @@ import tomllib
 import pytest
 from loguru import logger
 
+from Tests.private_profile import private_profile_test
+
 CONFIG_PATH_BEFORE_CONFIG_IMPORT = os.environ.get("TLDW_CONFIG_PATH")
 from tldw_chatbook import config as config_module  # noqa: E402
 
@@ -344,8 +346,9 @@ def test_load_settings_rejects_boolean_console_paste_threshold(tmp_path, monkeyp
         )
 
 
-def test_load_settings_normalizes_console_background_effects(tmp_path, monkeypatch):
-    config_path = tmp_path / "config.toml"
+@private_profile_test
+def test_load_settings_normalizes_console_background_effects(request, monkeypatch):
+    config_path = Path(config_module.get_cli_config_path())
     config_path.write_text(
         "\n".join(
             [

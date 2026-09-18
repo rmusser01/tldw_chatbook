@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │ │ ││ 85                            │ │  │
+│     Web Search               │  │  │ │ │                                │ │  │
+│     Speech & TTS             │  │  │ │ │Reduce context to (%)           │ │  │
+│  Interface                   │  │  │ │ │█ 55                            │ │  │
+│     Appearance               │  │  │ │ │                                │ │  │
+│     Theme                  ▁ │  │  │ │ │Summary response max            │ │  │
+│     Splash Screen            │  │  │ │ ││ 1536                          │ │  │
+│   > Console Behavior         │  │  │ │ │                                │ │▆ │
+│  Data & Privacy              │  │  │ │ │ Summary response max applies   │ │▆ │
+│     Storage                  │  │  │ │ │ only to Text summary and       │ │  │
+│     Workspaces               │  │  │ │ │ Hybrid.                        │ │  │
+│     Tool Profiles            │  │  │ │ │If compaction fails             │ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | F1 · F6 · Ctrl+P · Ctrl+Q

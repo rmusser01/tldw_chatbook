@@ -1,0 +1,6 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+8.59s call     Tests/UI/test_console_native_transcript.py::test_mounted_console_repaints_when_transcript_style_changes
+
+(8 durations < 1s hidden.)
+3 passed in 11.32s

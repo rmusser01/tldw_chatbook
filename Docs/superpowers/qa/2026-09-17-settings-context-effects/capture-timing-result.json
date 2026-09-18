@@ -1,0 +1,44 @@
+{
+  "pid": 66810,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "invalid_ratio_and_fps_refused": true,
+      "context_default_controller_parity": true,
+      "workbench_fallback": true,
+      "live_effect_started_and_stopped": true,
+      "transcript_identity_and_text_unchanged": true
+    }
+  ],
+  "runner_sha256": "24fad32f0768d1f9298c72e274f110fd193e50c8c64f6d8c8adc45fc61feb401",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "a3a46ebfc538c643e2e8a0be24c90673208f13e9dfb904afefb18b4d391f913d",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "b99ae9e5e1a78367774a8e19c09e823387214ca16f85e3cc850ca918c1e0061e",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "da2e73f4102cebaa79523005310b96bfe101e39b1c2ca0d25138946267f05865",
+    "tldw_chatbook/css/features/_settings.tcss": "6f844271e2d124708dae7b302023f6230fd1b018ec4e296242eb9d8e6b169475",
+    "tldw_chatbook/Utils/console_background_effects.py": "416a4249648e5b870d946da4e2316ddca19db250783e680dfc93b320e3362675",
+    "tldw_chatbook/Widgets/Console/console_background_effect.py": "6a8fa756bb65af91906c7c06c1b19d58248a3c7b800d580af8554583109eddfe",
+    "tldw_chatbook/Chat/console_context_policy.py": "9823eb2eaef18c07666e42252ba342d29a143901bf7eaf6cf3905d986cb2cd7e",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Saved context and effects",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-context-effects/native_check.py\", line 274, in journey\n    assert \"Reduce context to (%)\" in painted(label)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "app_run_returned": true
+}

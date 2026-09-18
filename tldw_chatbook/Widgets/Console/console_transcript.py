@@ -3044,6 +3044,8 @@ class ConsoleTranscript(VerticalScroll):
         #: harness that builds this widget directly starts with the card
         #: switched off until the setter runs.
         self._change_review_provider_factory: Callable[[], Any] | None = None
+        # A viewport-only decoration, separate from row reconciliation and export.
+        self.background_effect_factory: Callable[[], Widget] | None = None
         self._presentation_context = ConsolePresentationContext()
         self._messages: list[ConsoleChatMessage] = []
         self._unit_spans_by_index: tuple[
@@ -3300,6 +3302,16 @@ class ConsoleTranscript(VerticalScroll):
         )
         hint.display = False
         yield hint
+        if self.background_effect_factory is not None:
+            yield self.background_effect_factory()
+
+    @property
+    def layers(self) -> tuple[str, ...]:
+        # Textual inherits the outermost ancestor's layers. This viewport's
+        # decoration must stay below rows even inside the Console setup shell.
+        if getattr(self, "background_effect_factory", None) is not None:
+            return self.styles.layers or super().layers
+        return super().layers
 
     def set_voice_preview(self, projection: VoicePreviewProjection) -> None:
         """Show one ephemeral speculative voice projection."""
@@ -6445,7 +6457,11 @@ class ConsoleTranscript(VerticalScroll):
                 return
             self.toggle_message_selection(row_node.message_id)
             return
-        if control is self:
+        if control is self or (
+            control is not None
+            and control.parent is self
+            and control.has_class("console-background-effect")
+        ):
             self.action_clear_selection()
             event.stop()
 

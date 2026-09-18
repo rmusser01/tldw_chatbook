@@ -15659,3 +15659,30 @@ warning. Synchronizing Select errors/options and testing invalid-to-valid-to-
 invalid transitions fixed the interaction while preserving editor identity.
 When one branch adds a control state and another changes refresh strategy,
 exercise the composed control's next update, even after a clean text merge.
+
+## A cancelled Settings worker can finish writing without publishing the result
+
+**TASK-32767, 2026-09-17.** The native background-effects journey first found
+a saved setting that never reached a cached Console. After adding appearance
+publication and resume reconciliation, the mounted save-then-return test passed,
+but returning while the real file writer was blocked still failed: the file was
+replaced and caches reloaded, while the app's refresh generation stayed zero.
+Popping Settings cancelled its Textual worker handle without stopping the file
+thread. After unmount, that thread's `self.app` lookup had no parent to follow.
+Retaining the host before the blocking write allowed the completion callback to
+publish to the existing Console. Both timing variants now preserve seeded
+user/assistant text and start/stop the same effect widget. Test the physical
+writer and UI publication boundaries separately; a cancelled worker handle or
+a saved file alone does not prove that the live view received the result.
+
+## A running decoration timer does not prove its glyphs reach the screen
+
+**TASK-32767, 2026-09-17.** Background run007 passed active/timer assertions,
+but populated native screenshots showed no particles: Textual's full-size
+transcript blank strips occluded the sibling effect despite transparent colors.
+Moving the dedicated renderer below message children exposed another native-only
+fixture gap: the Console shell's outer layer list overrode the viewport order
+and hid the messages. Compositor assertions with the production ancestor now
+check both message glyphs and particles in unused space. Preserve a populated
+fixture and inspect actual output when qualifying decoration; lifecycle state
+alone can pass while the intended visual is absent or hides useful content.

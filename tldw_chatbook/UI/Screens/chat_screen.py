@@ -4716,6 +4716,7 @@ class ChatScreen(BaseAppScreen):
         if generation <= observed:
             return False
         self._console_appearance_refresh_generation = generation
+        self._refresh_console_background_effects()
         self._character.invalidate_refresh_scope()
         if self.is_mounted:
             self.run_worker(
@@ -7780,6 +7781,15 @@ class ChatScreen(BaseAppScreen):
             console.get("background_effects", {}) if isinstance(console, dict) else {}
         )
         return normalize_console_background_effects(background)
+
+    def _refresh_console_background_effects(self) -> None:
+        """Apply saved effects without rebuilding the transcript or resetting an unchanged timer."""
+        surface = self.console_session_surface
+        if surface is None:
+            return
+        settings = self._console_background_effect_settings()
+        if surface.background_effect_settings != settings:
+            surface.sync_background_effect_settings(settings)
 
     @staticmethod
     def _is_console_choose_model_action(label: object) -> bool:
@@ -23499,6 +23509,8 @@ class ChatScreen(BaseAppScreen):
         # task-17652: a Settings change to the status-row position must land
         # on this cached screen without a recompose.
         apply_status_chips_position(self)
+        # Settings can save while this cached Console is outside the screen stack.
+        self._refresh_console_background_effects()
         # TASK-31520: re-arm what on_screen_suspend quiesced. mount() is
         # idempotency-guarded, so the first visit's mount+resume pair does
         # the wiring once. A run left active while the user was away needs

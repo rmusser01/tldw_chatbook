@@ -1,0 +1,39 @@
+{
+  "pid": 73554,
+  "cells": [],
+  "runner_sha256": "b779a74b3b8d1eff53d13804ed9c76db7b0b96c4e9353b59d7a2da0d617c5a73",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "4c75d06f6091e2dc1615cfbe0247952b28239166429dcfda58477765ac2c5229",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "b99ae9e5e1a78367774a8e19c09e823387214ca16f85e3cc850ca918c1e0061e",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "da2e73f4102cebaa79523005310b96bfe101e39b1c2ca0d25138946267f05865",
+    "tldw_chatbook/css/features/_settings.tcss": "6f844271e2d124708dae7b302023f6230fd1b018ec4e296242eb9d8e6b169475",
+    "tldw_chatbook/Utils/console_background_effects.py": "416a4249648e5b870d946da4e2316ddca19db250783e680dfc93b320e3362675",
+    "tldw_chatbook/Widgets/Console/console_background_effect.py": "c541355dde241c6363e458faeb7b27e4c97b841e07efa3a93abf385a880c2280",
+    "tldw_chatbook/Widgets/Console/console_transcript.py": "5a773ac2b745ee1a6b72c95bd9b855308903838ccb395764314f14ef1da00ff6",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "d83fc0a40e6b23c8481a9e0ee687746fefa9a6001977363428d24a836d0166d2",
+    "tldw_chatbook/Chat/console_context_policy.py": "9823eb2eaef18c07666e42252ba342d29a143901bf7eaf6cf3905d986cb2cd7e",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Seeded transcript is painted",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-context-effects/native_check.py\", line 201, in journey\n    await wait_for(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-context-effects/native_check.py\", line 102, in wait_for\n    raise AssertionError(label)\nAssertionError: Seeded transcript is painted\n",
+  "app_run_returned": true,
+  "cleanup": {
+    "exit_code": 1,
+    "pid_absent": true,
+    "owned_terminal_closed": true,
+    "default_fingerprints_unchanged": true
+  }
+}

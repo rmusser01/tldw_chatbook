@@ -17923,7 +17923,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
-                    "Reduce conversation to (%)", classes="settings-input-label"
+                    "Reduce context to (%)", classes="settings-input-label"
                 )
                 yield Input(
                     value=format_ratio_percent(
@@ -30655,6 +30655,8 @@ class SettingsScreen(BaseAppScreen):
                 }
             self._console_settings().update(normalized_console_values)
             self._chat_defaults().update(chat_default_values)
+            if "background_effects" in console_values:
+                self._signal_console_appearance_refresh()
             if "user_display_name" in chat_default_values:
                 self._signal_console_identity_refresh()
             self._settings_drafts.pop(SettingsCategoryId.CONSOLE_BEHAVIOR, None)
@@ -30693,8 +30695,11 @@ class SettingsScreen(BaseAppScreen):
         chat_default_values: Mapping[str, object],
         workbench_scope_fallback: bool = False,
     ) -> None:
+        # An admitted write may finish after Settings has been unmounted.
+        # Retain its host before blocking; the detached screen has no app parent.
+        host = self.app
         saved = self._save_console_behavior_values(console_values, chat_default_values)
-        self.app.call_from_thread(
+        host.call_from_thread(
             self._apply_console_behavior_save_result,
             saved,
             dict(console_values),
