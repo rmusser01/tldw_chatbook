@@ -12,17 +12,18 @@ Token migration alone does not qualify a complete workflow.
 | Tools controls and catalog access | TASK-32789, [88 distinct targeted cases and native gallery](../qa/2026-09-18-mcp-tools-access/README.md) | Full on/off label, focused filters/rows, retained cursor through resize, real private toggle persistence and exact row inspection; no tool execution |
 | Tools name/state readability and identity | TASK-32790, [88 final targeted cases and native gallery](../qa/2026-09-18-mcp-tools-readability/README.md) | Complete names and State together, metadata reachable, identity retained through resize/filter/refresh, independent Enter and short/long scrollbar transitions; no tool execution |
 
+| Root drafts, ordered saves and truthful scope | TASK-32791, [targeted checks and ten native captures](../qa/2026-09-18-mcp-root-settings/README.md) | Exact draft ownership, app lifetime/shutdown, cache warnings and later config/external-file supersession; existing Permissions resize failure is separately retained |
+
 ## Remaining review
 
-- **Workspace-root guidance and save lifecycle:** independent mounted review
-  confirmed three defects: copy promises next-Console confinement, ordinary
-  `_sync_children()` discards the root draft, and a cancelled `to_thread` save A
-  can finish after save B and leave disk at A while the UI claims B. Actual
-  configured-root consumers include standalone MCP serving and the operator Hub
-  executable-provider/test path (`unified_control_plane_service.py`); Console
-  uses Chat scratch and admitted Workspace folders. Blank fallback resolves the
-  serving process's current working directory. Correct this contract and qualify
-  ordered writes, draft retention, failure/retry and screen lifetime.
+- **Permissions table final viewport:** TASK-32791's related rerun found the
+  light-theme selected State cell clipped from 7 to 6 columns after resize. A fresh
+  baseline checkout at6c0e317ab7 reproduced it unchanged on the first attempt;
+  an isolated current retry passed. The plain Permissions DataTable observes
+  canvas resize but not all final child/outer-scrollbar geometry transitions.
+  Repair and qualify this separately; passing retries do not close it.
+- **Local-tools master toggle:** verify ordering, lifetime and truthful outcomes
+  under overlapping saves; the root-specific owner does not change this path.
 - **Tools refresh and execution:** retained selection/filter drafts across
   background refresh, diagnostic empty-state actions, disconnected/stale tools,
   schema forms/raw arguments, test execution and inspector recovery.
