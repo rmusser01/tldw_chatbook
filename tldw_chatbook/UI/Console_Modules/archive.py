@@ -201,7 +201,7 @@ async def request_conversation_resume(
             app.run_worker(proceed(), group="resume-saved-conversation", exclusive=True)
 
     if workspace and workspace.archived:
-        from rich.markup import escape
+        from tldw_chatbook.Utils.markup import escape_markup as escape
 
         app.push_screen(
             ConfirmationDialog(

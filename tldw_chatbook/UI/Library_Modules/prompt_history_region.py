@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from rich.cells import cell_len, split_graphemes
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest

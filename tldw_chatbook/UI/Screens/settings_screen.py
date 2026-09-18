@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from rich.cells import cell_len
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult

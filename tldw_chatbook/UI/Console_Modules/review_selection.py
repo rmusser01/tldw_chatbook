@@ -17,7 +17,7 @@ from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 
 from tldw_chatbook.Chat.citation_trace_repository import ActiveCitationTraceState
 from tldw_chatbook.Chat.provider_usage import ProviderUsage

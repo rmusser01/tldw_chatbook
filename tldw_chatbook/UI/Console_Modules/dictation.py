@@ -101,7 +101,7 @@ import uuid
 from typing import Any, Literal, TYPE_CHECKING
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 from textual.message import Message
 
 # Import-safe at module scope: `console_voice_input` reaches the optional

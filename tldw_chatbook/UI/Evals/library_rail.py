@@ -73,7 +73,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches

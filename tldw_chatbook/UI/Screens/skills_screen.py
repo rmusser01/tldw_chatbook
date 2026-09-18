@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult

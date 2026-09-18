@@ -648,7 +648,7 @@ Preview: {preview}...
             self.app.notify(f"Image saved to: {downloads_path}")
         except Exception as e:
             logging.error(f"Error saving image: {e}")
-            from rich.markup import escape
+            from tldw_chatbook.Utils.markup import escape_markup as escape
 
             self.app.notify(f"Error saving image: {escape(str(e))}", severity="error")
 

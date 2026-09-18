@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from rich.cells import cell_len
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult

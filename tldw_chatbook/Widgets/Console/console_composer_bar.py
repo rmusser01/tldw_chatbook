@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from rich.cells import cell_len, split_graphemes
-from rich.markup import escape
+from tldw_chatbook.Utils.markup import escape_markup as escape
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult

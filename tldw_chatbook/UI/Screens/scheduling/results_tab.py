@@ -68,33 +68,19 @@ from .unified_rows import (
 )
 from .workbench_host_screen import WorkbenchHostScreen
 
+from tldw_chatbook.Utils.markup import escape_markup as _escape_markup
+
 _KIND_GLYPHS = {"finding": "●", "failure": "✕"}  # ● / ✕
 
 #: The tab's heading when every stored result fits in the listing.
 RESULTS_HEADING = "Automation results"
 
 
-def escape_markup(value: str) -> str:
-    """Escape EVERY ``[`` so the detail pane renders content literally.
-
-    Deliberately NOT `rich.markup.escape` (nor `textual.markup.escape`,
-    which shares its regex): both only escape tags matching
-    ``\\[[a-z#/@]...]``, but the parser this pane actually renders
-    through -- `Static.update(str)` -> `Content.from_markup` -- consumes
-    ANY ``[...]`` token, uppercase included. Live verification (task 6)
-    lost a literal ``[PR-6]`` out of a real result answer while the
-    existing escaping test passed, because that test only used a
-    lowercase ``[bold]`` token, which rich DOES escape. Escaping every
-    bracket is the only escape that matches this parser.
-
-    Args:
-        value: Text to render literally. Coerced via `str()`, so a
-            non-string stored-JSON value is safe to pass straight in.
-
-    Returns:
-        The same text with every ``[`` backslash-escaped.
-    """
-    return str(value).replace("[", "\\[")
+# TASK-32802.1 moved this function to ``tldw_chatbook/Utils/markup.py``
+# and adopted it repo-wide; it is re-exported here because this module's
+# own tests and siblings import it by this name. The rationale, and the
+# `[PR-6]` incident that produced it, live with the function.
+escape_markup = _escape_markup
 
 
 #: Failure rows get the same red-toned Rich style `status_badge_text`

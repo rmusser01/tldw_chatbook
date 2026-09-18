@@ -113,7 +113,7 @@ import os
 import uuid
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 from textual.widgets import Button
 
 from ...Chat.console_chat_controller import (

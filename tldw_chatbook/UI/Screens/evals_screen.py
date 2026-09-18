@@ -34,7 +34,12 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
+# The narrow rich escape is kept for the call sites below whose value
+# reaches a markup-OFF sink, where any escape shows the reader a literal
+# backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;
+# widening the escape would make that leak worse rather than fix it.
+from rich.markup import escape as _escape_for_markup_off_sink  # TASK-32802.4
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -2531,7 +2536,7 @@ class EvalsScreen(LabScreen):
                 bench = self._view_model.character_bench_by_id(selection.id)
             else:
                 bench = None
-            name = escape_markup(str(bench.get("name") or "Untitled bench")) if bench else None
+            name = _escape_for_markup_off_sink(str(bench.get("name") or "Untitled bench")) if bench else None
             return (
                 f"Run {name}" if name else "Run Bench",
                 True,
@@ -2566,7 +2571,7 @@ class EvalsScreen(LabScreen):
             # this file. Computed once here, ahead of the target-count
             # check below, so both the found-but-target-less and the
             # runnable branch can name the bench in their label.
-            name = escape_markup(str(bench.get("name") or "Untitled bench"))
+            name = _escape_for_markup_off_sink(str(bench.get("name") or "Untitled bench"))
             # task-1482 fix round 1: a draft bench created via "+ New
             # bench" has `target_ids=()` until the bench editor (Task 6)
             # wires one on. Read straight from the already-loaded row's
@@ -2628,7 +2633,7 @@ class EvalsScreen(LabScreen):
                     "The selected bench no longer exists; choose another "
                     "bench to run.",
                 )
-            name = escape_markup(str(bench.get("name") or "Untitled bench"))
+            name = _escape_for_markup_off_sink(str(bench.get("name") or "Untitled bench"))
             config_data = bench.get("config_data") or {}
             character_ids = config_data.get("character_ids") or []
             if not character_ids:

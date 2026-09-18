@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 
 from ...Backup_Recovery.runtime_producer_lifetime import ProducerLifetime, producer_call
 from ...Chat.console_command_grammar import CommandParse
@@ -1325,7 +1325,7 @@ class ConsoleVideoController:
         """
         import shutil
 
-        from rich.markup import escape as escape_markup
+        from tldw_chatbook.Utils.markup import escape_markup
 
         store = self._ensure_console_chat_store()
         try:

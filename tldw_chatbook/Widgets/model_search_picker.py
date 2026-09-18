@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from functools import partial
 
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.markup import escape_markup
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
