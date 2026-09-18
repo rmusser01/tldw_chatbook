@@ -2927,6 +2927,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._tool_profiles_listing_generation = 0
         self._tool_profiles_result = ""
+        self._tool_profiles_result_profile_id: str | None = None
         self._tool_profile_review_intent: object | None = None
         self._tool_profile_review_modal: ModalScreen | None = None
 
@@ -4535,14 +4536,17 @@ class SettingsScreen(BaseAppScreen):
             exit_on_error=False,
         )
 
-    def _set_tool_profiles_result(self, text: str) -> None:
+    def _set_tool_profiles_result(
+        self, text: str, *, profile_id: str | None = None
+    ) -> None:
         """Persist and render one bounded, path-free operation outcome."""
         self._tool_profiles_result = text[:512]
+        self._tool_profiles_result_profile_id = profile_id
         try:
             panel = self.query_one("#settings-tool-profiles-panel", ToolProfilesPanel)
         except QueryError:
             return
-        panel.set_result(self._tool_profiles_result)
+        panel.set_result(self._tool_profiles_result, profile_id=profile_id)
 
     def _tool_profile_action_is_current(
         self,
@@ -4567,6 +4571,22 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _tool_pack_failure_copy(operation: str, error: "ToolPackError") -> str:
         """Return bounded recovery copy for one stable Tool Pack error."""
+        if operation == "remove":
+            return {
+                "outcome_uncertain": (
+                    "Removal outcome uncertain. Check the current profile state "
+                    "before retrying."
+                ),
+                "stale": "Profile changed. Review its current details before removing it.",
+                "in_use": (
+                    "Profile is in use. Finish its active run, then reopen Tool Profiles."
+                ),
+                "referenced": (
+                    "Profile is referenced by a workspace. Update its active and "
+                    "archived workspace defaults first."
+                ),
+                "non_removable": "Profile cannot be removed. Review its current details.",
+            }.get(error.category, "Removal unavailable. Check the current profile state.")
         if operation == "export" and error.category == "publication_unsupported":
             if os.name == "nt":
                 return (
@@ -4895,7 +4915,9 @@ class SettingsScreen(BaseAppScreen):
 
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
-            self._set_tool_profiles_result("Remove failed · service_unavailable")
+            self._set_tool_profiles_result(
+                "Remove failed · service_unavailable", profile_id=profile_id
+            )
             return
         worker = get_current_worker()
         display_profile_id = "".join(
@@ -4917,7 +4939,7 @@ class SettingsScreen(BaseAppScreen):
             )
         )
         if confirmed is not True or worker.is_cancelled:
-            self._set_tool_profiles_result("Remove cancelled")
+            self._set_tool_profiles_result("Remove cancelled", profile_id=profile_id)
             return
         try:
             candidate = await asyncio.to_thread(
@@ -4928,15 +4950,23 @@ class SettingsScreen(BaseAppScreen):
             if type(candidate) is not ToolProfileRemovalResult:
                 raise ToolPackError("remove", "outcome_uncertain")
             self._set_tool_profiles_result(
-                f"Removed {candidate.tombstone.profile_id} · id permanently reserved"
+                f"Removed {candidate.tombstone.profile_id} · id permanently reserved",
+                profile_id=profile_id,
             )
-            self._request_tool_profiles_listing()
         except ToolPackError as exc:
-            self._set_tool_profiles_result(self._tool_pack_failure_copy("remove", exc))
+            self._set_tool_profiles_result(
+                self._tool_pack_failure_copy("remove", exc), profile_id=profile_id
+            )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - optional workflow must stay bounded
-            self._set_tool_profiles_result("Remove failed · outcome_uncertain")
+            self._set_tool_profiles_result(
+                self._tool_pack_failure_copy(
+                    "remove", ToolPackError("remove", "outcome_uncertain")
+                ),
+                profile_id=profile_id,
+            )
+        self._request_tool_profiles_listing()
 
     @on(ToolProfilesPanel.EditPolicyRequested)
     def _handle_tool_profile_edit_policy(
@@ -20790,6 +20820,7 @@ class SettingsScreen(BaseAppScreen):
             yield ToolProfilesPanel(
                 self._tool_profiles_listing,
                 result=self._tool_profiles_result,
+                result_profile_id=self._tool_profiles_result_profile_id,
                 id="settings-tool-profiles-panel",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
