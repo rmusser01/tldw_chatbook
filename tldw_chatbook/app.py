@@ -8259,6 +8259,8 @@ class TldwCli(
         )
         self._tool_pack_wiring_started = False
         self._tool_pack_composition_worker: Worker | None = None
+        self._tool_profile_operations = None
+        self._tool_profile_operations_closed = False
         self._screen_preimport_thread: threading.Thread | None = None
         # task-21110: the splash-overlapped warm-up of the INITIAL route's
         # module. Separate from `_screen_preimport_thread` (the whole-registry
@@ -9854,6 +9856,21 @@ class TldwCli(
                 "Workspace agent provisioning wiring failed; "
                 f"error_type={type(exc).__name__}"
             )
+
+    def _get_tool_profile_operations(self):
+        """Lazily own admitted Tool Profile writes for this app session."""
+        from .Tool_Packs.operations import (
+            ToolProfileOperations,
+            ToolProfileWriteUnavailable,
+        )
+
+        if getattr(self, "_tool_profile_operations_closed", False):
+            raise ToolProfileWriteUnavailable("shutdown")
+        owner = getattr(self, "_tool_profile_operations", None)
+        if owner is None:
+            owner = ToolProfileOperations()
+            self._tool_profile_operations = owner
+        return owner
 
     def _deferred_wire_tool_pack_service(self) -> Worker | None:
         """Schedule one complete Tool Pack composition on first feature use."""
@@ -18998,6 +19015,12 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        self._tool_profile_operations_closed = True
+        tool_profiles = getattr(self, "_tool_profile_operations", None)
+        if tool_profiles is not None:
+            # Settle these writes before another owner's failure can advance
+            # teardown to the workspace databases used by their final checks.
+            await tool_profiles.close_and_drain()
         recovery_cancellation = await TldwCli._shutdown_recovery_service(self)
         monitor_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
         recovery_cancellation = recovery_cancellation or monitor_cancellation
@@ -19057,6 +19080,9 @@ class TldwCli(
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""
+        # Ordinary Quit reaches these drains before on_unmount. Use the same
+        # process-owned, idempotent watchdog here so the drains are bounded too.
+        arm_exit_watchdog(reason="app shutdown")
         cancellation: asyncio.CancelledError | None = None
         owner_error: BaseException | None = None
         shutdown_task = asyncio.current_task()

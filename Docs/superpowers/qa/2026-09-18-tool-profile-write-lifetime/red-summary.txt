@@ -1,0 +1,10 @@
+Mounted baseline recreation probe: first worker cancelled; actual profiles empty; replacement Settings rendered research and an empty receipt.
+Nine recreation regressions: 9 failed, 15 deselected in 50.80s (pending activity absent after recreation).
+Owner test collection initially failed because the coordinator module did not exist.
+Initial owner14 and mounted/app27 checks passed.
+Independent review found malformed nested results and callable-origin cancellation. Added red cases: 6 failed, 4 passed, 10 deselected in 0.68s. Corrected owner20 plus app4: 24 passed. Six mounted malformed-result cases pass and refresh actual facts with uncertain copy.
+The first raw app-shutdown test invocation failed at config-source bootstrap, before exercising app shutdown. The unchanged existing test passes under the established private-profile process wrapper.
+Native run001: recreated Settings showed Removal in progress and Profiles unavailable/loading. The fixture held the same lifecycle lock that list_profiles needs for lease counts, so waiting for rows before releasing it was an invalid fixture expectation. It exited normally with 11 clean private databases. The final run qualifies pending/loading first, then releases and qualifies refreshed facts.
+Native run002: the fixture attempted to focus disabled Import during loading; Textual correctly retained category focus. The final helper checks enabled state and actual focus identity, preserves category focus during loading and explicitly focuses Import only after completion. Both failed fixtures exited normally with 11 clean private databases; their receipts are retained.
+Final run003: all four recreation cells and the fifth normal-shutdown write passed on final production source. All 17 captures rendered and inspected.
+Final owner ordering coverage: 21 passed; final import/export closure capture check: 31 passed, 12 deselected. These overlap the broader runs; final distinct total is 229.

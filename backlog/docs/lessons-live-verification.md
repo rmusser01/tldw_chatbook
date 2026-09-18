@@ -2839,6 +2839,16 @@ harness and read `screen.focused`. And when a control's focus treatment is a
 colour swap that its own selected/active state also uses, that is itself the
 bug worth filing — a reader cannot see focus there either.
 
+**Refinement (TASK-32787, 2026-09-18): calling `focus()` is not evidence
+that it succeeded.** The second Tool Profile recreation native fixture tried to
+focus Import while a real service lock kept the listing in its loading state.
+Import was disabled, so Textual correctly retained category focus. A helper that
+checked geometry alone accepted the no-op and the later focus assertion failed.
+The final helper checks enabled state and `screen.focused is widget`, while the
+journey deliberately preserves category focus until Import becomes available.
+All four final recreation cells pass. Pair actual identity with rendered focus
+and visibility checks; none of the three substitutes for the others.
+
 ## "The key is being swallowed" — check the framework binds it at all before hunting the swallower (task-32247, 2026-09-11)
 
 **What happened.** The task recorded, as an inferred cause, "Textual's
