@@ -1,0 +1,28 @@
+.......................................................                  [100%]
+============================= slowest 25 durations =============================
+22.12s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size1-textual-light]
+21.53s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size1-textual-dark]
+21.38s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size0-textual-light]
+19.87s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+19.05s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size0-textual-dark]
+18.15s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+9.23s call     Tests/UI/test_settings_workspaces_category.py::test_create_rename_archive_unarchive_flow
+7.89s call     Tests/UI/test_settings_workspaces_category.py::test_activation_failure_surfaces_inline_but_creates_workspace
+7.87s call     Tests/UI/test_settings_workspaces_category.py::test_settings_archived_label_and_restore_name_preserve_active_workspace
+7.72s call     Tests/UI/test_settings_workspaces_category.py::test_default_workspace_card_is_protected
+7.15s call     Tests/UI/test_settings_workspaces_category.py::test_settings_archive_receipt_undo_without_switching
+7.13s call     Tests/UI/test_settings_workspaces_category.py::test_compact_overview_keeps_a_painted_recovery_action
+6.60s call     Tests/UI/test_settings_workspaces_category.py::test_folder_bindings_add_toggle_remove_and_inline_errors
+5.82s call     Tests/UI/test_settings_workspaces_category.py::test_archived_workspace_card_offers_only_unarchive
+5.34s call     Tests/UI/test_settings_workspaces_category.py::test_workspaces_category_registered_and_immediate
+5.16s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_toggle_flips_and_persists
+4.95s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_failed_root_offers_one_retry_without_paths
+4.93s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_preparing_is_explicitly_non_blocking
+4.78s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_unavailable_consent_has_no_toggle
+4.73s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_git_absent_shows_honest_copy
+4.65s call     Tests/UI/test_settings_workspaces_category.py::test_resume_refreshes_workspaces_pane_only_when_active
+4.60s call     Tests/UI/test_settings_workspaces_category.py::test_pane_refreshes_after_external_registry_change
+4.60s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_global_kill_disclosed_in_settings
+4.51s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_stale_toggle_reports_conflict_and_refreshes
+4.50s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+55 passed in 295.54s (0:04:55)

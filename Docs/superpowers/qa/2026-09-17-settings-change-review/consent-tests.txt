@@ -1,0 +1,16 @@
+...........                                                              [100%]
+============================= slowest 25 durations =============================
+3.14s call     Tests/Workspaces/test_change_review_consent.py::test_full_initializer_queue_fails_fast_and_retry_is_bounded
+2.40s call     Tests/Workspaces/test_change_review_consent.py::test_admission_and_disable_linearize_on_one_lock
+2.21s call     Tests/Workspaces/test_change_review_consent.py::test_disable_then_reenable_rejects_old_initializer_aba
+2.18s call     Tests/Workspaces/test_change_review_consent.py::test_enabled_admission_prepares_once_then_returns_ready_root
+2.08s call     Tests/Workspaces/test_change_review_consent.py::test_unavailable_global_capability_schedules_no_work[disabled]
+2.07s call     Tests/Workspaces/test_change_review_consent.py::test_external_revision_change_rejects_old_initializer
+2.07s call     Tests/Workspaces/test_change_review_consent.py::test_unavailable_global_capability_schedules_no_work[unavailable]
+2.04s call     Tests/Workspaces/test_change_review_consent.py::test_enabling_consent_starts_background_preparation
+2.02s call     Tests/Workspaces/test_change_review_consent.py::test_disabled_admission_never_schedules_initializer
+1.87s call     Tests/Workspaces/test_change_review_consent.py::test_shutdown_is_bounded_and_late_completion_reads_no_registry
+1.80s call     Tests/Workspaces/test_change_review_consent.py::test_failed_toggle_cas_preserves_readiness
+
+(14 durations < 1s hidden.)
+11 passed in 24.63s

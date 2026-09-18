@@ -15734,3 +15734,16 @@ reuses the guarded reveal after actual text reflow. The populated dark/light
 keyboard matrix asserts the complete painted disclosure and focused action, and
 the native gallery records the final layout. Use geometry-change evidence for
 this case; another screen callback alone did not prove text had reflowed.
+
+## Retained controls must capture intent when an activation is posted
+
+**TASK-32771, 2026-09-17.** Keeping Change Review controls mounted preserved
+workspace drafts, but independent review queued a Disable press, changed the
+registry, and repainted that same button as Enable before its handler ran. The
+handler read the button's mutable target and enabled review against the user's
+original action. Capturing the immutable consent revision and target on the
+actual Button.Pressed message repaired the race while preserving Textual's
+normal activation/debounce behavior. A real-registry regression now expects
+the stale Disable to conflict and leave review disabled. When replacing pane
+rebuilds with in-place updates, test queued actions across those updates; stable
+widget identity does not mean its action intent stayed stable.

@@ -626,7 +626,7 @@ async def test_change_review_unavailable_consent_has_no_toggle(request) -> None:
         await pilot.pause(0.2)
 
         assert "state could not be read" in _visible_text(screen)
-        assert not screen.query("#settings-workspace-change-review-toggle")
+        assert not screen.query_one("#settings-workspace-change-review-toggle").display
 
 
 @pytest.mark.asyncio
@@ -714,7 +714,7 @@ async def test_change_review_preparing_is_explicitly_non_blocking(request) -> No
         text = _visible_text(screen)
         assert "Preparing change history" in text
         assert "background; chat and tools continue" in text
-        assert not screen.query("#settings-workspace-change-review-retry")
+        assert not screen.query_one("#settings-workspace-change-review-retry").display
 
 
 @pytest.mark.asyncio
@@ -742,7 +742,7 @@ async def test_change_review_git_absent_shows_honest_copy(request, monkeypatch) 
         assert "Change review needs git — install git to enable." in _visible_text(
             screen
         )
-        assert not screen.query("#settings-workspace-change-review-toggle")
+        assert not screen.query_one("#settings-workspace-change-review-toggle").display
 
 
 @pytest.mark.asyncio
@@ -770,7 +770,7 @@ async def test_change_review_global_kill_disclosed_in_settings(
         text = _visible_text(screen)
         assert "disabled globally" in text, text
         assert "Tracking enabled" not in text
-        assert not screen.query("#settings-workspace-change-review-toggle")
+        assert not screen.query_one("#settings-workspace-change-review-toggle").display
 
 
 @pytest.mark.asyncio

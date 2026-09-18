@@ -1,0 +1,327 @@
+F.F.......                                                               [100%]
+=================================== FAILURES ===================================
+_______________ test_change_review_feedback_and_readiness[stale] _______________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1700/test_change_review_feedback_an0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _______________ test_change_review_feedback_and_readiness[stale] _______________
+E
+E   request = <FixtureRequest for <Coroutine test_change_review_feedback_and_readiness[stale]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1700/test_change_review_feedback_an0/private-profile-process/pytest/test_change_review_feedback_an0')
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x112043f20>
+E   case = 'stale'
+E
+E       @pytest.mark.parametrize("case", ["stale", "retry_error", "completion"])
+E       @private_profile_test
+E       async def test_change_review_feedback_and_readiness(
+E           request, tmp_path, monkeypatch, case
+E       ):
+E           app = _build_test_app()
+E           registry = app.workspace_registry_service
+E           registry.create_workspace(workspace_id="ws-review", name="Review workspace")
+E           root = tmp_path / "workspace"
+E           root.mkdir()
+E           registry.add_folder_binding("ws-review", root)
+E           service = app.change_review_consent_service
+E           entered = threading.Event()
+E           release = threading.Event()
+E
+E           def initialize(_root):
+E               entered.set()
+E               if not release.wait(15):
+E                   raise RuntimeError("test never released initializer")
+E               if case == "retry_error":
+E                   raise RuntimeError("preparation failed at /private/synthetic-root")
+E
+E           monkeypatch.setattr(service, "_initialize_root", initialize)
+E           host = _StyledDestinationHarness(app, "settings")
+E           try:
+E               async with host.run_test(size=(80, 24)) as pilot:
+E                   await _category(host, pilot, "Workspaces")
+E                   await _press(host, pilot, "#settings-workspace-row-ws-review")
+E                   if case == "stale":
+E                       registry.set_change_review_enabled("ws-review", True)
+E                       await _press(host, pilot, "#settings-workspace-change-review-toggle")
+E                       assert registry.change_review_enabled("ws-review")
+E                       receipt = host.screen.query_one(
+E                           "#settings-workspace-change-review-result", Static
+E                       )
+E                       assert "changed elsewhere" in str(receipt.renderable)
+E                       _assert_painted(host.screen, receipt)
+E   >                   _assert_painted(host.screen, host.focused)
+E
+E   Tests/UI/test_settings_change_review_journeys.py:56:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   screen = SettingsScreen(classes='shell-header-compact'), widget = None
+E
+E       def _assert_painted(screen, widget):
+E           """Require the whole control inside its compositor clip, not just the DOM."""
+E           geometry = screen._compositor.visible_widgets.get(widget)
+E   >       assert geometry is not None, (widget.id, widget.region)
+E                                         ^^^^^^^^^
+E   E       AttributeError: 'NoneType' object has no attribute 'id'
+E
+E   Tests/UI/test_library_rag_result_focus.py:25: AttributeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 22:44:30.705 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 22:44:30.710 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 22:44:30.711 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 22:44:30.711 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 22:44:30.789 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 22:44:30.812 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 22:44:30.813 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 22:44:30.813 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 22:44:30.814 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 22:44:30.891 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1700/test_change_review_feedback_an0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:30.961 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-08z8odp1/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:31.129 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-08z8odp1/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:31.142 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:31.143 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-08z8odp1/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:31.143 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-08z8odp1/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:31.248 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 22:44:31.289 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 22:44:31.333 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 22:44:31.374 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 22:44:31.419 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 22:44:31.456 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 22:44:31.457 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-08z8odp1/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 22:44:31.502 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 22:44:31.502 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 22:44:31.510 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 22:44:31.581 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 22:44:31.581 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1700/test_change_review_feedback_an0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 22:44:31.582 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 22:44:31.647 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 22:44:31.647 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 22:44:31.648 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 22:44:31.648 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.927 seconds
+E   2026-09-17 22:44:31.648 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.090s (9.7%)
+E   2026-09-17 22:44:31.649 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 22:44:31.649 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 22:44:31.649 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:44:31.649 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:44:31.650 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:44:31.650 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:44:31.650 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 22:44:32.427 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 22:44:32.514 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 22:44:34.971 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   4.26s call     Tests/UI/test_settings_change_review_journeys.py::test_change_review_feedback_and_readiness[stale]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_change_review_journeys.py::test_change_review_feedback_and_readiness[stale]
+E   1 failed in 6.00s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 22:44:28.948 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 22:44:28.954 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 22:44:28.954 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 22:44:28.955 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+____________ test_change_review_feedback_and_readiness[completion] _____________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1700/test_change_review_feedback_an2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____________ test_change_review_feedback_and_readiness[completion] _____________
+E
+E   request = <FixtureRequest for <Coroutine test_change_review_feedback_and_readiness[completion]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1700/test_change_review_feedback_an2/private-profile-process/pytest/test_change_review_feedback_an0')
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x116363fe0>
+E   case = 'completion'
+E
+E       @pytest.mark.parametrize("case", ["stale", "retry_error", "completion"])
+E       @private_profile_test
+E       async def test_change_review_feedback_and_readiness(
+E           request, tmp_path, monkeypatch, case
+E       ):
+E           app = _build_test_app()
+E           registry = app.workspace_registry_service
+E           registry.create_workspace(workspace_id="ws-review", name="Review workspace")
+E           root = tmp_path / "workspace"
+E           root.mkdir()
+E           registry.add_folder_binding("ws-review", root)
+E           service = app.change_review_consent_service
+E           entered = threading.Event()
+E           release = threading.Event()
+E
+E           def initialize(_root):
+E               entered.set()
+E               if not release.wait(15):
+E                   raise RuntimeError("test never released initializer")
+E               if case == "retry_error":
+E                   raise RuntimeError("preparation failed at /private/synthetic-root")
+E
+E           monkeypatch.setattr(service, "_initialize_root", initialize)
+E           host = _StyledDestinationHarness(app, "settings")
+E           try:
+E               async with host.run_test(size=(80, 24)) as pilot:
+E                   await _category(host, pilot, "Workspaces")
+E                   await _press(host, pilot, "#settings-workspace-row-ws-review")
+E                   if case == "stale":
+E                       registry.set_change_review_enabled("ws-review", True)
+E                       await _press(host, pilot, "#settings-workspace-change-review-toggle")
+E                       assert registry.change_review_enabled("ws-review")
+E                       receipt = host.screen.query_one(
+E                           "#settings-workspace-change-review-result", Static
+E                       )
+E                       assert "changed elsewhere" in str(receipt.renderable)
+E                       _assert_painted(host.screen, receipt)
+E                       _assert_painted(host.screen, host.focused)
+E                       return
+E                   await _press(host, pilot, "#settings-workspace-change-review-toggle")
+E                   assert await asyncio.to_thread(entered.wait, 2)
+E                   assert host.screen.query_one(
+E                       "#settings-workspace-change-review-preparing"
+E                   ).display
+E                   rename = host.screen.query_one("#settings-workspace-rename-input", Input)
+E                   rename.value = "Unsubmitted rename"
+E                   rename.focus()
+E                   await _settle(host, pilot)
+E                   release.set()
+E                   expected = (
+E                       RootReadinessState.FAILED
+E                       if case == "retry_error"
+E                       else RootReadinessState.READY
+E                   )
+E                   async with asyncio.timeout(5):
+E                       while service.status("ws-review").roots[0].state is not expected:
+E                           await pilot.pause(0.02)
+E                   if case == "retry_error":
+E                       # Existing navigation refresh exposes the failed state; the
+E                       # completion case below specifically proves automatic updates.
+E                       host.screen._refresh_settings_workspaces_pane()
+E                       await _settle(host, pilot)
+E
+E                       def fail_retry(_workspace_id):
+E                           raise RuntimeError("failure at /private/synthetic-root")
+E
+E                       monkeypatch.setattr(service, "retry_failed_roots", fail_retry)
+E                       await _press(host, pilot, "#settings-workspace-change-review-retry")
+E                       text = str(
+E                           host.screen.query_one(
+E                               "#settings-workspace-change-review-result", Static
+E                           ).renderable
+E                       )
+E                       assert "could not" in text.lower()
+E                       assert "/private/synthetic-root" not in text
+E                   else:
+E                       await pilot.pause(1.5)
+E                       assert host.screen.query_one(
+E                           "#settings-workspace-change-review-ready"
+E                       ).display
+E                       assert not host.screen.query_one(
+E                           "#settings-workspace-change-review-preparing"
+E                       ).display
+E                       assert (
+E                           host.screen.query_one("#settings-workspace-rename-input") is rename
+E                       )
+E                       assert rename.value == "Unsubmitted rename" and host.focused is rename
+E                       _assert_painted(host.screen, rename)
+E   >                   assert "Unsubmitted rename" in _painted(host, rename)
+E   E                   AssertionError: assert 'Unsubmitted rename' in '█ bmitted rename  '
+E   E                    +  where '█ bmitted rename  ' = _painted(_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'}), Input(id='settings-workspace-rename-input', classes='settings-compact-input -valid'))
+E
+E   Tests/UI/test_settings_change_review_journeys.py:107: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 22:44:45.989 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 22:44:45.994 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 22:44:45.994 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 22:44:45.995 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 22:44:46.074 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 22:44:46.096 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 22:44:46.097 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 22:44:46.097 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 22:44:46.097 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 22:44:46.166 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1700/test_change_review_feedback_an2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:46.225 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tr6txegy/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:46.402 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tr6txegy/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:46.416 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:46.417 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tr6txegy/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:46.417 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tr6txegy/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:44:46.541 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 22:44:46.576 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 22:44:46.615 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 22:44:46.649 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 22:44:46.683 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 22:44:46.717 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 22:44:46.717 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tr6txegy/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 22:44:46.760 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 22:44:46.761 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 22:44:46.768 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 22:44:46.843 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 22:44:46.843 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1700/test_change_review_feedback_an2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 22:44:46.843 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 22:44:46.909 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 22:44:46.909 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 22:44:46.909 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 22:44:46.910 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.904 seconds
+E   2026-09-17 22:44:46.910 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.089s (9.8%)
+E   2026-09-17 22:44:46.910 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 22:44:46.910 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 22:44:46.911 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:44:46.911 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:44:46.911 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:44:46.912 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:44:46.912 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 22:44:47.715 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 22:44:47.798 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 22:44:52.293 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   6.33s call     Tests/UI/test_settings_change_review_journeys.py::test_change_review_feedback_and_readiness[completion]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_change_review_journeys.py::test_change_review_feedback_and_readiness[completion]
+E   1 failed in 8.12s
+============================= slowest 25 durations =============================
+9.00s call     Tests/UI/test_settings_change_review_journeys.py::test_change_review_feedback_and_readiness[completion]
+8.17s call     Tests/UI/test_settings_change_review_journeys.py::test_change_review_feedback_and_readiness[retry_error]
+6.91s call     Tests/UI/test_settings_change_review_journeys.py::test_change_review_feedback_and_readiness[stale]
+5.14s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_toggle_flips_and_persists
+4.74s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_stale_toggle_reports_conflict_and_refreshes
+4.66s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_failed_root_offers_one_retry_without_paths
+4.58s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_unavailable_consent_has_no_toggle
+4.45s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_git_absent_shows_honest_copy
+4.43s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_global_kill_disclosed_in_settings
+4.42s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_preparing_is_explicitly_non_blocking
+
+(15 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_change_review_journeys.py::test_change_review_feedback_and_readiness[stale]
+FAILED Tests/UI/test_settings_change_review_journeys.py::test_change_review_feedback_and_readiness[completion]
+2 failed, 8 passed, 13 deselected in 59.07s
