@@ -171,10 +171,28 @@ repeated Remove, then verified one revision increment, the tombstone and visible
 continuation. All twelve captures were rendered and inspected; exact-source and
 private lifecycle checks pass. [QA and gallery](../qa/2026-09-18-tool-profile-write-overlap/README.md).
 
+## Write lifetime — TASK-32787
+
+Leaving Settings could cancel its observer while the admitted write committed;
+the replacement screen then retained stale profile facts and no result. The
+application now owns admitted Import, Export and Remove tasks, limits duplicate
+same-kind writes across visits, and exposes bounded pending/terminal receipts.
+Settings observation cancels promptly and refreshes facts on completion without
+taking newer focus. Normal shutdown closes admission and drains these tasks
+before resource teardown, with the existing process-owned watchdog armed first.
+ADR-167 records the lifecycle boundary; exact service review authority is unchanged.
+
+229 distinct targeted cases pass. Independent review found watchdog ordering,
+malformed nested-result and callable-cancellation gaps; their regression cases
+now pass. Four final native recreation cells and a fifth pending-write shutdown
+journey use real services. All seventeen captures were rendered and inspected;
+exact-source and private lifecycle checks pass. Earlier fixture failures are
+retained and explained. [QA and gallery](../qa/2026-09-18-tool-profile-write-lifetime/README.md).
+
 ## Remaining scope
 
-In-visit overlap is qualified above. Screen-destruction/app-shutdown outcome
-ownership remains a separate review boundary. The Edit repair does not close
+In-visit overlap and screen-destruction/app-shutdown outcome ownership are
+qualified above within their recorded bounds. The Edit repair does not close
 the whole MCP destination: compact rail/header wrapping and simultaneous
 tool/state readability remain part of its broader layout review. State remains
 accessible with existing horizontal keyboard scroll, now qualified natively.

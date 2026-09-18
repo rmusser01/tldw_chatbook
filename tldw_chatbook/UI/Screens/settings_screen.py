@@ -7,7 +7,7 @@ legacy Chat window are deprecated parallels; new settings belong here.
 
 import asyncio
 import copy
-from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import logging
@@ -2930,7 +2930,8 @@ class SettingsScreen(BaseAppScreen):
         self._tool_profiles_result_profile_id: str | None = None
         self._tool_profile_review_intent: object | None = None
         self._tool_profile_review_modal: ModalScreen | None = None
-        self._tool_profile_writes: dict[str, str | None] = {}
+        self._tool_profile_operation_revision = 0
+        self._tool_profile_completion_revision = 0
 
         # Network category pending edits. Deliberately NOT a SettingsDraft in
         # _settings_drafts: the category bypasses the draft-staging machinery
@@ -4046,6 +4047,8 @@ class SettingsScreen(BaseAppScreen):
         if not self.is_attached or not self.is_current:
             return
         category = self._active_category_id()
+        if category is SettingsCategoryId.TOOL_PROFILES:
+            self._sync_tool_profile_operations()
         if category not in {
             SettingsCategoryId.OVERVIEW,
             SettingsCategoryId.PROVIDERS_MODELS,
@@ -4446,6 +4449,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _request_tool_profiles_listing(self) -> None:
         """Refresh Tool Profiles from the app-owned service off the UI thread."""
+        self._sync_tool_profile_operations(refresh_listing=False)
         composition_worker = None
         if getattr(self.app_instance, "tool_pack_service", None) is None:
             reason = getattr(
@@ -4571,30 +4575,95 @@ class SettingsScreen(BaseAppScreen):
 
     def _tool_profile_write_pending(self, operation: str) -> bool:
         """Refuse replacement before its exclusive worker can cancel a write."""
-        if operation not in self._tool_profile_writes:
+        owner = getattr(self.app_instance, "_tool_profile_operations", None)
+        pending = owner.pending(operation) if owner is not None else None
+        if pending is None:
             return False
         label = "Removal" if operation == "remove" else operation.title()
         self._set_tool_profiles_result(
             f"{label} in progress. Wait for it to finish.",
-            profile_id=self._tool_profile_writes[operation],
+            profile_id=pending.profile_id,
         )
         return True
 
-    @contextmanager
-    def _tool_profile_write(
-        self, operation: str, profile_id: str | None = None
-    ) -> Iterator[None]:
-        """Protect only admitted writes, leaving review replacement cancellable."""
-        self._tool_profile_writes[operation] = profile_id
+    def _sync_tool_profile_operations(self, *, refresh_listing: bool = True) -> None:
+        """Project app-owned progress and outcomes into this attached view."""
+        if not self.is_attached:
+            return
+        owner = getattr(self.app_instance, "_tool_profile_operations", None)
+        state = owner.state if owner is not None else None
+        if state is None or state.revision == self._tool_profile_operation_revision:
+            return
+        from ...Tool_Packs.contracts import ToolPackError
+
+        self._tool_profile_operation_revision = state.revision
+        completed = owner.completion_revision != self._tool_profile_completion_revision
+        self._tool_profile_completion_revision = owner.completion_revision
+        profile_id = (
+            state.profile_id
+            if state.in_progress or state.operation == "remove"
+            else None
+        )
+        if state.in_progress:
+            label = (
+                "Removal" if state.operation == "remove" else state.operation.title()
+            )
+            copy = f"{label} in progress. Wait for it to finish."
+        elif state.error_category:
+            copy = self._tool_pack_failure_copy(
+                state.operation, ToolPackError(state.operation, state.error_category)
+            )
+        elif state.operation == "import":
+            copy = (
+                f"Imported {state.result.installed.profile_id} unbound · "
+                f"revision {state.result.installed.revision}"
+            )
+        elif state.operation == "remove":
+            copy = (
+                f"Removed {state.result.tombstone.profile_id} · id permanently reserved"
+            )
+        elif state.result.durability_uncertain:
+            copy = "Export may have completed · durability_uncertain"
+        elif state.result.committed:
+            copy = f"Exported Tool Pack · {state.result.archive_sha256}"
+        else:
+            copy = "Export failed · publication_failed"
+        self._set_tool_profiles_result(copy, profile_id=profile_id)
+        if completed and refresh_listing:
+            self._request_tool_profiles_listing()
+
+    async def _run_tool_profile_write(
+        self,
+        operation: str,
+        profile_id: str | None,
+        write: Callable[[Callable[[], bool]], object],
+    ):
+        """Observe admitted work without owning its thread lifetime."""
+        from ...Tool_Packs.operations import ToolProfileWriteUnavailable
+
         try:
-            self._tool_profile_write_pending(operation)
-            yield
-        finally:
-            self._tool_profile_writes.pop(operation, None)
+            owner = self.app_instance._get_tool_profile_operations()
+            task = owner.start(operation, profile_id, write)
+        except ToolProfileWriteUnavailable as error:
+            if str(error) == "busy":
+                self._tool_profile_write_pending(operation)
+            else:
+                self._set_tool_profiles_result(
+                    "Tool Profile changes unavailable while the app is closing."
+                )
+            return None
+        self._sync_tool_profile_operations()
+        outcome = await asyncio.shield(task)
+        self._sync_tool_profile_operations()
+        return outcome
 
     @staticmethod
     def _tool_pack_failure_copy(operation: str, error: "ToolPackError") -> str:
         """Return bounded recovery copy for one stable Tool Pack error."""
+        if operation == "export" and error.category == "cancelled":
+            return "Export cancelled before publication."
+        if operation == "export" and error.category == "destination_changed":
+            return "Export destination changed. Choose a new filename."
         if operation == "import" and error.category == "activation_uncertain":
             return (
                 "Import outcome uncertain. Check the current profile state "
@@ -4673,7 +4742,6 @@ class SettingsScreen(BaseAppScreen):
     )
     async def _tool_profile_import_flow(self) -> None:
         """Inspect and explicitly activate a Tool Pack outside the event loop."""
-        from ...Tool_Packs.activation import ToolPackActivationResult
         from ...Tool_Packs.contracts import ToolPackError
         from ...Tool_Packs.importer import ToolPackImportReview
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
@@ -4753,15 +4821,13 @@ class SettingsScreen(BaseAppScreen):
                 if worker.is_cancelled:
                     return
                 mutation_started = True
-                with self._tool_profile_write("import", candidate.destination_id):
-                    result = await asyncio.to_thread(service.import_unbound, candidate)
-                if type(result) is not ToolPackActivationResult:
-                    raise ToolPackError("import", "activation_failed")
-                self._set_tool_profiles_result(
-                    f"Imported {result.installed.profile_id} unbound · "
-                    f"revision {result.installed.revision}"
+                await self._run_tool_profile_write(
+                    "import",
+                    candidate.destination_id,
+                    lambda cancelled, candidate=candidate: service.import_unbound(
+                        candidate
+                    ),
                 )
-                self._request_tool_profiles_listing()
                 return
         except ToolPackError as exc:
             if mutation_started or self._tool_profile_review_is_current(intent):
@@ -4808,10 +4874,7 @@ class SettingsScreen(BaseAppScreen):
         """Capture, review, and safely publish one immutable Tool Pack."""
         from ...Tool_Packs.contracts import ToolPackError
         from ...Tool_Packs.export import ToolPackExportReview
-        from ...Tool_Packs.publication import (
-            CapturedToolPackDestination,
-            ToolPackPublicationResult,
-        )
+        from ...Tool_Packs.publication import CapturedToolPackDestination
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
             ToolPackExportReviewModal,
         )
@@ -4894,33 +4957,24 @@ class SettingsScreen(BaseAppScreen):
                 if destination.target_identity is not None:
                     recovery = "Name already exists. Choose a new filename."
                     continue
-                try:
-                    mutation_started = True
-                    with self._tool_profile_write("export", profile_id):
-                        result = await asyncio.to_thread(
-                            service.publish_export,
+                mutation_started = True
+                outcome = await self._run_tool_profile_write(
+                    "export",
+                    profile_id,
+                    lambda cancelled, candidate=candidate, destination=destination: (
+                        service.publish_export(
                             candidate,
                             destination,
-                            cancelled=lambda: worker.is_cancelled,
+                            cancelled=lambda: worker.is_cancelled or cancelled(),
                         )
-                except ToolPackError as exc:
-                    if exc.category != "destination_changed":
-                        raise
+                    ),
+                )
+                if outcome is None:
+                    return
+                if outcome.error_category == "destination_changed":
                     recovery = "Destination changed. Choose a new filename."
                     continue
-                break
-            if type(result) is not ToolPackPublicationResult:
-                raise ToolPackError("export", "publication_failed")
-            if result.durability_uncertain:
-                self._set_tool_profiles_result(
-                    "Export may have completed · durability_uncertain"
-                )
-            elif result.committed:
-                self._set_tool_profiles_result(
-                    f"Exported Tool Pack · {result.archive_sha256}"
-                )
-            else:
-                raise ToolPackError("export", "publication_failed")
+                return
         except ToolPackError as exc:
             if mutation_started or self._tool_profile_review_is_current(intent):
                 self._set_tool_profiles_result(
@@ -4958,9 +5012,6 @@ class SettingsScreen(BaseAppScreen):
         revision: int,
     ) -> None:
         """Confirm and replace one eligible profile with its permanent tombstone."""
-        from ...Tool_Packs.contracts import ToolPackError
-        from ...Tool_Packs.removal import ToolProfileRemovalResult
-
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result(
@@ -4989,33 +5040,14 @@ class SettingsScreen(BaseAppScreen):
         if confirmed is not True or worker.is_cancelled:
             self._set_tool_profiles_result("Remove cancelled", profile_id=profile_id)
             return
-        try:
-            with self._tool_profile_write("remove", profile_id):
-                candidate = await asyncio.to_thread(
-                    service.remove_profile,
-                    profile_id,
-                    expected_revision=revision,
-                )
-            if type(candidate) is not ToolProfileRemovalResult:
-                raise ToolPackError("remove", "outcome_uncertain")
-            self._set_tool_profiles_result(
-                f"Removed {candidate.tombstone.profile_id} · id permanently reserved",
-                profile_id=profile_id,
-            )
-        except ToolPackError as exc:
-            self._set_tool_profiles_result(
-                self._tool_pack_failure_copy("remove", exc), profile_id=profile_id
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - optional workflow must stay bounded
-            self._set_tool_profiles_result(
-                self._tool_pack_failure_copy(
-                    "remove", ToolPackError("remove", "outcome_uncertain")
-                ),
-                profile_id=profile_id,
-            )
-        self._request_tool_profiles_listing()
+        await self._run_tool_profile_write(
+            "remove",
+            profile_id,
+            lambda cancelled: service.remove_profile(
+                profile_id,
+                expected_revision=revision,
+            ),
+        )
 
     @on(ToolProfilesPanel.EditPolicyRequested)
     def _handle_tool_profile_edit_policy(

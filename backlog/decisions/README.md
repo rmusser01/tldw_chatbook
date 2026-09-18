@@ -124,6 +124,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-158](158-agent-runs-migration-order-after-worktree-qualification.md) | Accepted | Implement definition caps in AgentRuns18→19 independently of unresolved worktree execution; preserve cap policy and qualify recovery before its later migration. |
 | [ADR-159](159-console-native-reasoning-prefill.md) | Accepted | Keep native reasoning prefill adapter-qualified, with exclusive per-turn seed ownership, conversation-owned pins, and exact tool/recovery semantics. |
 | [ADR-164](164-rechunk-run-lifetime.md) | Accepted | Keep Re-chunk work and feedback for the app session so Library navigation cannot discard a running operation or its receipt. |
+| [ADR-167](167-tool-profile-write-lifetime.md) | Accepted | Keep admitted Tool Profile writes and bounded outcomes application-owned across Settings recreation and shutdown. |
 
 ## Historical Decision Material
 
