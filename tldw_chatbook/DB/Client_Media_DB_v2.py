@@ -1355,7 +1355,15 @@ class MediaDatabase:
             if not in_outer:
                 conn.commit()
                 logging.debug("Committed transaction.")
-        except Exception as e:
+        # TASK-32801.5: BaseException, not Exception. A CancelledError or
+        # KeyboardInterrupt raised inside the block is not an Exception, so
+        # the rollback used to be skipped and the transaction stayed open --
+        # and because `transaction()` treats an already-open transaction as
+        # nested, every later write on that thread then rode it uncommitted
+        # and was lost at close. Proven on Prompts_DB: a write after an
+        # escaped KeyboardInterrupt did not survive close+reopen.
+        # Library_Collections_DB and Workflows_DB already do this.
+        except BaseException as e:
             if not in_outer:
                 logging.error(
                     "Transaction failed; rolling back (error_type=%s).",
