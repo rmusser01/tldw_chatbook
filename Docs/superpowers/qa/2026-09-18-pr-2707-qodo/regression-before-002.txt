@@ -12,7 +12,7 @@ tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/p
         from Tests.UI.test_settings_overview_search_journeys import _category
         from Tests.UI.test_settings_provider_keyboard_journeys import _settle
         from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
-    
+
         ids = [f"writer-{i:03}" for i in range(205)]
         personas = _personas(tmp_path, ids)
         app = _build_test_app()

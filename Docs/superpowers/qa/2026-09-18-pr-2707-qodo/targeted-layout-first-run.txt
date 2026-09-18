@@ -15,8 +15,8 @@ self = <Coroutine test_failed_list_resolves_saved_identity_without_silent_rebind
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -25,7 +25,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_failed_list_resolves_saved_identity_without_silent_rebinding[False]>>,...0n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2821/test_failed_list_resolves_save1'), 'available': False}
@@ -90,11 +90,11 @@ E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyt
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           ___ test_failed_list_resolves_saved_identity_without_silent_rebinding[False] ___
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_failed_list_resolves_saved_identity_without_silent_rebinding[False]>>
 E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2821/test_failed_list_resolves_save1/private-profile-process/pytest/test_failed_list_resolves_save0')
 E           available = False
-E           
+E
 E               @pytest.mark.asyncio
 E               @pytest.mark.parametrize("available", [True, False])
 E               @private_profile_test
@@ -109,10 +109,10 @@ E                   defaults = WorkspaceAssistantDefaults(assistant_id="saved")
 E                   registry.create_workspace(
 E                       workspace_id="chosen", name="Chosen", assistant_defaults=defaults
 E                   )
-E               
+E
 E                   def unavailable_list(**_kwargs):
 E                       raise RuntimeError("private list failure")
-E               
+E
 E                   personas.list_persona_profiles = unavailable_list
 E                   host = _Host()
 E                   try:
@@ -133,7 +133,7 @@ E                                   strip.text for strip in host.screen._composi
 E                               )
 E           >                   assert "Selected Persona is unavailable" in text
 E           E                   AssertionError: assert 'Selected Persona is unavailable' in '                                                                                \n      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔...▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎      \n                                                                                '
-E           
+E
 E           Tests/UI/test_workspace_persona_picker_identity.py:266: AssertionError
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-18 16:16:16.411 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
@@ -147,7 +147,7 @@ E           2026-09-18 16:16:16.890 | INFO     | tldw_chatbook.Evals.task_loader
 E           ----------------------------- Captured stderr call -----------------------------
 E           2026-09-18 16:16:17.020 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2821/test_failed_list_resolves_save1/private-profile-process/pytest/test_failed_list_resolves_save0/ws.sqlite [Client: c1]
 E           ============================= slowest 25 durations =============================
-E           
+E
 E           (3 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]

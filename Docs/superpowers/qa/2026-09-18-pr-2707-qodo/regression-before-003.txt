@@ -11,11 +11,11 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a765fa0>
             service.create_persona_profile({"id": f"persona-{i}", "name": f"Persona {i}"})
         original = service._persona_profile_view
         viewed = []
-    
+
         def observe(record):
             viewed.append(record["id"])
             return original(record)
-    
+
         monkeypatch.setattr(service, "_persona_profile_view", observe)
         page = service.list_persona_profiles(limit=3, offset=4)
 >       assert len(viewed) == 3
