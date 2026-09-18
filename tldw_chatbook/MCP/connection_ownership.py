@@ -388,7 +388,9 @@ class ConnectionOwnership:
             await self._close(connection)
             raise
 
-    async def invoke(self, context, profile_id, tool_name, arguments, call):
+    async def invoke(
+        self, context, profile_id, tool_name, arguments, call, *, automatic_work=None
+    ):
         if context.check_permission is not None:
             context.check_permission()
         await self.plugins.check_mcp_snapshot(context.snapshot, context.component_id)
@@ -434,9 +436,11 @@ class ConnectionOwnership:
         async def perform():
             try:
                 if not request.accepting:
-                    request.outcome = "not_started"
-                    await self._settle(request.token)
                     raise PermissionError("plugin_request_revoked")
+                if context.check_permission is not None:
+                    context.check_permission()
+                if automatic_work is not None:
+                    automatic_work.check()
                 request.dispatched = True
                 result = await call(identity, tool_name, arguments)
                 request.outcome = result.dispatch_state
@@ -446,7 +450,11 @@ class ConnectionOwnership:
                     await self._uncertain(request)
                 return result
             except BaseException:
-                await self._uncertain(request)
+                if request.dispatched:
+                    await self._uncertain(request)
+                else:
+                    request.outcome = "not_started"
+                    await self._settle(request.token)
                 raise
             finally:
                 if request.outcome in {"settled", "not_started"}:

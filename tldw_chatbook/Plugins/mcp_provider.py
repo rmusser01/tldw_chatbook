@@ -52,38 +52,83 @@ class PluginMCPProvider(MCPToolProvider):
             **kwargs,
         )
 
+    def _kill_switch_engaged(self) -> bool:
+        """Owned authority refuses unavailable switch state without logging it."""
+        try:
+            return bool(self._service.get_kill_switch())
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _current_persona_policy(self):
+        from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
+
+        try:
+            policy = (
+                self._persona_policy_provider()
+                if self._persona_policy_provider is not None
+                else None
+            )
+            if policy is not None and not isinstance(policy, PersonaToolPolicy):
+                raise TypeError("invalid persona authority")
+            return policy
+        except Exception:  # noqa: BLE001
+            raise PermissionError("plugin_permission_unavailable") from None
+
+    def _persona_floor(self, state, tool):
+        from tldw_chatbook.Agents.persona_policy import persona_floor_state
+
+        policy = self._current_persona_policy()
+        return (
+            state if policy is None else persona_floor_state(state, policy, tool.name)
+        )
+
     async def compose_catalog(self) -> None:
-        for mapping in self._tool_mappings.values():
-            await self.plugins.check_mcp_snapshot(
-                self.snapshot, mapping["component_id"]
-            )
-        await super().compose_catalog()
-        renamed, catalog = {}, []
-        for tool, state in self._entry_by_llm_name.values():
-            mapping = self._tool_mappings[tool.tool_id]
-            name = (
-                "plugin_mcp_"
-                + hashlib.sha256(
-                    (
-                        self.snapshot.installation_id
-                        + ":"
-                        + mapping["component_id"]
-                        + ":"
-                        + tool.name
-                    ).encode()
-                ).hexdigest()[:48]
-            )
-            renamed[name] = (tool, state)
-            catalog.append(
-                ToolCatalogEntry(
-                    id=name,
-                    name=name,
-                    one_line_description=tool.description,
-                    source="plugin_mcp",
+        self._catalog, self._entry_by_llm_name = [], {}
+        self._not_connected_count = 0
+        with self._decisions_lock:
+            self._stamped_decisions.clear()
+        try:
+            self._current_persona_policy()
+            if self._kill_switch_engaged():
+                return
+            for mapping in self._tool_mappings.values():
+                await self.plugins.check_mcp_snapshot(
+                    self.snapshot, mapping["component_id"]
                 )
-            )
-        self._entry_by_llm_name = renamed
-        self._catalog = catalog
+            await super().compose_catalog()
+            renamed, catalog = {}, []
+            for tool, state in self._entry_by_llm_name.values():
+                mapping = self._tool_mappings[tool.tool_id]
+                name = (
+                    "plugin_mcp_"
+                    + hashlib.sha256(
+                        (
+                            self.snapshot.installation_id
+                            + ":"
+                            + mapping["component_id"]
+                            + ":"
+                            + tool.name
+                        ).encode()
+                    ).hexdigest()[:48]
+                )
+                renamed[name] = (tool, state)
+                catalog.append(
+                    ToolCatalogEntry(
+                        id=name,
+                        name=name,
+                        one_line_description=tool.description,
+                        source="plugin_mcp",
+                    )
+                )
+            self._entry_by_llm_name = renamed
+            self._catalog = catalog
+            self._current_persona_policy()
+            if self._kill_switch_engaged():
+                self._catalog, self._entry_by_llm_name = [], {}
+        except Exception:  # noqa: BLE001
+            self._catalog, self._entry_by_llm_name = [], {}
+            self._not_connected_count = 0
+            raise PermissionError("plugin_catalog_authority_unavailable") from None
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         try:

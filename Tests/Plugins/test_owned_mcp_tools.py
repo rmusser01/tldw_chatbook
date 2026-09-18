@@ -1297,3 +1297,256 @@ async def test_exited_stdio_session_is_reaped_before_fresh_scope_dispatch(
         session.process is not process for session in case.client.sessions.values()
     )
     assert len(case.calls.read_text().splitlines()) == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reader", ["persona", "kill_switch"])
+@pytest.mark.parametrize("phase", ["before_dispatch", "after_dispatch", "advertise"])
+async def test_owned_authority_reader_failure_never_removes_required_confirmation(
+    shared_connection_case, monkeypatch, tmp_path, reader, phase
+):
+    from tldw_chatbook.Agents.persona_policy import parse_persona_policy_from_rules
+
+    case = shared_connection_case
+    provider = case.providers["b"]
+    policy = parse_persona_policy_from_rules(
+        [
+            {
+                "rule_kind": "mcp_tool",
+                "rule_name": "echo",
+                "allowed": True,
+                "require_confirmation": True,
+            }
+        ]
+    )
+    assert policy.rules and policy.rules[0]["require_confirmation"]
+    monkeypatch.setattr(provider, "_persona_policy_provider", lambda: policy)
+    tool, _ = next(iter(provider._entry_by_llm_name.values()))
+    case.unified.set_tool_state("local:" + case.profile_id, "echo", "allow", tool=tool)
+    approvals = []
+
+    def approve(calls):
+        approvals.extend(calls)
+        return {call.llm_name: "approve_once" for call in calls}
+
+    monkeypatch.setattr(provider, "_approval_callback", approve)
+    before_control = len(case.calls.read_text().splitlines())
+    assert (await case.invoke("b")).ok
+    assert len(approvals) == 1, "real persona must floor persisted allow to ask"
+    assert len(case.calls.read_text().splitlines()) == before_control + 1
+    before = case.calls.read_text()
+    original_tokens = await case.service._call(
+        lambda: case.service._coordinator.owner.unsettled_tokens(case.installation)
+    )
+    release, started = tmp_path / "authority-release", tmp_path / "authority-started"
+    pending = None
+
+    def unavailable():
+        raise RuntimeError("private-authority-reader-sentinel")
+
+    try:
+        if phase == "after_dispatch":
+            pending = asyncio.create_task(
+                case.invoke("b", {"hold": str(release), "started": str(started)})
+            )
+            for _ in range(500):
+                if started.exists():
+                    break
+                await asyncio.sleep(0.01)
+            assert started.exists(), "B must actually dispatch before authority loss"
+        target, attribute = (
+            (provider, "_persona_policy_provider")
+            if reader == "persona"
+            else (case.unified, "get_kill_switch")
+        )
+        with monkeypatch.context() as fault:
+            fault.setattr(target, attribute, unavailable)
+            if phase == "advertise":
+                try:
+                    await provider.compose_catalog()
+                except Exception as exc:  # noqa: BLE001
+                    assert "private-authority-reader-sentinel" not in str(exc)
+                assert (
+                    provider.list_catalog() == []
+                ), "unavailable authority must clear advertising"
+                assert case.calls.read_text() == before
+            else:
+                release.touch()
+                result = (
+                    await pending if pending is not None else await case.invoke("b")
+                )
+                assert not result.ok
+                assert result.dispatch_state == (
+                    "settled" if phase == "after_dispatch" else "not_started"
+                )
+                assert "private-authority-reader-sentinel" not in repr(result)
+                assert len(case.calls.read_text().splitlines()) == (
+                    len(before.splitlines()) + (phase == "after_dispatch")
+                )
+                tokens = await case.service._call(
+                    lambda: case.service._coordinator.owner.unsettled_tokens(
+                        case.installation
+                    )
+                )
+                assert (
+                    tokens == original_tokens
+                ), "failed authority must not leak request grants"
+    finally:
+        release.touch()
+        if pending is not None:
+            await pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("checkpoint", ["connect", "reserve", "publish"])
+async def test_owned_automatic_authority_is_rechecked_after_awaited_setup(
+    shared_connection_case, monkeypatch, tmp_path, checkpoint
+):
+    from Tests.Chat.test_automatic_provider_budget import context_for
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    case = shared_connection_case
+    database = AgentRunsDB(tmp_path / "automatic.sqlite", client_id="owned-automatic")
+    context = context_for(database)
+    reached, resume = asyncio.Event(), asyncio.Event()
+    pending = None
+    try:
+        with context.scope():
+            before_control = len(case.calls.read_text().splitlines())
+            control = await case.invoke("b")
+            assert control.ok and control.dispatch_state == "settled"
+            assert len(case.calls.read_text().splitlines()) == before_control + 1
+        before = case.calls.read_text()
+        original_tokens = await case.service._call(
+            lambda: case.service._coordinator.owner.unsettled_tokens(case.installation)
+        )
+        method = {"connect": "connect", "reserve": "_reserve", "publish": "_publish"}[
+            checkpoint
+        ]
+        original = getattr(case.ownership, method)
+
+        async def pause_after_real_setup(*args, **kwargs):
+            value = await original(*args, **kwargs)
+            is_request = (
+                checkpoint == "connect"
+                or (checkpoint == "reserve" and kwargs.get("request") is not None)
+                or (checkpoint == "publish" and "mcp_request_id" in args[1])
+            )
+            if is_request:
+                reached.set()
+                await resume.wait()
+            return value
+
+        monkeypatch.setattr(case.ownership, method, pause_after_real_setup)
+        with context.scope():
+            pending = asyncio.create_task(case.invoke("b"))
+        await asyncio.wait_for(reached.wait(), 5)
+        database.automatic_work.pause(context.chain_id, "controlled_stop")
+        with pytest.raises(AutomaticWorkRefused):
+            context.check()
+        resume.set()
+        result = await asyncio.wait_for(pending, 5)
+        assert not result.ok and result.dispatch_state == "not_started"
+        assert (
+            case.calls.read_text() == before
+        ), "stopped automatic chain must not reach peer"
+        tokens = await case.service._call(
+            lambda: case.service._coordinator.owner.unsettled_tokens(case.installation)
+        )
+        assert (
+            tokens == original_tokens
+        ), "not-started request must settle its exact grant"
+        assert (
+            database.automatic_work.snapshot(context.chain_id).pause_reason
+            == "controlled_stop"
+        )
+    finally:
+        resume.set()
+        if pending is not None:
+            await pending
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reader", ["persona", "kill_switch"])
+async def test_late_authority_failure_preserves_actual_uncertain_dispatch(
+    tmp_path, native_package, monkeypatch, reader
+):
+    from Tests.MCP.test_streamable_http import peer
+    from tldw_chatbook.Agents.persona_policy import parse_persona_policy_from_rules
+
+    class Fault:
+        value = None
+
+        def __eq__(self, other):
+            return self.value == other
+
+        def __hash__(self):
+            return hash(self.value)
+
+    fault = Fault()
+    async with peer(monkeypatch, fault=fault) as (  # noqa: SIM117
+        url,
+        _messages,
+        calls,
+    ):
+        async with http_owned_case(tmp_path, native_package, url) as case:
+            provider = case.providers["b"]
+            policy = parse_persona_policy_from_rules(
+                [
+                    {
+                        "rule_kind": "mcp_tool",
+                        "rule_name": "echo",
+                        "allowed": True,
+                        "require_confirmation": True,
+                    }
+                ]
+            )
+            tool, _ = next(iter(provider._entry_by_llm_name.values()))
+            case.unified.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+            monkeypatch.setattr(provider, "_persona_policy_provider", lambda: policy)
+            approvals = []
+
+            def approve(pending):
+                approvals.extend(pending)
+                return {call.llm_name: "approve_once" for call in pending}
+
+            monkeypatch.setattr(provider, "_approval_callback", approve)
+            assert (await case.invoke("b")).ok
+            assert len(approvals) == 1 and calls["count"] == 1
+            original = case.client.call_tool_result
+
+            def unavailable():
+                raise RuntimeError("private-late-reader-sentinel")
+
+            async def fail_reader_after_real_call(*args, **kwargs):
+                result = await original(*args, **kwargs)
+                assert result.dispatch_state == "uncertain"
+                if reader == "persona":
+                    monkeypatch.setattr(
+                        provider, "_persona_policy_provider", unavailable
+                    )
+                else:
+                    monkeypatch.setattr(case.unified, "get_kill_switch", unavailable)
+                return result
+
+            monkeypatch.setattr(
+                case.client, "call_tool_result", fail_reader_after_real_call
+            )
+            fault.value = "lost"
+            result = await case.invoke("b")
+            assert not result.ok and result.dispatch_state == "uncertain"
+            assert "private-late-reader-sentinel" not in repr(result)
+            assert calls["count"] == 2, "lost call must not replay"
+            rows = await case.service._call(
+                lambda: case.service._coordinator.owner.list_processes(
+                    limit=50, offset=0
+                )
+            )
+            assert any(
+                row["workspace_id"] == "b"
+                and row["state"] == "published"
+                and (row.get("provenance") or {}).get("outcome") == "uncertain"
+                for row in rows
+            )

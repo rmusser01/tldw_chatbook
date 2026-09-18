@@ -713,7 +713,12 @@ class LocalMCPControlService:
             if context is None or context.ownership is not self.connection_ownership:
                 raise PermissionError("plugin_connection_authority_required")
             result = await context.ownership.invoke(
-                context, profile_id, tool_name, arguments or {}, client.call_tool_result
+                context,
+                profile_id,
+                tool_name,
+                arguments or {},
+                client.call_tool_result,
+                automatic_work=automatic_work,
             )
             if typed_result:
                 return result
