@@ -346,7 +346,7 @@ class ToolProfilesPanel(Vertical):
         button = Button(
             label,
             id=button_id,
-            classes="console-action-subdued",
+            classes="console-action-subdued tool-profile-action",
             compact=True,
             disabled=disabled,
             tooltip=tooltip,

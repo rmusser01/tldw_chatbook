@@ -1,0 +1,474 @@
+[
+  {
+    "theme": "textual-dark",
+    "size": [
+      80,
+      24
+    ],
+    "buttons": [
+      {
+        "id": "tool-profiles-import",
+        "label": "Import Tool Pack",
+        "region": [
+          39,
+          -12,
+          20,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0 1 0 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-export-0",
+        "label": "Export",
+        "region": [
+          41,
+          0,
+          16,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-edit-0",
+        "label": "Edit",
+        "region": [
+          58,
+          0,
+          17,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-bind-0",
+        "label": "Bind",
+        "region": [
+          41,
+          2,
+          16,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-remove-0",
+        "label": "Remove",
+        "region": [
+          58,
+          2,
+          17,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-export-1",
+        "label": "Export",
+        "region": [
+          41,
+          16,
+          16,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-edit-1",
+        "label": "Edit",
+        "region": [
+          58,
+          16,
+          17,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-bind-1",
+        "label": "Bind",
+        "region": [
+          41,
+          18,
+          16,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-remove-1",
+        "label": "Remove",
+        "region": [
+          58,
+          18,
+          17,
+          1
+        ],
+        "style": "background-tint: #E0E0E00C;\nbackground: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFFDD;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\noutline:  #00FF00;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: bold underline;\nwidth: 1fr;",
+        "visible": true
+      }
+    ],
+    "paint": "                             \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                    \n \u2039   \u23030 ACP  F2 Lab  F3 Logs \u2502 F4 Settings \u2502 F5 Research  F7 Meetings   More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n Settings | Global preferences, appearance, storage, and app behavior | Local   \n Mode: Tool Profiles                                                            \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510  \u2502  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  Filter categories (/)       \u2502  \u2502  \u2502  State: Reviewed actions | Imports      \u2502\n\u2502  Core                        \u2502  \u2502  \u2502  stay unbound; MCP owns policy          \u2502\n\u2502     Overview (view)          \u2502  \u2502  \u2502  editing; removal permanently reserves  \u2502\n\u2502     Providers & Models       \u2502  \u2502  \u2502  the profile id.                        \u2502\n\u2502     Web Search               \u2502  \u2502  \u2502 \u2502 Revision 3 \u00b7 Policy digest         \u2502  \u2502\n\u2502     Speech & TTS             \u2502  \u2502  \u2502 \u2502 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \u2502  \u2502\n\u2502  Interface                   \u2502  \u2502  \u2502 \u2502 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa     \u2502  \u2502\n\u2502     Appearance               \u2502  \u2502  \u2502 \u2502 Local provenance \u00b7 References: 0   \u2502  \u2502\n\u2502     Theme                  \u2581 \u2502  \u2502  \u2502 \u2502 active \u00b7 0 archived                \u2502  \u2502\n\u2502     Splash Screen            \u2502  \u2502  \u2502 \u2502 Allow 4 \u00b7 Ask 3 \u00b7 Deny 2           \u2502  \u2502\n\u2502     Console Behavior         \u2502  \u2502  \u2502 \u2502      Export            Edit        \u2502  \u2502\n\u2502  Data & Privacy              \u2502  \u2502  \u2502 \u2502                                    \u2502\u2581 \u2502\n\u2502     Storage                  \u2502  \u2502  \u2502 \u2502       Bind            Remove       \u2502  \u2502\n\u2502     Workspaces               \u2502  \u2502  \u2502 \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518  \u2502\n\u2502   > Tool Profiles            \u2502  \u2502  \u2502                                         \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518  \u2502  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n Remove this unreferenced profile.                                              \n  F1 help \u00b7 F6 next pane \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit                         "
+  },
+  {
+    "theme": "textual-dark",
+    "size": [
+      170,
+      48
+    ],
+    "buttons": [
+      {
+        "id": "tool-profiles-import",
+        "label": "Import Tool Pack",
+        "region": [
+          39,
+          14,
+          20,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0 1 0 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-export-0",
+        "label": "Export",
+        "region": [
+          41,
+          23,
+          10,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-edit-0",
+        "label": "Edit",
+        "region": [
+          51,
+          23,
+          8,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-bind-0",
+        "label": "Bind",
+        "region": [
+          59,
+          23,
+          8,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-remove-0",
+        "label": "Remove",
+        "region": [
+          67,
+          23,
+          10,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-export-1",
+        "label": "Export",
+        "region": [
+          41,
+          34,
+          10,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-edit-1",
+        "label": "Edit",
+        "region": [
+          51,
+          34,
+          8,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-bind-1",
+        "label": "Bind",
+        "region": [
+          59,
+          34,
+          8,
+          1
+        ],
+        "style": "background: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-remove-1",
+        "label": "Remove",
+        "region": [
+          67,
+          34,
+          10,
+          1
+        ],
+        "style": "background-tint: #E0E0E00C;\nbackground: #1E1E1E;\nborder:  #00FF00;\ncolor: #FFFFFFDD;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(1,120,212);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\noutline:  #00FF00;\npadding: 0 1;\nscrollbar-background-active: rgb(0,0,0);\nscrollbar-background-hover: rgb(0,0,0);\nscrollbar-background: rgb(0,0,0);\nscrollbar-color-active: rgb(1,120,212);\nscrollbar-color-hover: rgb(0,60,106);\nscrollbar-color: rgb(0,48,84);\nscrollbar-corner-color: rgb(0,0,0);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: bold underline;\nwidth: auto;",
+        "visible": true
+      }
+    ],
+    "paint": "                                                                                                                       \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                    \n \u2039   \u23033 Library  \u23034 Roleplay  \u23035 Watchlists  \u23036 Artifacts  \u23037 Schedules  \u23038 Workflows  \u23039 MCP  \u23030 ACP  F2 Lab  F3 Logs \u2502 F4 Settings \u2502 F5 Research  F7 Meetings   More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n Settings | Global preferences, appearance, storage, and app behavior | Local                                                                                             \n Mode: Tool Profiles                                                                                                                                                      \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510  \u2502  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510  \u2502  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502                              \u2502\n\u2502  Filter categories (/)       \u2502  \u2502  \u2502  State: Reviewed actions | Imports stay unbound; MCP owns policy editing; removal            \u2502  \u2502  \u2502  Scope Inspector             \u2502\n\u2502  No filter | / focus         \u2502  \u2502  \u2502  permanently reserves the profile id.                                                        \u2502  \u2502  \u2502                              \u2502\n\u2502  category search             \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502 Selected category: Tool      \u2502\n\u2502                              \u2502  \u2502  \u2502  Tool Profiles                                                                               \u2502  \u2502  \u2502 Profiles                     \u2502\n\u2502  Core                        \u2502  \u2502  \u2502  Portable permission profiles change tool policy only. Importing a profile never installs    \u2502  \u2502  \u2502 No unsaved changes           \u2502\n\u2502     Overview (view)          \u2502  \u2502  \u2502  tools or binds it to a workspace.                                                           \u2502  \u2502  \u2502  Reviewed actions: imports   \u2502\n\u2502     Providers & Models       \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  stay unbound, exports       \u2502\n\u2502     Web Search               \u2502  \u2502  \u2502   Import Tool Pack                                                                           \u2502  \u2502  \u2502  publish an exact snapshot,  \u2502\n\u2502     Speech & TTS             \u2502  \u2502  \u2502 \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510 \u2502  \u2502  \u2502  and policy editing opens    \u2502\n\u2502  Interface                   \u2502  \u2502  \u2502 \u2502 alpha                                                                                    \u2502 \u2502  \u2502  \u2502  MCP Permissions.            \u2502\n\u2502     Appearance               \u2502  \u2502  \u2502 \u2502 Imported Tool Pack \u00b7 Unbound \u00b7 Policy lifecycle valid                                    \u2502 \u2502  \u2502  \u2502 Local-only: saves write your \u2502\n\u2502     Theme                    \u2502  \u2502  \u2502 \u2502 First bind review required                                                               \u2502 \u2502  \u2502  \u2502 config file.                 \u2502\n\u2502     Splash Screen            \u2502  \u2502  \u2502 \u2502 Revision 3 \u00b7 Policy digest                                                               \u2502 \u2502  \u2502  \u2502 Impact and boundaries        \u2502\n\u2502     Console Behavior         \u2502  \u2502  \u2502 \u2502 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                         \u2502 \u2502  \u2502  \u2502 Import, export, review,      \u2502\n\u2502  Data & Privacy              \u2502  \u2502  \u2502 \u2502 Local provenance \u00b7 References: 0 active \u00b7 0 archived                                     \u2502 \u2502  \u2502  \u2502 bind, and remove portable    \u2502\n\u2502     Storage                  \u2502  \u2502  \u2502 \u2502 Allow 4 \u00b7 Ask 3 \u00b7 Deny 2                                                                 \u2502 \u2502  \u2502  \u2502 tool permission profiles.    \u2502\n\u2502     Workspaces               \u2502  \u2502  \u2502 \u2502   Export    Edit    Bind    Remove                                                       \u2502 \u2502  \u2502  \u2502  Runtime owner:              \u2502\n\u2502   > Tool Profiles            \u2502  \u2502  \u2502 \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518 \u2502  \u2502  \u2502  ToolPackService             \u2502\n\u2502     Privacy & Security       \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  (immediate reviewed         \u2502\n\u2502     Network                  \u2502  \u2502  \u2502 \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510 \u2502  \u2502  \u2502  actions)                    \u2502\n\u2502     My Profile               \u2502  \u2502  \u2502 \u2502 beta                                                                                     \u2502 \u2502  \u2502  \u2502                              \u2502\n\u2502  Troubleshooting             \u2502  \u2502  \u2502 \u2502 Imported Tool Pack \u00b7 Unbound \u00b7 Policy lifecycle valid                                    \u2502 \u2502  \u2502  \u2502  Writes allowed: Yes         \u2502\n\u2502     Diagnostics (view)       \u2502  \u2502  \u2502 \u2502 First bind review required                                                               \u2502 \u2502  \u2502  \u2502                              \u2502\n\u2502     About (view)             \u2502  \u2502  \u2502 \u2502 Revision 3 \u00b7 Policy digest                                                               \u2502 \u2502  \u2502  \u2502  Owns: MCP                   \u2502\n\u2502     Agents                   \u2502  \u2502  \u2502 \u2502 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                         \u2502 \u2502  \u2502  \u2502  permission-store Tool       \u2502\n\u2502  Expert                      \u2502  \u2502  \u2502 \u2502 Local provenance \u00b7 References: 0 active \u00b7 0 archived                                     \u2502 \u2502  \u2502  \u2502  profiles                    \u2502\n\u2502     Internal Prompts         \u2502  \u2502  \u2502 \u2502 Allow 4 \u00b7 Ask 3 \u00b7 Deny 2                                                                 \u2502 \u2502  \u2502  \u2502  portable Tool Pack import   \u2502\n\u2502     Advanced Config          \u2502  \u2502  \u2502 \u2502   Export    Edit    Bind    Remove                                                       \u2502 \u2502  \u2502  \u2502  receipts                    \u2502\n\u2502   Domain Defaults \u25b8 (11)     \u2502  \u2502  \u2502 \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518 \u2502  \u2502  \u2502                              \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  Affected data: local Tool   \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  policy profiles and         \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  portable Tool Pack          \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  receipts                    \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502                              \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  Recovery: re-inspect        \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  imports, keep profiles      \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502 \u25bc more \u2014 scroll the          \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502                              \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518  \u2502  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518  \u2502  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n Remove this unreferenced profile.                                                                                                                                        \n  F1 help \u00b7 F6 next pane \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit                                                                                                                   "
+  },
+  {
+    "theme": "textual-light",
+    "size": [
+      80,
+      24
+    ],
+    "buttons": [
+      {
+        "id": "tool-profiles-import",
+        "label": "Import Tool Pack",
+        "region": [
+          39,
+          -12,
+          20,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0 1 0 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-export-0",
+        "label": "Export",
+        "region": [
+          41,
+          0,
+          16,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-edit-0",
+        "label": "Edit",
+        "region": [
+          58,
+          0,
+          17,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-bind-0",
+        "label": "Bind",
+        "region": [
+          41,
+          2,
+          16,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-remove-0",
+        "label": "Remove",
+        "region": [
+          58,
+          2,
+          17,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": false
+      },
+      {
+        "id": "tool-profile-export-1",
+        "label": "Export",
+        "region": [
+          41,
+          16,
+          16,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-edit-1",
+        "label": "Edit",
+        "region": [
+          58,
+          16,
+          17,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-bind-1",
+        "label": "Bind",
+        "region": [
+          41,
+          18,
+          16,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: 1fr;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-remove-1",
+        "label": "Remove",
+        "region": [
+          58,
+          18,
+          17,
+          1
+        ],
+        "style": "background-tint: #1F1F1F0C;\nbackground: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFFDD;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\noutline:  #00FF00;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: bold underline;\nwidth: 1fr;",
+        "visible": true
+      }
+    ],
+    "paint": "                             \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                    \n \u2039   \u23030 ACP  F2 Lab  F3 Logs \u2502 F4 Settings \u2502 F5 Research  F7 Meetings   More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n Settings | Global preferences, appearance, storage, and app behavior | Local   \n Mode: Tool Profiles                                                            \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510  \u2502  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  Filter categories (/)       \u2502  \u2502  \u2502  State: Reviewed actions | Imports      \u2502\n\u2502  Core                        \u2502  \u2502  \u2502  stay unbound; MCP owns policy          \u2502\n\u2502     Overview (view)          \u2502  \u2502  \u2502  editing; removal permanently reserves  \u2502\n\u2502     Providers & Models       \u2502  \u2502  \u2502  the profile id.                        \u2502\n\u2502     Web Search               \u2502  \u2502  \u2502 \u2502 Revision 3 \u00b7 Policy digest         \u2502  \u2502\n\u2502     Speech & TTS             \u2502  \u2502  \u2502 \u2502 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \u2502  \u2502\n\u2502  Interface                   \u2502  \u2502  \u2502 \u2502 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa     \u2502  \u2502\n\u2502     Appearance               \u2502  \u2502  \u2502 \u2502 Local provenance \u00b7 References: 0   \u2502  \u2502\n\u2502     Theme                  \u2581 \u2502  \u2502  \u2502 \u2502 active \u00b7 0 archived                \u2502  \u2502\n\u2502     Splash Screen            \u2502  \u2502  \u2502 \u2502 Allow 4 \u00b7 Ask 3 \u00b7 Deny 2           \u2502  \u2502\n\u2502     Console Behavior         \u2502  \u2502  \u2502 \u2502      Export            Edit        \u2502  \u2502\n\u2502  Data & Privacy              \u2502  \u2502  \u2502 \u2502                                    \u2502\u2581 \u2502\n\u2502     Storage                  \u2502  \u2502  \u2502 \u2502       Bind            Remove       \u2502  \u2502\n\u2502     Workspaces               \u2502  \u2502  \u2502 \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518  \u2502\n\u2502   > Tool Profiles            \u2502  \u2502  \u2502                                         \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518  \u2502  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n Remove this unreferenced profile.                                              \n  F1 help \u00b7 F6 next pane \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit                         "
+  },
+  {
+    "theme": "textual-light",
+    "size": [
+      170,
+      48
+    ],
+    "buttons": [
+      {
+        "id": "tool-profiles-import",
+        "label": "Import Tool Pack",
+        "region": [
+          39,
+          14,
+          20,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0 1 0 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-export-0",
+        "label": "Export",
+        "region": [
+          41,
+          23,
+          10,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-edit-0",
+        "label": "Edit",
+        "region": [
+          51,
+          23,
+          8,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-bind-0",
+        "label": "Bind",
+        "region": [
+          59,
+          23,
+          8,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-remove-0",
+        "label": "Remove",
+        "region": [
+          67,
+          23,
+          10,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-export-1",
+        "label": "Export",
+        "region": [
+          41,
+          34,
+          10,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-edit-1",
+        "label": "Edit",
+        "region": [
+          51,
+          34,
+          8,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-bind-1",
+        "label": "Bind",
+        "region": [
+          59,
+          34,
+          8,
+          1
+        ],
+        "style": "background: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFF99;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: none;\nwidth: auto;",
+        "visible": true
+      },
+      {
+        "id": "tool-profile-remove-1",
+        "label": "Remove",
+        "region": [
+          67,
+          34,
+          10,
+          1
+        ],
+        "style": "background-tint: #1F1F1F0C;\nbackground: #D8D8D8;\nborder:  #00FF00;\ncolor: #FFFFFFDD;\ncontent-align: center middle;\nheight: 1;\nline-pad: 1;\nlink-background-hover: rgb(0,69,120);\nlink-background: rgba(0,0,0,0);\nlink-color-hover: rgba(255,255,255,0.87);\nlink-color: rgba(255,255,255,0.87);\nlink-style-hover: bold not underline;\nlink-style: underline;\nmargin: 0;\nmin-height: 1;\nmin-width: 8;\noutline:  #00FF00;\npadding: 0 1;\nscrollbar-background-active: rgb(202,202,202);\nscrollbar-background-hover: rgb(202,202,202);\nscrollbar-background: rgb(202,202,202);\nscrollbar-color-active: rgb(0,69,120);\nscrollbar-color-hover: rgb(101,135,161);\nscrollbar-color: rgb(121,148,169);\nscrollbar-corner-color: rgb(202,202,202);\nscrollbar-size-horizontal: 1;\nscrollbar-size-vertical: 2;\ntext-align: center;\ntext-style: bold underline;\nwidth: auto;",
+        "visible": true
+      }
+    ],
+    "paint": "                                                                                                                       \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                    \n \u2039   \u23033 Library  \u23034 Roleplay  \u23035 Watchlists  \u23036 Artifacts  \u23037 Schedules  \u23038 Workflows  \u23039 MCP  \u23030 ACP  F2 Lab  F3 Logs \u2502 F4 Settings \u2502 F5 Research  F7 Meetings   More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n Settings | Global preferences, appearance, storage, and app behavior | Local                                                                                             \n Mode: Tool Profiles                                                                                                                                                      \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510  \u2502  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510  \u2502  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502                              \u2502\n\u2502  Filter categories (/)       \u2502  \u2502  \u2502  State: Reviewed actions | Imports stay unbound; MCP owns policy editing; removal            \u2502  \u2502  \u2502  Scope Inspector             \u2502\n\u2502  No filter | / focus         \u2502  \u2502  \u2502  permanently reserves the profile id.                                                        \u2502  \u2502  \u2502                              \u2502\n\u2502  category search             \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502 Selected category: Tool      \u2502\n\u2502                              \u2502  \u2502  \u2502  Tool Profiles                                                                               \u2502  \u2502  \u2502 Profiles                     \u2502\n\u2502  Core                        \u2502  \u2502  \u2502  Portable permission profiles change tool policy only. Importing a profile never installs    \u2502  \u2502  \u2502 No unsaved changes           \u2502\n\u2502     Overview (view)          \u2502  \u2502  \u2502  tools or binds it to a workspace.                                                           \u2502  \u2502  \u2502  Reviewed actions: imports   \u2502\n\u2502     Providers & Models       \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  stay unbound, exports       \u2502\n\u2502     Web Search               \u2502  \u2502  \u2502   Import Tool Pack                                                                           \u2502  \u2502  \u2502  publish an exact snapshot,  \u2502\n\u2502     Speech & TTS             \u2502  \u2502  \u2502 \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510 \u2502  \u2502  \u2502  and policy editing opens    \u2502\n\u2502  Interface                   \u2502  \u2502  \u2502 \u2502 alpha                                                                                    \u2502 \u2502  \u2502  \u2502  MCP Permissions.            \u2502\n\u2502     Appearance               \u2502  \u2502  \u2502 \u2502 Imported Tool Pack \u00b7 Unbound \u00b7 Policy lifecycle valid                                    \u2502 \u2502  \u2502  \u2502 Local-only: saves write your \u2502\n\u2502     Theme                    \u2502  \u2502  \u2502 \u2502 First bind review required                                                               \u2502 \u2502  \u2502  \u2502 config file.                 \u2502\n\u2502     Splash Screen            \u2502  \u2502  \u2502 \u2502 Revision 3 \u00b7 Policy digest                                                               \u2502 \u2502  \u2502  \u2502 Impact and boundaries        \u2502\n\u2502     Console Behavior         \u2502  \u2502  \u2502 \u2502 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                         \u2502 \u2502  \u2502  \u2502 Import, export, review,      \u2502\n\u2502  Data & Privacy              \u2502  \u2502  \u2502 \u2502 Local provenance \u00b7 References: 0 active \u00b7 0 archived                                     \u2502 \u2502  \u2502  \u2502 bind, and remove portable    \u2502\n\u2502     Storage                  \u2502  \u2502  \u2502 \u2502 Allow 4 \u00b7 Ask 3 \u00b7 Deny 2                                                                 \u2502 \u2502  \u2502  \u2502 tool permission profiles.    \u2502\n\u2502     Workspaces               \u2502  \u2502  \u2502 \u2502   Export    Edit    Bind    Remove                                                       \u2502 \u2502  \u2502  \u2502  Runtime owner:              \u2502\n\u2502   > Tool Profiles            \u2502  \u2502  \u2502 \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518 \u2502  \u2502  \u2502  ToolPackService             \u2502\n\u2502     Privacy & Security       \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  (immediate reviewed         \u2502\n\u2502     Network                  \u2502  \u2502  \u2502 \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510 \u2502  \u2502  \u2502  actions)                    \u2502\n\u2502     My Profile               \u2502  \u2502  \u2502 \u2502 beta                                                                                     \u2502 \u2502  \u2502  \u2502                              \u2502\n\u2502  Troubleshooting             \u2502  \u2502  \u2502 \u2502 Imported Tool Pack \u00b7 Unbound \u00b7 Policy lifecycle valid                                    \u2502 \u2502  \u2502  \u2502  Writes allowed: Yes         \u2502\n\u2502     Diagnostics (view)       \u2502  \u2502  \u2502 \u2502 First bind review required                                                               \u2502 \u2502  \u2502  \u2502                              \u2502\n\u2502     About (view)             \u2502  \u2502  \u2502 \u2502 Revision 3 \u00b7 Policy digest                                                               \u2502 \u2502  \u2502  \u2502  Owns: MCP                   \u2502\n\u2502     Agents                   \u2502  \u2502  \u2502 \u2502 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                         \u2502 \u2502  \u2502  \u2502  permission-store Tool       \u2502\n\u2502  Expert                      \u2502  \u2502  \u2502 \u2502 Local provenance \u00b7 References: 0 active \u00b7 0 archived                                     \u2502 \u2502  \u2502  \u2502  profiles                    \u2502\n\u2502     Internal Prompts         \u2502  \u2502  \u2502 \u2502 Allow 4 \u00b7 Ask 3 \u00b7 Deny 2                                                                 \u2502 \u2502  \u2502  \u2502  portable Tool Pack import   \u2502\n\u2502     Advanced Config          \u2502  \u2502  \u2502 \u2502   Export    Edit    Bind    Remove                                                       \u2502 \u2502  \u2502  \u2502  receipts                    \u2502\n\u2502   Domain Defaults \u25b8 (11)     \u2502  \u2502  \u2502 \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518 \u2502  \u2502  \u2502                              \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  Affected data: local Tool   \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  policy profiles and         \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  portable Tool Pack          \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  receipts                    \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502                              \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  Recovery: re-inspect        \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502  imports, keep profiles      \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502 \u25bc more \u2014 scroll the          \u2502\n\u2502                              \u2502  \u2502  \u2502                                                                                              \u2502  \u2502  \u2502                              \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518  \u2502  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518  \u2502  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n Remove this unreferenced profile.                                                                                                                                        \n  F1 help \u00b7 F6 next pane \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit                                                                                                                   "
+  }
+]
