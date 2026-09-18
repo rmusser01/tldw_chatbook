@@ -18,7 +18,7 @@ modified_files:
 - Tests/UI/test_console_dispatch_recovery_repeated_actions.py
 - Docs/User_Guide/console/chat-basics.md
 - backlog/docs/lessons-console-wiring.md
-updated_date: 2026-09-18 20:36
+updated_date: 2026-09-18 20:43
 ---
 
 ## Description
@@ -61,11 +61,13 @@ Follow-up validation complete: 80 recovery/composer cases passed in the first ru
 Qodo review on 652cc816cc raised four actionable items: pending pre-claim click latch can be cleared by an ordinary repaint; repaint failure can mask original action exception/cancellation; new integration case should use real in-memory SQLite; trigger DDL should use db.transaction. Plan: reproduce the two behavioral failures, add owner/token-scoped action completion instead of clearing local pending intent from stale model state, preserve the primary unwind when repaint also fails with sanitized logging, and convert the new SQLite regression to memory/transaction contexts. Reverify before replying and pushing.
 Qodo fixes committed as 2d29204b77: token-owned completion prevents stale repaint/worker releases; primary exceptions and cancellation survive secondary repaint failures. New mounted DB tests use in-memory SQLite and transaction-managed trigger DDL. Reproduced 3 failing cases before fix; final recovery selection 20 passed, bringing unique targeted coverage to 188 cases. Ruff baseline 284/current 280/zero new; 13 Python files parse; Bandit 10 existing/zero new. Independent review found no actionable findings. All four Qodo findings now show resolved on the updated head. Auditing the new sanitized warning against the diagnostic inventory before final CI.
 Diagnostic inventory review: the sole new row is UI/Console_Modules/prompt_queue.py (one warning). --statements against origin/dev confirms it contains fixed text plus type(exc).__name__ only; no exception payload, user text, secret, path, URL or new sink. Regenerating the approved inventory to record this intended diagnostic. The initial Qodo review now shows all four findings resolved on 2d29204b77.
+Fresh Qodo reviewer guide on final head identified cleanup CancelledError (BaseException) escaping the Exception-only secondary handler. Extend regression matrix to cancelled repaint after both action failure and action cancellation, and verify a repaint cancellation still propagates if the action succeeded. Then explicitly handle cleanup cancellation while preserving the original action error.
+Follow-up Qodo cancellation concern reproduced with 2 failing cases, then fixed by explicitly catching secondary asyncio.CancelledError alongside Exception. The original exception object is retained; secondary cancellation after a successful action still propagates. Final recovery selection: 23 passed in 62.62s; total unique targeted cases verified: 191. Focused lint/format pass; prompt_queue Ruff unchanged at 8 baseline findings, and Bandit reports zero findings in that file. Independent review of this delta found no actionable issues. Diagnostic statement unchanged from the reviewed inventory.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Recovery controls and composer copy fixed; dev harness failures and backlog ID collision repaired. All four initial Qodo findings addressed in 2d29204b77; 188 targeted cases verified, including 20 final recovery tests. Latest-head CI and merge remain open.
+Recovery controls, composer copy, dev test harness failures, backlog collision and all Qodo findings addressed. 191 targeted cases verified, including the final 23-case recovery selection. Diagnostic inventory reviewed and regenerated; no new lint or security findings. Awaiting final-head CI and merge of PR #2709.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->

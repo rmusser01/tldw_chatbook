@@ -560,7 +560,7 @@ class ConsolePromptQueueUIController:
                     if on_recovery_complete is not None:
                         on_recovery_complete()
                     await self._sync_ui()
-                except Exception as exc:
+                except (Exception, asyncio.CancelledError) as exc:
                     if action_error is None:
                         raise
                     logger.warning(

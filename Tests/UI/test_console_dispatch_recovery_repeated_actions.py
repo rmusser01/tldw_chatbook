@@ -221,13 +221,18 @@ async def test_restored_recovery_failed_discard_can_be_discarded_again(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancelled", [False, True])
-async def test_repaint_failure_preserves_original_recovery_error(cancelled):
+@pytest.mark.parametrize("repaint_cancelled", [False, True])
+async def test_repaint_failure_preserves_original_recovery_error(
+    cancelled, repaint_cancelled
+):
     original = asyncio.CancelledError() if cancelled else RuntimeError("action failed")
 
     async def recover(_session_id):
         raise original
 
     async def repaint():
+        if repaint_cancelled:
+            raise asyncio.CancelledError("repaint cancelled")
         raise ValueError("repaint failed")
 
     ui = _ui_controller(
@@ -243,8 +248,13 @@ async def test_repaint_failure_preserves_original_recovery_error(cancelled):
 
 
 @pytest.mark.asyncio
-async def test_repaint_failure_propagates_after_successful_recovery():
-    repaint_error = ValueError("repaint failed")
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_repaint_failure_propagates_after_successful_recovery(cancelled):
+    repaint_error = (
+        asyncio.CancelledError("repaint cancelled")
+        if cancelled
+        else ValueError("repaint failed")
+    )
 
     async def recover(_session_id):
         return ConsoleSubmitResult(True, False, "Discarded")
@@ -257,7 +267,7 @@ async def test_repaint_failure_propagates_after_successful_recovery():
         {"notified": [], "sync": []},
     )
     ui._sync_ui = repaint
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(type(repaint_error)) as caught:
         await ui.handle_primary_intent(
             "session-1", action="discard", expected_revision=0
         )
