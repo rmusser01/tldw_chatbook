@@ -18,7 +18,7 @@ modified_files:
 - Tests/UI/test_console_dispatch_recovery_repeated_actions.py
 - Docs/User_Guide/console/chat-basics.md
 - backlog/docs/lessons-console-wiring.md
-updated_date: 2026-09-18 21:07
+updated_date: 2026-09-18 21:27
 ---
 
 ## Description
@@ -65,11 +65,13 @@ Fresh Qodo reviewer guide on final head identified cleanup CancelledError (BaseE
 Follow-up Qodo cancellation concern reproduced with 2 failing cases, then fixed by explicitly catching secondary asyncio.CancelledError alongside Exception. The original exception object is retained; secondary cancellation after a successful action still propagates. Final recovery selection: 23 passed in 62.62s; total unique targeted cases verified: 191. Focused lint/format pass; prompt_queue Ruff unchanged at 8 baseline findings, and Bandit reports zero findings in that file. Independent review of this delta found no actionable issues. Diagnostic statement unchanged from the reviewed inventory.
 All GitHub checks on 7d0501a0ed passed, including PR Fast Lane, derived artifacts, CSS, backlog uniqueness and UI latency guardrails. Qodo reports zero bugs and one documentation finding: document handle_primary_intent callback timing and propagated errors using Google-style Args/Raises sections. Adding this contract without behavior changes; final GitHub checks and merge will follow.
 Final Qodo documentation fix adds Args and Raises sections describing callback scope/timing and action-versus-cleanup error precedence. AST comparison after removing docstrings confirms executable behavior is unchanged. Latest dev remains e89f28d751. Task acceptance tracks the verified implementation and review work; final integration status is tracked by PR #2709. All code-head CI gates passed before this documentation-only update; required checks will run again before merge.
+Final docs-head CI: 1129 passed, one intermittent untouched MCP test failed (test_test_tool_active_watcher_never_updates_stale_panel[switch]) with a retained preview. The same executable code passed prior CI; both variants pass locally and repeated fresh-process switch runs pass. Inspection identifies a test synchronization gap: 20 pilot.pause calls do not join the watcher/preview revocation worker or its asyncio.to_thread operation. Replace the fixed UI-pause count with app.workers.wait_for_complete after confirming the switch precondition and releasing the simulated active run. This preserves the no-stale-preview assertion and avoids a speculative production change.
+MCP test synchronization update verified: 7 targeted watcher/cancellation/reopen lifecycle tests pass; unchanged original switch test passed 20 fresh-process repetitions, confirming the CI failure was intermittent rather than a reproducible recovery regression. New test precondition verifies the selected owner, and worker completion now precedes preview cleanup assertions. Independent review confirms the active flag is released before joining, preventing a polling deadlock. No production MCP changes. No new Ruff findings in the touched test; syntax and diff checks pass. Total unique local targeted cases: 198. Final CI rerun follows publication; merge remains tracked by PR #2709.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented and verified issue #2708 recovery-control and composer fixes. Repaired all identified test-harness and CI blockers, addressed all six Qodo findings across review rounds, and updated the reviewed diagnostic inventory. 191 targeted cases pass; final recovery selection 23 passed. No new Ruff or Bandit findings. All code-head CI gates passed; final update only documents the completion callback contract, with executable AST unchanged. PR #2709 targets latest dev; merge follows final required checks.
+Issue #2708 recovery controls and composer copy fixed; dev harness failures, backlog collision, six Qodo findings and an intermittent MCP CI test synchronization gap addressed. 198 unique local targeted cases verified (23 final recovery and 7 MCP lifecycle cases included). No new lint or production Bandit findings. Implementation complete; PR #2709 remains the record for final-head CI and merge.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->
