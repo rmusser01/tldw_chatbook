@@ -189,13 +189,27 @@ journey use real services. All seventeen captures were rendered and inspected;
 exact-source and private lifecycle checks pass. Earlier fixture failures are
 retained and explained. [QA and gallery](../qa/2026-09-18-tool-profile-write-lifetime/README.md).
 
+## Compact MCP readability — TASK-32788
+
+The introduction now grows to show its complete text, compact Local/Server
+source labels fit, and permission Tool labels wrap beside a fully visible State
+column at the left scroll position. Tags retain horizontal keyboard access.
+Resize and filtering retain row identity, exact action authority and newer focus.
+
+134 distinct targeted cases pass. Four real native theme/size cells and sixteen
+rendered, inspected captures verify complete guidance, Local source, long labels
+and State together, exact selected-profile persistence and fresh-revision return.
+Mounted production tests additionally qualify Server keyboard selection, Unicode
+and tags. Independent review found no introduced blocker; exact-source and private
+lifecycle checks pass. [QA and gallery](../qa/2026-09-18-mcp-compact-readability/README.md).
+
 ## Remaining scope
 
 In-visit overlap and screen-destruction/app-shutdown outcome ownership are
-qualified above within their recorded bounds. The Edit repair does not close
-the whole MCP destination: compact rail/header wrapping and simultaneous
-tool/state readability remain part of its broader layout review. State remains
-accessible with existing horizontal keyboard scroll, now qualified natively.
+qualified above within their recorded bounds. The compact introduction, Source
+labels and simultaneous Tool/State readability are now qualified as well. These
+repairs do not close the whole MCP destination: broader server, tool, audit and
+connected runtime workflows remain open.
 
 New PR heads require their own remote checks. These bounded management reviews
 do not complete the broader component workstream.

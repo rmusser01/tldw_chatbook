@@ -1046,6 +1046,17 @@ ListItem.personas-library-row.is-active.-highlight {
     margin-top: $ds-space-1;
 }
 
+/* Keep the complete onramp and both source labels readable at 80 columns.
+   The compact rail has 12 content cells; SelectCurrent's default padding
+   leaves only four for Local/Server. Retain its border and arrow shape. */
+#mcp-purpose {
+    height: $ds-height-auto;
+}
+
+#mcp-hub-grid.mcp-compact #mcp-rail-source > SelectCurrent {
+    padding: $ds-space-0 $ds-space-1;
+}
+
 /* Override border away from the generic `.is-active` rule (`border: round
    $ds-action-focus`, earlier in this sheet). Button.mcp-rail-row rows are
    fixed at height 1 (see MCPRail.DEFAULT_CSS); a round border needs at

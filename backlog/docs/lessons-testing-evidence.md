@@ -11200,6 +11200,13 @@ its bug — verified by reintroducing all three. A test harness that yields the
 widget straight into the App gives it the screen's whole box, which is exactly
 the geometry the bug does not live in.
 
+**TASK-32788, 2026-09-18 recurrence.** Compact MCP permission rows initially
+reserved the current `DataTable.scrollbar_size_vertical`, which is zero before
+wrapping creates the bar. Long Unicode rows then clipped State by two cells.
+Budgeting against `table.styles.scrollbar_size_vertical` before wrapping fixed
+the reproduced case. Qualify both scrollbar states and actual painted Tool/State
+regions after resizing; a pre-layout width measurement alone is insufficient.
+
 ## A clean rebase can orphan an import, and only a full-suite A/B sees it
 
 **TASK-22500, 2026-08-27.** The branch stopped importing `VerticalScroll` in

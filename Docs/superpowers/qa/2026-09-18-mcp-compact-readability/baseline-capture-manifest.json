@@ -1,0 +1,12 @@
+[
+  {
+    "file": "before-120x40.svg",
+    "original_sha256": "50dd76699bf434486778a785f3f0ddfa28d30ea09026853eef17f65730c69f57",
+    "stored_sha256": "ff249c96c9d0e319d5b39ea5b49d9e94172b5c9724f8fc0e264da648ba1f2fe6"
+  },
+  {
+    "file": "before-80x24.svg",
+    "original_sha256": "5b7dda44c8d31d8179c6a3abc35f2db44902e5ac7c6e9956ff8e91d7eeac0c10",
+    "stored_sha256": "226411683675222e7b4a4af0de9b7bca73d542068d7f80c369ae279b6297b5e7"
+  }
+]

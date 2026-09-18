@@ -1,0 +1,4 @@
+MCPPermissionsMode Ruff baseline 3 -> current 3; no introduced code/message pairs. New tests and native runner pass Ruff and formatting. New production methods formatted without whole-file churn.
+Backlog: 4139 task files, no duplicate IDs, all task paths Windows-compatible.
+Persistent diagnostic inventory: 607 owners; 1407 TASK-492, 55 TASK-31551 and 7763 TASK-494 calls; 14 sink files.
+ID allocation: 227 local/remote refs and 30 worktrees; prior maxima TASK32787 and ADR167. No new ADR required; ADR-150/161 govern this presentation-only repair.
