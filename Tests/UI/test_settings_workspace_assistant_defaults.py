@@ -31,6 +31,9 @@ from tldw_chatbook.Tool_Packs.binding import (
     ToolProfileBindingSummary,
     ToolProfileConfirmationRequired,
 )
+from tldw_chatbook.UI.Screens.settings_screen import (
+    _SettingsWorkspaceMemoryConfirmation,
+)
 from tldw_chatbook.Widgets.Settings_Widgets.tool_pack_import_review import (
     ToolProfileFirstBindReviewModal,
 )
@@ -601,13 +604,20 @@ async def test_slow_apply_does_not_clear_newer_staging(
             }
             screen._settings_selected_workspace_id = replacement_workspace_id
             screen._settings_workspace_assistant_pending = replacement
-            screen._settings_workspace_memory_armed = replacement_workspace_id
+            confirmation = _SettingsWorkspaceMemoryConfirmation(
+                replacement_workspace_id,
+                None,
+                WorkspaceAssistantDefaults(
+                    assistant_id="persona-1", persona_memory_mode="read_write"
+                ),
+            )
+            screen._settings_workspace_memory_armed = confirmation
             release.set()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             assert screen._settings_workspace_assistant_pending is replacement
-            assert screen._settings_workspace_memory_armed == replacement_workspace_id
+            assert screen._settings_workspace_memory_armed is confirmation
             assert registry.get_workspace("ws-slow").assistant_defaults is not None
     finally:
         release.set()
@@ -672,9 +682,11 @@ async def test_imported_profile_first_bind_requires_current_review_and_exact_tok
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_before_bind", [False, True])
 @private_profile_test
 async def test_read_write_acknowledgement_remains_separate_from_first_bind_review(
     request,
+    cancel_before_bind,
 ) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
@@ -733,6 +745,38 @@ async def test_read_write_acknowledgement_remains_separate_from_first_bind_revie
             registry.get_workspace("ws-bind-rw").assistant_defaults.persona_memory_mode
             == "read_write"
         )
+
+        if cancel_before_bind:
+            staged = dict(screen._settings_workspace_assistant_pending)
+            await pilot.press("escape")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert host.screen is screen
+            assert screen._settings_workspace_memory_armed is None
+            assert screen._settings_workspace_assistant_pending == staged
+            assert not app.tool_pack_service.confirmed
+            assert (
+                registry.get_workspace(
+                    "ws-bind-rw"
+                ).assistant_defaults.tool_policy_profile_id
+                is None
+            )
+            assert "cancelled" in str(
+                screen.query_one(
+                    "#settings-workspace-assistant-result", Static
+                ).renderable
+            )
+            toggle = screen.query_one("#settings-workspace-memory-toggle", Button)
+            assert str(toggle.label) == "Apply (memory: read_write)"
+            toggle.press()
+            await pilot.pause(0.3)
+            assert host.screen is screen
+            assert str(toggle.label) == "Confirm read_write?"
+            assert len(app.tool_pack_service.reviews) == 1
+            toggle.press()
+            await pilot.pause(0.3)
+            assert isinstance(host.screen, ToolProfileFirstBindReviewModal)
+            assert len(app.tool_pack_service.reviews) == 2
 
         await pilot.press("enter")
         await pilot.app.workers.wait_for_complete()

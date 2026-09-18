@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## A workspace ID does not identify what a confirmation approved
+
+**TASK-32770, 2026-09-17.** The memory toggle stored only the workspace ID
+between its first and second presses. Mounted regressions showed that A→B→A,
+category return and modal suspension retained the old acknowledgement; replacing
+the saved persona/profile before the second press applied read-write to that new
+record. Capture saved and intended values when asking, compare before applying,
+and discard the review on navigation. Exercise cancellation as well as acceptance:
+the separate imported-profile modal must preserve staging but require a fresh
+memory acknowledgement when the user retries after cancelling.
+
 ## A watcher test must prove selection and await worker completion
 
 **PR #2709 / TASK-32819, 2026-09-18.** The MCP stale-panel test intermittently

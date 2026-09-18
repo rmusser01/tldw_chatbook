@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each action reversible: unarchive, rename again, or set        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  active.                                                                                     │  │  │                              │
+│  category search             │  │  │ │                                                                                         │  │  │  │ Selected category:           │
+│                              │  │  │ │                                                                                         │  │  │  │ Workspaces                   │
+│  Core                        │  │  │ │  Change review (post-run diffs)                                                         │  │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ │  Change Review stores shadow Git history in application data, including file contents,  │  │  │  │  Immediate actions:          │
+│     Providers & Models       │  │  │ │  for 30 days by default. Disabling stops new review snapshots but does not erase        │  │  │  │  workspace changes apply as  │
+│     Web Search               │  │  │ │  existing history.                                                                      │  │  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  │ │  Tracking disabled for this workspace: runs record no diffs and offer no review.        │  │  │  │  draft to save or revert.    │
+│  Interface                   │  │  │ │  Enable change review                                                                   │  │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │ │                                                                                         │▂ │  │  │ config file.                 │
+│     Theme                    │  │  │ │  Default assistant                                                                      │  │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │ │  Effective: Research helper (memory: read_only)                                         │  │  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  │ │ Extra helper 02                                                                         │  │  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  │ │ Extra helper 01                                                                         │  │  │  │ tools.                       │
+│     Storage                  │  │  │ │ Extra helper 00                                                                         │  │  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  │ │ Other helper                                                                         ▁▁ │  │  │  │  registry (immediate         │
+│     Tool Profiles            │  │  │ │ Research helper                                                                         │  │  │  │  actions)                    │
+│     Privacy & Security       │  │  │ │  Confirm read_write?                                                                    │  │  │  │                              │
+│     Network                  │  │  │ │  read_write memory widens what this persona may remember across sessions — press again  │  │  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  │ │  to confirm.                                                                            │  │  │  │                              │
+│  Troubleshooting             │  │  │ │ extra-17                                                                                │  │  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  │ │ extra-18                                                                                │  │  │  │  lifecycle records and       │
+│     About (view)             │  │  │ │ extra-19                                                                                │  │  │  │  their bound folders         │
+│     Agents                   │  │  │ │ review-other                                                                         ▄▄ │  │  │  │                              │
+│  Expert                      │  │  │ │ review-research                                                                      ▄▄ │  │  │  │  Recovery:                   │
+│     Internal Prompts         │  │  │ │  Clear default assistant                                                                │▁ │  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  │ │  chat_with_llm: ask — permissions                                                       │  │  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  │ │  chat_with_character: ask — permissions                                                 │  │  │  │  workspace in Library        │
+│                              │  │  │ │  search_rag: ask — permissions                                                          │  │  │  │                              │
+│                              │  │  │ │  search_conversations: ask — permissions                                                │  │  │  │  Boundary: lifecycle and     │
+│                              │  │  │ │  create_note: ask — permissions                                                         │  │  │  │  folder bindings apply       │
+│                              │  │  │ │  search_notes: ask — permissions                                                        │  │  │  │  immediately; there is no    │
+│                              │  │  │ │  list_characters: ask — permissions                                                     │  │  │  │  draft state here            │
+│                              │  │  │ │  get_conversation_history: ask — permissions                                            │  │  │  │                              │
+│                              │  │  │ │  export_conversation: ask — permissions                                                 │  │  │  │                              │
+│                              │  │  │ │  library_list_media: ask — permissions                                                  │  │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
