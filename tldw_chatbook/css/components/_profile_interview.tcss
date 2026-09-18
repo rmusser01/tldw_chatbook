@@ -153,7 +153,7 @@ PersonalContextLinkModal {
 /* The global outline paints over the first input row, where Input renders
    its value. Use the token focus surface and side edge without covering it. */
 #profile-interview-answer:focus,
-PersonalContextReviewModal .personal-context-review-row Input:focus {
+PersonalContextReviewModal .personal-context-review-row Input.personal-context-review-input:focus {
     outline: none;
     border: none;
     border-left: solid $ds-input-focus-accent;

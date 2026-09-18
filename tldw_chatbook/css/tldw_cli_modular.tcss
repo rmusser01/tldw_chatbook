@@ -5216,7 +5216,7 @@ PersonalContextLinkModal {
 
 
 #profile-interview-answer:focus,
-PersonalContextReviewModal .personal-context-review-row Input:focus {
+PersonalContextReviewModal .personal-context-review-row Input.personal-context-review-input:focus {
     outline: none;
     border: none;
     border-left: solid $ds-input-focus-accent;

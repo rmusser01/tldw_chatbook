@@ -500,11 +500,13 @@ class PersonalContextReviewModal(
                     yield Input(
                         value=str(subject),
                         id=f"personal-context-review-subject-{index}",
+                        classes="personal-context-review-input",
                     )
                 yield Static("Value", classes="settings-input-label")
                 yield Input(
                     value=str(value),
                     id=f"personal-context-review-value-{index}",
+                    classes="personal-context-review-input",
                 )
                 yield Static("Polarity", classes="settings-input-label")
                 yield Select(
