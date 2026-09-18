@@ -22,6 +22,7 @@ async def test_settings_restore_clears_only_matching_archive_receipt(matching_re
     screen._settings_selected_workspace_id = "restored"
     screen._settings_workspace_archive_receipt = receipt
     screen.query_one = lambda *_: SimpleNamespace(value="Restored")
+    screen._set_settings_workspaces_result = Mock()
     screen._refresh_settings_workspaces_pane = Mock()
     SettingsScreen.handle_workspace_unarchive(screen, SimpleNamespace(stop=Mock()))
     for task in tasks:

@@ -87,6 +87,7 @@ def _detok(value: str) -> str:
         (r"\$ds-height-full", "100%"),
         (r"\$ds-width-fill", "1fr"),
         (r"\$ds-height-fill", "1fr"),
+        (r"\$ds-height-auto", "auto"),
     ):
         resolved = re.sub(pattern, repl, resolved)
     return resolved
@@ -511,16 +512,18 @@ def test_library_notes_compact_geometry_matches_fallback_source_and_bundle(
     for selector, expected in _LIBRARY_NOTES_COMPACT_GEOMETRY.items():
         declarations = [_declarations(css, selector) for css in stylesheets]
         for name, value in expected.items():
-            # The fallback source keeps literals; the app-tier sources were
-            # tokenized on arrival (ADR-161 task 10) -- their tokens must
-            # resolve to the same geometry.
+            # TASK-32765 deliberately lets the app's list introduction grow;
+            # the standalone fallback and editor authority retain two rows.
+            app_value = value
+            if selector == "#library-shell-grid.library-notes-compact #library-notes-authority":
+                app_value = {"height": "auto", "max-height": "100%"}.get(name, value)
             assert [
                 _detok(declaration.get(name, ""))
                 for declaration in declarations
             ] == [
                 value,
-                value,
-                value,
+                app_value,
+                app_value,
             ], (selector, name, declarations)
 
 

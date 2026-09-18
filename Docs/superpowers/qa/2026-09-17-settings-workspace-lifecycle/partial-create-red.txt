@@ -1,0 +1,124 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_partial_create_keeps_the_committed_workspace_clear ____________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1723/test_partial_create_keeps_the_0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ___________ test_partial_create_keeps_the_committed_workspace_clear ____________
+E
+E   request = <FixtureRequest for <Coroutine test_partial_create_keeps_the_committed_workspace_clear>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1723/test_partial_create_keeps_the_0/private-profile-process/pytest/test_partial_create_keeps_the_0')
+E
+E       @private_profile_test
+E       async def test_partial_create_keeps_the_committed_workspace_clear(request, tmp_path):
+E           app = _build_test_app()
+E           registry = app.workspace_registry_service
+E           host = _StyledDestinationHarness(app, "settings")
+E           folder = tmp_path / "project"
+E           folder.mkdir()
+E           async with host.run_test(size=(80, 24)) as pilot:
+E               await _category(host, pilot, "Workspaces")
+E               await _press(host, pilot, "#settings-workspace-create")
+E               modal = host.screen
+E               field = modal.query_one("#workspace-create-name", Input)
+E               field.focus()
+E               await pilot.press("home", "shift+end", *"Created once")
+E               modal.query_one("#workspace-default-persona", Select).value = "none"
+E               field = modal.query_one("#workspace-create-folder-path", Input)
+E               field.focus()
+E               await pilot.press(*str(folder))
+E               await _press(host, pilot, "#workspace-create-folder-add")
+E               assert modal._folders == [str(folder.resolve())]
+E               folder.rmdir()
+E               await _press(host, pilot, "#workspace-create-confirm")
+E               assert host.screen is modal
+E               created = [record for record in registry.list_workspaces() if record.name == "Created once"]
+E               assert len(created) == 1
+E               workspace_id = created[0].workspace_id
+E   >           assert modal.query_one("#workspace-create-name", Input).disabled
+E   E           AssertionError: assert False
+E   E            +  where False = Input(id='workspace-create-name', classes='-valid -textual-compact').disabled
+E   E            +    where Input(id='workspace-create-name', classes='-valid -textual-compact') = query_one('#workspace-create-name', Input)
+E   E            +      where query_one = WorkspaceCreateModal().query_one
+E
+E   Tests/UI/test_settings_workspace_lifecycle_journeys.py:111: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 23:15:36.675 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 23:15:36.680 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 23:15:36.680 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 23:15:36.681 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 23:15:36.765 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 23:15:36.787 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 23:15:36.788 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 23:15:36.788 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 23:15:36.789 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 23:15:36.867 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1723/test_partial_create_keeps_the_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 23:15:36.940 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2vfcgftw/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 23:15:37.101 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2vfcgftw/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 23:15:37.115 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 23:15:37.116 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2vfcgftw/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 23:15:37.116 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2vfcgftw/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 23:15:37.229 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 23:15:37.270 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 23:15:37.314 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 23:15:37.355 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 23:15:37.394 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 23:15:37.430 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 23:15:37.431 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2vfcgftw/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 23:15:37.477 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 23:15:37.478 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 23:15:37.486 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 23:15:37.556 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 23:15:37.557 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1723/test_partial_create_keeps_the_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 23:15:37.557 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 23:15:37.623 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 23:15:37.623 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 23:15:37.623 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 23:15:37.624 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.930 seconds
+E   2026-09-17 23:15:37.624 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.093s (9.9%)
+E   2026-09-17 23:15:37.624 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 23:15:37.624 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 23:15:37.625 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 23:15:37.625 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 23:15:37.625 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 23:15:37.625 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 23:15:37.626 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 23:15:37.840 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 23:15:38.065 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 23:15:55.471 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   18.79s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear
+E   1 failed in 20.78s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 23:15:34.937 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 23:15:34.943 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 23:15:34.943 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 23:15:34.943 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+22.69s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear
+1 failed, 5 deselected in 24.64s

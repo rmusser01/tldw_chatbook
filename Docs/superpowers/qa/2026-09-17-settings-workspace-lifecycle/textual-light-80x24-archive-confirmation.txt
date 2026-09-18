@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌─────────█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█─────────┐
+│  Filter █                                                          █ach      │
+│     Stor█                    Archive workspace?                    █rename   │
+│   > Work█                                                          █         │
+│     Tool█   Archive [red]Review 4[/red]? Its conversations stay    █s        │
+│     Priv█    saved and remain visible in Library; the workspace    █ - 1   ▇ │
+│     Netw█     disappears from the active switcher list and the     █       ▅ │
+│     My P█     Console browser. Recover it using Show archived.     █         │
+│  Trouble█                                                          █         │
+│     Diag█                                                          █         │
+│     Abou█                   Cancel      Archive                    █──────┐  │
+│     Agen█                                                          █      │  │
+│  Expert █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█      │  │
+│     Internal Prompts         │  │  │ │     Archive                        │  │
+│     Advanced Config          │  │  │ │  This workspace is now active.     │  │
+│   Domain Defaults ▸ (11)     │  │  │ │                                    │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

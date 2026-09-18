@@ -2327,6 +2327,17 @@ Button#skill-trust-bootstrap-submit {
     min-height: $ds-control-height;
 }
 
+
+WorkspaceCreateModal #workspace-create-modal {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: tall $ds-control-edge;
+}
+
+WorkspaceCreateModal #workspace-create-error {
+    color: $ds-status-error-readable;
+}
+
 /* ===== MODULE: components/_status.tcss ===== */
 
 
