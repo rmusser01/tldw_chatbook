@@ -153,7 +153,7 @@ class ToolProfilesPanel(Vertical):
         self._rows = {
             profile.profile_id: self._present(profile) for profile in self._profiles
         }
-        self._button_actions: dict[str, tuple[str, ToolProfilePresentation]] = {}
+        self._button_actions: dict[Button, tuple[str, ToolProfilePresentation]] = {}
 
     @staticmethod
     def _present(profile: ToolProfilePresentation) -> ToolProfileRow:
@@ -220,8 +220,7 @@ class ToolProfilesPanel(Vertical):
         tooltip: str,
     ) -> Button:
         button_id = f"tool-profile-{action}-{index}"
-        self._button_actions[button_id] = (action, profile)
-        return Button(
+        button = Button(
             label,
             id=button_id,
             classes="console-action-subdued",
@@ -229,6 +228,9 @@ class ToolProfilesPanel(Vertical):
             disabled=disabled,
             tooltip=tooltip,
         )
+        # A queued event belongs to this control, even if a refresh reuses its ID.
+        self._button_actions[button] = (action, profile)
+        return button
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -363,12 +365,15 @@ class ToolProfilesPanel(Vertical):
                     )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if not self.is_attached or not event.button.is_attached:
+            event.stop()
+            return
         button_id = event.button.id or ""
         if button_id == "tool-profiles-import":
             event.stop()
             self.post_message(self.ImportRequested())
             return
-        action_context = self._button_actions.get(button_id)
+        action_context = self._button_actions.get(event.button)
         if action_context is None:
             return
         event.stop()

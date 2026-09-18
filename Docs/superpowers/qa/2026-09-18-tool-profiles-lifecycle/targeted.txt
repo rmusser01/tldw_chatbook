@@ -1,0 +1,28 @@
+................................................                         [100%]
+============================= slowest 25 durations =============================
+18.18s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+18.17s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+4.87s call     Tests/UI/test_tool_profiles_lifecycle.py::test_settings_cancellation_preserves_shared_profile_initialization[False-remove]
+4.74s call     Tests/UI/test_tool_profiles_lifecycle.py::test_settings_cancellation_preserves_shared_profile_initialization[True-remove]
+4.29s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+4.20s call     Tests/UI/test_tool_profiles_lifecycle.py::test_settings_cancellation_preserves_shared_profile_initialization[True-refresh]
+4.15s call     Tests/UI/test_tool_profiles_lifecycle.py::test_settings_cancellation_preserves_shared_profile_initialization[False-refresh]
+2.17s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[save]
+2.13s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[cancel]
+2.10s call     Tests/UI/test_workspace_cold_provisioning.py::test_pending_creation_revalidates_ownership_and_form[nested_screen]
+2.09s call     Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[WorkspacePersonaChoice.NONE]
+2.05s call     Tests/UI/test_workspace_cold_provisioning.py::test_pending_creation_revalidates_ownership_and_form[explicit_none]
+2.03s call     Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[saved]
+2.03s call     Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[True]
+2.01s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[unavailable]
+1.95s call     Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[False]
+1.77s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.62s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.54s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_wiring_creates_no_orphans_before_authority
+1.50s call     Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+1.49s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]
+1.47s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]
+1.45s call     Tests/UI/test_component_pattern_governance.py::test_catalog_and_gallery_sync
+1.45s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+1.44s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+48 passed in 117.65s (0:01:57)
