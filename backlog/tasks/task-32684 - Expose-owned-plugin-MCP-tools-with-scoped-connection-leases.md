@@ -1,11 +1,11 @@
 ---
 id: TASK-32684
 title: Expose owned plugin MCP tools with scoped connection leases
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:28'
-updated_date: '2026-09-17 23:58'
+updated_date: '2026-09-18 00:16'
 labels:
   - plugins
   - implementation
@@ -31,10 +31,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Owned profiles and tools register through existing MCP/catalog services with exact namespace, definition digest, mappings and normal permission enforcement.
-- [ ] #2 Portable variable expansion applies only to approved fields with host variables last; configuration save does not launch a server and explicit testing uses normal authority.
-- [ ] #3 Connection reuse requires equivalent reviewed execution, configuration, credential binding and qualified session isolation; otherwise each scope receives a separate connection.
-- [ ] #4 Cancelling A detaches/cancels A requests without killing authorized B transport; idle processes retain data ownership, uncertain outcomes remain counted, and standalone mutation services reject package-owned edits.
+- [x] #1 Owned profiles and tools register through existing MCP/catalog services with exact namespace, definition digest, mappings and normal permission enforcement.
+- [x] #2 Portable variable expansion applies only to approved fields with host variables last; configuration save does not launch a server and explicit testing uses normal authority.
+- [x] #3 Connection reuse requires equivalent reviewed execution, configuration, credential binding and qualified session isolation; otherwise each scope receives a separate connection.
+- [x] #4 Cancelling A detaches/cancels A requests without killing authorized B transport; idle processes retain data ownership, uncertain outcomes remain counted, and standalone mutation services reject package-owned edits.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -71,4 +71,20 @@ Verification handoff from H2 review F3: any child bootstrap/network/profile fixt
 15. Apply R69 from m4-component-readiness-ruling.md before changing admission ceilings. Evaluate actual MCP mapping readiness per component with declared dependent closure; preserve global authenticated authority, current generations and whole-snapshot recovery validation. Add an optional explicit component ceiling to existing capture_mcp_snapshot/admission APIs, validate selected identities and complete prerequisites, and scope mappings/dependencies/provider advertisement consistently. Old snapshots including a failed component still refuse and cannot narrow themselves; independent fresh B-only capture may succeed, while required dependent B cannot. Do not relax installation/scope/root generations, normal permissions, missing-owner checks or R24 recovery. Qualify actual public two-server independence/dependence, old snapshot refusal, explicit invalid ceiling and capture-without-launch controls in already authorized tests. No additional edit paths; existing three contract docs carry this boundary. Re-freeze the recorded20-file covering set only after these edits are complete.
 
 16. Fix1 for the independent task review at a2f414c5edb80f75988eb06152945b1b24c4006b. Address I1 (owned final permission/advertisement must refuse unavailable kill-switch or configured persona authority) and I2 (carry existing automatic-work authority through awaited setup/reservation and recheck at final owned dispatch). Use existing authorized provider/local-control/connection-owner paths; no parallel policy/budget owner, no additional runtime/test edit paths. Establish real owned-peer successful controls and behavioral failures before production changes, including required-confirmation persona/read failure and actual automatic-context invalidation during a paused setup. Preserve bounded errors, not_started for no dispatch, lower settled/uncertain provenance after dispatch, and exact reservation/root cleanup. Review findings are verbatim in task-17-review.md. Fix BASE snapshots are task-17-fix1-baseline-manifest.json; automatic_work_runtime.py, unified_control_plane_service.py and Tests/Chat/test_automatic_provider_budget.py are newly snapshotted read-only context/regressions, not edit authorization. Covering files: Tests/Plugins/test_owned_mcp_tools.py, Tests/MCP/test_connection_ownership.py, Tests/Agents/test_mcp_tool_provider.py, Tests/MCP/test_control_plane_lifecycle.py, Tests/Chat/test_automatic_provider_budget.py. Record any necessary additional test/source scope before edits or final verification. Freeze final amended code and concrete affected neighbors, run exact covering tests and ordinary three-feature-file command; append commands, raw outputs, static BASE parity and resource/provenance evidence to task-17-report.md. Controller commits, dispatches fresh scoped re-review and owns Backlog closeout. No full suite.
+
+17. After the fresh Fix1 gate, append the factual TASK32684 authority-check integration incident to backlog/docs/lessons-testing-evidence.md, describing the actual successful controls, nine behavioral regressions and final163/111 overlapping verification. This is a documentation-only closeout addition; keep reviewed runtime/test bytes unchanged. Record accepted I1/I2, exact final evidence/qualification limits and ADR162/163 in task notes, check all four ACs and set Done only after metadata whitespace and frozen implementation checks.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Plugin MCP tools now use immutable reviewed connection/tool mappings, the existing permission/catalog services, and exact process/request/root ownership. Connections are separate by default; explicitly qualified sharing preserves authorized sibling work while revoked or uncertain requests retain the custody needed for cleanup and revision drain. Public setup saves configuration, reviews the connection, performs explicit discovery, then reviews exact tool mappings before advertisement.
+
+Owned profiles preserve literal argv/env/cwd and authenticated package headers, merge fresh host credentials under transport controls, and migrate valid local MCP schema3 state to schema4 without rewriting malformed source. Component readiness follows prerequisite closure; fresh narrower snapshots can use independent eligible siblings while captured requirements remain fixed. Standalone owned-edit guards and actual supported mapping recovery are enforced at their existing owners.
+
+The review fix refuses unavailable configured persona/kill-switch authority and rechecks the captured automatic-work context after connection/reservation/publication awaits immediately before dispatch. Actual peer controls cover pre-dispatch refusal, settled late rejection, uncertain lost responses, stopped accepted wake records, request-grant cleanup and no replay.
+
+Validation: initial20-file789passes and ordinary100passes; after the four-path review fix, final five-file163passes53.17s and ordinary three-file111passes46.19s. Counts overlap. Exact50FixBASE snapshots,60frozen paths and19-file syntax/Ruff/Black baseline parity verified; whitespace clean. Current qualification is controlled stdio/HTTP and same-boot Darwin/APFS. Real OS/multiprocess keychain, arbitrary external peers/session isolation, optional legacy extra and other platforms remain unqualified; generic OAuth is unsupported. A real restart of an uncertain MCP request is not newly qualified. H6 consumes original payloads before ordinary display projection; later native hook-graph/Console composition remains separately tracked.
+
+ADR required: yes; existing backlog/decisions/162-managed-agent-plugins.md and 163-expanded-console-hook-runtime.md apply, with R65–69 policies documented in ADR162/spec/MCP plan. Implementation a2f414c5edb80f75988eb06152945b1b24c4006b and Fix1 930a96c5a3d2801c25bfe9a00420c972d6868086. Independent scoped review accepted I1 and I2 with zero new Critical, Important or Minor findings. All acceptance criteria are verified; the factual integration incident is recorded in backlog/docs/lessons-testing-evidence.md.
+<!-- SECTION:NOTES:END -->
