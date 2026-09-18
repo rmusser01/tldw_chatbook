@@ -668,6 +668,7 @@ class ConsoleComposerBar(Horizontal):
         self._send_button_width = 6
         self._send_label = "Send"
         self._send_blocked = False
+        self._dispatch_recovery_blocked = False
         self._setup_blocked_reason = ""
         #: Last rendered `#console-send-disabled-reason` copy, tracked so a
         #: reason change can re-window the draft at its new width.
@@ -1851,6 +1852,7 @@ class ConsoleComposerBar(Horizontal):
             run_active=self._run_active,
             can_save_chatbook=self._can_save_chatbook,
             send_blocked=self._send_blocked,
+            dispatch_recovery_blocked=self._dispatch_recovery_blocked,
             setup_blocked_reason=self._setup_blocked_reason,
             ephemeral=self._ephemeral,
             send_label=self._send_label,
@@ -2124,6 +2126,7 @@ class ConsoleComposerBar(Horizontal):
         ephemeral: bool = False,
         send_label: str = "Send",
         wake_turn_active: bool = False,
+        dispatch_recovery_blocked: bool = False,
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -2133,6 +2136,7 @@ class ConsoleComposerBar(Horizontal):
             can_save_chatbook: Whether a Chatbook artifact is available to save.
             send_blocked: Whether the current run state blocks new sends.
             setup_blocked_reason: Provider/model setup copy when setup blocks Send.
+            dispatch_recovery_blocked: An unresolved response needs explicit recovery.
             ephemeral: Whether the active session is temporary, which blocks
                 Save Chatbook (a second door onto the same write the
                 workbench's Save Chatbook action already gates).
@@ -2151,6 +2155,7 @@ class ConsoleComposerBar(Horizontal):
         setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
         self._run_active = run_active
         self._send_blocked = send_blocked
+        self._dispatch_recovery_blocked = bool(dispatch_recovery_blocked)
         self._setup_blocked_reason = setup_blocked_reason
         self._can_save_chatbook = can_save_chatbook
         self._ephemeral = ephemeral
@@ -2211,6 +2216,8 @@ class ConsoleComposerBar(Horizontal):
         send_button.variant = "primary" if send_ready else "default"
         if raw_cli_ready:
             send_button.tooltip = "Run this raw command with host-user authority."
+        elif effective_send_blocked and dispatch_recovery_blocked:
+            send_button.tooltip = "Resolve the response recovery above before sending."
         elif effective_send_blocked and wake_turn_active:
             # task-15862 AC#3: a wake turn's blocked state names itself --
             # the queue tooltip riding `setup_blocked_reason` mid-wake read
@@ -2244,7 +2251,9 @@ class ConsoleComposerBar(Horizontal):
         self.set_class(
             effective_send_blocked
             and bool(setup_blocked_reason)
-            and not wake_turn_active,
+            and not wake_turn_active
+            # Recovery is resolved at its own controls, not the setup wizard.
+            and not dispatch_recovery_blocked,
             "console-composer-setup-blocked",
         )
         reason = build_console_disabled_reason(
@@ -2253,6 +2262,7 @@ class ConsoleComposerBar(Horizontal):
             send_blocked=effective_send_blocked,
             setup_blocked_reason=setup_blocked_reason,
             wake_turn_active=wake_turn_active,
+            dispatch_recovery_blocked=dispatch_recovery_blocked,
         )
         reason_changed = reason != self._send_disabled_reason
         self._send_disabled_reason = reason

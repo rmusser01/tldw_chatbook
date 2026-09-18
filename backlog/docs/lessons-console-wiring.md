@@ -11,6 +11,31 @@ bring the incident.
 
 ---
 
+## An unchanged recovery projection can still need its click latch released
+
+**TASK-32819, GitHub #2708, 2026-09-18.** A failed recovery returned the store to
+the same actionable state before the UI painted its in-flight projection.
+`sync_recovery()` skipped identical display state before clearing the widget's
+local click latch, leaving Retry and Discard enabled-looking but inert. A mounted
+restored-conversation test with a real SQLite settlement failure reproduced it;
+after the database failure was removed, another Discard still did nothing.
+
+Release the widget's pending click explicitly when its action completes, then
+refresh after exceptional or cancelled actions as well as successful returns.
+Qodo review reproduced the opposite race in the first fix: an unrelated repaint
+of unchanged model state released a click before its worker had claimed the
+action. Use a per-click completion token so a stale worker cannot release a
+newer click or owner. Preserve the action's original exception if repainting also
+fails. Test a failed attempt followed by a second click through the real
+dispatcher; store-only assertions cannot detect a stranded widget latch.
+
+The dev rebase also exposed stale harness assumptions: full-app tests must use
+`private_profile_test` once config sources are lifetime-bound, and controller-only
+gateway doubles must not replace the runtime's UI metadata gateway. Wait for the
+actual Queue label rather than an already-disabled empty composer. Pure widget
+projection tests should override the full-app catalog fixture, as other isolated
+UI harnesses do, so running them alone does not import and bind the application.
+
 ## A `console_view_hooks()` entry with no declared slot is silently inert
 
 **TASK-32482 (tasks 6 and 7), 2026-09-11.** The chat-fork feature wired two

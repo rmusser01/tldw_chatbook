@@ -25,6 +25,7 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_command_composer import _spy_submit_draft
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
@@ -83,7 +84,8 @@ def test_disabled_reason_helper_covers_run_blocked_state():
 
 
 @pytest.mark.asyncio
-async def test_empty_draft_disables_send_with_visible_idle_reason():
+@private_profile_test
+async def test_empty_draft_disables_send_with_visible_idle_reason(request):
     app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -100,7 +102,8 @@ async def test_empty_draft_disables_send_with_visible_idle_reason():
 
 
 @pytest.mark.asyncio
-async def test_typing_enables_send_and_clears_reason_immediately():
+@private_profile_test
+async def test_typing_enables_send_and_clears_reason_immediately(request):
     app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -129,7 +132,8 @@ async def test_typing_enables_send_and_clears_reason_immediately():
 
 
 @pytest.mark.asyncio
-async def test_setup_block_shows_reason_and_clears_when_unblocked():
+@private_profile_test
+async def test_setup_block_shows_reason_and_clears_when_unblocked(request):
     app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -179,7 +183,8 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked():
 
 
 @pytest.mark.asyncio
-async def test_active_run_block_shows_wait_reason():
+@private_profile_test
+async def test_active_run_block_shows_wait_reason(request):
     app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -223,7 +228,8 @@ async def test_active_run_block_shows_wait_reason():
 
 
 @pytest.mark.asyncio
-async def test_reason_strip_never_adds_height_to_the_composer_row():
+@private_profile_test
+async def test_reason_strip_never_adds_height_to_the_composer_row(request):
     app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -242,7 +248,8 @@ async def test_reason_strip_never_adds_height_to_the_composer_row():
 
 
 @pytest.mark.asyncio
-async def test_idle_stop_button_has_no_unreachable_tooltip():
+@private_profile_test
+async def test_idle_stop_button_has_no_unreachable_tooltip(request):
     """DS-07: the hidden idle Stop must not carry copy nobody can hover."""
     app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -269,7 +276,8 @@ async def test_idle_stop_button_has_no_unreachable_tooltip():
 
 
 @pytest.mark.asyncio
-async def test_enter_hotkey_still_sends_when_send_is_enabled():
+@private_profile_test
+async def test_enter_hotkey_still_sends_when_send_is_enabled(request):
     gateway = CapturingGateway()
     app, host = _ready_host()
     attach_chachanotes_db(app)
@@ -285,15 +293,17 @@ async def test_enter_hotkey_still_sends_when_send_is_enabled():
         await pilot.press("enter")
         await _wait_for_text(console, pilot, "accepted")
 
-        submit_spy.assert_awaited_once_with(
-            "enter sends this",
-            session_id=console._ensure_console_chat_store().active_session_id,
+        submit_spy.assert_awaited_once()
+        assert submit_spy.await_args.args == ("enter sends this",)
+        assert submit_spy.await_args.kwargs["session_id"] == (
+            console._ensure_console_chat_store().active_session_id
         )
         assert gateway.sent_messages[-1][-1]["content"] == "enter sends this"
 
 
 @pytest.mark.asyncio
-async def test_enter_hotkey_queues_draft_behind_accepted_run():
+@private_profile_test
+async def test_enter_hotkey_queues_draft_behind_accepted_run(request):
     """An accepted live turn changes Send to Queue and preserves exact text."""
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -330,7 +340,10 @@ async def test_enter_hotkey_queues_draft_behind_accepted_run():
         try:
             # An empty draft stays disabled, but the action truthfully names
             # the now-available queue path.
-            await _wait_for_condition(pilot, lambda: send_button.disabled is True)
+            await _wait_for_condition(
+                pilot,
+                lambda: send_button.disabled and send_button.label.plain == "Queue",
+            )
             assert send_button.label.plain == "Queue"
             assert reason.styles.display == "block"
             assert reason.renderable.plain == "Send disabled: type a message"
@@ -363,7 +376,7 @@ async def test_enter_hotkey_queues_draft_behind_accepted_run():
             )
             assert text.text == "queued behind run"
             assert composer.draft_text() == ""
-            assert console._console_pending_send_stash is None
+            assert store.session_draft(store.active_session_id) == ""
         finally:
             gateway.release.set()
 
@@ -379,7 +392,8 @@ async def test_enter_hotkey_queues_draft_behind_accepted_run():
 
 
 @pytest.mark.asyncio
-async def test_setup_blocked_reason_never_parses_reason_text_as_markup():
+@private_profile_test
+async def test_setup_blocked_reason_never_parses_reason_text_as_markup(request):
     app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -398,12 +412,8 @@ async def test_setup_blocked_reason_never_parses_reason_text_as_markup():
         assert "[bold]" in plain
         # And the only action link is the one this widget added itself.
         spans = getattr(rendered, "spans", [])
-        actions = [
-            s
-            for s in spans
-            if "@click" in str(getattr(s, "style", ""))
-        ]
+        actions = [s for s in spans if "@click" in str(getattr(s, "style", ""))]
         assert len(actions) <= 1, f"reason text injected extra action(s): {actions}"
-        assert all(
-            "app.quit" not in str(getattr(s, "style", "")) for s in spans
-        ), "reason text injected its own click action"
+        assert all("app.quit" not in str(getattr(s, "style", "")) for s in spans), (
+            "reason text injected its own click action"
+        )

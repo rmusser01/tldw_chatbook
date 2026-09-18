@@ -22030,11 +22030,13 @@ class ChatScreen(BaseAppScreen):
         session_id: str,
         assistant_message_id: str,
         action: str,
+        on_complete: Callable[[], None],
     ) -> None:
         """Run one mounted recovery intent against the currently pinned owner."""
 
         controller = self._console_chat_controller
         if controller is None or not session_id or not assistant_message_id:
+            on_complete()
             return
         recovery = controller.store.dispatch_recovery_for_session(session_id)
         if (
@@ -22042,6 +22044,7 @@ class ChatScreen(BaseAppScreen):
             or recovery.assistant_message_id != assistant_message_id
             or not recovery.recovery_needed
         ):
+            on_complete()
             return
         revision = controller.prompt_queue_registry.snapshot(session_id).revision
         self.run_worker(
@@ -22049,6 +22052,7 @@ class ChatScreen(BaseAppScreen):
                 session_id,
                 action=action,
                 expected_revision=revision,
+                on_recovery_complete=on_complete,
             ),
             exclusive=True,
             group="console-dispatch-recovery-action",
@@ -22074,6 +22078,7 @@ class ChatScreen(BaseAppScreen):
 
         run_active = False
         send_blocked = False
+        dispatch_recovery_blocked = False
         controller = self._console_chat_controller
         queue_presentation = None
         if controller is not None:
@@ -22105,9 +22110,11 @@ class ChatScreen(BaseAppScreen):
                 # so an unaccepted live run still refuses. The recovery
                 # predicate stays in the `or` and still refuses for a genuinely
                 # unresolved owner (see `dispatch_recovery_blocks_submission`).
+                dispatch_recovery_blocked = (
+                    controller.store.dispatch_recovery_blocks_submission(active_id)
+                )
                 send_blocked = (
-                    not queue_presentation.send_enabled
-                    or controller.store.dispatch_recovery_blocks_submission(active_id)
+                    not queue_presentation.send_enabled or dispatch_recovery_blocked
                 )
                 try:
                     queue_region = self.query_one(
@@ -22167,6 +22174,7 @@ class ChatScreen(BaseAppScreen):
             run_active=run_active,
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
+            dispatch_recovery_blocked=dispatch_recovery_blocked,
             setup_blocked_reason=(
                 setup_blocked_reason
                 or attachment_blocked_reason

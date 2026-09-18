@@ -13,6 +13,7 @@ from Tests.Chat.test_console_dispatch_queue_recovery import (
     _destination,
     _truth,
 )
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -22,17 +23,20 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
 )
+from tldw_chatbook.Chat.console_prompt_queue import PromptQueueMode
+from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
 from tldw_chatbook.UI.Console_Modules.dispatch_recovery import (
     ConsoleDispatchRecoveryRegion,
 )
 from tldw_chatbook.UI.Console_Modules.prompt_queue import ConsolePromptQueueRegion
-from tldw_chatbook.Chat.console_prompt_queue import PromptQueueMode
-from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
 @pytest.mark.asyncio
-async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_queue():
+@private_profile_test
+async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_queue(
+    request,
+):
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -72,7 +76,7 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("must remain blocked")
 
-        # A healthy provider-owned turn blocks a second send but is not recovery UI.
+        # A healthy checkpoint does not expose recovery or engage its send fence.
         store.begin_ephemeral_dispatch(
             session.id,
             assistant_message_id=assistant.id,
@@ -85,7 +89,7 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
         )
         send = composer.query_one("#console-send-message", Button)
         assert region.display is False
-        assert send.disabled is True
+        assert store.dispatch_recovery_blocks_submission(session.id) is False
 
         # A delivery-unknown owner is visible even though the queue is empty.
         store.mark_dispatch_recovery_needed(session.id, assistant.id)
@@ -124,7 +128,10 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
 
 
 @pytest.mark.asyncio
-async def test_mounted_queued_recovery_has_one_action_surface_and_drains_exact_owner():
+@private_profile_test
+async def test_mounted_queued_recovery_has_one_action_surface_and_drains_exact_owner(
+    request,
+):
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -263,7 +270,8 @@ async def test_mounted_queued_recovery_has_one_action_surface_and_drains_exact_o
 
 
 @pytest.mark.asyncio
-async def test_mounted_recovery_action_is_pinned_to_the_displayed_session():
+@private_profile_test
+async def test_mounted_recovery_action_is_pinned_to_the_displayed_session(request):
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)
