@@ -16,7 +16,8 @@ from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 from textual.widgets.data_table import RowDoesNotExist
@@ -123,7 +124,7 @@ def _ellipsize(text: str, budget: int) -> str:
     return rendered.plain
 
 
-class MCPToolsMode(DataTableClickSelectMixin, Vertical):
+class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
     """Canvas for the Tools mode: cross-server catalog, filters, empty state."""
 
     BUNDLED_CSS = """
@@ -311,6 +312,26 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         table.add_columns(*_TABLE_COLUMNS)
         await self._rebuild_server_select()
         self._apply_filter()
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def on_resize(self, event: Resize) -> None:
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def reveal_focused_control(self) -> None:
+        """Reveal the current child after layout without overriding newer focus."""
+        if (
+            not self.is_attached
+            or not self.display
+            or self.app.screen is not self.screen
+        ):
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            focused.scroll_visible(animate=False, immediate=True)
+            if isinstance(focused, DataTable) and focused.row_count:
+                focused._scroll_cursor_into_view(animate=False)
 
     # -- data ---------------------------------------------------------------
 

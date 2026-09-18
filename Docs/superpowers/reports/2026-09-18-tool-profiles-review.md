@@ -209,7 +209,7 @@ In-visit overlap and screen-destruction/app-shutdown outcome ownership are
 qualified above within their recorded bounds. The compact introduction, Source
 labels and simultaneous Tool/State readability are now qualified as well. These
 repairs do not close the whole MCP destination: broader server, tool, audit and
-connected runtime workflows remain open.
+connected runtime workflows remain open in the [MCP review ledger](2026-09-18-mcp-review.md). TASK-32789 separately qualifies Tools controls and catalog access.
 
 New PR heads require their own remote checks. These bounded management reviews
 do not complete the broader component workstream.

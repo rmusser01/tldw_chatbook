@@ -1210,6 +1210,24 @@ Button.mcp-callout {
     max-height: $ds-agentic-mcp-table-cap;
 }
 
+/* Keep the switch's state readable inside the allocated pane. */
+#mcp-tools-local-enabled {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    text-wrap: wrap;
+}
+
+/* The compact workbench cannot fit two useful filter fields side by side. */
+.mcp-compact #mcp-tools-filter-bar {
+    layout: vertical;
+}
+
+.mcp-compact #mcp-tools-filter-text,
+.mcp-compact #mcp-tools-filter-server-slot,
+.mcp-compact #mcp-tools-filter-server {
+    width: $ds-width-full;
+}
+
 /* T9 (P4): kept in lockstep with the baseline copy in
    MCPPermissionsMode.DEFAULT_CSS (mcp_permissions_mode.py) -- same fix,
    same rationale, as #mcp-servers-table/#mcp-tools-table above: the matrix

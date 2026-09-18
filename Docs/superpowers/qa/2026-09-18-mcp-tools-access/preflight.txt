@@ -1,0 +1,5 @@
+MCPToolsMode Ruff baseline 0 -> final 0; no introduced code/message pairs. New tests and native runner pass Ruff and formatting.
+Changed production methods pass formatting; the whole module retains two pre-existing formatting differences in unchanged label assignment statements.
+No duplicate task IDs across 4140 task files in backlog/tasks, backlog/completed, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.
+diagnostic inventory verified: 607 owners, 1407 TASK-492 calls, 55 TASK-31551 calls, 7763 TASK-494 calls, 14 sink files
+ID scan: 227 distinct local/remote commits and 30 worktrees; prior maximum TASK32788, no candidate collision.
