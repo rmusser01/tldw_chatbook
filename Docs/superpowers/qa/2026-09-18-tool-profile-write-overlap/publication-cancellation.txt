@@ -1,0 +1,2 @@
+RESULT {"cancel_at": "archive_fsynced", "cancelled_flag": true, "destination_exists": false, "temporaries": 0, "category": "cancelled"}
+RESULT {"cancel_at": "before_replace", "cancelled_flag": true, "destination_exists": true, "temporaries": 0, "committed": true, "durability_uncertain": false}

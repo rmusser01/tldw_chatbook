@@ -1,0 +1,5 @@
+Baseline mounted probe: first worker cancelled; actual profile absent, rendered research row retained, receipt Remove cancelled.
+Initial 9 overlap cases: 9 failed, first worker cancelled.
+After pre-dispatch guard: 8 passed, 1 failed (uncertain import labelled failed).
+After truthful uncertainty copy and import refresh: 9 passed in 45.60s.
+Expanded final run: 95 passed in 396.57s, including all 15 overlap cases.
