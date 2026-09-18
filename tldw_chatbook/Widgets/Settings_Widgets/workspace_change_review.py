@@ -79,6 +79,11 @@ class WorkspaceChangeReviewPanel(Vertical):
         self._poll_worker = None
 
     def compose(self) -> ComposeResult:
+        """Build status, preparation retry, consent and result controls.
+
+        Yields:
+            Widgets projecting consent and readiness without mutating either.
+        """
         yield Static("Change review (post-run diffs)", classes="destination-section")
         for name in _STATUS_ROWS:
             yield Static(
@@ -93,6 +98,7 @@ class WorkspaceChangeReviewPanel(Vertical):
         )
 
     def on_mount(self) -> None:
+        """Paint current consent and start polling unfinished preparation."""
         self._paint_status()
         self.set_interval(0.5, self._poll_preparing)
 
@@ -224,6 +230,12 @@ class WorkspaceChangeReviewPanel(Vertical):
 
     @on(Button.Pressed, "#settings-workspace-change-review-toggle")
     def toggle_review(self, event: Button.Pressed) -> None:
+        """Apply the queued consent intent and publish its refreshed result.
+
+        Args:
+            event: Consumed button press carrying the expected consent and choice.
+                Stale, disabled or malformed presses do not change consent.
+        """
         event.stop()
         if not self._current() or event.button.disabled:
             return
@@ -252,6 +264,11 @@ class WorkspaceChangeReviewPanel(Vertical):
 
     @on(Button.Pressed, "#settings-workspace-change-review-retry")
     def retry_preparation(self, event: Button.Pressed) -> None:
+        """Schedule eligible failed roots for preparation and publish a receipt.
+
+        Args:
+            event: Consumed retry press; ignored for detached or disabled controls.
+        """
         event.stop()
         if not self._current() or event.button.disabled:
             return

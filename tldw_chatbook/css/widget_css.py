@@ -940,6 +940,12 @@ def without_source_comments(css: str) -> str:
     intact. Quoted text is protected in both the comment and trailing-space
     passes, including strings containing comment markers or trailing spaces.
     Module provenance banners are added separately by the builder.
+
+    Args:
+        css: Source stylesheet text, including comments and quoted values.
+
+    Returns:
+        Stylesheet text without source comments or unquoted trailing spaces.
     """
     without_comments = _SOURCE_COMMENT_OR_STRING.sub(
         lambda match: "" if match.group().startswith("/*") else match.group(), css

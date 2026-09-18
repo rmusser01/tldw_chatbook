@@ -1,0 +1,31 @@
+{
+  "prior_unbounded": {
+    "median_ms": 26.78766701137647,
+    "runs_ms": [
+      13.405250007053837,
+      30.189874989446253,
+      28.50229199975729,
+      26.78766701137647,
+      26.81120901252143,
+      13.41824998962693,
+      26.061291981022805
+    ],
+    "returned_records": 25000,
+    "constructed_options": 25000
+  },
+  "bounded_page": {
+    "median_ms": 1.32079201284796,
+    "runs_ms": [
+      2.5595829938538373,
+      1.3504579837899655,
+      1.2989590177312493,
+      1.32079201284796,
+      1.2944999907631427,
+      1.3112080050632358,
+      1.3265410088934004
+    ],
+    "returned_records": 101,
+    "constructed_options": 100
+  },
+  "scope": "Synthetic 25,000-record in-memory service catalog; actual view normalization and Option construction. Excludes app startup, painting and disk reads."
+}

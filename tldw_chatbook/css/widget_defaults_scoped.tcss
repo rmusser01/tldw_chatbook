@@ -2969,6 +2969,6 @@
 
     WorkspacePersonaDefaultModal #workspace-default-dialog { width: 68; max-width: 95%; height: auto; max-height: 95%;
         background: $surface; border: tall $primary; padding: 1 2; }
-    WorkspacePersonaDefaultModal #workspace-default-form { height: auto; max-height: 17; }
+    WorkspacePersonaDefaultModal #workspace-default-form { height: 1fr; max-height: 17; }
     WorkspacePersonaDefaultModal #workspace-default-actions { height: 3; align-horizontal: right; }
     WorkspacePersonaDefaultModal #workspace-default-error { height: auto; color: $error; }

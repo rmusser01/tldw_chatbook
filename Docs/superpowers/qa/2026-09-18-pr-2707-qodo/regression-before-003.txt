@@ -1,0 +1,36 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_persona_catalog_only_materializes_requested_page _____________
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2768/test_persona_catalog_only_mate0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a765fa0>
+
+    def test_persona_catalog_only_materializes_requested_page(tmp_path, monkeypatch):
+        service = LocalCharacterPersonaService(None, persona_store_path=tmp_path / "personas.json")
+        for i in range(12):
+            service.create_persona_profile({"id": f"persona-{i}", "name": f"Persona {i}"})
+        original = service._persona_profile_view
+        viewed = []
+    
+        def observe(record):
+            viewed.append(record["id"])
+            return original(record)
+    
+        monkeypatch.setattr(service, "_persona_profile_view", observe)
+        page = service.list_persona_profiles(limit=3, offset=4)
+>       assert len(viewed) == 3
+E       AssertionError: assert 12 == 3
+E        +  where 12 = len(['persona-0', 'persona-1', 'persona-2', 'persona-3', 'persona-4', 'persona-5', ...])
+
+Tests/Character_Chat/test_local_character_persona_service.py:747: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 16:04:40.147 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 16:04:40.155 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 16:04:40.226 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 16:04:40.298 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 16:04:40.298 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 16:04:40.299 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+1 failed in 0.67s

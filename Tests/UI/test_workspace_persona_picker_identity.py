@@ -126,7 +126,7 @@ async def test_create_control_named_persona_survives_folder_recomposition(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_modal_offers_all_personas_beyond_first_page(request, tmp_path):
-    ids = [f"writer-{i:03}" for i in range(101)]
+    ids = [f"writer-{i:03}" for i in range(205)]
     personas = _personas(tmp_path, ids)
     assert ids[0] not in {p["id"] for p in personas.list_persona_profiles()}
     registry, _store = build(tmp_path, personas)
@@ -137,14 +137,36 @@ async def test_modal_offers_all_personas_beyond_first_page(request, tmp_path):
     )
     host = _Host()
     try:
-        async with host.run_test(size=(80, 24)):
+        async with host.run_test(size=(80, 24)) as pilot:
             await host.push_screen(
                 WorkspacePersonaDefaultModal(registry, personas, "chosen")
             )
             select = host.screen.query_one("#workspace-default-persona", Select)
-            offered = {value for _, value in select._options}
+            offered = set()
+            for page in range(3):
+                select = host.screen.query_one("#workspace-default-persona", Select)
+                assert len(select._options) <= 102  # One page, None, saved identity.
+                offered.update(value for _, value in select._options)
+                assert _selected_label(select) == "Writer [writer-000]"
+                if page < 2:
+                    await _press(host, pilot, "#workspace-persona-next")
             assert set(ids) <= offered
-            assert _selected_label(select) == "Writer [writer-000]"
+            assert host.screen.query_one("#workspace-persona-next", Button).disabled
+            apply = host.screen.query_one("#workspace-default-apply", Button)
+            apply.focus()
+            await pilot.pause()
+            region, clip = host.screen._compositor.visible_widgets[apply]
+            assert region.intersection(clip) == region
+            select.value = ids[3]
+            await pilot.pause()
+            await _press(host, pilot, "#workspace-persona-previous")
+            select = host.screen.query_one("#workspace-default-persona", Select)
+            assert select.value == ids[3]
+            await _press(host, pilot, "#workspace-default-apply")
+            assert (
+                registry.get_workspace("chosen").assistant_defaults.assistant_id
+                == ids[3]
+            )
     finally:
         registry.db.close()
 
@@ -157,7 +179,7 @@ async def test_settings_offers_and_selects_persona_beyond_first_page(request, tm
     from Tests.UI.test_settings_provider_keyboard_journeys import _settle
     from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 
-    ids = [f"writer-{i:03}" for i in range(101)]
+    ids = [f"writer-{i:03}" for i in range(205)]
     personas = _personas(tmp_path, ids)
     app = _build_test_app()
     app.local_character_persona_service = personas
@@ -173,16 +195,36 @@ async def test_settings_offers_and_selects_persona_beyond_first_page(request, tm
         await _press(host, pilot, "#settings-workspace-row-chosen")
         await _settle(host, pilot)
         picker = host.screen.query_one("#settings-workspace-persona-picker", OptionList)
-        offered = {
-            picker.get_option_at_index(i).persona_id for i in range(picker.option_count)
-        }
+        offered = set()
+        for page in range(3):
+            picker = host.screen.query_one(
+                "#settings-workspace-persona-picker", OptionList
+            )
+            assert picker.option_count <= 101  # One page plus the saved identity.
+            offered.update(
+                picker.get_option_at_index(i).persona_id
+                for i in range(picker.option_count)
+            )
+            assert picker.get_option_at_index(picker.highlighted).persona_id == ids[0]
+            if page < 2:
+                await _press(host, pilot, "#settings-workspace-persona-next")
+                await _settle(host, pilot)
         assert offered == set(ids)
-        assert picker.get_option_at_index(picker.highlighted).persona_id == ids[0]
+        assert host.screen.query_one(
+            "#settings-workspace-persona-next", Button
+        ).disabled
         picker.focus()
         await pilot.pause()
         await pilot.press("end", "enter")
         await _settle(host, pilot)
         assert host.screen._settings_workspace_assistant_pending["persona_id"] == ids[0]
+        await _press(host, pilot, "#settings-workspace-persona-previous")
+        await _settle(host, pilot)
+        picker = host.screen.query_one("#settings-workspace-persona-picker", OptionList)
+        assert picker.get_option_at_index(picker.highlighted).persona_id == ids[0]
+        assert (
+            registry.get_workspace("chosen").assistant_defaults.assistant_id == ids[0]
+        )
 
 
 @pytest.mark.asyncio

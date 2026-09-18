@@ -1,0 +1,52 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______________ test_modal_offers_all_personas_beyond_first_page _______________
+
+request = <FixtureRequest for <Coroutine test_modal_offers_all_personas_beyond_first_page>>
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2766/test_modal_offers_all_personas0')
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_modal_offers_all_personas_beyond_first_page(request, tmp_path):
+        ids = [f"writer-{i:03}" for i in range(205)]
+        personas = _personas(tmp_path, ids)
+        assert ids[0] not in {p["id"] for p in personas.list_persona_profiles()}
+        registry, _store = build(tmp_path, personas)
+        registry.create_workspace(
+            workspace_id="chosen",
+            name="Chosen",
+            assistant_defaults=WorkspaceAssistantDefaults(assistant_id=ids[0]),
+        )
+        host = _Host()
+        try:
+            async with host.run_test(size=(80, 24)) as pilot:
+                await host.push_screen(
+                    WorkspacePersonaDefaultModal(registry, personas, "chosen")
+                )
+                select = host.screen.query_one("#workspace-default-persona", Select)
+                offered = set()
+                for page in range(3):
+                    select = host.screen.query_one("#workspace-default-persona", Select)
+>                   assert len(select._options) <= 102  # One page, None, saved identity.
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                   AssertionError: assert 206 <= 102
+E                    +  where 206 = len([('None', <WorkspacePersonaChoice.NONE: 2>), (<text 'Writer [writer-204]' [] ''>, 'writer-204'), (<text 'Writer [write...ter-202'), (<text 'Writer [writer-201]' [] ''>, 'writer-201'), (<text 'Writer [writer-200]' [] ''>, 'writer-200'), ...])
+E                    +    where [('None', <WorkspacePersonaChoice.NONE: 2>), (<text 'Writer [writer-204]' [] ''>, 'writer-204'), (<text 'Writer [write...ter-202'), (<text 'Writer [writer-201]' [] ''>, 'writer-201'), (<text 'Writer [writer-200]' [] ''>, 'writer-200'), ...] = Select(id='workspace-default-persona', classes='workspace-persona-picker-select -textual-compact')._options
+
+Tests/UI/test_workspace_persona_picker_identity.py:148: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 16:04:25.416 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 16:04:25.427 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 16:04:25.498 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 16:04:25.579 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 16:04:25.579 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 16:04:25.580 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-18 16:04:25.698 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 16:04:26.058 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 16:04:27.531 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2766/test_modal_offers_all_personas0/ws.sqlite [Client: c1]
+============================= slowest 25 durations =============================
+1.80s call     Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page
+
+(2 durations < 1s hidden.)
+1 failed in 3.41s

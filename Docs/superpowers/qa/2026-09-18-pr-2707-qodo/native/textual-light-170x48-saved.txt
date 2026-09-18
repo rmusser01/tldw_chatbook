@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Art▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ F4 Settings │ F5 Research  F7 Meetings   More ▾
+───────────────────────────────────────────────────▊                                                                  ▎───────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage▊   Workspace default Persona                                      ▎
+ Mode: Workspaces                                  ▊                                                                  ▎
+┌──────────────────────────────┐  │  ┌─────────────▊  Default Persona · future new conversations                      ▎─────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │             ▊  Writer [auto]                                               ▼   ▎             │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Appl▊                                                                  ▎r set        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  active.    ▊                                                                  ▎             │  │  │                              │
+│  category search             │  │  │             ▊                                                                  ▎             │  │  │ Selected category:           │
+│                              │  │  │  Workspace m▊  Persona page 3                                                  ▎             │  │  │ Workspaces                   │
+│  Core                        │  │  │  Create work▊   Previous Personas                                              ▎             │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ ▊▔▔▔▔▔▔▔▔▔▔▔▊   Next Personas                                                  ▎             │  │  │  Immediate actions:          │
+│     Providers & Models       │  │  │ ▊ ▐X▌ Show a▊  Existing, copied and moved conversations keep their Persona.    ▎             │  │  │  workspace changes apply as  │
+│     Web Search               │  │  │ ▊▁▁▁▁▁▁▁▁▁▁▁▊  Persona memory                                                  ▎             │  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  │  Default - 0▊  Read only                                                   ▼   ▎             │  │  │  draft to save or revert.    │
+│  Interface                   │  │  │  textual-dar▊                                                                  ▎             │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │  textual-dar▊                                                                  ▎             │  │  │ config file.                 │
+│     Theme                    │  │  │  textual-lig▊                                                                  ▎             │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │             ▊  ▐X▌ Confirm this Persona may write memory across sessions       ▎             │  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  │             ▊                                                                  ▎             │  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  │  Selected wo▊                                                                  ▎             │  │  │ tools.                       │
+│     Storage                  │  │  │ ┌───────────▊                                                                  ▎──────────┐  │  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  │ │ │ textual-▊                                     Cancel          Apply        ▎name      │  │  │  │  registry (immediate         │
+│     Tool Profiles            │  │  │ │    Set act▊                                                                  ▎          │▅ │  │  │  actions)                    │
+│     Privacy & Security       │  │  │ │     Archiv▊                                                                  ▎          │  │  │  │                              │
+│     Network                  │  │  │ │           ▊                                                                  ▎          │  │  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  │ │           ▊                                                                  ▎          │  │  │  │                              │
+│  Troubleshooting             │  │  │ │  Folders (▊                                                                  ▎          │  │  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  │ │  /private/▊                                                                  ▎          │  │  │  │  lifecycle records and       │
+│     About (view)             │  │  │ │   Allow wr▊                                                                  ▎          │  │  │  │  their bound folders         │
+│     Agents                   │  │  │ │           ▊                                                                  ▎          │  │  │  │                              │
+│  Expert                      │  │  │ │ │ ~/path/t▊                                                                  ▎folder    │  │  │  │  Recovery:                   │
+│     Internal Prompts         │  │  │ │           ▊                                                                  ▎          │  │  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  │ │           ▊                                                                  ▎          │  │  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  │ │  Change re▊                                                                  ▎          │  │  │  │  workspace in Library        │
+│                              │  │  │ │  Change Re▊                                                                  ▎ontents,  │  │  │  │                              │
+│                              │  │  │ │  for 30 da▊                                                                  ▎se        │  │  │  │  Boundary: lifecycle and     │
+│                              │  │  │ │  existing ▊                                                                  ▎          │  │  │  │  folder bindings apply       │
+│                              │  │  │ │  Tracking ▊                                                                  ▎w.        │  │  │  │  immediately; there is no    │
+│                              │  │  │ │  Enable ch▊                                                                  ▎          │  │  │  │  draft state here            │
+│                              │  │  │ │           ▊                                                                  ▎          │  │  │  │                              │
+│                              │  │  │ │           ▊                                                                  ▎          │  │  │  │                              │
+│                              │  │  │ │  Default a▊                                                                  ▎          │  │  │  │                              │
+│                              │  │  │             ▊                                                                  ▎             │  │  │                              │
+└──────────────────────────────┘  │  └─────────────▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎─────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

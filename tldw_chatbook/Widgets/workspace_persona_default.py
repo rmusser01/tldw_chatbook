@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
-from sys import maxsize
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -21,6 +20,8 @@ from ..Workspaces.registry_service import (
     WorkspaceRegistryServiceError,
 )
 from .modal_dismissal import SafeModalDismissMixin
+
+WORKSPACE_PERSONA_PAGE_SIZE = 100
 
 
 class WorkspacePersonaChoice(Enum):
@@ -60,22 +61,31 @@ class WorkspacePersonaPicker(Vertical):
         self._personas = persona_service
         self._selection = selection
         self._allow_auto = allow_auto
+        self._persona_offset = 0
 
     def compose(self) -> ComposeResult:
+        """Compose a finite catalog page with the selected identity retained.
+
+        Yields:
+            Persona, page-navigation and memory-consent controls.
+        """
         options = [("None", WorkspacePersonaChoice.NONE)]
         if self._allow_auto:
             options.insert(0, ("Create a workspace Agent", WorkspacePersonaChoice.AUTO))
         unavailable = False
         try:
-            # The local service already sorts the full in-memory catalog.
             records = (
-                self._personas.list_persona_profiles(limit=maxsize)
+                self._personas.list_persona_profiles(
+                    limit=WORKSPACE_PERSONA_PAGE_SIZE + 1, offset=self._persona_offset
+                )
                 if self._personas
                 else []
             )
         except Exception:  # noqa: BLE001 - None remains a usable choice
             records, unavailable = [], True
-        for record in records or []:
+        records = list(records or [])
+        has_next = len(records) > WORKSPACE_PERSONA_PAGE_SIZE
+        for record in records[:WORKSPACE_PERSONA_PAGE_SIZE]:
             if not isinstance(record, Mapping) or record.get("deleted"):
                 continue
             persona_id = str(record.get("id") or "")
@@ -106,6 +116,22 @@ class WorkspacePersonaPicker(Vertical):
             compact=True,
             classes="workspace-persona-picker-select",
         )
+        if self._persona_offset or has_next:
+            yield Static(
+                f"Persona page {self._persona_offset // WORKSPACE_PERSONA_PAGE_SIZE + 1}"
+            )
+            yield Button(
+                "Previous Personas",
+                id="workspace-persona-previous",
+                compact=True,
+                disabled=self._persona_offset == 0,
+            )
+            yield Button(
+                "Next Personas",
+                id="workspace-persona-next",
+                compact=True,
+                disabled=not has_next,
+            )
         yield Static(
             "Existing, copied and moved conversations keep their Persona.", markup=False
         )
@@ -128,6 +154,22 @@ class WorkspacePersonaPicker(Vertical):
             id="workspace-default-memory-confirm",
             compact=True,
         )
+
+    @on(Button.Pressed, "#workspace-persona-previous")
+    @on(Button.Pressed, "#workspace-persona-next")
+    async def _change_persona_page(self, event: Button.Pressed) -> None:
+        """Browse a bounded page without changing selected identity or consent."""
+        event.stop()
+        if event.button.disabled or not event.button.is_attached:
+            return
+        self._selection = self.selection()
+        step = -1 if event.button.id == "workspace-persona-previous" else 1
+        self._persona_offset = max(
+            0, self._persona_offset + step * WORKSPACE_PERSONA_PAGE_SIZE
+        )
+        await self.recompose()
+        self._sync_memory_controls()
+        self.query_one("#workspace-default-persona", Select).focus()
 
     @on(Select.Changed)
     def _choice_changed(self, event: Select.Changed) -> None:
@@ -209,7 +251,7 @@ class WorkspacePersonaDefaultModal(SafeModalDismissMixin, ModalScreen[bool]):
     WorkspacePersonaDefaultModal { align: center middle; }
     #workspace-default-dialog { width: 68; max-width: 95%; height: auto; max-height: 95%;
         background: $surface; border: tall $primary; padding: 1 2; }
-    #workspace-default-form { height: auto; max-height: 17; }
+    #workspace-default-form { height: $ds-height-fill; max-height: $ds-size-17; }
     #workspace-default-actions { height: 3; align-horizontal: right; }
     #workspace-default-error { height: auto; color: $error; }
     """
@@ -241,7 +283,7 @@ class WorkspacePersonaDefaultModal(SafeModalDismissMixin, ModalScreen[bool]):
             yield Static("Workspace default Persona", classes="console-modal-header")
             with VerticalScroll(id="workspace-default-form"):
                 yield WorkspacePersonaPicker(self._personas, selection=self._selection)
-                yield Static("", id="workspace-default-error", markup=False)
+            yield Static("", id="workspace-default-error", markup=False)
             with Horizontal(id="workspace-default-actions"):
                 yield Button("Cancel", id="workspace-default-cancel", compact=True)
                 yield Button("Apply", id="workspace-default-apply", compact=True)

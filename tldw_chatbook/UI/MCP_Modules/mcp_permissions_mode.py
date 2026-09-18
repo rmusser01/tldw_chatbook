@@ -409,6 +409,11 @@ class MCPPermissionsTable(DataTable):
         """The matrix viewport changed independently of its outer canvas."""
 
     def on_resize(self, event: Resize) -> None:
+        """Notify the parent that the permission matrix viewport changed.
+
+        Args:
+            event: Resize notification for this table.
+        """
         self.post_message(self.Resized())
 
 
@@ -691,15 +696,30 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         table.add_columns(*_TABLE_COLUMNS)
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal the focused descendant after its layout settles.
+
+        Args:
+            event: Descendant focus notification, allowed to propagate.
+        """
         self.call_after_refresh(self.reveal_focused_control)
 
     def on_resize(self, event: Resize) -> None:
+        """Refit the table and reveal focus after the new viewport is laid out.
+
+        Args:
+            event: Canvas resize notification, allowed to propagate.
+        """
         self.call_after_refresh(self._reflow_table)
         self.call_after_refresh(self.reveal_focused_control)
 
     def on_mcp_permissions_table_resized(
         self, event: MCPPermissionsTable.Resized
     ) -> None:
+        """Consume matrix geometry changes and defer reflow and focus reveal.
+
+        Args:
+            event: Table resize message, stopped after scheduling updates.
+        """
         event.stop()
         self.call_after_refresh(self._reflow_table)
         self.call_after_refresh(self.reveal_focused_control)
@@ -751,6 +771,15 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
                 focused._scroll_cursor_into_view(animate=False)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Enable permission cycling only while the matrix owns focus.
+
+        Args:
+            action: Action name being checked by Textual.
+            parameters: Action arguments forwarded for other framework actions.
+
+        Returns:
+            Whether cycling is allowed, or the inherited action availability.
+        """
         if action == "cycle_state":
             return self.app.focused is self.query_one("#mcp-perm-table", DataTable)
         return super().check_action(action, parameters)

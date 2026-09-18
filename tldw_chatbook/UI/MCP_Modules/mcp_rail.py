@@ -338,12 +338,15 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
             focused.scroll_visible(animate=False, immediate=True)
 
     def on_mount(self) -> None:
+        """Fit row labels after the initial rail width and scrollbar settle."""
         self.call_after_refresh(self._update_rows)
 
     def on_resize(self) -> None:
+        """Defer row refitting until the resized rail has its final viewport."""
         self.call_after_refresh(self._update_rows)
 
     def watch_show_vertical_scrollbar(self) -> None:
+        """Refit rows after scrollbar changes alter the usable viewport width."""
         # A catalog refresh can change scrollbar width without resizing
         # the rail's outer region, so it needs its own viewport refit.
         self.call_after_refresh(self._update_rows)

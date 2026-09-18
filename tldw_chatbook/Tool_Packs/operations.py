@@ -57,7 +57,14 @@ class ToolProfileOperations:
         self.completion_revision = 0
 
     def pending(self, operation: Operation) -> ToolProfileWriteState | None:
-        """Return the exact pending operation, including across screen visits."""
+        """Return the exact pending operation, including across screen visits.
+
+        Args:
+            operation: Import, export or removal operation to inspect.
+
+        Returns:
+            The admitted pending state, or None when that operation is inactive.
+        """
         active = self._active.get(operation)
         return active.state if active is not None else None
 
@@ -71,6 +78,19 @@ class ToolProfileOperations:
 
         Callers observe the returned task through ``asyncio.shield``. Cancelling
         their wait must not cancel the admitted task or imply a stopped thread.
+
+        Args:
+            operation: Import, export or removal operation to admit.
+            profile_id: Profile identity retained in the bounded receipt, if known.
+            write: Synchronous writer receiving a cooperative cancellation probe.
+
+        Returns:
+            The application-owned task resolving to the final write receipt.
+
+        Raises:
+            ToolProfileWriteUnavailable: Shutdown or a duplicate operation blocks admission.
+            ValueError: The operation name is unsupported.
+            RuntimeError: No application event loop is running.
         """
         if self._closed:
             raise ToolProfileWriteUnavailable("shutdown")

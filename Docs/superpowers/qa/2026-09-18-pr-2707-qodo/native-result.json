@@ -1,0 +1,107 @@
+{
+  "pid": 40539,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "workspace_id": "workspace-local-1",
+      "created_persona_id": "none",
+      "catalog_count": 207,
+      "recompose_preserves_id": true,
+      "no_edit_apply_preserves_id": true,
+      "read_write_requires_confirmation": true,
+      "cancel_preserves_defaults": true,
+      "final_persona_id": "writer-000",
+      "tool_profile_preserved": true,
+      "reopened_database_checked_after_each_apply": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "workspace_id": "workspace-local-2",
+      "created_persona_id": "none",
+      "catalog_count": 207,
+      "recompose_preserves_id": true,
+      "no_edit_apply_preserves_id": true,
+      "read_write_requires_confirmation": true,
+      "cancel_preserves_defaults": true,
+      "final_persona_id": "writer-000",
+      "tool_profile_preserved": true,
+      "reopened_database_checked_after_each_apply": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "workspace_id": "workspace-local-3",
+      "created_persona_id": "auto",
+      "catalog_count": 207,
+      "recompose_preserves_id": true,
+      "no_edit_apply_preserves_id": true,
+      "read_write_requires_confirmation": true,
+      "cancel_preserves_defaults": true,
+      "final_persona_id": "writer-000",
+      "tool_profile_preserved": true,
+      "reopened_database_checked_after_each_apply": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "workspace_id": "workspace-local-4",
+      "created_persona_id": "auto",
+      "catalog_count": 207,
+      "recompose_preserves_id": true,
+      "no_edit_apply_preserves_id": true,
+      "read_write_requires_confirmation": true,
+      "cancel_preserves_defaults": true,
+      "final_persona_id": "writer-000",
+      "tool_profile_preserved": true,
+      "reopened_database_checked_after_each_apply": true
+    }
+  ],
+  "runner_sha256": "df62c7009f86e3edc15fb4e3c639f04da1be95a82374a368b4aa19665a016219",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "2321eda81f507778713fce72505a44b3e969bf21fdd75b3763bb594a5db91661",
+    "tldw_chatbook/Widgets/workspace_persona_default.py": "b3873b231d9e8ae6137ccc06b6c9e900b91fcd03c12f46755939a6b3764cdd37",
+    "tldw_chatbook/Widgets/workspace_create_modal.py": "c2407576849caddad58e38b7f408c2842e710c2876fa3e35795092ad0aba9675",
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": "3388eeffb2be6f1ef5abe3c8d6a2c949c97d0e0cd2d00ced39415d594752b4e5",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "410b2894a0c0fc64b989fb76dc4d65157b68e15314ea108f8bcb9a2be5d6d96b",
+    "tldw_chatbook/css/features/_settings.tcss": "4d7359558e0ee21c398bca401d6cdd68eff6c811e91574e4f11df92e2e436214",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_dialogs.tcss": "ae5a712066473878b3a40415b9606176475040bc998d00d794ae38d0754dc2cf",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "527cfc7921838381e7d83e59d13230a66353c7af5ef13e8b8f230298fec41507",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "53ed1070293859594e65d5099e1aa7a8d67551f6b18ff6153ea50859855a3159"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Notices clear",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Real Persona service and registry, 207 saved identities. Tool Profiles initialized first. Creation and assistant changes enter through Settings; production default modal mounted directly to isolate its choices (Console entry covered by targeted test). No provider requests.",
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

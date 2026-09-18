@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each action reversible: unarchive, rename again, or set        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  active.                                                                                     │  │  │                              │
+│  category search             │  │  │  Selected workspace                                                                          │  │  │ Selected category:           │
+│                              │  │  │ ┌─────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Workspaces                   │
+│  Core                        │  │  │ │ │ textual-dark-170x48                                                       Rename      │  │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ │  This workspace is active.                                                              │  │  │  │  Immediate actions:          │
+│     Providers & Models       │  │  │ │     Archive                                                                             │▅ │  │  │  workspace changes apply as  │
+│     Web Search               │  │  │ │                                                                                         │  │  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  │ │                                                                                         │  │  │  │  draft to save or revert.    │
+│  Interface                   │  │  │ │  Folders (agent file-tool access)                                                       │  │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │ │  /private/tmp/tldw-2707-qodo-native-002-project [ro] ready                              │  │  │  │ config file.                 │
+│     Theme                    │  │  │ │   Allow write        Remove                                                             │  │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │ │                                                                                         │  │  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  │ │ │ ~/path/to/folder                                                        Add folder    │  │  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  │ │                                                                                         │  │  │  │ tools.                       │
+│     Storage                  │  │  │ │                                                                                         │  │  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  │ │  Change review (post-run diffs)                                                         │  │  │  │  registry (immediate         │
+│     Tool Profiles            │  │  │ │  Change Review stores shadow Git history in application data, including file contents,  │  │  │  │  actions)                    │
+│     Privacy & Security       │  │  │ │  for 30 days by default. Disabling stops new review snapshots but does not erase        │  │  │  │                              │
+│     Network                  │  │  │ │  existing history.                                                                      │  │  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  │ │  Tracking disabled for this workspace: runs record no diffs and offer no review.        │  │  │  │                              │
+│  Troubleshooting             │  │  │ │  Enable change review                                                                   │  │  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  │ │                                                                                         │▇ │  │  │  lifecycle records and       │
+│     About (view)             │  │  │ │                                                                                         │  │  │  │  their bound folders         │
+│     Agents                   │  │  │ │  Default assistant                                                                      │  │  │  │                              │
+│  Expert                      │  │  │ │  Effective: Writer [none] (memory: read_write)                                          │  │  │  │  Recovery:                   │
+│     Internal Prompts         │  │  │ │ Writer [writer-004]                                                                     │  │  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  │ │ Writer [writer-003]                                                                  ▅▅ │  │  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  │ │ Writer [writer-002]                                                                     │  │  │  │  workspace in Library        │
+│                              │  │  │ │ Writer [writer-001]                                                                     │  │  │  │                              │
+│                              │  │  │ │ Writer [writer-000]                                                                     │  │  │  │  Boundary: lifecycle and     │
+│                              │  │  │ │  Persona staged — press the memory button to apply.                                     │  │  │  │  folder bindings apply       │
+│                              │  │  │ │  Persona page 3                                                                         │  │  │  │  immediately; there is no    │
+│                              │  │  │ │  Previous Personas                                                                      │  │  │  │  draft state here            │
+│                              │  │  │ │  Next Personas                                                                          │  │  │  │                              │
+│                              │  │  │ │  Apply (memory: read_only)                                                              │  │  │  │                              │
+│                              │  │  │ │ default                                                                                 │  │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1323,7 +1323,15 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         config_path: Path,
         pending: bool = False,
     ) -> None:
-        """Project both the master label and the value its next press reverses."""
+        """Project both the master label and the value its next press reverses.
+
+        Args:
+            enabled: Projected master state used by the button and dependent gates.
+            message: Status text shown alongside the master control.
+            error: Whether the status uses the error rather than muted text role.
+            config_path: Destination captured by the next master-switch press.
+            pending: Whether the choice awaits persistence, suppressing the saved-off note.
+        """
         self._local_master_projection = enabled, message, error
         self._local_config_path = config_path
         button_id = f"{_TOOL_GATE_ID_PREFIX}{LOCAL_TOOLS_MASTER_KEY}"

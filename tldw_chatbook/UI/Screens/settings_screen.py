@@ -15,7 +15,6 @@ import math
 import os
 from pathlib import Path
 import re
-from sys import maxsize
 import threading
 import tomllib
 from typing import TYPE_CHECKING, Any, cast
@@ -3306,6 +3305,7 @@ class SettingsScreen(BaseAppScreen):
         #: section's render; cleared on apply/clear and whenever the pane
         #: recomposes for a different workspace.
         self._settings_workspace_assistant_pending: dict | None = None
+        self._settings_workspace_persona_page: tuple[str | None, int] = (None, 0)
         self._settings_workspace_assistant_result: tuple[str, str, str] | None = None
         #: A read_write acknowledgement belongs to these exact defaults.
         #: Selection changes and screen suspension discard the review.
@@ -20304,6 +20304,11 @@ class SettingsScreen(BaseAppScreen):
             markup=False,
         )
 
+        from ...Widgets.workspace_persona_default import WORKSPACE_PERSONA_PAGE_SIZE
+
+        if self._settings_workspace_persona_page[0] != workspace_id:
+            self._settings_workspace_persona_page = (workspace_id, 0)
+        persona_offset = self._settings_workspace_persona_page[1]
         persona_options: list[Option] = []
         highlight_persona = (
             pending or {}
@@ -20311,11 +20316,14 @@ class SettingsScreen(BaseAppScreen):
             effective.assistant_id if effective.status == "available" else None
         )
         try:
-            # The local service already sorts the full in-memory catalog.
-            persona_records = personas.list_persona_profiles(limit=maxsize)
+            persona_records = personas.list_persona_profiles(
+                limit=WORKSPACE_PERSONA_PAGE_SIZE + 1, offset=persona_offset
+            )
         except Exception:  # noqa: BLE001 -- picker degrades, never blocks
             persona_records = []
         persona_records = list(persona_records or [])
+        has_next_persona_page = len(persona_records) > WORKSPACE_PERSONA_PAGE_SIZE
+        persona_records = persona_records[:WORKSPACE_PERSONA_PAGE_SIZE]
         if highlight_persona and not any(
             isinstance(record, dict) and record.get("id") == highlight_persona
             for record in persona_records
@@ -20348,6 +20356,23 @@ class SettingsScreen(BaseAppScreen):
                 persona_picker.highlighted = index
                 break
         yield persona_picker
+        if persona_offset or has_next_persona_page:
+            yield Static(
+                f"Persona page {persona_offset // WORKSPACE_PERSONA_PAGE_SIZE + 1}",
+                classes="settings-detail-row",
+            )
+            yield Button(
+                "Previous Personas",
+                id="settings-workspace-persona-previous",
+                compact=True,
+                disabled=persona_offset == 0,
+            )
+            yield Button(
+                "Next Personas",
+                id="settings-workspace-persona-next",
+                compact=True,
+                disabled=not has_next_persona_page,
+            )
 
         confirmation = self._settings_workspace_memory_armed
         armed = confirmation is not None and confirmation.workspace_id == workspace_id
@@ -20355,13 +20380,14 @@ class SettingsScreen(BaseAppScreen):
             memory_label = "Confirm read_write?"
         elif pending is not None:
             memory_label = f"Apply (memory: {pending.get('memory_mode', 'read_only')})"
-        elif effective.status == "available" and effective.persona_memory_mode == "read_write":
+        elif (
+            effective.status == "available"
+            and effective.persona_memory_mode == "read_write"
+        ):
             memory_label = "Set memory: read_only"
         else:
             memory_label = "Set memory: read_write"
-        yield Button(
-            memory_label, id="settings-workspace-memory-toggle", compact=True
-        )
+        yield Button(memory_label, id="settings-workspace-memory-toggle", compact=True)
 
         result = self._settings_workspace_assistant_result
         yield _SettingsWorkspaceAssistantResult(
@@ -25392,6 +25418,27 @@ class SettingsScreen(BaseAppScreen):
         # during teardown, leaving focus attached to a removed control.
         self._after_category_panes(
             self._restore_category_pane_focus, "settings-workspace-folder-add"
+        )
+
+    @on(Button.Pressed, "#settings-workspace-persona-previous")
+    @on(Button.Pressed, "#settings-workspace-persona-next")
+    def _change_workspace_persona_page(self, event: Button.Pressed) -> None:
+        """Browse personas without staging a choice or changing memory consent."""
+        event.stop()
+        if event.button.disabled or not event.button.is_attached:
+            return
+        from ...Widgets.workspace_persona_default import WORKSPACE_PERSONA_PAGE_SIZE
+
+        workspace_id, offset = self._settings_workspace_persona_page
+        if workspace_id != self._settings_selected_workspace_id:
+            return
+        step = -1 if event.button.id == "settings-workspace-persona-previous" else 1
+        self._settings_workspace_persona_page = (
+            workspace_id, max(0, offset + step * WORKSPACE_PERSONA_PAGE_SIZE)
+        )
+        self._refresh_settings_workspaces_pane()
+        self._after_category_panes(
+            self._restore_category_pane_focus, "settings-workspace-persona-picker"
         )
 
     @on(OptionList.OptionSelected, "#settings-workspace-persona-picker")

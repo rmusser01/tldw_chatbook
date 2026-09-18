@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each action reversible: unarchive, rename again, or set        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  active.  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎           │  │  │                              │
+│  category search             │  │  │           ▊                                                                      ▎           │  │  │ Selected category:           │
+│                              │  │  │  Workspace▊   New Workspace                                                      ▎           │  │  │ Workspaces                   │
+│  Core                        │  │  │  Create wo▊                                                                      ▎           │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ ▊▔▔▔▔▔▔▔▔▔▊  A workspace groups related Console conversations and can narrow     ▎           │  │  │  Immediate actions:          │
+│     Providers & Models       │  │  │ ▊ ▐X▌ Show▊  retrieval through its RAG Scope. Every chat has private scratch     ▎           │  │  │  workspace changes apply as  │
+│     Web Search               │  │  │ ▊▁▁▁▁▁▁▁▁▁▊  space. Bind project folders here to add explicit project-file       ▎           │  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  │  Default (▊  access (read-only unless you grant write in Settings). Folder       ▎           │  │  │  draft to save or revert.    │
+│  Interface                   │  │  │           ▊  access is optional; add or change folders later in Settings ▸       ▎           │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │  Select a ▊  Workspaces.                                                         ▎.          │  │  │ config file.                 │
+│     Theme                    │  │  │           ▊                                                                      ▎           │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │           ▊  textual-dark-170x48                                                 ▎           │  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  │           ▊  Default Persona · future new conversations                          ▎           │  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  │           ▊  Writer [none]                                                  ▼    ▎           │  │  │ tools.                       │
+│     Storage                  │  │  │           ▊                                                                      ▎           │  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  │           ▊                                                                      ▎           │  │  │  registry (immediate         │
+│     Tool Profiles            │  │  │           ▊                                                                      ▎           │  │  │  actions)                    │
+│     Privacy & Security       │  │  │           ▊  Persona page 1                                                      ▎           │  │  │                              │
+│     Network                  │  │  │           ▊   Previous Personas                                                  ▎           │  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  │           ▊   Next Personas                                                      ▎           │  │  │                              │
+│  Troubleshooting             │  │  │           ▊  Existing, copied and moved conversations keep their Persona.        ▎           │  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  │           ▊  Persona memory                                                      ▎           │  │  │  lifecycle records and       │
+│     About (view)             │  │  │           ▊  Read only                                                      ▼    ▎           │  │  │  their bound folders         │
+│     Agents                   │  │  │           ▊                                                                      ▎           │  │  │                              │
+│  Expert                      │  │  │           ▊                                                                      ▎           │  │  │  Recovery:                   │
+│     Internal Prompts         │  │  │           ▊                                                                      ▎           │  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  │           ▊  ▐X▌ Confirm this Persona may write memory across sessions           ▎           │  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  │           ▊  ~/path/to/project (optional)         Browse…        Add folder   ▅  ▎           │  │  │  workspace in Library        │
+│                              │  │  │           ▊                                                                      ▎           │  │  │                              │
+│                              │  │  │           ▊  ▐X▌ Switch to this workspace                                        ▎           │  │  │  Boundary: lifecycle and     │
+│                              │  │  │           ▊                                                                      ▎           │  │  │  folder bindings apply       │
+│                              │  │  │           ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  │  │  immediately; there is no    │
+│                              │  │  │                                                                                              │  │  │  draft state here            │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

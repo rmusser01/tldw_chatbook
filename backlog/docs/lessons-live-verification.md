@@ -3267,3 +3267,14 @@ only its instance's tap probe; real owner/preparation, screens, fifteen route
 sentinels and source limits remain, and both tours terminate normally. A passing
 dot is not a completed test; inspect child cleanup and retain the nonzero run.
 This fixture isolation does not establish production audio/compiler shutdown.
+
+
+## Paging can push compact modal actions outside the clip
+
+PR2707 Qodo follow-up (TASK32824): three Persona paging rows passed keyboard Apply
+assertions, but the real 80×24 default modal painted no action buttons. Focus and
+Enter still reached the clipped Apply control. The form used auto height inside a
+capped dialog. A compositor-region regression now requires the whole action to be
+visible; the form fills remaining space and scrolls, with validation errors and
+actions outside the scroller. Keep the existing error-paint assertion too: making
+the form scroll initially hid the unavailable-Persona explanation.

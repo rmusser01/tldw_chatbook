@@ -150,6 +150,11 @@ class MCPToolsServerSelect(Select):
     """A catalog filter whose committed choice survives background refresh."""
 
     def compose(self) -> ComposeResult:
+        """Compose the committed filter and its refresh-stable dropdown.
+
+        Yields:
+            The selected-value display and searchable server overlay.
+        """
         yield SelectCurrent(self.prompt)
         yield _MCPToolsServerOverlay(type_to_search=self._type_to_search).data_bind(
             compact=Select.compact
@@ -163,6 +168,11 @@ class MCPToolsTable(DataTable):
         """The table's geometry changed independently of its outer canvas."""
 
     def on_resize(self, event: Resize) -> None:
+        """Notify the parent that the catalog viewport changed.
+
+        Args:
+            event: Resize notification for this table.
+        """
         self.post_message(self.Resized())
 
 
@@ -387,13 +397,28 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         self._apply_filter()
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal the focused descendant after its layout settles.
+
+        Args:
+            event: Descendant focus notification, allowed to propagate.
+        """
         self.call_after_refresh(self.reveal_focused_control)
 
     def on_resize(self, event: Resize) -> None:
+        """Refit the table and reveal focus after the new viewport is laid out.
+
+        Args:
+            event: Canvas resize notification, allowed to propagate.
+        """
         self.call_after_refresh(self._reflow_table)
         self.call_after_refresh(self.reveal_focused_control)
 
     def on_mcp_tools_table_resized(self, event: MCPToolsTable.Resized) -> None:
+        """Consume table geometry changes and defer column reflow.
+
+        Args:
+            event: Table resize message, stopped after scheduling the reflow.
+        """
         event.stop()
         self.call_after_refresh(self._reflow_table)
 

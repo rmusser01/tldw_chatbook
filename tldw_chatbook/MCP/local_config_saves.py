@@ -65,7 +65,19 @@ class MCPLocalConfigSaves:
     def submit(
         self, request: ConfigSaveRequest, write: Callable[[], ConfigSaveResult]
     ) -> asyncio.Task[ConfigSaveState]:
-        """Register a write before yielding; callers await it through a shield."""
+        """Register a write before yielding; callers await it through a shield.
+
+        Args:
+            request: Immutable value, destination and draft identity to save.
+            write: Synchronous writer run off-thread after earlier writes finish.
+
+        Returns:
+            The admitted task, reused for an identical latest pending request.
+
+        Raises:
+            ConfigSaveUnavailable: Admission has closed for shutdown.
+            RuntimeError: No application event loop is running.
+        """
         if self._closed:
             raise ConfigSaveUnavailable("shutdown")
         if (
@@ -88,7 +100,14 @@ class MCPLocalConfigSaves:
         return task
 
     def state_for(self, key: ConfigKey) -> ConfigSaveState | None:
-        """Return the latest request for one control, independent of its sibling."""
+        """Return the latest request for one control, independent of its sibling.
+
+        Args:
+            key: Configuration control whose latest state is requested.
+
+        Returns:
+            Its pending or completed state, or None before any submission.
+        """
         return self._states.get(key)
 
     async def _run(
@@ -163,7 +182,18 @@ class MCPLocalConfigSaves:
         generation: int | None = None,
         file_revision: tuple[int, int, int, int] | None = None,
     ) -> str | bool:
-        """Keep a committed value visible when its cache publication failed."""
+        """Keep a committed value visible when its cache publication failed.
+
+        Args:
+            key: Configuration control to project.
+            config_path: Active configuration file to match against the receipt.
+            cached_value: Runtime value used when no matching receipt exists.
+            generation: Current runtime cache generation.
+            file_revision: Current file identity and modification fingerprint.
+
+        Returns:
+            The matching committed value awaiting cache refresh, or cached_value.
+        """
         confirmed = self._confirmed.get(key)
         if (
             confirmed is not None
@@ -183,7 +213,17 @@ class MCPLocalConfigSaves:
         generation: int | None = None,
         file_revision: tuple[int, int, int, int] | None = None,
     ) -> str:
-        """Read the saved root without mixing it with a master-switch receipt."""
+        """Read the saved root without mixing it with a master-switch receipt.
+
+        Args:
+            config_path: Active configuration file to match against the receipt.
+            cached_root: Runtime root used when no matching receipt exists.
+            generation: Current runtime cache generation.
+            file_revision: Current file identity and modification fingerprint.
+
+        Returns:
+            The confirmed root awaiting cache refresh, or cached_root.
+        """
         return str(
             self.known_value(
                 "workspace_root", config_path, cached_root, generation, file_revision
@@ -202,7 +242,17 @@ class MCPLocalConfigSaves:
 
 
 def get_mcp_local_config_saves(host: Any) -> MCPLocalConfigSaves:
-    """Lazily obtain the session owner without retaining a screen."""
+    """Lazily obtain the session owner without retaining a screen.
+
+    Args:
+        host: Application object that owns the save coordinator and shutdown flag.
+
+    Returns:
+        The existing or newly attached session coordinator.
+
+    Raises:
+        ConfigSaveUnavailable: The host has closed save admission for shutdown.
+    """
     if getattr(host, "_mcp_local_config_saves_closed", False):
         raise ConfigSaveUnavailable("shutdown")
     owner = getattr(host, "_mcp_local_config_saves", None)
@@ -213,7 +263,14 @@ def get_mcp_local_config_saves(host: Any) -> MCPLocalConfigSaves:
 
 
 def config_file_revision(path: Path) -> tuple[int, int, int, int] | None:
-    """Track external replacements/edits that do not advance runtime generation."""
+    """Track external replacements/edits that do not advance runtime generation.
+
+    Args:
+        path: Configuration file to inspect.
+
+    Returns:
+        Device, inode, modification nanoseconds and size, or None if stat fails.
+    """
     try:
         stat = path.stat()
     except OSError:

@@ -1119,16 +1119,32 @@ class LocalCharacterPersonaService:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        records = [
-            self._persona_profile_view(record)
-            for record in self._persona_profiles
-            if (include_deleted or not record.get("deleted", False))
-            and (not active_only or bool(record.get("is_active", True)))
-        ]
+        """Return one newest-first page of local Persona views.
+
+        Args:
+            active_only: Exclude inactive records when true.
+            include_deleted: Include soft-deleted records when true.
+            limit: Maximum number of views returned from the filtered catalog.
+            offset: Number of filtered, sorted records to skip.
+
+        Returns:
+            Normalized copies of only the requested page of Persona records.
+        """
         records = sorted(
-            records, key=lambda item: item.get("created_at", ""), reverse=True
+            (
+                record
+                for record in self._persona_profiles
+                if (include_deleted or not record.get("deleted", False))
+                and (not active_only or bool(record.get("is_active", True)))
+            ),
+            key=lambda item: item.get("created_at", ""),
+            reverse=True,
         )
-        return records[offset : offset + limit]
+        # Only normalize/copy policy-bearing records in the requested page.
+        return [
+            self._persona_profile_view(record)
+            for record in records[offset : offset + limit]
+        ]
 
     @_chat_sources.guarded
     def get_persona_profile(self, persona_id: str) -> dict[str, Any]:

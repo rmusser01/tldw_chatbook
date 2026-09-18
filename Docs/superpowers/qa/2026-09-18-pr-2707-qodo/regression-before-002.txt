@@ -1,0 +1,100 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_settings_offers_and_selects_persona_beyond_first_page __________
+
+request = <FixtureRequest for <Coroutine test_settings_offers_and_selects_persona_beyond_first_page>>
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2767/test_settings_offers_and_selec0')
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_settings_offers_and_selects_persona_beyond_first_page(request, tmp_path):
+        from Tests.UI.app_factory import _build_test_app
+        from Tests.UI.test_settings_overview_search_journeys import _category
+        from Tests.UI.test_settings_provider_keyboard_journeys import _settle
+        from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
+    
+        ids = [f"writer-{i:03}" for i in range(205)]
+        personas = _personas(tmp_path, ids)
+        app = _build_test_app()
+        app.local_character_persona_service = personas
+        registry = app.workspace_registry_service
+        registry.create_workspace(
+            workspace_id="chosen",
+            name="Chosen",
+            assistant_defaults=WorkspaceAssistantDefaults(assistant_id=ids[0]),
+        )
+        host = _StyledDestinationHarness(app, "settings")
+        async with host.run_test(size=(80, 24)) as pilot:
+            await _category(host, pilot, "Workspaces")
+            await _press(host, pilot, "#settings-workspace-row-chosen")
+            await _settle(host, pilot)
+            picker = host.screen.query_one("#settings-workspace-persona-picker", OptionList)
+            offered = set()
+            for page in range(3):
+                picker = host.screen.query_one("#settings-workspace-persona-picker", OptionList)
+>               assert picker.option_count <= 101  # One page plus the saved identity.
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AssertionError: assert 205 <= 101
+E                +  where 205 = OptionList(id='settings-workspace-persona-picker', classes='-textual-compact').option_count
+
+Tests/UI/test_workspace_persona_picker_identity.py:193: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 16:04:30.517 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 16:04:30.526 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 16:04:30.583 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 16:04:30.656 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 16:04:30.657 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 16:04:30.657 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-18 16:04:30.763 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 16:04:31.024 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 16:04:31.059 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ pydub dependency not found. Feature 'pydub' will be disabled. Reason: No module named 'pydub'
+2026-09-18 16:04:31.059 | WARNING  | tldw_chatbook.TTS.audio_stitch:<module>:83 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-09-18 16:04:34.249 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+2026-09-18 16:04:34.271 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+2026-09-18 16:04:34.271 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+2026-09-18 16:04:34.272 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+2026-09-18 16:04:34.272 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+2026-09-18 16:04:34.348 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/2707-page-red/002/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 16:04:34.425 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-asq316b6/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-18 16:04:34.589 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-asq316b6/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-18 16:04:34.603 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-09-18 16:04:34.604 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-asq316b6/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 16:04:34.605 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-asq316b6/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 16:04:34.747 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+2026-09-18 16:04:34.808 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-09-18 16:04:34.868 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-09-18 16:04:34.916 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-09-18 16:04:34.963 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+2026-09-18 16:04:35.011 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-09-18 16:04:35.011 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-asq316b6/scheduled_tasks.sqlite [Client: default]
+2026-09-18 16:04:35.050 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-09-18 16:04:35.050 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-09-18 16:04:35.058 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+2026-09-18 16:04:35.131 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-09-18 16:04:35.131 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/2707-page-red/002/profile/home/.local/share/tldw_cli/default_user/evals.db
+2026-09-18 16:04:35.131 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-09-18 16:04:35.188 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-09-18 16:04:35.189 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+2026-09-18 16:04:35.189 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+2026-09-18 16:04:35.189 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 1.011 seconds
+2026-09-18 16:04:35.190 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.089s (8.8%)
+2026-09-18 16:04:35.190 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+2026-09-18 16:04:35.190 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.002s (0.2%)
+2026-09-18 16:04:35.191 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.3% of parallel_init)
+2026-09-18 16:04:35.191 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+2026-09-18 16:04:35.191 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.0% of parallel_init)
+2026-09-18 16:04:35.192 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+2026-09-18 16:04:35.192 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+2026-09-18 16:04:35.427 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+2026-09-18 16:04:35.514 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+2026-09-18 16:04:37.593 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+============================= slowest 25 durations =============================
+6.56s call     Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page
+
+(2 durations < 1s hidden.)
+1 failed in 7.75s
