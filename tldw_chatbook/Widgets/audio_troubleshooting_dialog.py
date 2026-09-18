@@ -243,8 +243,14 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
             await asyncio.sleep(0.5)  # Brief delay for UI
 
             try:
+                # thread=True is required, not optional: `_get_devices_safe`
+                # is a plain `def`, and Textual's `Worker._run_async` raises
+                # WorkerError for a non-coroutine target. `exit_on_error`
+                # defaults to True, so without this the dialog takes the whole
+                # app down when it opens (TASK-32800.3). The call also blocks
+                # on device enumeration, which belongs off the loop anyway.
                 self.audio_devices = await self.run_worker(
-                    self._get_devices_safe
+                    self._get_devices_safe, thread=True
                 ).wait()
 
                 if self.audio_devices:
