@@ -1,0 +1,11 @@
+--- native-run001/tldw_chatbook/UI/Screens/settings_screen.py
++++ final/tldw_chatbook/UI/Screens/settings_screen.py
+@@ -25490,7 +25490,7 @@
+     def _settings_workspace_clear_assistant(self, event: Button.Pressed) -> None:
+         """Remove the selected workspace's default assistant (Task 10)."""
+         event.stop()
+-        self._discard_workspace_memory_confirmation()
++        self._settings_workspace_first_bind_intent = None
+         workspace_id = self._settings_selected_workspace_id
+         if not workspace_id:
+             return

@@ -1001,7 +1001,7 @@ class _SettingsWorkspacePersonaOption(Option):
     """
 
     def __init__(self, prompt: str, *, persona_id: str) -> None:
-        super().__init__(prompt)
+        super().__init__(Text(prompt))
         self.persona_id = persona_id
 
 
@@ -3290,6 +3290,8 @@ class SettingsScreen(BaseAppScreen):
         self._settings_show_archived_workspaces: bool = False
         self._settings_workspaces_result = ""
         self._settings_workspace_lifecycle_result: tuple[str, str, str] | None = None
+        self._settings_workspace_first_bind_intent: object | None = None
+        self._settings_workspace_first_bind_modal: object | None = None
         self._settings_workspace_folder_result: tuple[str, str | None, str] | None = None
         #: Task 10 (workspace assistant defaults): the staged-but-unapplied
         #: selection in the "Default assistant" section
@@ -4004,6 +4006,7 @@ class SettingsScreen(BaseAppScreen):
     def on_unmount(self) -> None:
         """Fence late credential and Model Library results before replacement."""
 
+        self._settings_workspace_first_bind_intent = None
         if self._subscription_readiness_timer is not None:
             self._subscription_readiness_timer.stop()
             self._subscription_readiness_timer = None
@@ -20026,6 +20029,7 @@ class SettingsScreen(BaseAppScreen):
             status,
             id="settings-workspace-assistant-status",
             classes="settings-detail-row",
+            markup=False,
         )
 
         persona_options: list[Option] = []
@@ -20395,7 +20399,11 @@ class SettingsScreen(BaseAppScreen):
         if local:
             self.call_after_refresh(self._reveal_workspace_lifecycle_result)
 
-    def _discard_workspace_memory_confirmation(self) -> None:
+    def _discard_workspace_memory_confirmation(
+        self, *, invalidate_first_bind: bool = True
+    ) -> None:
+        if invalidate_first_bind:
+            self._settings_workspace_first_bind_intent = None
         if self._settings_workspace_memory_armed is not None:
             self._settings_workspace_memory_armed = None
             self._settings_workspace_assistant_result = None
@@ -25138,7 +25146,7 @@ class SettingsScreen(BaseAppScreen):
         pending["persona_id"] = persona_id
         pending["memory_mode"] = str(keep_mode or "read_only")
         self._settings_workspace_assistant_pending = pending
-        self._settings_workspace_memory_armed = None
+        self._discard_workspace_memory_confirmation()
         self._set_workspace_assistant_result(
             workspace_id,
             "Persona staged — press the memory button to apply.",
@@ -25168,7 +25176,7 @@ class SettingsScreen(BaseAppScreen):
             }
         pending["profile_id"] = profile_id
         self._settings_workspace_assistant_pending = pending
-        self._settings_workspace_memory_armed = None
+        self._discard_workspace_memory_confirmation()
         self._set_workspace_assistant_result(
             workspace_id,
             "Profile staged — press apply."
@@ -25178,18 +25186,33 @@ class SettingsScreen(BaseAppScreen):
         )
         self._refresh_settings_workspaces_pane()
 
-    @work(
-        group="settings-workspace-assistant-apply",
-        exclusive=True,
-        exit_on_error=False,
-    )
-    async def _settings_workspace_apply_assistant_default(
+    def _settings_workspace_apply_assistant_default(
         self,
         registry: LocalWorkspaceRegistryService,
         workspace_id: str,
         persona_id: str,
         memory_mode: str,
         profile_id: str | None,
+    ) -> None:
+        """Capture the Apply intent before its worker can yield to navigation."""
+        intent = self._settings_workspace_first_bind_intent = object()
+        self._run_workspace_assistant_apply(
+            registry, workspace_id, persona_id, memory_mode, profile_id, intent
+        )
+
+    @work(
+        group="settings-workspace-assistant-apply",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    async def _run_workspace_assistant_apply(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+        persona_id: str,
+        memory_mode: str,
+        profile_id: str | None,
+        intent: object,
     ) -> None:
         """Apply staged defaults, reviewing one imported first bind if required."""
         from ...Tool_Packs.binding import (
@@ -25209,6 +25232,16 @@ class SettingsScreen(BaseAppScreen):
             tool_policy_profile_id=profile_id or None,
         )
         confirm_read_write = memory_mode == "read_write"
+
+        def review_is_current() -> bool:
+            return (
+                self._settings_workspace_first_bind_intent is intent
+                and self.is_attached
+                and self.app.screen is self
+                and self._active_category_id() == SettingsCategoryId.WORKSPACES
+                and self._settings_selected_workspace_id == workspace_id
+            )
+
         try:
             await asyncio.to_thread(
                 registry.set_assistant_defaults,
@@ -25217,6 +25250,8 @@ class SettingsScreen(BaseAppScreen):
                 confirm_read_write=confirm_read_write,
             )
         except ToolProfileConfirmationRequired:
+            if not review_is_current():
+                return
             service = getattr(self.app_instance, "tool_pack_service", None)
             if service is None:
                 self._set_workspace_assistant_result(
@@ -25236,27 +25271,32 @@ class SettingsScreen(BaseAppScreen):
                 )
                 if type(candidate) is not ToolProfileBindingReview:
                     raise ToolPackError("bind", "confirmation_invalid")
-                if self._settings_selected_workspace_id != workspace_id:
-                    raise ToolPackError("bind", "confirmation_stale")
+                if not review_is_current():
+                    return
 
-                confirmed = await self.app.push_screen_wait(
-                    ToolProfileFirstBindReviewModal(candidate, intended)
-                )
+                modal = ToolProfileFirstBindReviewModal(candidate, intended)
+                self._settings_workspace_first_bind_modal = modal
+                try:
+                    confirmed = await self.app.push_screen_wait(modal)
+                finally:
+                    if self._settings_workspace_first_bind_modal is modal:
+                        self._settings_workspace_first_bind_modal = None
+                if not review_is_current():
+                    return
                 if confirmed is not candidate:
                     self._set_workspace_assistant_result(
                         workspace_id,
                         "Tool Profile bind cancelled; no assistant defaults changed.",
                     )
                     return
-                if self._settings_selected_workspace_id != workspace_id:
-                    raise ToolPackError("bind", "confirmation_stale")
-
                 token = await asyncio.to_thread(
                     service.confirm_first_bind,
                     candidate,
                 )
                 if type(token) is not str or not token:
                     raise ToolPackError("bind", "confirmation_invalid")
+                if not review_is_current():
+                    return
                 await asyncio.to_thread(
                     registry.set_assistant_defaults,
                     workspace_id,
@@ -25265,17 +25305,20 @@ class SettingsScreen(BaseAppScreen):
                     tool_profile_confirmation_token=token,
                 )
             except ToolPackError as exc:
-                self._set_workspace_assistant_result(
-                    workspace_id, f"Tool Profile bind failed · {exc.category}"
-                )
+                if review_is_current():
+                    self._set_workspace_assistant_result(
+                        workspace_id, f"Tool Profile bind failed · {exc.category}"
+                    )
                 return
             except WorkspaceRegistryServiceError as exc:
-                self._set_workspace_assistant_result(workspace_id, str(exc))
+                if review_is_current():
+                    self._set_workspace_assistant_result(workspace_id, str(exc))
                 return
             except Exception:  # noqa: BLE001 - keep optional UI failure bounded
-                self._set_workspace_assistant_result(
-                    workspace_id, "Default assistant apply failed · operation_failed"
-                )
+                if review_is_current():
+                    self._set_workspace_assistant_result(
+                        workspace_id, "Default assistant apply failed · operation_failed"
+                    )
                 return
         except WorkspaceRegistryServiceError as exc:
             self._set_workspace_assistant_result(workspace_id, str(exc))
@@ -25448,6 +25491,7 @@ class SettingsScreen(BaseAppScreen):
     def _settings_workspace_clear_assistant(self, event: Button.Pressed) -> None:
         """Remove the selected workspace's default assistant (Task 10)."""
         event.stop()
+        self._settings_workspace_first_bind_intent = None
         workspace_id = self._settings_selected_workspace_id
         if not workspace_id:
             return
@@ -26866,7 +26910,11 @@ class SettingsScreen(BaseAppScreen):
         self._openai_reconnect_token = None
 
     def on_screen_suspend(self) -> None:
-        self._discard_workspace_memory_confirmation()
+        self._discard_workspace_memory_confirmation(
+            invalidate_first_bind=(
+                self.app.screen is not self._settings_workspace_first_bind_modal
+            )
+        )
         if not self._openai_reconnect_prompt_open:
             self._discard_openai_reconnect_review()
         if not self._local_model_review_prompt_open:

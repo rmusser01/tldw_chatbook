@@ -21,6 +21,15 @@ and discard the review on navigation. Exercise cancellation as well as acceptanc
 the separate imported-profile modal must preserve staging but require a fresh
 memory acknowledgement when the user retries after cancelling.
 
+**TASK-32774, 2026-09-18.** First-bind review had the same lifetime gap
+across an asynchronous service call: four mounted journeys reproduced an old
+dialog after category/workspace A→B→A, an unrelated modal, or a newer persona
+draft. Capture the Apply intent before dispatch and invalidate that identity
+on navigation or staging changes. Check it again after both review and token
+exchange; a delayed token must not commit after the user leaves. Exempt only
+the owned review modal from suspension invalidation, while still discarding
+its separate memory acknowledgement.
+
 ## A watcher test must prove selection and await worker completion
 
 **PR #2709 / TASK-32819, 2026-09-18.** The MCP stale-panel test intermittently

@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎e ▾
+─────▊                                                                    ▎─────
+ Sett▊  Review first Tool Profile bind                                    ▎al
+ Mode▊                                                                    ▎
+┌────▊                                                                    ▎────┐
+│  Fi▊  Target                                                            ▎    │
+│    ▊  Workspace: ws-textual-light-80x24                              ▂  ▎e   │
+│   >▊  Action: Replace                                                   ▎    │
+│    ▊  Profile: import-textual-light-80x24 · revision 1                  ▎ │  │
+│    ▊  Policy digest:                                                    ▎ │  │
+│    ▊  bc69f7294afc2198ce942c920b530b6273f26c521164984d23862216198f660   ▎ │  │
+│    ▊  9                                                                 ▎ │  │
+│  Tr▊  Assistant kind: persona                                           ▎ │▄ │
+│    ▊  Persona: review-helper                                            ▎ │▂ │
+│    ▊  Memory: read_only                                                 ▎ │  │
+│    ▊                                                                    ▎ │  │
+│  Ex▊                                                                    ▎ │  │
+│    ▊                                    Cancel     Confirm exact bind   ▎ │  │
+│    ▊                                                                    ▎ │  │
+│   D▊                                                                    ▎ │  │
+└────▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

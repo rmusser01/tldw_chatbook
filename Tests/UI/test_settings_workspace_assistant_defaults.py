@@ -661,7 +661,9 @@ async def test_imported_profile_first_bind_requires_current_review_and_exact_tok
             == "research"
         )
         screen.handle_workspace_profile_selected(_FakeOptionSelected(profile))
-        await pilot.pause()
+        async with asyncio.timeout(5):
+            while screen._category_pane_swap_pending:
+                await pilot.pause(0.02)
 
         screen.query_one("#settings-workspace-memory-toggle", Button).press()
         await pilot.pause(0.3)
