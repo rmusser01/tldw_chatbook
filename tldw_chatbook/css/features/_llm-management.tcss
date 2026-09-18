@@ -9,6 +9,13 @@
 
 
 /* --- LLM Management Tab --- */
+#llm-view-llama-cpp > .section-title,
+#llm-view-llamafile > .section-title {
+    /* Preserve the Models form's pre-consolidation spacing: at 80x24 an
+       extra row pushes the newly selected managed GGUF control offscreen. */
+    margin-bottom: $ds-space-stack;
+}
+
 #llamacpp-snapshot-manager {
     height: auto;
     width: $ds-width-full;

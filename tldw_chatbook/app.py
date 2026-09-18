@@ -598,7 +598,6 @@ from .Prompt_Management.prompt_variables import PromptVariableApplication
 from .UI.tools_settings_messages import IngestUiStyleChanged  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
 from .UI.image_gen_command_provider import ImageGenCommandProvider  # noqa: E402
-from .Widgets.pattern_gallery import PatternGalleryProvider  # noqa: E402
 from tldw_chatbook.Chat_Grammars_Interop import (  # noqa: E402
     ChatGrammarsScopeService,
     LocalChatGrammarsService,
@@ -2126,6 +2125,45 @@ class SetupWizardProvider(Provider):
                 )
         except Exception as e:
             self.app.notify(f"Failed to open setup wizard: {e}", severity="error")
+
+
+class PatternGalleryProvider(Provider):
+    """Command-palette entry that opens the pattern gallery."""
+
+    COMMANDS = (
+        (
+            "Design System: Pattern Gallery",
+            "open_pattern_gallery",
+            "Browse every canonical component pattern live",
+        ),
+    )
+
+    async def discover(self) -> Hits:
+        for text, _id, help_text in self.COMMANDS:
+            yield Hit(
+                1.0,
+                text,
+                self.open_gallery,
+                help=help_text,
+            )
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for text, _id, help_text in self.COMMANDS:
+            if (score := matcher.match(text)) > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(text),
+                    self.open_gallery,
+                    help=help_text,
+                )
+
+
+    def open_gallery(self) -> None:
+        """Load the gallery only when its palette command is invoked."""
+        from .Widgets.pattern_gallery import PatternGalleryScreen
+
+        self.app.push_screen(PatternGalleryScreen())
 
 
 class DeveloperProvider(Provider):

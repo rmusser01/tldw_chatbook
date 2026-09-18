@@ -221,8 +221,10 @@ SkillTrustBootstrapModal {
     align-horizontal: right;
 }
 
-#skill-trust-passphrase-actions Button,
-#skill-trust-bootstrap-actions Button {
+Button#skill-trust-passphrase-cancel,
+Button#skill-trust-passphrase-submit,
+Button#skill-trust-bootstrap-cancel,
+Button#skill-trust-bootstrap-submit {
     width: $ds-size-10;
     min-width: $ds-size-10;
     height: $ds-control-height;

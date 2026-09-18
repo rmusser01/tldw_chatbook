@@ -5,11 +5,13 @@ review each feature/component remains active. This ledger separates those two
 contracts so that another successful bounded review cannot accidentally close
 the whole workstream.
 
-Saved work: draft [PR #2704](https://github.com/rmusser01/tldw_chatbook/pull/2704),
+Saved work: ready [PR #2704](https://github.com/rmusser01/tldw_chatbook/pull/2704),
 `feat/component-pattern-library` → `dev`. TASK-32749 reconciles dev
 `1c0327b3bb3d95b61e3e1b9a83b30e7030453ad6`; the earlier integration of
 `fd30614dcdc` remains historical evidence. No merge into dev or full-suite run
-is authorized by this ledger.
+is authorized by this ledger alone. The owner subsequently approved merging
+after the refreshed conflict/visual review at `156c06f80b`; merge remains
+subject to verification. No full-suite run was requested.
 
 ADR required: no. Existing ADR-150/161 define the language and migration;
 ADR-031 governs interaction and ADR-097 governs startup budgets. This document
@@ -101,12 +103,18 @@ Both lesson additions and the incoming parent-side STT diagnostics are preserved
 15 affected STT tests and all seven derived-artifact guards pass. The native rail
 captures predate that callback-only merge; the receipt states this boundary.
 
-The [conflict review](2026-09-17-pr-2704-conflict-review.md) reconstructs all four dev integration merges through `96d4ca2b96`: 20 conflicted file entries / 30 blocks, exact parent references, selected outcomes and recorded native captures. The user requires visual review and explicit green light before the PR is merged into dev.
+The [conflict review](2026-09-17-pr-2704-conflict-review.md) reconstructs all four dev integration merges through `96d4ca2b96`: 20 conflicted file entries / 30 blocks, exact parent references, selected outcomes and recorded native captures. The user gave the requested green light after the refreshed Notes/Console gallery at `156c06f80b`.
+
+Pre-merge CI then exposed a gallery startup import, four excess broad CSS
+rules, and a one-row GGUF layout regression. TASK-32591 was reopened to repair
+those failures without raising ratchets or changing the approved conflict
+choices. [Repair and native evidence](../qa/2026-09-17-pr-2704-ci-repair/README.md)
+records the exact scope and verification; the broader review remains open.
 
 The [fresh PR visual gallery](../qa/2026-09-17-pr-2704-visual-review/README.md)
 records eight Console/Notes captures from source commit `7c28855825`, inspected
 in dark/light at 80×24 and 170×48 with clean native shutdown. Wide Notes shows
-the complete `Remove placement` label. Compact Notes still truncates its
-introductory next-step status after `Create a note or add from`; reconcile this
-observed residual during the remaining Library review. This gallery does not
+the complete `Remove placement` label. That historical gallery truncates the compact Notes
+introductory status; TASK-32765 fixed this residual in the refreshed gallery
+linked above. This historical gallery does not
 close any whole-destination or provider-execution gate.

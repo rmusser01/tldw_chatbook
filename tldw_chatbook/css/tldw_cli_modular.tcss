@@ -2317,8 +2317,10 @@ SkillTrustBootstrapModal {
     align-horizontal: right;
 }
 
-#skill-trust-passphrase-actions Button,
-#skill-trust-bootstrap-actions Button {
+Button#skill-trust-passphrase-cancel,
+Button#skill-trust-passphrase-submit,
+Button#skill-trust-bootstrap-cancel,
+Button#skill-trust-bootstrap-submit {
     width: $ds-size-10;
     min-width: $ds-size-10;
     height: $ds-control-height;
@@ -9690,7 +9692,11 @@ ConsolePromptsModal.-narrow #console-prompts-search {
     max-height: $ds-size-1;
 }
 
-#console-library-access .console-library-access-actions Button {
+.console-library-access-actions Button#library-access-save,
+.console-library-access-actions Button#library-access-cancel,
+.console-library-access-actions Button#library-access-reload,
+.console-library-access-actions Button#library-access-compare-retry,
+.console-library-access-actions Button#library-access-discard {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-size-1;
@@ -9734,7 +9740,8 @@ ConsolePromptsModal.-narrow #console-prompts-search {
     max-height: $ds-size-1;
 }
 
-#console-rag-settings .console-rag-settings-actions Button {
+.console-rag-settings-actions Button#console-rag-settings-run,
+.console-rag-settings-actions Button#console-rag-settings-cancel {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-size-1;
@@ -10087,7 +10094,7 @@ WorktreeRecoveryDialog {
     text-style: bold underline;
 }
 
-.settings-workbench-compact #settings-model-catalog-group Input,
+.settings-workbench-compact Input#settings-model-catalog-stale-hours,
 .settings-workbench-compact #settings-model-catalog-group .settings-input-label {
     width: $ds-width-full;
 }
@@ -11712,6 +11719,12 @@ MediaDetailsWidget {
 
 
 
+
+#llm-view-llama-cpp > .section-title,
+#llm-view-llamafile > .section-title {
+
+    margin-bottom: $ds-space-stack;
+}
 
 #llamacpp-snapshot-manager {
     height: auto;

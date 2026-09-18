@@ -716,7 +716,7 @@ Button.settings-category-group-toggle:focus {
     layout: vertical;
 }
 
-.settings-workbench-compact #settings-model-catalog-group Input,
+.settings-workbench-compact Input#settings-model-catalog-stale-hours,
 .settings-workbench-compact #settings-model-catalog-group .settings-input-label {
     width: $ds-width-full;
 }

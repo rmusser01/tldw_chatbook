@@ -13,7 +13,6 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.command import Hit, Hits, Provider
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import (
@@ -206,38 +205,6 @@ class PatternGalleryScreen(Screen):
                         with Container(classes="pg-utility-cell"):
                             yield Label(utility)
                             yield Static("Sample", classes=utility)
-
-
-class PatternGalleryProvider(Provider):
-    """Command-palette entry that opens the pattern gallery."""
-
-    COMMANDS = (
-        (
-            "Design System: Pattern Gallery",
-            "open_pattern_gallery",
-            "Browse every canonical component pattern live",
-        ),
-    )
-
-    async def discover(self) -> Hits:
-        for text, _id, help_text in self.COMMANDS:
-            yield Hit(
-                1.0,
-                text,
-                lambda: self.app.push_screen(PatternGalleryScreen()),
-                help=help_text,
-            )
-
-    async def search(self, query: str) -> Hits:
-        matcher = self.matcher(query)
-        for text, _id, help_text in self.COMMANDS:
-            if (score := matcher.match(text)) > 0:
-                yield Hit(
-                    score,
-                    matcher.highlight(text),
-                    lambda: self.app.push_screen(PatternGalleryScreen()),
-                    help=help_text,
-                )
 
 
 EXTENDED_UTILITIES = (

@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## Consolidated headings can move a control beyond a compact viewport
+
+**PR #2704 / TASK-32591, 2026-09-17.** Token/component consolidation changed
+Models section-title bottom margin from one row to two. The 80x24 llamafile
+journey selected Managed GGUF correctly but left the next selector below the
+viewport. Comparing computed styles for 221 real mounted nodes against dev
+isolated that single margin difference; restoring it made the unchanged
+keyboard test pass. An initial Models-wide override also affected vLLM's
+zero-margin headings, so review narrowed it to the two direct GGUF headings.
+Check the computed cascade and viewport after consolidation, then scope the
+repair to the verified consumers instead of altering the shared token.
+
 ## A mocked coordinator can hide an owner-thread violation
 
 **TASK-32764, 2026-09-17.** Settings capture tests mocked both the disclosure

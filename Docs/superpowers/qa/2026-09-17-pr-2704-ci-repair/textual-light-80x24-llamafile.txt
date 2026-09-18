@@ -1,0 +1,24 @@
+               ╭────────╮
+ ‹ MCP  ⌃0 ACP │ F2 Lab │ F3 Logs  F4 Settings  F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Models  Manage providers,   Ready  Servers: none running  Model install: idle
+ Modes:    Models    Speech    Evals
+Catalog              < │
+                       │    ┗╍╍╍╍╍╍╍╍╍╍╍╍╍╍┛ ┗╍╍╍╍╍╍╍╍╍╍╍╍╍╍┛         Inspector
+ Local servers         │          Llamafile Executable ▊▔▔▔▔▔▔▔▔▔▅
+   Llama.cpp           │                 (.llamafile): ▊  /path/t
+█   Llamafile          │                               ▊▁▁▁▁▁▁▁▁▁
+   Ollama              │
+   vLLM                │                     Managed GGUF      ▼ ▅
+   ONNX                │       Model source:
+   Transformers        │
+   MLX-LM              │
+                       │   ┏╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍┓
+ Models                │   ╏Choose a managed GGUF model       ▼ ╏
+   Curated             │   ┗╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍┛
+   Installed           │
+   External            │           Refresh managed models
+   Remote              │
+                       │
+                       │
+  [ / ] Move mode focus | Enter Go | F1 · F6 · Ctrl+P · Ctrl+Q

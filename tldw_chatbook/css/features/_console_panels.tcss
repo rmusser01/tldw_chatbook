@@ -2161,7 +2161,11 @@ ConsolePromptsModal.-narrow #console-prompts-search {
     max-height: $ds-size-1;
 }
 
-#console-library-access .console-library-access-actions Button {
+.console-library-access-actions Button#library-access-save,
+.console-library-access-actions Button#library-access-cancel,
+.console-library-access-actions Button#library-access-reload,
+.console-library-access-actions Button#library-access-compare-retry,
+.console-library-access-actions Button#library-access-discard {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-size-1;
@@ -2205,7 +2209,8 @@ ConsolePromptsModal.-narrow #console-prompts-search {
     max-height: $ds-size-1;
 }
 
-#console-rag-settings .console-rag-settings-actions Button {
+.console-rag-settings-actions Button#console-rag-settings-run,
+.console-rag-settings-actions Button#console-rag-settings-cancel {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-size-1;
