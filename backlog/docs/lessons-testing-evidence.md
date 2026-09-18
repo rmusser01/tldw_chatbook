@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## A pane resize does not report its child's final scrollbar geometry
+
+**TASK-32790, 2026-09-18.** MCP Tools wrapping passed 60-row resize checks,
+then independent review clipped one State cell in a five-row Unicode catalog.
+The outer scrollbar narrowed the table after the pane's resize callback;
+measuring again by hand restored the missing cell. Observe the table's own
+Resize and gate rebuilding on changed measured width. The first local message
+was also unhandled because Textual converted `MCPToolsTable` to `mcptools_table`;
+an explicit message namespace aligned the handler. Exercise short and long
+catalogs across scrollbar transitions, not only the terminal dimensions.
+
 ## A stale review and an admitted write have different lifetimes
 
 **TASK-32780, 2026-09-18.** Preventing delayed Tool Profile reviews after

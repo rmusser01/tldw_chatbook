@@ -10,20 +10,19 @@ Token migration alone does not qualify a complete workflow.
 | Settings → permission Edit | TASK-32785, [129 targeted cases and native gallery](../qa/2026-09-18-mcp-permission-handoff/README.md) | Exact profile/revision, visible controls/rows and read-only canvas scrolling |
 | Compact introduction, Source and permission matrix | TASK-32788, [134 targeted cases and native gallery](../qa/2026-09-18-mcp-compact-readability/README.md) | Complete guidance and Local/Server labels; permission Tool/State together, tags accessible; no connected external server qualification |
 | Tools controls and catalog access | TASK-32789, [88 distinct targeted cases and native gallery](../qa/2026-09-18-mcp-tools-access/README.md) | Full on/off label, focused filters/rows, retained cursor through resize, real private toggle persistence and exact row inspection; no tool execution |
+| Tools name/state readability and identity | TASK-32790, [88 final targeted cases and native gallery](../qa/2026-09-18-mcp-tools-readability/README.md) | Complete names and State together, metadata reachable, identity retained through resize/filter/refresh, independent Enter and short/long scrollbar transitions; no tool execution |
 
 ## Remaining review
 
-- **Tools column readability:** final native 80-column captures show long Tool
-  values moving State partly or entirely out of the leftmost viewport. Horizontal
-  scroll remains available; simultaneous identity/state reading needs review.
-- **Workspace-root guidance and save lifecycle:** `MCPToolsMode` still describes
-  this root as applying to the next Console run, and
-  `_save_tools_mode_workspace_root()` confirms confinement to it. This contradicts
-  [ADR-102](../../../backlog/decisions/102-console-run-admitted-local-path-authority.md),
-  which reserves configured-root fallback for the standalone local MCP server;
-  in-app Console path tools derive authority from admitted workspace bindings.
-  Validate actual consumers, then correct the user-facing contract and qualify
-  save failure/retry and retained edits.
+- **Workspace-root guidance and save lifecycle:** independent mounted review
+  confirmed three defects: copy promises next-Console confinement, ordinary
+  `_sync_children()` discards the root draft, and a cancelled `to_thread` save A
+  can finish after save B and leave disk at A while the UI claims B. Actual
+  configured-root consumers include standalone MCP serving and the operator Hub
+  executable-provider/test path (`unified_control_plane_service.py`); Console
+  uses Chat scratch and admitted Workspace folders. Blank fallback resolves the
+  serving process's current working directory. Correct this contract and qualify
+  ordered writes, draft retention, failure/retry and screen lifetime.
 - **Tools refresh and execution:** retained selection/filter drafts across
   background refresh, diagnostic empty-state actions, disconnected/stale tools,
   schema forms/raw arguments, test execution and inspector recovery.

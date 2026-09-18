@@ -14,18 +14,20 @@ from __future__ import annotations
 import pytest
 from textual.widgets import DataTable
 
+from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _wait_for_selector,
 )
-from Tests.UI.app_factory import _build_test_app
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_clicking_a_tool_row_updates_the_inspector_end_to_end():
+@private_profile_test
+async def test_clicking_a_tool_row_updates_the_inspector_end_to_end(request):
     """A single click — i.e. a `RowHighlighted` — must select through to the
     workbench, not merely move the DataTable cursor."""
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
@@ -79,7 +81,8 @@ async def test_clicking_a_tool_row_updates_the_inspector_end_to_end():
 
 
 @pytest.mark.asyncio
-async def test_opening_tools_mode_selects_nothing_on_its_own():
+@private_profile_test
+async def test_opening_tools_mode_selects_nothing_on_its_own(request):
     """The regression the focus gate exists to prevent.
 
     A first draft of the mixin forwarded every `RowHighlighted`, including the

@@ -1,0 +1,18 @@
+TASK-32790 independent review of the uncommitted diff against 044d5f2731.
+Reviewer: mcp_tools_access_review.
+
+Findings corrected:
+- Retained tool IDs left the click-selection mixin's old activation token alive;
+  Enter after a redraw could be swallowed. Tools now resets that token on redraw.
+- Five-row Unicode catalogs revealed a final child-table scrollbar width change
+  after the outer canvas resize. A child Resize message now requests width-gated
+  reflow, with an explicit namespace matching the parent handler.
+
+Final independent mounted replay: 1 -> 5 -> 60 -> 5 -> 1 rows, each at widths
+34, 39, 42 and 90. Full Allow bullet state painted, exact selected tool retained,
+reflow converged, no spontaneous selections, and Enter emitted exactly one event.
+An expanded server Select also remained operable through resizing.
+No remaining actionable findings in the corrected diff; diff whitespace clean.
+
+Separate existing root-setting findings remain in the MCP review ledger;
+they are not claimed fixed by this table-only task.
