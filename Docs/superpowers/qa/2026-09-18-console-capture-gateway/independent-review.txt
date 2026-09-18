@@ -1,0 +1,30 @@
+TASK-32817 independent bounded read-only review.
+Base efe900eb993f080bcc13b9be028ef4832888b0d7; uncommitted two test files.
+
+Initial review: no actionable findings. Ten-line gateway fixture change matches
+production synchronous/asynchronous signatures and returns the real context
+resolution without fabricated server evidence. Stream capture is unchanged;
+no additional gateway method was required by inspected paths.
+
+Follow-up: no actionable findings in setup correction. First bounded wait
+establishes composer/session ownership before loading the unrelated draft.
+Second handles the sync returning early after coalescing. Both observe real
+state and preserve every assertion without directly seeding the store.
+The initial failure was pre-recovery; its sibling passed unchanged.
+
+Reviewer ran no tests/apps and made no edits. Root owns final execution evidence.
+
+Consumer triage: persisted defaults are the correct contract for sessions made
+later by New tab/workspace switch. Preserve the lifecycle tab assertion because
+the wrong provider alone does not prove the missing-tab cause. Rail subtitles
+are deliberately cell-truncated; retain visible active cue and matching row_key
+while asserting complete normalized status. Reviewer corrected the proposed raw
+status expectation to "active session" (normalization preserves it verbatim).
+No tests or edits performed. Actual final reruns remain the root's evidence.
+
+Final actual-diff review after stylesheet correction: no actionable findings.
+Restored harness loads the same application stylesheets through the existing
+merge path. Original pointer click and all archive/lifecycle assertions remain.
+Provider-default fixes match new-session behavior; rail verifies the visible
+cue and complete "active session" on the exact row. No production edit.
+Reviewer did not run tests; root has a passing lifecycle rerun, adjacent pending.

@@ -222,3 +222,19 @@ and exit normally. Production audio compilation is outside this qualification.
 TASK-32817's archive fixture contract, Roleplay recovery styling and the wider
 MCP/Persona/Personal Context review remain open. PR2707 stays draft/unmerged;
 all applicable checks passed on saved b76e759, with new-head checks separate.
+
+
+TASK-32817 restores the capture gateway's current metadata contract and repairs
+the exposed archive/later-session fixture assumptions. [Fourteen distinct passing
+targeted cases](../qa/2026-09-18-console-capture-gateway/README.md) cover both archive
+variants, every direct capture-gateway consumer and both restored-harness users.
+All 32 archive-module assertions remain unchanged; lifecycle retains its original
+pointer click after restoring the harness's application stylesheets. Saved
+provider defaults and complete normalized rail status are verified at their
+actual boundaries. Initial and intermediate failures remain in the receipt.
+No production files changed; no new native or full-suite qualification is claimed.
+There are no introduced Ruff diagnostics, and all seven changed ranges pass
+formatting. Independent review found no actionable issue. All applicable remote
+checks passed on saved efe900eb99; checks on the fixture commit remain separate.
+Roleplay recovery styling and the wider component review remain open. PR2707
+stays draft/unmerged and requires its own visual review and merge approval.

@@ -1,0 +1,30 @@
+[
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_workspace_conversation_resume_uses_real_local_services",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_workspace_conversation_resume_uses_real_local_services",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_workspace_conversation_resume_uses_real_local_services",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_workspace_conversation_resume_uses_real_local_services",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-restored-adjacent-005/001",
+    "classes": [],
+    "mismatches": 0
+  }
+]
