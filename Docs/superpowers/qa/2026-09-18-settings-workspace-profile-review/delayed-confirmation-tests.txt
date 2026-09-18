@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+42.06s call     Tests/UI/test_settings_workspace_profile_review_journeys.py::test_delayed_first_bind_review_does_not_reopen_an_old_intent[confirmation-category_return]
+35.31s call     Tests/UI/test_settings_workspace_profile_review_journeys.py::test_delayed_first_bind_review_does_not_reopen_an_old_intent[confirmation-workspace_return]
+34.88s call     Tests/UI/test_settings_workspace_profile_review_journeys.py::test_delayed_first_bind_review_does_not_reopen_an_old_intent[confirmation-modal_return]
+32.15s call     Tests/UI/test_settings_workspace_profile_review_journeys.py::test_delayed_first_bind_review_does_not_reopen_an_old_intent[confirmation-new_draft]
+
+(8 durations < 1s hidden.)
+4 passed, 4 deselected in 154.15s (0:02:34)
