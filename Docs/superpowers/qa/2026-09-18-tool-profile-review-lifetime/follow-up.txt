@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+5.56s call     Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-import]
+5.34s call     Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-export]
+5.22s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[same-import]
+5.05s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[same-export]
+
+(8 durations < 1s hidden.)
+4 passed, 19 deselected in 22.94s

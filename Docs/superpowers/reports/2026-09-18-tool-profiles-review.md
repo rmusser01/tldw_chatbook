@@ -57,13 +57,28 @@ real service/publication tests qualify the underlying boundaries. Capture
 checks initial policy authority; publication uses the immutable reviewed
 snapshot without recapturing current policy. [Evidence and visual gallery](../qa/2026-09-18-tool-profile-export/README.md).
 
-## Confirmed remaining defects
+## Review lifetime — TASK-32780
 
-- **Delayed import review can steal focus after category navigation.** A
-  mounted production-CSS probe held inspection after Options → Inspect,
-  navigated to Theme through its real rail action, then released inspection.
-  The old import review opened over Theme. Guard the originating visit after
-  asynchronous inspection. Screen removal already suppresses a late modal.
+Import inspection and export capture could publish delayed review dialogs
+over a newer category or Settings visit. Eight mounted cases reproduced the
+problem; screen removal already suppressed late modals. A local intent now
+tracks the initiating visit, exempts only its owned modal, and is rechecked
+after preparation and modal boundaries before prompting or admitting a write.
+Category changes, unrelated suspension and newer workflows invalidate it.
+
+Independent review caught an initial overbroad error guard: it also hid errors
+from already-admitted writes after navigation. Admission is now tracked
+separately, preserving failure/uncertainty receipts alongside success while
+obsolete preparation errors remain silent. The identical mounted publication
+probe now retains its uncertainty receipt after a category roundtrip.
+
+74 distinct targeted cases qualify navigation, same/cross-type replacement,
+owned import revise/accept/cancel, destination capture, admitted outcomes and
+existing workflow/loading behavior. [Evidence](../qa/2026-09-18-tool-profile-review-lifetime/README.md).
+This is mounted production-CSS evidence, not new native visual qualification.
+
+## Confirmed remaining defect
+
 - **Unchanged profile refresh loses focused actions.** Import/Edit/Remove
   focus falls to the detail-pane body after recomposition. Cancelling import
   or removal also triggers this through Settings resume. Restore by stable
@@ -76,7 +91,7 @@ do not qualify the remaining native management journeys.
 
 ## Remaining scope
 
-Import/removal stale-context journeys, focus through refresh, and their native
-compact/wide dark/light presentation remain to be qualified. This ledger does
+Remaining removal boundaries, focus through refresh, and complete native
+import/removal compact/wide dark/light journeys remain to be qualified. This ledger does
 not claim the Tool Profiles feature review or the broader component workstream
 is complete.

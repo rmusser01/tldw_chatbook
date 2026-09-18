@@ -1,0 +1,5 @@
+tool-profile-admitted-outcome-audit.log
+RESULT {"admitted": true, "category": "tool-profiles", "worker": "WorkerState.SUCCESS", "receipt": ""}
+
+tool-profile-admitted-outcome-green.log
+RESULT {"admitted": true, "category": "tool-profiles", "worker": "WorkerState.SUCCESS", "receipt": "Export failed \u00b7 durability_uncertain"}

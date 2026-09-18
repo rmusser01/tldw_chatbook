@@ -1,0 +1,17 @@
+E   E               AssertionError: assert ToolPackImportReviewModal() is SettingsScreen(classes='shell-header-compact')
+E   E               AssertionError: assert ToolPackExportReviewModal() is SettingsScreen(classes='shell-header-compact')
+E   E               AssertionError: assert ToolPackImportReviewModal() is SettingsScreen(classes='shell-header-compact')
+E   E               AssertionError: assert ToolPackExportReviewModal() is SettingsScreen(classes='shell-header-compact')
+E   E               AssertionError: assert ToolPackImportReviewModal() is SettingsScreen(classes='shell-header-compact')
+E   E               AssertionError: assert ToolPackExportReviewModal() is SettingsScreen(classes='shell-header-compact')
+E   E               AssertionError: assert ToolPackImportReviewModal() is SettingsScreen(classes='shell-header-compact')
+E   E               AssertionError: assert ToolPackExportReviewModal() is SettingsScreen(classes='shell-header-compact')
+FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[category-import]
+FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[category-export]
+FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[return-import]
+FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[return-export]
+FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[modal-import]
+FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[modal-export]
+FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[newer-import]
+FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[newer-export]
+8 failed, 2 passed in 55.80s

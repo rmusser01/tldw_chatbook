@@ -1,5 +1,15 @@
 # Lessons: what counts as evidence a change works
 
+## A stale review and an admitted write have different lifetimes
+
+**TASK-32780, 2026-09-18.** Preventing delayed Tool Profile reviews after
+navigation initially hid errors from already-admitted import/export writes
+because their shared exception handlers used the same visit guard. A mounted
+publisher held after confirmation then raised `durability_uncertain` after a
+category roundtrip; its receipt was empty. Track mutation admission separately:
+discard obsolete preparation, but preserve outcomes of writes the user already
+confirmed. The same probe then retained its uncertainty receipt.
+
 ## A fake payload can preserve the same wrong contract as its consumer
 
 **TASK-32779, 2026-09-18.** Export-review tests invented `payload.rules`,

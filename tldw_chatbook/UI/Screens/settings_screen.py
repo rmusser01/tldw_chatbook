@@ -2927,6 +2927,8 @@ class SettingsScreen(BaseAppScreen):
         )
         self._tool_profiles_listing_generation = 0
         self._tool_profiles_result = ""
+        self._tool_profile_review_intent: object | None = None
+        self._tool_profile_review_modal: ModalScreen | None = None
 
         # Network category pending edits. Deliberately NOT a SettingsDraft in
         # _settings_drafts: the category bypasses the draft-staging machinery
@@ -3608,6 +3610,7 @@ class SettingsScreen(BaseAppScreen):
         the screen mounts) are a no-op: ``compose_content`` reads
         ``active_category`` fresh, so the first paint is already correct.
         """
+        self._tool_profile_review_intent = None
         self._register_footer_shortcuts()
         self._sync_category_chrome()
         # `is_running`, not `is_mounted`: a bare `SettingsScreen(app)` built in
@@ -4007,6 +4010,7 @@ class SettingsScreen(BaseAppScreen):
     def on_unmount(self) -> None:
         """Fence late credential and Model Library results before replacement."""
 
+        self._tool_profile_review_intent = None
         self._settings_workspace_first_bind_intent = None
         if self._subscription_readiness_timer is not None:
             self._subscription_readiness_timer.stop()
@@ -4583,6 +4587,26 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._tool_profile_import_flow()
 
+    def _tool_profile_review_is_current(self, intent: object) -> bool:
+        """Allow review preparation only within its original Settings visit."""
+        return (
+            self._tool_profile_review_intent is intent
+            and self.is_attached
+            and self.app.screen is self
+            and self._active_category_id() is SettingsCategoryId.TOOL_PROFILES
+        )
+
+    async def _push_tool_profile_modal(self, modal: ModalScreen, intent: object) -> Any:
+        """Exempt only this workflow's own dialog from visit invalidation."""
+        if not self._tool_profile_review_is_current(intent):
+            return None
+        self._tool_profile_review_modal = modal
+        try:
+            return await self.app.push_screen_wait(modal)
+        finally:
+            if self._tool_profile_review_modal is modal:
+                self._tool_profile_review_modal = None
+
     @work(
         group="settings-tool-pack-import",
         exclusive=True,
@@ -4599,12 +4623,16 @@ class SettingsScreen(BaseAppScreen):
             ToolPackImportReviewModal,
         )
 
+        intent = self._tool_profile_review_intent = object()
+        if not self._tool_profile_review_is_current(intent):
+            return
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Import failed · service_unavailable")
             return
         worker = get_current_worker()
-        selected = await self.app.push_screen_wait(
+        mutation_started = False
+        selected = await self._push_tool_profile_modal(
             EnhancedFileOpen(
                 title="Import Tool Pack",
                 filters=Filters(
@@ -4615,8 +4643,11 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 context="tool_pack_import",
                 select_button="Inspect",
-            )
+            ),
+            intent,
         )
+        if not self._tool_profile_review_is_current(intent):
+            return
         if selected is None or worker.is_cancelled:
             self._set_tool_profiles_result("Import cancelled")
             return
@@ -4632,9 +4663,11 @@ class SettingsScreen(BaseAppScreen):
         )
         try:
             while options is not None and not worker.is_cancelled:
-                options = await self.app.push_screen_wait(
-                    ToolPackImportOptionsModal(options)
+                options = await self._push_tool_profile_modal(
+                    ToolPackImportOptionsModal(options), intent
                 )
+                if not self._tool_profile_review_is_current(intent):
+                    return
                 if options is None or worker.is_cancelled:
                     self._set_tool_profiles_result("Import cancelled")
                     return
@@ -4644,11 +4677,15 @@ class SettingsScreen(BaseAppScreen):
                     destination_id=options.destination_id,
                     mappings=options.mappings,
                 )
+                if not self._tool_profile_review_is_current(intent):
+                    return
                 if type(candidate) is not ToolPackImportReview:
                     raise ToolPackError("import", "archive_invalid")
-                decision = await self.app.push_screen_wait(
-                    ToolPackImportReviewModal(candidate)
+                decision = await self._push_tool_profile_modal(
+                    ToolPackImportReviewModal(candidate), intent
                 )
+                if not self._tool_profile_review_is_current(intent):
+                    return
                 if decision == "revise":
                     continue
                 if decision is not candidate:
@@ -4656,6 +4693,7 @@ class SettingsScreen(BaseAppScreen):
                     return
                 if worker.is_cancelled:
                     return
+                mutation_started = True
                 result = await asyncio.to_thread(service.import_unbound, candidate)
                 if type(result) is not ToolPackActivationResult:
                     raise ToolPackError("import", "activation_failed")
@@ -4666,11 +4704,15 @@ class SettingsScreen(BaseAppScreen):
                 self._request_tool_profiles_listing()
                 return
         except ToolPackError as exc:
-            self._set_tool_profiles_result(self._tool_pack_failure_copy("import", exc))
+            if mutation_started or self._tool_profile_review_is_current(intent):
+                self._set_tool_profiles_result(
+                    self._tool_pack_failure_copy("import", exc)
+                )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - optional workflow must stay bounded
-            self._set_tool_profiles_result("Import failed · activation_failed")
+            if mutation_started or self._tool_profile_review_is_current(intent):
+                self._set_tool_profiles_result("Import failed · activation_failed")
 
     @on(ToolProfilesPanel.ExportRequested)
     def _handle_tool_profile_export(
@@ -4708,11 +4750,15 @@ class SettingsScreen(BaseAppScreen):
             ToolPackExportReviewModal,
         )
 
+        intent = self._tool_profile_review_intent = object()
+        if not self._tool_profile_review_is_current(intent):
+            return
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Export failed · service_unavailable")
             return
         worker = get_current_worker()
+        mutation_started = False
         try:
             candidate = await asyncio.to_thread(
                 service.capture_export,
@@ -4722,16 +4768,21 @@ class SettingsScreen(BaseAppScreen):
                 expected_revision=revision,
                 expected_policy_digest=policy_digest,
             )
+            if not self._tool_profile_review_is_current(intent):
+                return
             if type(candidate) is not ToolPackExportReview:
                 raise ToolPackError("export", "profile_invalid")
-            confirmed = await self.app.push_screen_wait(
+            confirmed = await self._push_tool_profile_modal(
                 ToolPackExportReviewModal(
                     candidate,
                     profile_id=profile_id,
                     revision=revision,
                     policy_digest=policy_digest,
-                )
+                ),
+                intent,
             )
+            if not self._tool_profile_review_is_current(intent):
+                return
             if confirmed is not candidate or worker.is_cancelled:
                 self._set_tool_profiles_result("Export cancelled")
                 return
@@ -4739,6 +4790,7 @@ class SettingsScreen(BaseAppScreen):
             filename = f"{candidate.snapshot.manifest.suggested_id}.tldw-tool-pack"
             recovery = ""
             while True:
+                mutation_started = False
                 picker = EnhancedFileSave(
                     location=location,
                     title="Export Tool Pack",
@@ -4753,7 +4805,9 @@ class SettingsScreen(BaseAppScreen):
                 )
                 if recovery:
                     picker.call_after_refresh(picker._set_error, recovery)
-                selected = await self.app.push_screen_wait(picker)
+                selected = await self._push_tool_profile_modal(picker, intent)
+                if not self._tool_profile_review_is_current(intent):
+                    return
                 if selected is None or worker.is_cancelled:
                     self._set_tool_profiles_result("Export cancelled")
                     return
@@ -4769,10 +4823,13 @@ class SettingsScreen(BaseAppScreen):
                         raise
                     recovery = "Use a .tldw-tool-pack filename in an existing folder."
                     continue
+                if not self._tool_profile_review_is_current(intent):
+                    return
                 if destination.target_identity is not None:
                     recovery = "Name already exists. Choose a new filename."
                     continue
                 try:
+                    mutation_started = True
                     result = await asyncio.to_thread(
                         service.publish_export,
                         candidate,
@@ -4798,11 +4855,15 @@ class SettingsScreen(BaseAppScreen):
             else:
                 raise ToolPackError("export", "publication_failed")
         except ToolPackError as exc:
-            self._set_tool_profiles_result(self._tool_pack_failure_copy("export", exc))
+            if mutation_started or self._tool_profile_review_is_current(intent):
+                self._set_tool_profiles_result(
+                    self._tool_pack_failure_copy("export", exc)
+                )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - optional workflow must stay bounded
-            self._set_tool_profiles_result("Export failed · publication_failed")
+            if mutation_started or self._tool_profile_review_is_current(intent):
+                self._set_tool_profiles_result("Export failed · publication_failed")
 
     @on(ToolProfilesPanel.RemoveRequested)
     def _handle_tool_profile_remove(
@@ -26953,6 +27014,8 @@ class SettingsScreen(BaseAppScreen):
         self._openai_reconnect_token = None
 
     def on_screen_suspend(self) -> None:
+        if self.app.screen is not self._tool_profile_review_modal:
+            self._tool_profile_review_intent = None
         self._discard_workspace_memory_confirmation(
             invalidate_first_bind=(
                 self.app.screen is not self._settings_workspace_first_bind_modal
