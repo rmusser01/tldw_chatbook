@@ -814,7 +814,7 @@
     },
     {
       "call_count": 345,
-      "diagnostic_digest": "bdf40a2b56dc69c6d1c5",
+      "diagnostic_digest": "ad055d26393ae00396ac",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
