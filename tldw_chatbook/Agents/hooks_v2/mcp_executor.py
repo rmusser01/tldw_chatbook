@@ -153,6 +153,7 @@ class _MCPDelivery:
     requests: list = field(default_factory=list)
     task: asyncio.Task | None = None
     worker: asyncio.Task | None = None
+    result_check: Callable[[], bool] | None = None
     active_started: float | None = None
     active_seconds: float = 0.0
     approval_end: float | None = None
@@ -497,19 +498,77 @@ class MCPHookExecutor:
                     result = context.registry.invoke_by_name(
                         call.name, call.args, expected_definition=expected
                     )
-                    raw = capture.consume(result)
+                    evidence = capture.consume_authorized(result)
                 with job.wait_scope("nested"):
                     hook_run.install_result(call, result)
                     hook_run.settle()
                 policy.check()
-                if raw is None or result.dispatch_state != "settled":
+                if evidence is None or result.dispatch_state != "settled":
                     raise ValueError("hook_mcp_execution_failed")
+                raw, owner_current = evidence
+
+                def result_current():
+                    policy.check()
+                    if context.definition(call) != expected:
+                        raise PermissionError("hook_mcp_result_definition_changed")
+                    owner_current()
+                    # The normal owned authority port can block. Its completion
+                    # is not permission to outlive this original event/scope.
+                    policy.check()
+                    if context.definition(call) != expected:
+                        raise PermissionError("hook_mcp_result_definition_changed")
+                    return True
+
+                job.result_check = result_current
+                result_current()
                 return normalize_hook_result(raw, job.handler)
         finally:
             self.retire_context(operation_id)
             # Also retire preparation on a pre-start failure; existing required
             # post handlers remain with their existing checkpoint/engine owners.
             context.lifecycle.close_scope(operation_id)
+
+    async def _wait_worker(self, job):
+        """Join sequential work under this same ticket and original deadline."""
+        failure = None
+        accepted = None
+        while not job.worker.done():
+            if job.cancellation.is_set() or job.execution.closed:
+                failure = "cancelled"
+                break
+            if time.monotonic() >= job.deadline:
+                failure = "event_deadline"
+                break
+            if (
+                job.approval_depth
+                and job.approval_end is not None
+                and time.monotonic() >= job.approval_end
+            ):
+                failure = "approval_deadline"
+                break
+            if job.active_used >= min(
+                job.handler.timeout_seconds, 60 - job.execution.active_seconds
+            ):
+                failure = "handler_deadline"
+                break
+            try:
+                job.context.check()
+                for policy in job.inherited_policies:
+                    policy.check()
+            except Exception:  # noqa: BLE001 -- refuse
+                failure = "authority_refused"
+                break
+            await asyncio.wait({job.worker}, timeout=0.025)
+        if failure:
+            job.stop()
+            await job.suspend()
+            await asyncio.wait({job.worker}, timeout=5)
+        if job.worker.done():
+            try:
+                accepted = job.worker.result()
+            except Exception:  # noqa: BLE001 -- refuse
+                failure = failure or "hook_mcp_execution_failed"
+        return accepted, failure
 
     async def _run(self, job):
         from .engine import HookEventOutcome
@@ -520,42 +579,7 @@ class MCPHookExecutor:
             job.worker = asyncio.create_task(
                 asyncio.to_thread(self._invoke_worker_bound, job)
             )
-            while not job.worker.done():
-                if job.cancellation.is_set() or job.execution.closed:
-                    failure = "cancelled"
-                    break
-                if time.monotonic() >= job.deadline:
-                    failure = "event_deadline"
-                    break
-                if (
-                    job.approval_depth
-                    and job.approval_end is not None
-                    and time.monotonic() >= job.approval_end
-                ):
-                    failure = "approval_deadline"
-                    break
-                if job.active_used >= min(
-                    job.handler.timeout_seconds, 60 - job.execution.active_seconds
-                ):
-                    failure = "handler_deadline"
-                    break
-                try:
-                    job.context.check()
-                    for policy in job.inherited_policies:
-                        policy.check()
-                except Exception:  # noqa: BLE001 -- refuse
-                    failure = "authority_refused"
-                    break
-                await asyncio.wait({job.worker}, timeout=0.025)
-            if failure:
-                job.stop()
-                await job.suspend()
-                await asyncio.wait({job.worker}, timeout=5)
-            if job.worker.done():
-                try:
-                    accepted = job.worker.result()
-                except Exception:  # noqa: BLE001 -- refuse
-                    failure = failure or "hook_mcp_execution_failed"
+            accepted, failure = await self._wait_worker(job)
             if accepted is not None:
                 current, code = await self.engine._authority_status(
                     job.handler, job.event, "accept"
@@ -568,6 +592,23 @@ class MCPHookExecutor:
                 ):
                     accepted = None
                     failure = code or "authority_refused"
+                else:
+                    # Sequential continuation, never another MCP request. Keep
+                    # this actual check in the same worker/custody join so a
+                    # cancelled awaiter cannot release a running owner check.
+                    job.worker = asyncio.create_task(
+                        asyncio.to_thread(job.result_check)
+                    )
+                    checked, failure = await self._wait_worker(job)
+                    if (
+                        not checked
+                        or failure
+                        or job.cancel_event.is_set()
+                        or job.execution.closed
+                        or time.monotonic() >= job.deadline
+                    ):
+                        accepted = None
+                        failure = failure or "authority_refused"
             await job.suspend()
             job.execution.active_seconds += job.active_seconds
             if job.terminal():
@@ -601,6 +642,8 @@ class MCPHookExecutor:
             if self._reaper is None or self._reaper.done():
                 self._reaper = asyncio.create_task(self._reap())
             raise
+        finally:
+            job.result_check = None
 
     async def _reap(self):
         while self._jobs:

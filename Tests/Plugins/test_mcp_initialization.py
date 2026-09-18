@@ -344,3 +344,256 @@ async def test_executor_refuses_actual_changed_owned_mapping_before_dispatch(
         case.local.store.save_discovery_snapshot(case.profile_id, original)
         await engine.close()
     assert (await case.invoke("b")).ok
+
+
+@pytest.fixture
+async def owned_result_case(native_package, tmp_path, monkeypatch, request):
+    import Tests.Plugins.test_owned_mcp_tools as existing
+
+    # Preserve the actual owned fixture's transport/setup/custody; only the
+    # controlled peer's response body changes to a qualified native result.
+    response = '{"version":2,"decision":"pass","context":[{"text":"owned instructions","lifetime":"runtime"}]}'
+    monkeypatch.setattr(
+        existing,
+        "SERVER",
+        existing.SERVER.replace(
+            'result = {"content": [{"type": "text", "text": "ok"}]}',
+            f'result = {{"content": [{{"type": "text", "text": {response!r}}}]}}',
+        ),
+    )
+    async with contextlib.aclosing(
+        _owned_connection_fixture.__wrapped__(
+            native_package, tmp_path, monkeypatch, request
+        )
+    ) as cases:
+        async for case in cases:
+            yield case
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    ["none", "permission", "disable", "definition", "profile", "kill", "persona"],
+)
+async def test_owned_result_currentness_after_required_post_join(
+    owned_result_case, tmp_path, change
+):
+    import json
+
+    from Tests.Agents.test_hooks_v2_tool_pipeline import hook_command
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookContext
+    from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+    case = owned_result_case
+    case.release.touch()
+    assert (await case.pending).ok
+    provider = case.providers["a"]
+    name = provider.list_catalog()[0].name
+    tool = provider._entry_by_llm_name[name][0]
+    prompts = []
+    provider._approval_callback = lambda calls: prompts.extend(calls) or {
+        call.llm_name: "approve_once" for call in calls
+    }
+    marker, release = tmp_path / "post-entered", tmp_path / "post-release"
+    wait = f"while not Path({str(release)!r}).exists(): time.sleep(.01)"
+    post = hook_command(
+        "post",
+        event="PostToolUse",
+        required=True,
+        code=f"from pathlib import Path;import time;Path({str(marker)!r}).touch();exec({wait!r})",
+    )
+    handler = parse_handlers(
+        [
+            {
+                "id": "owned",
+                "event": "SessionStart",
+                "type": "mcp_tool",
+                "server": "local:" + case.profile_id,
+                "tool": "echo",
+                "required": True,
+                "effects": ["context"],
+                "require_context": True,
+            }
+        ]
+    )[0]
+    owner = HookBudgetOwner()
+    engine = HookEngine((handler, post), lambda *_: True, owner)
+    lifecycle = HookSessionLifecycle(engine, "session")
+    engine.mcp_executor.bind_context(
+        MCPHookContext(
+            case.registries["a"],
+            lifecycle,
+            lifecycle.scope_id,
+            "run-a",
+            "session",
+            frozenset([name]),
+            lambda: True,
+            lambda _definition: (),
+            workspace_id="a",
+        )
+    )
+    original = case.local.store.get_discovery_snapshot(case.profile_id)
+    original_persona = provider._persona_policy_provider
+    original_profile = provider._profile_id
+    before = len(case.calls.read_text().splitlines())
+    pending = asyncio.create_task(
+        engine.fire_async(lifecycle.event("SessionStart", data={"reason": "startup"}))
+    )
+    try:
+        for _ in range(300):
+            if marker.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert marker.exists() and not pending.done()
+        assert len(case.calls.read_text().splitlines()) == before + 1
+        assert len(prompts) == 1
+        if change == "permission":
+            case.unified.set_tool_state(tool.server_key, tool.name, "deny", tool=tool)
+        elif change == "disable":
+            await case.disable_a()
+        elif change == "definition":
+            changed = json.loads(json.dumps(original))
+            changed["tools"][0]["description"] = "changed during post wait"
+            case.local.store.save_discovery_snapshot(case.profile_id, changed)
+        elif change == "profile":
+            provider._profile_id = lambda: "changed-profile"
+        elif change == "kill":
+            case.unified.set_kill_switch(True)
+        elif change == "persona":
+
+            def broken_persona():
+                raise RuntimeError("configured persona unavailable")
+
+            provider._persona_policy_provider = broken_persona
+        release.touch()
+        outcome = await asyncio.wait_for(pending, 5)
+        assert bool(outcome.accepted) is (change == "none"), outcome
+        assert outcome.allowed is (change == "none")
+        assert len(prompts) == 1
+        assert len(case.calls.read_text().splitlines()) == before + 1
+        assert owner.snapshot()["tickets"] == owner.snapshot()["execution"] == 0
+    finally:
+        release.touch()
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        provider._persona_policy_provider = original_persona
+        provider._profile_id = original_profile
+        case.local.store.save_discovery_snapshot(case.profile_id, original)
+        case.unified.set_kill_switch(False)
+        if change == "permission":
+            case.unified.set_tool_state(tool.server_key, tool.name, "ask", tool=tool)
+        await engine.close()
+    assert (await case.invoke("b")).ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["cancel", "deadline"])
+async def test_result_currentness_worker_retains_same_ticket_until_actual_completion(
+    owned_result_case, action
+):
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookContext
+    from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+    case = owned_result_case
+    case.release.touch()
+    assert (await case.pending).ok
+    provider = case.providers["a"]
+    original = provider._result_currentness
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    checks = []
+
+    def capture(*args):
+        current = original(*args)
+
+        def check():
+            current()
+            checks.append(threading.get_ident())
+            if len(checks) == 2:
+                entered.set()
+                try:
+                    assert release.wait(12)
+                finally:
+                    finished.set()
+
+        return check
+
+    provider._result_currentness = capture
+    handler = parse_handlers(
+        [
+            {
+                "id": "owned",
+                "event": "SessionStart",
+                "type": "mcp_tool",
+                "server": "local:" + case.profile_id,
+                "tool": "echo",
+                "required": True,
+                "effects": ["context"],
+                "timeout_seconds": 1,
+            }
+        ]
+    )[0]
+    owner = HookBudgetOwner()
+    engine = HookEngine((handler,), lambda *_: True, owner)
+    lifecycle = HookSessionLifecycle(engine, "session")
+    engine.mcp_executor.bind_context(
+        MCPHookContext(
+            case.registries["a"],
+            lifecycle,
+            lifecycle.scope_id,
+            "run-a",
+            "session",
+            frozenset(row.name for row in provider.list_catalog()),
+            lambda: True,
+            lambda _definition: (),
+            workspace_id="a",
+        )
+    )
+    before = len(case.calls.read_text().splitlines())
+    pending = asyncio.create_task(
+        engine.fire_async(lifecycle.event("SessionStart", data={"reason": "startup"}))
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 4)
+        job = next(iter(engine.mcp_executor._jobs))
+        assert all(record.completed.is_set() for record in job.requests)
+        assert len(checks) == 2 and all(
+            thread != threading.get_ident() for thread in checks
+        )
+        if action == "cancel":
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        else:
+            outcome = await asyncio.wait_for(pending, 7)
+            assert not outcome.accepted and not outcome.allowed
+        for _ in range(200):
+            if owner.snapshot()["execution"] == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert owner.snapshot()["execution"] == 0
+        assert owner.snapshot()["tickets"] == 1 and engine.cleanup_pending
+        assert not job.worker.done() and not finished.is_set()
+        assert len(checks) == 2, "deadline/cancellation queued another check"
+        assert len(case.calls.read_text().splitlines()) == before + 1
+        release.set()
+        for _ in range(300):
+            if owner.snapshot()["tickets"] == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert finished.is_set() and job.worker.done()
+        assert owner.snapshot()["tickets"] == 0 and not engine.cleanup_pending
+    finally:
+        release.set()
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await engine.close()
+        provider._result_currentness = original
+    assert (await case.invoke("b")).ok

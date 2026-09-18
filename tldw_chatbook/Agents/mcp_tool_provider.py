@@ -44,7 +44,7 @@ import json
 import threading
 import time
 from collections.abc import Callable, Mapping
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -174,22 +174,35 @@ class MCPResultCapture:
         self._value = None
         self._closed = False
 
-    def _record(self, provider, raw, projected):
+    def _record(self, provider, raw, projected, current=None):
         with self._lock:
             if not self._closed and provider is self._provider:
                 if self._value is not None:
                     self._closed = True
                     self._value = None
                 else:
-                    self._value = (raw, projected)
+                    self._value = (raw, projected, current)
 
-    def consume(self, result: ToolResult) -> MCPToolResult | None:
-        """Consume once, only after the enclosing normal invoker has returned."""
+    def _take(self, result: ToolResult):
         with self._lock:
             value, self._value = self._value, None
             accepted = not self._closed and value is not None and value[1] is result
             self._closed = True
-            return value[0] if accepted else None
+            return value if accepted else None
+
+    def consume(self, result: ToolResult) -> MCPToolResult | None:
+        """Consume once, only after the enclosing normal invoker has returned."""
+        value = self._take(result)
+        return value[0] if value is not None else None
+
+    def consume_authorized(
+        self, result: ToolResult
+    ) -> tuple[MCPToolResult, Callable[[], None]] | None:
+        """Transfer exact result evidence and its original owner's read-only check."""
+        value = self._take(result)
+        return (
+            (value[0], value[2]) if value is not None and value[2] is not None else None
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -1442,6 +1455,60 @@ class MCPToolProvider:
                 f"MCPToolProvider: record_tool_decision failed for {tool.server_key}/{tool.name}: {exc}"
             )
 
+    def _check_result_permission(self, tool, args, decision):
+        """Read normal current gates without consuming a grant or prompting."""
+        from .persona_policy import PersonaToolPolicy, persona_floor_state
+
+        # Result acceptance requires a positive read; the ordinary display
+        # path's best-effort fallback cannot mint native effects on failure.
+        if self._service.get_kill_switch():
+            raise PermissionError("hook_mcp_permission_changed")
+        state = self._service.gate_tool_test(tool, **self._profile_kwargs())
+        if self._persona_policy_provider is not None:
+            policy = self._persona_policy_provider()
+            if policy is not None:
+                if not isinstance(policy, PersonaToolPolicy):
+                    raise PermissionError("hook_mcp_persona_unavailable")
+                state = persona_floor_state(state, policy, tool.name)
+        if state.state not in {"allow", "ask"}:
+            raise PermissionError("hook_mcp_permission_changed")
+        if (
+            decision == "allowed"
+            and state.state != "allow"
+            and not self._arg_rule_allows_safe(tool, args)
+        ):
+            raise PermissionError("hook_mcp_permission_changed")
+        if (
+            decision == APPROVED_SESSION_DECISION
+            and not self._is_session_approved_safe(tool)
+        ):
+            raise PermissionError("hook_mcp_permission_changed")
+        if decision not in {"allowed", "approved", APPROVED_SESSION_DECISION}:
+            raise PermissionError("hook_mcp_grant_unavailable")
+
+    def _result_currentness(self, tool, args, decision) -> Callable[[], None]:
+        """Bind the original call's identity; this check cannot execute a tool."""
+        from .automatic_work_runtime import current_automatic_work
+
+        original_context = copy_context()
+        profile = self._profile_kwargs()
+        arguments = json.dumps(args, sort_keys=True, allow_nan=False)
+        automatic_work = current_automatic_work()
+
+        def check():
+            if self._profile_kwargs() != profile:
+                raise PermissionError("hook_mcp_profile_changed")
+            if not any(
+                current_tool == tool
+                for current_tool, _state in self._entry_by_llm_name.values()
+            ):
+                raise PermissionError("hook_mcp_definition_changed")
+            if automatic_work is not None:
+                automatic_work.check()
+            self._check_result_permission(tool, json.loads(arguments), decision)
+
+        return lambda: original_context.copy().run(check)
+
     def _execute(self, tool: HubTool, args: dict, *, decision: str) -> ToolResult:
         """Run the tool via the main loop. NEVER raises, NEVER hangs unbounded.
 
@@ -1471,6 +1538,7 @@ class MCPToolProvider:
         execution_coroutine = None
         observation = MCPDispatchObservation()
         execution_completed = threading.Event()
+        result_currentness = None
         started = time.monotonic()
         typed_entry = getattr(self._service, "execute_hub_tool_result", None)
         execute = (
@@ -1480,6 +1548,8 @@ class MCPToolProvider:
             from .automatic_work_runtime import current_automatic_work
 
             automatic_work = current_automatic_work()
+            if _result_capture.get() is not None:
+                result_currentness = self._result_currentness(tool, args, decision)
             if automatic_work is not None:
                 # An approval may have arrived after this chain stopped.
                 automatic_work.check()
@@ -1601,13 +1671,13 @@ class MCPToolProvider:
                         error="bridge execution failed: mcp_execution_failed",
                     )
             return ToolResult(ok=False, error=error, dispatch_state=dispatch_state)
-        return self._format_result(raw_result)
+        return self._format_result(raw_result, current=result_currentness)
 
-    def _format_result(self, raw_result: Any) -> ToolResult:
+    def _format_result(self, raw_result: Any, *, current=None) -> ToolResult:
         projected = self._format_display_result(raw_result)
         capture = _result_capture.get()
         if capture is not None and isinstance(raw_result, MCPToolResult):
-            capture._record(self, raw_result, projected)
+            capture._record(self, raw_result, projected, current)
         return projected
 
     def _format_display_result(self, raw_result: Any) -> ToolResult:

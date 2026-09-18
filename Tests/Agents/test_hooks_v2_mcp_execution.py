@@ -1049,3 +1049,193 @@ async def test_mcp_executor_installs_both_required_post_events_before_either_set
             release.touch()
             await asyncio.wait_for(pending, 5)
             await engine.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "approval,change,phase",
+    [
+        ("allow", "none", "post"),
+        ("allow", "deny", "post"),
+        ("once", "none", "post"),
+        ("once", "deny", "post"),
+        ("allow", "ask", "post"),
+        ("once", "profile", "post"),
+        ("once", "definition", "post"),
+        ("once", "kill_unavailable", "post"),
+        ("once", "persona_unavailable", "post"),
+        ("allow", "deny", "accept"),
+        ("once", "none", "accept"),
+    ],
+)
+async def test_original_mcp_result_rechecks_normal_authority_after_post_and_at_acceptance(
+    tmp_path, approval, change, phase
+):
+    import threading
+
+    from Tests.Agents.test_hooks_v2_tool_pipeline import hook_command
+    from Tests.MCP.test_typed_tool_results import (
+        controlled_service,
+        controlled_stdio_client,
+    )
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookContext
+    from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    marker, release = tmp_path / "post-entered", tmp_path / "post-release"
+    accept_entered, accept_release = threading.Event(), threading.Event()
+    profile = ["default"]
+    prompts = []
+    initializer = parse_handlers(
+        [
+            {
+                "id": "init",
+                "event": "SessionStart",
+                "type": "mcp_tool",
+                "server": "local:fixture",
+                "tool": "fixture",
+                "required": True,
+                "effects": ["context"],
+                "require_context": True,
+                "input": {
+                    "payload": {
+                        "structuredContent": {
+                            "version": 2,
+                            "decision": "pass",
+                            "context": [
+                                {
+                                    "text": "revocable instructions",
+                                    "lifetime": "runtime",
+                                }
+                            ],
+                        }
+                    }
+                },
+            }
+        ]
+    )[0]
+    wait = f"while not Path({str(release)!r}).exists(): time.sleep(.01)"
+    post = hook_command(
+        "post",
+        event="PostToolUse",
+        required=True,
+        code=f"from pathlib import Path;import time;Path({str(marker)!r}).touch();exec({wait!r})",
+    )
+
+    def authority(handler, _event, stage):
+        if phase == "accept" and handler.id == "init" and stage == "accept":
+            accept_entered.set()
+            return accept_release.wait(5)
+        return True
+
+    async with controlled_stdio_client(tmp_path) as client:
+        service = await controlled_service(tmp_path, client)
+        tool = HubTool(
+            server_key="local:fixture",
+            server_label="fixture",
+            source="local",
+            name="fixture",
+            description="",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        if approval == "allow":
+            service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+
+        def approve(calls):
+            prompts.extend(calls)
+            return {call.llm_name: "approve_once" for call in calls}
+
+        provider = MCPToolProvider(
+            service=service,
+            main_loop=asyncio.get_running_loop(),
+            approval_callback=approve,
+            profile_id_provider=lambda: profile[0],
+        )
+        await provider.compose_catalog()
+        registry = ToolCatalogRegistry()
+        registry.register_provider(provider)
+        name = provider.list_catalog()[0].name
+        owner = HookBudgetOwner()
+        engine = HookEngine((initializer, post), authority, owner)
+        lifecycle = HookSessionLifecycle(engine, "session")
+        engine.mcp_executor.bind_context(
+            MCPHookContext(
+                registry,
+                lifecycle,
+                lifecycle.scope_id,
+                "reserved",
+                "session",
+                frozenset(row.name for row in registry.list_catalog()),
+                lambda: True,
+                lambda _definition: (),
+            )
+        )
+        pending = asyncio.create_task(
+            engine.fire_async(
+                lifecycle.event("SessionStart", data={"reason": "startup"})
+            )
+        )
+        try:
+            for _ in range(300):
+                if marker.exists():
+                    break
+                await asyncio.sleep(0.01)
+            assert marker.exists() and not pending.done()
+            assert len(service.execution_log.read_recent()) == 1
+            assert len(prompts) == (1 if approval == "once" else 0)
+            if phase == "accept":
+                release.touch()
+                assert await asyncio.to_thread(accept_entered.wait, 5)
+                assert not pending.done()
+            if change in {"deny", "ask"}:
+                service.set_tool_state(tool.server_key, tool.name, change, tool=tool)
+                assert service.gate_tool_test(tool).state == change
+                if change == "deny":
+                    control = await asyncio.to_thread(provider.invoke, name, {})
+                    assert not control.ok and control.dispatch_state == "not_started"
+            elif change == "profile":
+                profile[0] = "changed-profile"
+            elif change in {"kill_unavailable", "persona_unavailable"}:
+
+                def unavailable():
+                    raise RuntimeError("current configured authority unavailable")
+
+                if change == "kill_unavailable":
+                    service.get_kill_switch = unavailable
+                else:
+                    provider._persona_policy_provider = unavailable
+            elif change == "definition":
+                original, state = provider._entry_by_llm_name[name]
+                provider._entry_by_llm_name[name] = (
+                    replace(
+                        original,
+                        input_schema={"type": "object", "required": ["changed"]},
+                    ),
+                    state,
+                )
+            release.touch()
+            accept_release.set()
+            outcome = await asyncio.wait_for(pending, 5)
+            assert bool(outcome.accepted) is (change == "none"), outcome
+            assert outcome.allowed is (change == "none")
+            assert len(prompts) == (1 if approval == "once" else 0)
+            assert owner.snapshot()["tickets"] == owner.snapshot()["execution"] == 0
+            counter = await client.call_tool_result(
+                "fixture", "fixture", {"counter": True}
+            )
+            assert (
+                counter.content[0]["text"] == "2"
+            ), "acceptance replayed the original tool"
+        finally:
+            release.touch()
+            accept_release.set()
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            await engine.close()
