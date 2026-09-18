@@ -8,15 +8,16 @@ degraded copy, locked default workspace, and the tool-catalog degrade.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 import threading
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from textual.widgets import Button, OptionList, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_settings_configuration_hub import (
     DestinationHarness,
     _active_destination_screen,
@@ -25,8 +26,6 @@ from Tests.UI.test_settings_configuration_hub import (
     _visible_text,
     _wait_for_selector,
 )
-from tldw_chatbook.Workspaces.assistant_defaults import compose_posture_preview
-from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
 from tldw_chatbook.Tool_Packs.binding import (
     ToolProfileBindingReview,
     ToolProfileBindingSummary,
@@ -35,6 +34,8 @@ from tldw_chatbook.Tool_Packs.binding import (
 from tldw_chatbook.Widgets.Settings_Widgets.tool_pack_import_review import (
     ToolProfileFirstBindReviewModal,
 )
+from tldw_chatbook.Workspaces.assistant_defaults import compose_posture_preview
+from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
 
 
 class FakePersonaService:
@@ -50,7 +51,11 @@ class FakePersonaService:
         for persona in self._personas:
             if persona["id"] == persona_id:
                 if persona.get("deleted"):
-                    return {"id": persona_id, "deleted": True, "name": persona.get("name", "")}
+                    return {
+                        "id": persona_id,
+                        "deleted": True,
+                        "name": persona.get("name", ""),
+                    }
                 return dict(persona)
         return None
 
@@ -74,9 +79,7 @@ def _fake_unified_service(
     service = SimpleNamespace()
     if tool_names is not None:
         service.local_service = SimpleNamespace(
-            get_inventory=lambda: {
-                "tools": [{"name": name} for name in tool_names]
-            }
+            get_inventory=lambda: {"tools": [{"name": name} for name in tool_names]}
         )
     if store is not None:
         service.permission_store = store
@@ -93,9 +96,7 @@ def _stub_assistant_services(
     app.local_character_persona_service = FakePersonaService(personas or [])
     app.unified_mcp_service = _fake_unified_service(
         tool_names=tool_names,
-        store=FakePermissionStore(
-            permission_payload or {}, profiles or ["default"]
-        ),
+        store=FakePermissionStore(permission_payload or {}, profiles or ["default"]),
     )
 
 
@@ -105,7 +106,7 @@ class _FakeOptionSelected:
     def __init__(self, option: Any) -> None:
         self.option = option
 
-    def stop(self) -> None:  # noqa: D102 - event protocol
+    def stop(self) -> None:
         return None
 
 
@@ -125,7 +126,7 @@ def _first_bind_review(
         profile_id=str(defaults.tool_policy_profile_id),
         policy_digest="a" * 64,
         revision=3,
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
         summary=ToolProfileBindingSummary(
             global_fallback="ask",
             builtin_fallback="deny",
@@ -152,10 +153,7 @@ class _FirstBindGuard:
     @contextmanager
     def mutation_scope(self, **context: Any):
         defaults = context["intended_defaults"]
-        if (
-            defaults is not None
-            and defaults.tool_policy_profile_id == "research"
-        ):
+        if defaults is not None and defaults.tool_policy_profile_id == "research":
             token = context["confirmation_token"]
             if token is None:
                 raise ToolProfileConfirmationRequired()
@@ -252,13 +250,17 @@ def test_posture_preview_permission_resolution() -> None:
         }
     }
     # Named profile shadows the default profile, level by level.
-    lines = compose_posture_preview([], payload, "profile-b", ["search_notes", "write_note"])
+    lines = compose_posture_preview(
+        [], payload, "profile-b", ["search_notes", "write_note"]
+    )
     assert lines == [
         "search_notes: ask — permissions",
         "write_note: denied — permissions",
     ]
     # The default profile resolves search_notes at full fidelity.
-    lines = compose_posture_preview([], payload, "default", ["search_notes", "write_note"])
+    lines = compose_posture_preview(
+        [], payload, "default", ["search_notes", "write_note"]
+    )
     assert lines == [
         "search_notes: available — permissions",
         "write_note: denied — permissions",
@@ -290,7 +292,8 @@ async def _open_workspace_card(pilot, app, workspace_id: str):
 
 
 @pytest.mark.asyncio
-async def test_section_renders_effective_status_and_pickers() -> None:
+@private_profile_test
+async def test_section_renders_effective_status_and_pickers(request) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-a", name="Alpha WS")
@@ -313,24 +316,21 @@ async def test_section_renders_effective_status_and_pickers() -> None:
         screen = await _open_workspace_card(pilot, host, "ws-a")
 
         assert "Default assistant" in _visible_text(screen)
-        status = screen.query_one(
-            "#settings-workspace-assistant-status", Static
-        )
+        status = screen.query_one("#settings-workspace-assistant-status", Static)
         assert "Helper" in str(status.renderable)
         assert "read_only" in str(status.renderable)
         assert screen.query_one("#settings-workspace-persona-picker", OptionList)
         assert screen.query_one("#settings-workspace-profile-picker", OptionList)
         assert screen.query_one("#settings-workspace-memory-toggle", Button)
         assert screen.query_one("#settings-workspace-assistant-clear", Button)
-        preview = screen.query_one(
-            "#settings-workspace-posture-preview", Static
-        )
+        preview = screen.query_one("#settings-workspace-posture-preview", Static)
         # No persona policy rules and an empty store: global default is ask.
         assert "search_notes: ask — permissions" in str(preview.renderable)
 
 
 @pytest.mark.asyncio
-async def test_selecting_persona_then_press_applies_read_only() -> None:
+@private_profile_test
+async def test_selecting_persona_then_press_applies_read_only(request) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-b", name="Bravo WS")
@@ -363,7 +363,8 @@ async def test_selecting_persona_then_press_applies_read_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_write_requires_two_presses() -> None:
+@private_profile_test
+async def test_read_write_requires_two_presses(request) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-c", name="Charlie WS")
@@ -402,7 +403,8 @@ async def test_read_write_requires_two_presses() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_removes_default() -> None:
+@private_profile_test
+async def test_clear_removes_default(request) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-d", name="Delta WS")
@@ -424,7 +426,8 @@ async def test_clear_removes_default() -> None:
 
 
 @pytest.mark.asyncio
-async def test_degraded_persona_shows_reason_copy() -> None:
+@private_profile_test
+async def test_degraded_persona_shows_reason_copy(request) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-e", name="Echo WS")
@@ -445,7 +448,8 @@ async def test_degraded_persona_shows_reason_copy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_default_workspace_renders_locked_note_not_picker() -> None:
+@private_profile_test
+async def test_default_workspace_renders_locked_note_not_picker(request) -> None:
     app = _build_test_app()
     _stub_assistant_services(app, personas=[_persona("persona-1", "Helper")])
     host = DestinationHarness(app, "settings")
@@ -453,9 +457,7 @@ async def test_default_workspace_renders_locked_note_not_picker() -> None:
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
-        screen.query_one(
-            "#settings-workspace-row-workspace-default", Button
-        ).press()
+        screen.query_one("#settings-workspace-row-workspace-default", Button).press()
         await pilot.pause(0.2)
         assert not screen.query("#settings-workspace-persona-picker")
         assert not screen.query("#settings-workspace-memory-toggle")
@@ -466,7 +468,8 @@ async def test_default_workspace_renders_locked_note_not_picker() -> None:
 
 
 @pytest.mark.asyncio
-async def test_posture_preview_degrades_without_tool_catalog() -> None:
+@private_profile_test
+async def test_posture_preview_degrades_without_tool_catalog(request) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-f", name="Foxtrot WS")
@@ -488,7 +491,8 @@ async def test_posture_preview_degrades_without_tool_catalog() -> None:
 
 
 @pytest.mark.asyncio
-async def test_profile_selection_is_applied_with_default() -> None:
+@private_profile_test
+async def test_profile_selection_is_applied_with_default(request) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
     bootstrap = app._tool_pack_guard_bootstrap
@@ -526,11 +530,11 @@ async def test_profile_selection_is_applied_with_default() -> None:
             for index in range(profile_picker.option_count)
         ]
         profile_option = next(
-            option for option in options if getattr(option, "profile_id", None) == "profile-b"
+            option
+            for option in options
+            if getattr(option, "profile_id", None) == "profile-b"
         )
-        screen.handle_workspace_profile_selected(
-            _FakeOptionSelected(profile_option)
-        )
+        screen.handle_workspace_profile_selected(_FakeOptionSelected(profile_option))
         await pilot.pause(0.2)
 
         screen.query_one("#settings-workspace-memory-toggle", Button).press()
@@ -546,7 +550,9 @@ async def test_profile_selection_is_applied_with_default() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("replacement_workspace_id", ("ws-slow", "ws-new"))
+@private_profile_test
 async def test_slow_apply_does_not_clear_newer_staging(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     replacement_workspace_id: str,
 ) -> None:
@@ -575,9 +581,7 @@ async def test_slow_apply_does_not_clear_newer_staging(
     try:
         async with host.run_test(size=(180, 50)) as pilot:
             screen = await _open_workspace_card(pilot, host, "ws-slow")
-            picker = screen.query_one(
-                "#settings-workspace-persona-picker", OptionList
-            )
+            picker = screen.query_one("#settings-workspace-persona-picker", OptionList)
             screen.handle_workspace_persona_selected(
                 _FakeOptionSelected(picker.get_option_at_index(0))
             )
@@ -603,16 +607,17 @@ async def test_slow_apply_does_not_clear_newer_staging(
             await pilot.pause()
 
             assert screen._settings_workspace_assistant_pending is replacement
-            assert (
-                screen._settings_workspace_memory_armed == replacement_workspace_id
-            )
+            assert screen._settings_workspace_memory_armed == replacement_workspace_id
             assert registry.get_workspace("ws-slow").assistant_defaults is not None
     finally:
         release.set()
 
 
 @pytest.mark.asyncio
-async def test_imported_profile_first_bind_requires_current_review_and_exact_token() -> None:
+@private_profile_test
+async def test_imported_profile_first_bind_requires_current_review_and_exact_token(
+    request,
+) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-bind", name="Bind WS")
@@ -642,9 +647,7 @@ async def test_imported_profile_first_bind_requires_current_review_and_exact_tok
         profile = next(
             profile_picker.get_option_at_index(index)
             for index in range(profile_picker.option_count)
-            if getattr(
-                profile_picker.get_option_at_index(index), "profile_id", None
-            )
+            if getattr(profile_picker.get_option_at_index(index), "profile_id", None)
             == "research"
         )
         screen.handle_workspace_profile_selected(_FakeOptionSelected(profile))
@@ -669,13 +672,19 @@ async def test_imported_profile_first_bind_requires_current_review_and_exact_tok
 
 
 @pytest.mark.asyncio
-async def test_read_write_acknowledgement_remains_separate_from_first_bind_review() -> None:
+@private_profile_test
+async def test_read_write_acknowledgement_remains_separate_from_first_bind_review(
+    request,
+) -> None:
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-bind-rw", name="Bind RW")
     registry.set_assistant_defaults(
         "ws-bind-rw",
-        WorkspaceAssistantDefaults(assistant_id="persona-1"),
+        WorkspaceAssistantDefaults(
+            assistant_id="persona-1", persona_memory_mode="read_write"
+        ),
+        confirm_read_write=True,
     )
     registry.attach_tool_profile_guard(_FirstBindGuard())
     app.tool_pack_service = _FirstBindService()
@@ -695,9 +704,7 @@ async def test_read_write_acknowledgement_remains_separate_from_first_bind_revie
         profile = next(
             profile_picker.get_option_at_index(index)
             for index in range(profile_picker.option_count)
-            if getattr(
-                profile_picker.get_option_at_index(index), "profile_id", None
-            )
+            if getattr(profile_picker.get_option_at_index(index), "profile_id", None)
             == "research"
         )
         screen.handle_workspace_profile_selected(_FakeOptionSelected(profile))
@@ -709,8 +716,14 @@ async def test_read_write_acknowledgement_remains_separate_from_first_bind_revie
         assert "Confirm read_write?" in _visible_text(screen)
         assert not isinstance(host.screen, ToolProfileFirstBindReviewModal)
         assert (
+            registry.get_workspace(
+                "ws-bind-rw"
+            ).assistant_defaults.tool_policy_profile_id
+            is None
+        )
+        assert (
             registry.get_workspace("ws-bind-rw").assistant_defaults.persona_memory_mode
-            == "read_only"
+            == "read_write"
         )
 
         screen.query_one("#settings-workspace-memory-toggle", Button).press()
@@ -718,7 +731,7 @@ async def test_read_write_acknowledgement_remains_separate_from_first_bind_revie
         assert isinstance(host.screen, ToolProfileFirstBindReviewModal)
         assert (
             registry.get_workspace("ws-bind-rw").assistant_defaults.persona_memory_mode
-            == "read_only"
+            == "read_write"
         )
 
         await pilot.press("enter")

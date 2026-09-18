@@ -968,6 +968,17 @@ PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 # catalog module (imported at the top) so Settings and Console match.
 
 
+class _SettingsWorkspaceAssistantResult(Static):
+    """Recheck visibility when wrapping changes the receipt's measured height."""
+
+    def on_resize(self) -> None:
+        screen = self.screen
+        if isinstance(screen, SettingsScreen):
+            result = screen._settings_workspace_assistant_result
+            if result is not None:
+                screen._reveal_workspace_assistant_result(result)
+
+
 class _SettingsWorkspacePersonaOption(Option):
     """A persona row in the workspace "Default assistant" picker (Task 10).
 
@@ -3273,6 +3284,7 @@ class SettingsScreen(BaseAppScreen):
         #: section's render; cleared on apply/clear and whenever the pane
         #: recomposes for a different workspace.
         self._settings_workspace_assistant_pending: dict | None = None
+        self._settings_workspace_assistant_result: tuple[str, str, str] | None = None
         #: Task 10: the workspace id whose read_write memory press is
         #: awaiting the second (confirming) press. Any selection change
         #: or pane refresh disarms it.
@@ -20117,6 +20129,14 @@ class SettingsScreen(BaseAppScreen):
             memory_label, id="settings-workspace-memory-toggle", compact=True
         )
 
+        result = self._settings_workspace_assistant_result
+        yield _SettingsWorkspaceAssistantResult(
+            result[2] if result and result[0] == workspace_id else "",
+            id="settings-workspace-assistant-result",
+            classes="settings-status-row",
+            markup=False,
+        )
+
         store = self._settings_workspace_permission_store()
         profile_options: list[Option] = []
         highlight_profile = (pending or {}).get("profile_id") or (
@@ -20326,6 +20346,51 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
 
+    def _set_workspace_assistant_result(
+        self,
+        workspace_id: str,
+        text: str,
+        *,
+        control_id: str = "settings-workspace-memory-toggle",
+    ) -> None:
+        """Keep assistant feedback beside its control and on its own workspace."""
+        if self._settings_selected_workspace_id != workspace_id:
+            return
+        self._settings_workspace_assistant_result = (workspace_id, control_id, text)
+        self._set_static_text("#settings-workspace-assistant-result", text)
+        self.call_after_refresh(
+            self._reveal_workspace_assistant_result,
+            self._settings_workspace_assistant_result,
+        )
+
+    def _reveal_workspace_assistant_result(self, result: tuple[str, str, str]) -> None:
+        """Reveal a current receipt after its action, without moving newer focus."""
+        if (
+            not self.is_attached
+            or self._category_pane_swap_pending
+            or self._settings_workspace_assistant_result != result
+            or self._settings_selected_workspace_id != result[0]
+        ):
+            return
+        focused = self.app.focused
+        if not focus_is_on_screen(focused, self) or focused.id != result[1]:
+            return
+        try:
+            receipt = self.query_one("#settings-workspace-assistant-result")
+        except QueryError:
+            return
+        parent = receipt.parent
+        if parent is None or focused.parent is not parent:
+            return
+        siblings = list(parent.children)
+        if siblings.index(receipt) != siblings.index(focused) + 1:
+            parent.move_child(receipt, after=focused)
+            self.call_after_refresh(self._reveal_workspace_assistant_result, result)
+            return
+        # The guard runs after layout; don't queue another unguarded scroll.
+        if receipt.size:
+            receipt.scroll_visible(animate=False, immediate=True)
+
     def _set_settings_workspaces_result(self, text: str) -> None:
         self._settings_workspaces_result = text
         self._set_static_text("#settings-workspaces-result", text)
@@ -20348,6 +20413,12 @@ class SettingsScreen(BaseAppScreen):
         go stale or get wiped by the recompose.
         """
         self.mutate_reactive(SettingsScreen.active_category)
+        if self._settings_workspace_assistant_result is not None:
+            self._after_category_panes(
+                self.call_after_refresh,
+                self._reveal_workspace_assistant_result,
+                self._settings_workspace_assistant_result,
+            )
         if self._settings_workspace_folder_result is not None:
             # Recomposition can move the retained target before its first layout.
             self._after_category_panes(
@@ -24475,6 +24546,7 @@ class SettingsScreen(BaseAppScreen):
             return
         self._settings_selected_workspace_id = workspace_id
         self._settings_workspaces_result = ""
+        self._settings_workspace_assistant_result = None
         self._refresh_settings_workspaces_pane()
 
     @on(Checkbox.Changed, "#settings-workspaces-show-archived")
@@ -25039,7 +25111,9 @@ class SettingsScreen(BaseAppScreen):
             self._set_workspace_folder_result(str(exc), binding_id)
             return
         self._set_workspace_folder_result(
-            "Folder access: read-write." if allow_write else "Folder access: read-only.",
+            "Folder access: read-write."
+            if allow_write
+            else "Folder access: read-only.",
             binding_id,
         )
         self._refresh_settings_workspaces_pane()
@@ -25082,12 +25156,6 @@ class SettingsScreen(BaseAppScreen):
         persona_id = str(getattr(event.option, "persona_id", "") or "")
         if not workspace_id or not persona_id:
             return
-        pending = self._settings_workspace_assistant_pending
-        if pending is None or pending.get("workspace_id") != workspace_id:
-            pending = {
-                "workspace_id": workspace_id,
-                "profile_id": None,
-            }
         defaults = getattr(
             getattr(self.app_instance, "workspace_registry_service", None)
             and self.app_instance.workspace_registry_service.get_workspace(
@@ -25096,9 +25164,14 @@ class SettingsScreen(BaseAppScreen):
             "assistant_defaults",
             None,
         )
+        pending = self._settings_workspace_assistant_pending
+        if pending is None or pending.get("workspace_id") != workspace_id:
+            pending = {
+                "workspace_id": workspace_id,
+                "profile_id": getattr(defaults, "tool_policy_profile_id", None),
+            }
         keep_mode = (
-            pending.get("persona_id") == persona_id
-            and pending.get("memory_mode")
+            pending.get("persona_id") == persona_id and pending.get("memory_mode")
         ) or (
             getattr(defaults, "assistant_id", None) == persona_id
             and getattr(defaults, "persona_memory_mode", None)
@@ -25107,8 +25180,10 @@ class SettingsScreen(BaseAppScreen):
         pending["memory_mode"] = str(keep_mode or "read_only")
         self._settings_workspace_assistant_pending = pending
         self._settings_workspace_memory_armed = None
-        self._set_settings_workspaces_result(
-            "Persona staged — press the memory button to apply."
+        self._set_workspace_assistant_result(
+            workspace_id,
+            "Persona staged — press the memory button to apply.",
+            control_id="settings-workspace-persona-picker",
         )
         self._refresh_settings_workspaces_pane()
 
@@ -25124,16 +25199,23 @@ class SettingsScreen(BaseAppScreen):
             return
         pending = self._settings_workspace_assistant_pending
         if pending is None or pending.get("workspace_id") != workspace_id:
+            registry = getattr(self.app_instance, "workspace_registry_service", None)
+            record = registry.get_workspace(workspace_id) if registry else None
+            defaults = getattr(record, "assistant_defaults", None)
             pending = {
                 "workspace_id": workspace_id,
-                "persona_id": None,
-                "memory_mode": "read_only",
+                "persona_id": getattr(defaults, "assistant_id", None),
+                "memory_mode": getattr(defaults, "persona_memory_mode", "read_only"),
             }
         pending["profile_id"] = profile_id
         self._settings_workspace_assistant_pending = pending
         self._settings_workspace_memory_armed = None
-        self._set_settings_workspaces_result(
-            "Profile staged — select a persona and press apply."
+        self._set_workspace_assistant_result(
+            workspace_id,
+            "Profile staged — press apply."
+            if pending.get("persona_id")
+            else "Profile staged — select a persona and press apply.",
+            control_id="settings-workspace-profile-picker",
         )
         self._refresh_settings_workspaces_pane()
 
@@ -25178,8 +25260,8 @@ class SettingsScreen(BaseAppScreen):
         except ToolProfileConfirmationRequired:
             service = getattr(self.app_instance, "tool_pack_service", None)
             if service is None:
-                self._set_settings_workspaces_result(
-                    "Tool Profile bind unavailable · service_unavailable"
+                self._set_workspace_assistant_result(
+                    workspace_id, "Tool Profile bind unavailable · service_unavailable"
                 )
                 return
             try:
@@ -25202,8 +25284,9 @@ class SettingsScreen(BaseAppScreen):
                     ToolProfileFirstBindReviewModal(candidate, intended)
                 )
                 if confirmed is not candidate:
-                    self._set_settings_workspaces_result(
-                        "Tool Profile bind cancelled; no assistant defaults changed."
+                    self._set_workspace_assistant_result(
+                        workspace_id,
+                        "Tool Profile bind cancelled; no assistant defaults changed.",
                     )
                     return
                 if self._settings_selected_workspace_id != workspace_id:
@@ -25223,29 +25306,29 @@ class SettingsScreen(BaseAppScreen):
                     tool_profile_confirmation_token=token,
                 )
             except ToolPackError as exc:
-                self._set_settings_workspaces_result(
-                    f"Tool Profile bind failed · {exc.category}"
+                self._set_workspace_assistant_result(
+                    workspace_id, f"Tool Profile bind failed · {exc.category}"
                 )
                 return
             except WorkspaceRegistryServiceError as exc:
-                self._set_settings_workspaces_result(str(exc))
+                self._set_workspace_assistant_result(workspace_id, str(exc))
                 return
             except Exception:  # noqa: BLE001 - keep optional UI failure bounded
-                self._set_settings_workspaces_result(
-                    "Default assistant apply failed · operation_failed"
+                self._set_workspace_assistant_result(
+                    workspace_id, "Default assistant apply failed · operation_failed"
                 )
                 return
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_assistant_result(workspace_id, str(exc))
             return
         except ToolPackError as exc:
-            self._set_settings_workspaces_result(
-                f"Tool Profile bind failed · {exc.category}"
+            self._set_workspace_assistant_result(
+                workspace_id, f"Tool Profile bind failed · {exc.category}"
             )
             return
         except Exception:  # noqa: BLE001 - Settings must surface a stable outcome
-            self._set_settings_workspaces_result(
-                "Default assistant apply failed · operation_failed"
+            self._set_workspace_assistant_result(
+                workspace_id, "Default assistant apply failed · operation_failed"
             )
             return
         pending = self._settings_workspace_assistant_pending
@@ -25257,10 +25340,7 @@ class SettingsScreen(BaseAppScreen):
         )
         if pending is not None and pending_matches:
             self._settings_workspace_assistant_pending = None
-        if (
-            pending_matches
-            and self._settings_workspace_memory_armed == workspace_id
-        ):
+        if pending_matches and self._settings_workspace_memory_armed == workspace_id:
             self._settings_workspace_memory_armed = None
         if self._settings_selected_workspace_id != workspace_id or not pending_matches:
             return
@@ -25275,10 +25355,12 @@ class SettingsScreen(BaseAppScreen):
                     else None
                 )
                 if row is not None and row.first_bind_confirmation_required:
-                    status += " Saved, but marker cleanup failed; a later use may ask again."
+                    status += (
+                        " Saved, but marker cleanup failed; a later use may ask again."
+                    )
             except Exception:
                 pass
-        self._set_settings_workspaces_result(status)
+        self._set_workspace_assistant_result(workspace_id, status)
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-memory-toggle")
@@ -25314,7 +25396,9 @@ class SettingsScreen(BaseAppScreen):
             )
             if not persona_id:
                 self._settings_workspace_memory_armed = None
-                self._set_settings_workspaces_result("Select a persona first.")
+                self._set_workspace_assistant_result(
+                    workspace_id, "Select a persona first."
+                )
                 self._refresh_settings_workspaces_pane()
                 return
             self._settings_workspace_apply_assistant_default(
@@ -25331,9 +25415,10 @@ class SettingsScreen(BaseAppScreen):
             if str(pending.get("memory_mode", "read_only")) == "read_write":
                 self._settings_workspace_memory_armed = workspace_id
                 event.button.label = "Confirm read_write?"
-                self._set_settings_workspaces_result(
+                self._set_workspace_assistant_result(
+                    workspace_id,
                     "read_write memory widens what this persona may "
-                    "remember across sessions — press again to confirm."
+                    "remember across sessions — press again to confirm.",
                 )
             else:
                 self._settings_workspace_apply_assistant_default(
@@ -25345,7 +25430,10 @@ class SettingsScreen(BaseAppScreen):
                 )
             return
 
-        if defaults is not None and getattr(defaults, "assistant_kind", "") == "persona":
+        if (
+            defaults is not None
+            and getattr(defaults, "assistant_kind", "") == "persona"
+        ):
             if defaults.persona_memory_mode == "read_write":
                 self._settings_workspace_apply_assistant_default(
                     registry,
@@ -25357,13 +25445,16 @@ class SettingsScreen(BaseAppScreen):
             else:
                 self._settings_workspace_memory_armed = workspace_id
                 event.button.label = "Confirm read_write?"
-                self._set_settings_workspaces_result(
+                self._set_workspace_assistant_result(
+                    workspace_id,
                     "read_write memory widens what this persona may "
-                    "remember across sessions — press again to confirm."
+                    "remember across sessions — press again to confirm.",
                 )
             return
 
-        self._set_settings_workspaces_result("Select a persona below first.")
+        self._set_workspace_assistant_result(
+            workspace_id, "Select a persona below first."
+        )
 
     @on(Button.Pressed, "#settings-workspace-assistant-clear")
     def _settings_workspace_clear_assistant(self, event: Button.Pressed) -> None:
@@ -25378,11 +25469,17 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.clear_assistant_defaults(workspace_id)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_assistant_result(
+                workspace_id, str(exc), control_id="settings-workspace-assistant-clear"
+            )
             return
         self._settings_workspace_assistant_pending = None
         self._settings_workspace_memory_armed = None
-        self._set_settings_workspaces_result("Default assistant cleared.")
+        self._set_workspace_assistant_result(
+            workspace_id,
+            "Default assistant cleared.",
+            control_id="settings-workspace-assistant-clear",
+        )
         self._refresh_settings_workspaces_pane()
 
     @on(Input.Changed, "#settings-category-search")
