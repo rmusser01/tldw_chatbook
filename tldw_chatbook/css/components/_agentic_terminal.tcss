@@ -1040,6 +1040,16 @@ ListItem.personas-library-row.is-active.-highlight {
     min-width: $ds-size-24;
 }
 
+/* Compact rail content may be narrower than Button's default minimum.
+   Keep the full navigation label and count paint inside the pane; narrow
+   rows wrap naturally and the rail scrolls when more targets are present. */
+#mcp-hub-rail Button.mcp-rail-row {
+    min-width: $ds-size-0;
+    height: $ds-height-auto;
+    /* Button already supplies one line-pad cell on each side. */
+    padding: $ds-space-0;
+}
+
 #mcp-hub-rail .mcp-rail-heading {
     height: $ds-size-1;
     min-height: $ds-size-1;
@@ -1047,14 +1057,14 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 /* Keep the complete onramp and both source labels readable at 80 columns.
-   The compact rail has 12 content cells; SelectCurrent's default padding
-   leaves only four for Local/Server. Retain its border and arrow shape. */
+   The compact rail has 10 content cells beside its scrollbar. Remove
+   SelectCurrent's extra padding, retaining its border and arrow shape. */
 #mcp-purpose {
     height: $ds-height-auto;
 }
 
 #mcp-hub-grid.mcp-compact #mcp-rail-source > SelectCurrent {
-    padding: $ds-space-0 $ds-space-1;
+    padding: $ds-space-0;
 }
 
 /* Override border away from the generic `.is-active` rule (`border: round

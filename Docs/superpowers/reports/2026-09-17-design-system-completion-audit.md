@@ -161,3 +161,18 @@ and two Speech profile-setup failures are recorded, not hidden by the passing
 subset. Saved head 20de195131 failed only the two repaired inspector cases in
 Fast Lane; new-head remote verification is pending. Draft PR2707 and the broader
 component review remain open.
+
+
+TASK-32812 repairs the compact MCP rail clipping recorded by TASK-32796.
+[119 scoped cases and eight inspected native captures](../qa/2026-09-18-mcp-rail-navigation/README.md)
+qualify full All servers/Source paint, literal Unicode names/counts, exact row
+identity, ordinary-refresh and resize focus, and scrollbar transitions. Native
+shutdown and private data/default checks pass. All applicable remote checks on
+saved head 9a4ba3cef3 passed; fresh rail-head checks follow push.
+
+The broader CSS consolidation ratchet has **26 baseline offenders**, reproduced
+at 9a4ba3cef3 with unchanged test/offender source hashes. The destination-tour
+harness failed at profile setup (`raw_source_selection_changed`) before UI
+construction. Both are excluded from the scoped passing run and remain open;
+this repair does not close migration, all-destination or full-suite verification.
+The existing MCP/Tool Profile/component review bounds and PR2707 merge gate remain.

@@ -3318,6 +3318,14 @@ ListItem.personas-library-row.is-active.-highlight {
     min-width: $ds-size-24;
 }
 
+
+#mcp-hub-rail Button.mcp-rail-row {
+    min-width: $ds-size-0;
+    height: $ds-height-auto;
+
+    padding: $ds-space-0;
+}
+
 #mcp-hub-rail .mcp-rail-heading {
     height: $ds-size-1;
     min-height: $ds-size-1;
@@ -3330,7 +3338,7 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 #mcp-hub-grid.mcp-compact #mcp-rail-source > SelectCurrent {
-    padding: $ds-space-0 $ds-space-1;
+    padding: $ds-space-0;
 }
 
 

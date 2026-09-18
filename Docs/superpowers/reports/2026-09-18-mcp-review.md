@@ -16,24 +16,26 @@ Token migration alone does not qualify a complete workflow.
 | Shared local-tools master controls | TASK-32793, [177 distinct targeted cases and sixteen native captures](../qa/2026-09-18-mcp-master-settings/README.md) | Ordered saves across both entry points, activation/config identity, pending refresh/recreation, truthful partial receipts and shutdown; no runtime authority changes |
 | Tools filter and focus continuity | TASK-32794, [127 distinct targeted cases and native gallery](../qa/2026-09-18-mcp-tools-refresh/README.md) | Open menu/highlight, real pointer/keyboard admission, delayed filter/drill ordering, empty/recovery focus; controlled empty projection, no connected-server or execution qualification |
 | Workbench status lifetime | TASK-32795, [79 distinct targeted cases and eight native captures](../qa/2026-09-18-mcp-workbench-lifetime/README.md) | Pre-compose/prune polling, receipt replay across canvas/Workbench replacement, actual loading boundary; native navigation and saved receipts, no generic Select shutdown claim |
-
 | Quiet table redraw and inspector clearing | TASK-32796, [275 distinct targeted cases and eight native captures](../qa/2026-09-18-mcp-table-selection/README.md) | Publication-time row/cell suppression, table-scoped gesture dedup and quiet external drills; real keyboard refresh/navigation, no schema/execution qualification |
+| Compact rail navigation | TASK-32812, [119 targeted cases and eight native captures](../qa/2026-09-18-mcp-rail-navigation/README.md) | Full All servers/Source paint, literal Unicode names/counts, ordinary-refresh/resize focus, exact row identity and scrollbars; structural catalog replacement focus is not qualified |
 
 ## Remaining review
 
-- **Remote verification:** saved head 20de195131 Fast Lane failed only the two
-  inspector-clearing cases; TASK-32796 repairs both locally. New-head checks are
-  pending. [Evidence](../qa/2026-09-18-mcp-table-selection/README.md).
+- **Remote verification:** all applicable checks passed on saved head
+  9a4ba3cef3, including Fast Lane, UI latency, derived artifacts and all six GGUF
+  checks. Fresh rail-repair head verification follows push.
 - **Existing test debt:** four Audit CSS literal assertions fail against unchanged
   token-based CSS; two Speech harness cases failed during profile setup before UI
-  creation. Both boundaries are recorded in TASK-32796 evidence.
+  creation. Both boundaries are recorded in TASK-32796 evidence. TASK-32812 also
+  records 26 baseline CSS-consolidation ratchet offenders and an unqualified
+  destination-tour profile-setup failure; see its evidence and the broader ledger.
 - **Inspector refresh and execution:** selected tool definition/currentness,
   argument drafts across background refresh, diagnostic empty-state action routing,
   disconnected/stale tools, schema/raw arguments, execution and inspector recovery.
 - **Servers:** source transitions, add/edit/remove and connection lifecycles,
   built-in enable/expose controls, errors and recovery. Compact non-master gate
   labels still clip (visible in TASK-32793 captures). The All servers rail button
-  also clips at 80×24, explicitly recorded in TASK-32796 captures.
+  clipping recorded in TASK-32796 is repaired by TASK-32812 above.
 - **Audit and remaining permissions:** filtering, exact tool/event drilldown,
   restored roots, bulk actions, review/approval and connected-runtime journeys.
 
