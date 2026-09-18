@@ -1,0 +1,49 @@
+{
+  "task": "TASK-32779",
+  "base_commit": "f4d4adada006945cadfa68e26ecb1bc509f978a2",
+  "tests": {
+    "real_recovery_and_cancel": 6,
+    "terminal_publication_outcomes": 3,
+    "existing_tool_profiles": 30,
+    "service_and_publication": 47,
+    "distinct_total": 86
+  },
+  "native": {
+    "cells": 4,
+    "svg_captures": 12,
+    "terminal_captures": 12,
+    "inspected": 12,
+    "profile_root": "/private/tmp/tldw-32779-native-002",
+    "normal_shutdown": true,
+    "source_match": true
+  },
+  "existing_assertions_preserved": 137,
+  "ruff_baseline": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "before": 114,
+      "after": 114,
+      "introduced": []
+    },
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_pack_import_review.py": {
+      "before": 9,
+      "after": 9,
+      "introduced": []
+    },
+    "Tests/UI/test_settings_tool_profiles.py": {
+      "before": 3,
+      "after": 3,
+      "introduced": []
+    }
+  },
+  "new_test_and_runner_ruff": "pass",
+  "changed_method_and_small_files_format": "pass",
+  "backlog_guard": "4130 unique task files; Windows-compatible paths",
+  "diagnostic_inventory_guard": "pass",
+  "independent_review": "No introduced blocker; missing-parent correction also passed. Exact-snapshot assertion and three terminal-outcome cases added.",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "e4c89a73bbeb47ca5481104692fd2d8b1f04dafdfac8fcf63458a8c6fe3e7af6",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_pack_import_review.py": "30843d15759e26b9d45ea7d8fd887524f97841e2d6228d111fbcbaed3bbb1858",
+    "Tests/UI/test_settings_tool_profiles.py": "d15b7035d7462d888f88c733e798ae2f79deb8b95c0552303c22bc331c517c28",
+    "Tests/UI/test_tool_profile_export_recovery.py": "df1da423dfe9e608061f7011433a3bc2e5c06930fff021b108303fa967d3a977"
+  }
+}

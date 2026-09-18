@@ -516,7 +516,7 @@ class ToolPackExportReviewModal(
 
     def _policy_copy(self) -> str:
         payload = self.review.snapshot.payload
-        states = [rule.state for rule in payload.rules]
+        states = [rule.state for rule in payload.tools]
         lines = [
             f"Fallback · {item.authority}/{_plain_text(item.server_key)}: "
             f"{item.state.title()}"
