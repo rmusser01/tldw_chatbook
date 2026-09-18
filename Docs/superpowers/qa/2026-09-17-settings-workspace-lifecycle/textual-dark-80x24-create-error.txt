@@ -1,0 +1,24 @@
+   ▊                                                                      ▎   ▂▂
+ ‹ ▊   New Workspace                                                      ▎e ▾
+───▊                                                                      ▎───
+ Se▊  A workspace groups related Console conversations and can narrow     ▎al
+ Mo▊  retrieval through its RAG Scope. Every chat has private scratch     ▎
+┌──▊  space. Bind project folders here to add explicit project-file       ▎───
+│  ▊  access (read-only unless you grant write in Settings). Folder       ▎
+│  ▊  access is optional; add or change folders later in Settings ▸       ▎e
+│  ▊  Workspaces.                                                         ▎
+│  ▊                                                                      ▎
+│  ▊  Default                                                             ▎
+│  ▊  A workspace named Default already exists.                           ▎
+│  ▊  Default Persona · future new conversations                          ▎
+│  ▊  Create a workspace Agent                                        ▼   ▎
+│  ▊                                                                      ▎
+│  ▊                                                                      ▎
+│  ▊                                                                      ▎
+│  ▊  Existing, copied and moved conversations keep their Persona.        ▎
+│  ▊  Persona memory                                                      ▎  ▃▂▂
+│  ▊  Read only                                                       ▼   ▎
+│  ▊                                                                      ▎
+└──▊                                                                      ▎───
+   ▊                                                                      ▎
+  F▊  ▐X▌ Confirm this Persona may write memory across sessions           ▎

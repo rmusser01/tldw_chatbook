@@ -230,3 +230,16 @@ Button#skill-trust-bootstrap-submit {
     height: $ds-control-height;
     min-height: $ds-control-height;
 }
+
+/* TASK-32773: shared creation dialog follows the current theme. Keep token
+   rules in the app sheet: the consolidated widget-defaults source has its
+   own variable scope. Python retains the matching standalone fallback. */
+WorkspaceCreateModal #workspace-create-modal {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: tall $ds-control-edge;
+}
+
+WorkspaceCreateModal #workspace-create-error {
+    color: $ds-status-error-readable;
+}

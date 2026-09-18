@@ -1,0 +1,25 @@
+{
+  "pid": 32840,
+  "cells": [],
+  "runner_sha256": "443950323913b7ac132068f81d447ddb4d3ace859da31a1cce5ea78a77e85f4e",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "0dc9f306e64d0674f36f3908729ba430ab6c97ae9cdef2bb493f2596008d0ea9",
+    "tldw_chatbook/Widgets/workspace_create_modal.py": "641abb19470db186dfa0ea4e298bf901b616724b271c950131addb3f2aeb8767",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "fb0f7c3a6ed39c9933096838ac328da88f1bbcc82b2abac39923af75c865c1b4",
+    "tldw_chatbook/css/features/_settings.tcss": "60aa5ed477b868d548a68ed199a620b09a5b1e8ae791bc22ce1e9136e1445a99",
+    "tldw_chatbook/css/core/_variables.tcss": "bfd43f4b62fef469dda95c5e3e756d2146a98460c129038edb68ffcafb8cc442",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "a35bd13c6f608e450bef47f84689f810358e4d86c16c9ed3c0f0c08af66bb6bb",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "7a8e19f26a84f8a1b003cd596c67f1841278f2b90f9952306acafb2872d86271",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Startup",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-workspace-lifecycle/native_check.py\", line 106, in journey\n    await wait_for(lambda: getattr(app, \"_ui_ready\", False), \"Startup\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-workspace-lifecycle/native_check.py\", line 98, in wait_for\n    raise AssertionError(label)\nAssertionError: Startup\n",
+  "focused_id": null,
+  "focused_region": "None",
+  "app_run_returned": true
+}

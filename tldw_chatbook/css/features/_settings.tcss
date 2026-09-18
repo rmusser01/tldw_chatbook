@@ -818,6 +818,12 @@ Button.settings-category-group-toggle:focus {
     height: auto;
 }
 
+#settings-workspaces-list .settings-workspace-row {
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
 /* Keep the selected option and its adjacent staging receipt together even
    when the user's Persona/profile catalog is long. */
 #settings-workspace-persona-picker,

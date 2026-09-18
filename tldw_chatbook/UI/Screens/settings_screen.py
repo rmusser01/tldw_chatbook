@@ -972,6 +972,15 @@ class _SettingsWorkspaceMemoryConfirmation:
     intended_defaults: WorkspaceAssistantDefaults
 
 
+class _SettingsWorkspaceLifecycleResult(Static):
+    """Reveal lifecycle feedback after its text has wrapped."""
+
+    def on_resize(self) -> None:
+        screen = self.screen
+        if isinstance(screen, SettingsScreen):
+            screen._reveal_workspace_lifecycle_result()
+
+
 class _SettingsWorkspaceAssistantResult(Static):
     """Recheck visibility when wrapping changes the receipt's measured height."""
 
@@ -3280,6 +3289,7 @@ class SettingsScreen(BaseAppScreen):
         #: cached separately, so there is no stale-watcher state to wipe.
         self._settings_show_archived_workspaces: bool = False
         self._settings_workspaces_result = ""
+        self._settings_workspace_lifecycle_result: tuple[str, str, str] | None = None
         self._settings_workspace_folder_result: tuple[str, str | None, str] | None = None
         #: Task 10 (workspace assistant defaults): the staged-but-unapplied
         #: selection in the "Default assistant" section
@@ -3748,11 +3758,35 @@ class SettingsScreen(BaseAppScreen):
     def _restore_category_pane_focus(self, focus_id: str) -> None:
         """Re-focus ``focus_id`` if the rebuilt panes still contain it."""
         try:
-            self.query_one(f"#{focus_id}").focus()
+            control = self.query_one(f"#{focus_id}")
         except QueryError:
-            # No counterpart in the rebuilt pane (a different category, or a
-            # control this state does not render) -- leave focus alone.
-            pass
+            # A successful lifecycle action can remove its own control.
+            # Keep keyboard context on the next action in that same card.
+            replacement = {
+                "settings-workspace-set-active": "settings-workspace-archive",
+                "settings-workspace-unarchive": "settings-workspace-set-active",
+                "settings-workspace-archive-undo": "settings-workspace-set-active",
+            }.get(focus_id)
+            if replacement is None:
+                return
+            try:
+                control = self.query_one(f"#{replacement}")
+            except QueryError:
+                return
+        control.focus()
+
+        def reveal() -> None:
+            # The new pane has no final geometry when focus is restored.
+            # Reveal only if that same control still owns focus after layout.
+            if (
+                self.is_attached
+                and self.app.screen is self
+                and control.is_attached
+                and self.app.focused is control
+            ):
+                control.scroll_visible(animate=False, immediate=True)
+
+        self.call_after_refresh(reveal)
 
     def _after_category_panes(self, callback: Callable[..., object], *args) -> None:
         """Run ``callback`` once the new category's panes are on screen.
@@ -19801,9 +19835,10 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
         yield Static(
-            self._settings_workspaces_result,
+            "" if self._current_workspace_lifecycle_result() else self._settings_workspaces_result,
             id="settings-workspaces-result",
             classes="settings-status-row",
+            markup=False,
         )
         if getattr(self, "_settings_workspace_archive_receipt", None) is not None:
             with Horizontal(classes="settings-input-row"):
@@ -19879,6 +19914,7 @@ class SettingsScreen(BaseAppScreen):
                 yield Button(
                     "Restore workspace", id="settings-workspace-unarchive", compact=True
                 )
+                yield self._workspace_lifecycle_result_widget()
                 return
             with Horizontal(classes="settings-input-row"):
                 yield Input(
@@ -19896,6 +19932,7 @@ class SettingsScreen(BaseAppScreen):
                     "Set active", id="settings-workspace-set-active", compact=True
                 )
             yield Button("Archive", id="settings-workspace-archive", compact=True)
+            yield self._workspace_lifecycle_result_widget()
             yield from self._render_workspace_folder_bindings(
                 registry, record.workspace_id
             )
@@ -20299,9 +20336,64 @@ class SettingsScreen(BaseAppScreen):
         if receipt.size:
             receipt.scroll_visible(animate=False, immediate=True)
 
-    def _set_settings_workspaces_result(self, text: str) -> None:
+    def _current_workspace_lifecycle_result(self) -> tuple[str, str, str] | None:
+        result = self._settings_workspace_lifecycle_result
+        if (
+            result is not None
+            and result[0] == self._settings_selected_workspace_id
+            and result[2] == self._settings_workspaces_result
+        ):
+            return result
+        return None
+
+    def _workspace_lifecycle_result_widget(self) -> Static:
+        result = self._current_workspace_lifecycle_result()
+        return _SettingsWorkspaceLifecycleResult(
+            result[2] if result else "",
+            id="settings-workspace-lifecycle-result",
+            classes="settings-status-row",
+            markup=False,
+        )
+
+    def _reveal_workspace_lifecycle_result(self) -> None:
+        result = self._current_workspace_lifecycle_result()
+        if not result or not self.is_attached or self.app.screen is not self:
+            return
+        focused = self.app.focused
+        if not focus_is_on_screen(focused, self) or focused.id != result[1]:
+            return
+        try:
+            receipt = self.query_one("#settings-workspace-lifecycle-result")
+        except QueryError:
+            return
+        parent = receipt.parent
+        if parent is None:
+            return
+        anchor = focused
+        while anchor.parent is not parent:
+            anchor = anchor.parent
+            if anchor is None or anchor is self:
+                return
+        children = list(parent.children)
+        if children.index(receipt) != children.index(anchor) + 1:
+            parent.move_child(receipt, after=anchor)
+            self.call_after_refresh(self._reveal_workspace_lifecycle_result)
+            return
+        receipt.scroll_visible(animate=False, immediate=True)
+
+    def _set_settings_workspaces_result(
+        self, text: str, *, control_id: str | None = None
+    ) -> None:
         self._settings_workspaces_result = text
-        self._set_static_text("#settings-workspaces-result", text)
+        workspace_id = self._settings_selected_workspace_id
+        self._settings_workspace_lifecycle_result = (
+            (workspace_id, control_id, text) if workspace_id and control_id else None
+        )
+        local = self._current_workspace_lifecycle_result()
+        self._set_static_text("#settings-workspaces-result", "" if local else text)
+        self._set_static_text("#settings-workspace-lifecycle-result", text if local else "")
+        if local:
+            self.call_after_refresh(self._reveal_workspace_lifecycle_result)
 
     def _discard_workspace_memory_confirmation(self) -> None:
         if self._settings_workspace_memory_armed is not None:
@@ -20326,6 +20418,10 @@ class SettingsScreen(BaseAppScreen):
         go stale or get wiped by the recompose.
         """
         self.mutate_reactive(SettingsScreen.active_category)
+        if self._current_workspace_lifecycle_result() is not None:
+            self._after_category_panes(
+                self.call_after_refresh, self._reveal_workspace_lifecycle_result
+            )
         if self._settings_workspace_assistant_result is not None:
             self._after_category_panes(
                 self.call_after_refresh,
@@ -24555,9 +24651,13 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.rename_workspace(workspace_id, rename_input.value)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_settings_workspaces_result(
+                str(exc), control_id="settings-workspace-rename-apply"
+            )
             return
-        self._settings_workspaces_result = ""
+        self._set_settings_workspaces_result(
+            "Workspace renamed.", control_id="settings-workspace-rename-apply"
+        )
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-set-active")
@@ -24572,9 +24672,13 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.set_active_workspace(workspace_id)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_settings_workspaces_result(
+                str(exc), control_id="settings-workspace-set-active"
+            )
             return
-        self._settings_workspaces_result = ""
+        self._set_settings_workspaces_result(
+            "This workspace is now active.", control_id="settings-workspace-archive"
+        )
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-archive")
@@ -24713,7 +24817,7 @@ class SettingsScreen(BaseAppScreen):
 
             dialog = ConfirmationDialog(
                 title="Archive workspace?",
-                message=(
+                message=Text(
                     f"Archive {record.name}? Its conversations stay saved and "
                     "remain visible in Library; the workspace disappears from "
                     "the active switcher list and the Console browser. Recover it using Show archived."
@@ -24823,6 +24927,10 @@ class SettingsScreen(BaseAppScreen):
             if _visible():
                 if self._settings_selected_workspace_id == selected_id:
                     self._settings_selected_workspace_id = restored.workspace_id
+                    self._set_settings_workspaces_result(
+                        self._settings_workspaces_result,
+                        control_id="settings-workspace-set-active",
+                    )
                 self._refresh_settings_workspaces_pane()
 
         self.app.run_worker(_undo(), group="settings-workspace-undo", exclusive=True)
@@ -24861,13 +24969,16 @@ class SettingsScreen(BaseAppScreen):
                 )
             except WorkspaceRegistryServiceError as exc:
                 if _current():
-                    self._set_settings_workspaces_result(str(exc))
+                    self._set_settings_workspaces_result(
+                        str(exc), control_id="settings-workspace-unarchive"
+                    )
                 return
             except Exception:
                 logger.exception("Unable to restore Settings workspace")
                 if _current():
                     self._set_settings_workspaces_result(
-                        "Workspace could not be restored. Retry Restore."
+                        "Workspace could not be restored. Retry Restore.",
+                        control_id="settings-workspace-unarchive",
                     )
                 return
             if (
@@ -24878,9 +24989,10 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_workspace_archive_receipt = None
             if not _current():
                 return
-            self._settings_workspaces_result = (
+            self._set_settings_workspaces_result(
                 f"Restored {restored.name}. Active workspace unchanged; "
-                "choose Set active to switch."
+                "choose Set active to switch.",
+                control_id="settings-workspace-set-active",
             )
             self._refresh_settings_workspaces_pane()
 

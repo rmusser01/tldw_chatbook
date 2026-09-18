@@ -2969,8 +2969,9 @@
         width: 72;
         height: auto;
         max-height: 32;
-        border: tall gray;
-        background: black;
+        border: tall $surface-lighten-2;
+        background: $surface;
+        color: $text;
         padding: 1 2;
     }
 

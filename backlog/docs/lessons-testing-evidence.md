@@ -1,5 +1,15 @@
 # Lessons: what counts as evidence a change works
 
+## App tokens do not cross consolidated widget stylesheet scopes
+
+**TASK-32773, 2026-09-17.** Native light-theme review exposed a black
+WorkspaceCreateModal surface. Moving `$ds-*` references into its `BUNDLED_CSS`
+then failed native startup: the consolidated widget stylesheet did not share
+the app token definitions. Keep the token-backed override in the app dialog
+module and a matching Textual theme-variable fallback in the widget. Rebuild
+the generated sheets and verify actual startup and computed dark/light colors;
+a valid token name in another stylesheet does not prove it resolves here.
+
 ## A workspace ID does not identify what a confirmation approved
 
 **TASK-32770, 2026-09-17.** The memory toggle stored only the workspace ID
