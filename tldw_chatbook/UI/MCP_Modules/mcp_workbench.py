@@ -2671,6 +2671,7 @@ class MCPWorkbench(Container):
         await self.query_one(MCPPermissionsMode).update_server_profiles(
             await self._server_governance_profiles(service, refresh=refresh_governance)
         )
+        canvas.call_after_refresh(canvas.reveal_focused_control)
 
     def _cascade_for_tool(
         self, tool: HubTool

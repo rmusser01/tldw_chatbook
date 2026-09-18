@@ -1,0 +1,48 @@
+                                                                                                         ╭────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││  Console agents run with this profile; persona policy may still floor     ││                                             │
+│ Source                                     ││  some tools to Ask.                                                       ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  Review restored MCP roots                                                ││  Why · Off — enable it to let MCP clients   │
+│ ▊  Local                              ▼  ▎ ││ Restored permissions stay inactive until reviewed. Review creates fresh ▂ ││  use chatbook's tools.                      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││ Ask/local defaults; connecting and granting tools remain separate         ││  Add server                                 │
+│                                            ││ actions.                                                                  ││  get_current_datetime — Built-in (agent     │
+│ Servers                                    ││  Block all tool calls in chat: Off ▸                                      ││  runtime)                                   │
+│  ◦ off (opt-in) · ⌂ built-in               ││  Also blocks the app's own built-in tools (calculator, date/time, file    ││  Permission: Allow                          │
+│     All servers                            ││  and note tools).                                                         ││                                             │
+│   ◦ ⌂ tldw_chatbook (built-in)             ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││  From this tool's override.                 │
+│                                            ││ ▊  Filter tool or server…                                              ▎  ││                                             │
+│                                            ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││    Advanced…                                │
+│                                            ││ ol                                                   State    Tags        ││                                             │
+│                                            ││ watchlists_get_operation_status                      Ask      —           ││                                             │
+│                                            ││ watchlists_get_operations_status                     Ask      —           ││                                             │
+│                                            ││ watchlists_list_briefings                            Ask      —           ││                                             │
+│                                            ││ watchlists_list_collections                          Ask      —           ││                                             │
+│                                            ││ watchlists_list_sources                              Ask      —           ││                                             │
+│                                            ││ watchlists_search_items                              Ask      —           ││                                             │
+│                                            ││ watchlists_set_briefing_schedule                     Ask      mutates     ││                                             │
+│                                            ││ watchlists_update_collection_sources                 Ask      mutates     ││                                             │
+│                                            ││ web_crawl                                            Ask      —           ││                                             │
+│                                            ││ web_fetch                                            Ask      —           ││                                             │
+│                                            ││ web_search                                           Ask      —           ││                                             │
+│                                            ││ rver default — Virtual CLI (read-only)               Ask •    —           ││                                             │
+│                                            ││ cat                                                  Ask      —           ││                                             │
+│                                            ││ find                                                 Ask      —           ││                                             │
+│                                            ││ git_blame                                            Ask      —           ││                                             │
+│                                            ││ git_branches                                         Ask      —           ││                                             │
+│                                            ││ git_diff                                             Ask      —       ▆▆  ││                                             │
+│                                            ││ git_log                                              Ask      —           ││                                             │
+│                                            ││ git_status                                           Ask      —           ││                                             │
+│                                            ││ grep                                                 Ask      —           ││                                             │
+│                                            ││ ls                                                   Ask      —         ▃ ││                                             │
+│                                            ││ stat                                                 Ask      —           ││                                             │
+│                                            ││ rver default — Built-in (agent runtime)              Ask •    —           ││                                             │
+│                                            ││ calculator                                           Allow •  —           ││                                             │
+│                                            ││ get_current_datetime                                 Allow •  —           ││                                             │
+│                                            ││   ▉                                                                       ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | space cycle permission | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

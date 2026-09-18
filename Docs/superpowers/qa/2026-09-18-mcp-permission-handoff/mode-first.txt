@@ -1,0 +1,134 @@
+bringing up nodes...
+bringing up nodes...
+
+../Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+  warnings.warn(
+...................................F........................           [100%]
+=================================== FAILURES ===================================
+________ test_perm_table_height_rule_pinned_in_bundle_source_and_bundle ________
+[gw0] darwin -- Python 3.12.11 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1865/popen-gw0/test_perm_table_height_rule_pi0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ________ test_perm_table_height_rule_pinned_in_bundle_source_and_bundle ________
+E
+E   request = <FixtureRequest for <Coroutine test_perm_table_height_rule_pinned_in_bundle_source_and_bundle>>
+E
+E       @private_profile_test
+E       def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle(request) -> None:
+E           """`MCPPermissionsMode.BUNDLED_CSS` gives `#mcp-perm-table` the same
+E           `height: auto; max-height: 70%;` discipline T7 (P3 UX batch) gave
+E           `#mcp-tools-table`/`#mcp-servers-table` -- so it hugs its own row count
+E           instead of ballooning to fill the canvas and stranding the
+E           policy-preview strip below it. Pins the matching bundle-layer copy
+E           (added in lockstep, T9) in both the bundle-source file and the
+E           generated bundle (`tldw_cli_modular.tcss`) -- the latter also proves
+E           `build_css.py` was re-run after the source edit, mirroring
+E           `test_tools_table_height_rule_pinned_in_bundle_source_and_bundle` in
+E           test_mcp_tools_mode.py and `test_servers_table_height_rule_pinned_in_
+E           bundle_source_and_bundle` in test_mcp_servers_mode.py."""
+E           agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+E           bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+E
+E           for text, label in (
+E               (agentic_terminal, "_agentic_terminal.tcss"),
+E               (bundled_stylesheet, "tldw_cli_modular.tcss"),
+E           ):
+E               selector = "#mcp-perm-table {"
+E               start = text.find(selector)
+E               assert start != -1, f"{label} is missing {selector!r}"
+E               end = text.find("}", start)
+E               block = text[start:end]
+E               assert "height: auto;" in block, (
+E                   f"{label}'s {selector!r} block is missing 'height: auto;'"
+E               )
+E   >           assert "max-height: 70%;" in block, (
+E                   f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+E               )
+E   E           AssertionError: _agentic_terminal.tcss's '#mcp-perm-table {' block is missing 'max-height: 70%;'
+E   E           assert 'max-height: 70%;' in '#mcp-perm-table {\n    height: auto;\n    max-height: $ds-agentic-mcp-table-cap;\n'
+E
+E   Tests/UI/test_mcp_permissions_mode.py:1085: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 04:27:54.315 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E   2026-09-18 04:27:54.354 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6134 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1865/popen-gw0/test_perm_table_height_rule_pi0/private-profile-process/profile/config/config.toml
+E   2026-09-18 04:27:54.355 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6163 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1865/popen-gw0/test_perm_table_height_rule_pi0/private-profile-process/profile/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+E   2026-09-18 04:27:54.357 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6172 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1865/popen-gw0/test_perm_table_height_rule_pi0/private-profile-process/profile/config/config.toml
+E   2026-09-18 04:27:54.357 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6239 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+E   2026-09-18 04:27:54.357 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6243 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E   2026-09-18 04:27:54.368 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-18 04:27:54.368 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-18 04:27:54.369 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-18 04:27:54.370 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-18 04:27:54.405 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1865/popen-gw0/test_perm_table_height_rule_pi0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-18 04:27:54.406 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-18 04:27:54.406 | INFO     | tldw_chatbook.config:<module>:9753 - Default API Endpoint (from config.py global scope): openai
+E   2026-09-18 04:27:54.406 | DEBUG    | tldw_chatbook.config:<module>:9776 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E   2026-09-18 04:27:54.494 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-18 04:27:54.563 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-18 04:27:54.633 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 04:27:54.640 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-18 04:27:54.642 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-18 04:27:54.766 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-18 04:27:55.024 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   =============================== warnings summary ===============================
+E   Tests/UI/test_mcp_permissions_mode.py::test_perm_table_height_rule_pinned_in_bundle_source_and_bundle
+E     /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+E       warnings.warn(
+E
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1865/popen-gw0/test_perm_table_height_rule_pi0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_permissions_mode.py::test_perm_table_height_rule_pinned_in_bundle_source_and_bundle
+E   1 failed, 1 warning in 1.17s
+=============================== warnings summary ===============================
+Tests/UI/test_mcp_permissions_mode.py::test_update_matrix_sets_kill_switch_label_without_posting_a_toggle
+Tests/UI/test_mcp_permissions_mode.py::test_matrix_events_capture_exact_profile_context
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+2.23s call     Tests/UI/test_mcp_permissions_mode.py::test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css
+2.20s call     Tests/UI/test_mcp_permissions_mode.py::test_legend_and_breadcrumb_are_fully_readable_at_100_columns
+2.11s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_input_has_nonzero_geometry_with_bundled_css
+2.01s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_text_input_has_nonzero_geometry_with_bundled_css
+2.01s call     Tests/UI/test_mcp_permissions_mode.py::test_clearing_the_filter_after_narrowing_restores_every_row
+2.00s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target
+1.98s call     Tests/UI/test_mcp_permissions_mode.py::test_space_after_filter_cycles_the_row_actually_under_the_cursor
+1.98s call     Tests/UI/test_mcp_permissions_mode.py::test_user_press_toggles_off_when_currently_on
+1.97s call     Tests/UI/test_mcp_permissions_mode.py::test_enter_on_global_row_posts_row_selected_with_no_tool_name
+1.96s call     Tests/UI/test_mcp_permissions_mode.py::test_enter_on_server_row_posts_row_selected_with_no_tool_name
+1.96s call     Tests/UI/test_mcp_permissions_mode.py::test_user_press_posts_kill_switch_toggled_exactly_once
+1.96s call     Tests/UI/test_mcp_permissions_mode.py::test_update_server_profiles_transitions_from_present_to_absent
+1.95s call     Tests/UI/test_mcp_permissions_mode.py::test_update_server_profiles_defensive_reads_handle_missing_and_malformed_entries
+1.94s call     Tests/UI/test_mcp_permissions_mode.py::test_space_with_no_rows_is_a_noop
+1.94s call     Tests/UI/test_mcp_permissions_mode.py::test_enter_on_tool_row_posts_row_selected_with_tool_fields
+1.93s call     Tests/UI/test_mcp_permissions_mode.py::test_space_on_tool_row_posts_next_state_per_cycle_helper
+1.93s call     Tests/UI/test_mcp_permissions_mode.py::test_matrix_events_capture_exact_profile_context
+1.93s call     Tests/UI/test_mcp_permissions_mode.py::test_update_matrix_sets_kill_switch_label_without_posting_a_toggle
+1.92s call     Tests/UI/test_mcp_permissions_mode.py::test_space_on_global_row_never_posts_none
+1.92s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_moves_cursor_to_matching_tool_row
+1.91s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_is_case_insensitive
+1.91s call     Tests/UI/test_mcp_permissions_mode.py::test_space_on_server_row_allows_cycling_back_to_inherit
+1.91s call     Tests/UI/test_mcp_permissions_mode.py::test_tool_policy_selector_renders_untrusted_profile_ids_as_plain_text
+1.91s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_matching_across_two_servers_keeps_both_pinned_server_rows
+1.90s call     Tests/UI/test_mcp_permissions_mode.py::test_cursor_row_key_survives_a_refilter_that_still_shows_it
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_permissions_mode.py::test_perm_table_height_rule_pinned_in_bundle_source_and_bundle
+1 failed, 61 passed, 2 warnings in 60.57s (0:01:00)

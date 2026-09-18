@@ -500,6 +500,8 @@
         width: 1fr;
         height: 100%;
         min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     /* Task 4 (MCP Hub Phase 6): the free-text filter Input sits directly
     above the matrix table -- this canvas has exactly one filter control

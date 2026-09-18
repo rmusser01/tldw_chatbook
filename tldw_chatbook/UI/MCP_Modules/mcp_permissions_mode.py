@@ -22,7 +22,8 @@ from typing import Any
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
+from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
@@ -401,7 +402,7 @@ def _tool_column_text(row: PermRow) -> str:
     return f"{_TOOL_ROW_INDENT}{row.tool_name or ''}"
 
 
-class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
+class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
     """Canvas for the Permissions mode: kill switch, matrix, policy preview."""
 
     BUNDLED_CSS = """
@@ -409,6 +410,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         width: 1fr;
         height: 100%;
         min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     /* Task 4 (MCP Hub Phase 6): the free-text filter Input sits directly
     above the matrix table -- this canvas has exactly one filter control
@@ -675,6 +678,29 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
     async def on_mount(self) -> None:
         table = self.query_one("#mcp-perm-table", DataTable)
         table.add_columns(*_TABLE_COLUMNS)
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def on_resize(self, event: Resize) -> None:
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def reveal_focused_control(self) -> None:
+        """Reveal the current child after layout without overriding newer focus."""
+        if (
+            not self.is_attached
+            or not self.display
+            or self.app.screen is not self.screen
+        ):
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            focused.scroll_visible(animate=False, immediate=True)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "cycle_state":
+            return self.app.focused is self.query_one("#mcp-perm-table", DataTable)
+        return super().check_action(action, parameters)
 
     # -- data -----------------------------------------------------------
 

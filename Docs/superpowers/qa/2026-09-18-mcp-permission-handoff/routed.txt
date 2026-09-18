@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+22.54s call     Tests/UI/test_mcp_permissions_handoff.py::test_edit_routes_to_visible_current_profile_and_keyboard_rows[size0-textual-dark]
+22.19s call     Tests/UI/test_mcp_permissions_handoff.py::test_edit_routes_to_visible_current_profile_and_keyboard_rows[size0-textual-light]
+17.78s call     Tests/UI/test_mcp_permissions_handoff.py::test_edit_routes_to_visible_current_profile_and_keyboard_rows[size1-textual-dark]
+17.26s call     Tests/UI/test_mcp_permissions_handoff.py::test_edit_routes_to_visible_current_profile_and_keyboard_rows[size1-textual-light]
+
+(8 durations < 1s hidden.)
+4 passed in 81.59s (0:01:21)

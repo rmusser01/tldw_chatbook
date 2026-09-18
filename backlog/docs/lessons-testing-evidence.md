@@ -4212,6 +4212,14 @@ should have.
 
 ## `Widget.focus()` is deferred — a same-handler capture of `app.focused` sees the old widget
 
+**TASK-32785, 2026-09-18.** The real Settings→MCP Edit route focused a table
+below its canvas clip at 80×24; standalone profile-selection checks missed it.
+Adding overflow alone still failed all four size/theme cases because focus
+preceded final matrix/profile layout. Revealing the current focused descendant
+after focus, resize and completed sync repaired the route. A guarded callback
+must also preserve newer mode/dialog ownership; reading the now-focusable
+canvas must not inherit Space permission mutation from its table.
+
 **TASK-32783, 2026-09-18.** The Tool Profile Bind continuation called `focus()`
 then a focus-guarded receipt reveal. Initial mounted and native journeys passed
 because a later receipt resize retried the reveal. Holding the valid callback
