@@ -1,11 +1,11 @@
 ---
 id: TASK-32685
 title: Invoke MCP-backed hooks through normal tool authority
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:29'
-updated_date: '2026-09-18 02:12'
+updated_date: '2026-09-18 02:42'
 labels:
   - plugins
   - implementation
@@ -28,10 +28,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 MCP hooks use explicit typed input templates, current owned definitions and normal schema/profile/approval checks on already-connected eligible servers.
-- [ ] #2 Error-first result normalization accepts only the specified structured, single-text, exact mirrored or empty forms and rejects ambiguous fallback, extra blocks and oversized metadata.
-- [ ] #3 Provisional initialization resolves independently eligible dependencies and rejects static/dynamic cycles without dispatch or guard bypass.
-- [ ] #4 Approval observations cannot recurse into prompts; teardown cannot connect or request approval; nested suspension respects resource tickets and causal depth four with cancellation controls.
+- [x] #1 MCP hooks use explicit typed input templates, current owned definitions and normal schema/profile/approval checks on already-connected eligible servers.
+- [x] #2 Error-first result normalization accepts only the specified structured, single-text, exact mirrored or empty forms and rejects ambiguous fallback, extra blocks and oversized metadata.
+- [x] #3 Provisional initialization resolves independently eligible dependencies and rejects static/dynamic cycles without dispatch or guard bypass.
+- [x] #4 Approval observations cannot recurse into prompts; teardown cannot connect or request approval; nested suspension respects resource tickets and causal depth four with cancellation controls.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -72,4 +72,16 @@ Reason: Implement the approved MCP hook invocation/result/causality and provisio
 18. Fix1 addresses initial review Important I1 at BASE f344d461b97e60a59f356b253cea2dc321a93e5a: an MCP permission revoked while required post hooks wait must be revalidated through the existing normal capability owner after settlement and at effect acceptance. Refusal discards staged effects and fails the required containing event. Preserve the actual call's original grant/approval/definition identity; do not dispatch again, replay, prompt again or borrow another invocation's approval. Begin with hooks_v2/mcp_executor.py and Agents/mcp_tool_provider.py plus Tests/Agents/test_hooks_v2_mcp_execution.py and Tests/Plugins/test_mcp_initialization.py; Tests/Chat/test_hooks_v2_lifecycle.py may cover the actual approval/teardown boundary if affected. These are already authorized task paths. Any additional owner/source/test path requires a concrete proposal and CLI recording before edits. Preserve original raw capture, ordinary coroutine transfer/close, current owned request custody, original deadlines/caps, and required nested context rollback. Use the independent controlled-stdio review probe and unchanged-authority positive control as actual RED, then permanent same-entry regression(s); include successful unchanged one-time approval and no re-prompt/replay when the revalidation interface touches them. Final affected verification covers Tests/Agents/test_hooks_v2_mcp_results.py, Tests/Agents/test_hooks_v2_mcp_execution.py, Tests/Plugins/test_mcp_initialization.py, Tests/Agents/test_mcp_tool_provider.py, Tests/Agents/test_hooks_v2_post_checkpoints.py, Tests/Chat/test_hooks_v2_lifecycle.py and Tests/Plugins/test_owned_mcp_tools.py, plus unwrapped ordinary exact three H6 files; add only concrete affected neighbors if new owner edits require them. Use exact Fix1 BASE snapshots, new frozen hashes and static BASE comparison. Initial review Minor M1 (aggregate descriptor growth418) is recorded for I7/final review and remains explicit; no unrelated cleanup or threshold weakening belongs in this fix. Root owns commit and fresh scoped re-review before task completion.
 
 19. Fix1 authorizes tldw_chatbook/Plugins/mcp_provider.py (already an exact58-file Fix1 BASE snapshot) for the narrow owned-provider override of result-currentness validation. The ordinary provider may bind a private read-only callback to the exact captured final result and its original profile/tool/arguments/definition/decision identity; legitimate approve-once remains limited to that actual invocation, while fresh denial or unavailable/stale authority refuses. The owned override must reuse existing strict permission checks and exact admission/scope/credential/mapping fences under the captured permission-profile context, without publishing/recreating grants or using another call's approval. Executor checks the same normal owner after required post settlement and at final effect acceptance; failed checks discard staged effects. Do not invoke/prompt/connect/audit/replay as a validation shortcut. Any blocking owned-service check remains off the hook/UI loop under the existing bounded job/ticket owner and original deadline; cancellation of its awaiter must retain that actual work until completion, with no unbounded extra worker queue or false completion signal. Callback capture is private/request-local, cleared with capture retirement and preserves ordinary ToolResult/API and coroutine transfer. Existing seven-file covering set includes owned-provider regressions; add concrete check-lifetime/legitimate-approved-call controls to the already authorized H6 tests. Source edit scope is now the original26 plus this single owned provider; no other source path is authorized.
+
+20. After independent Fix1 acceptance, record the real post-hook authority race and retained final-validator evidence in backlog/docs/lessons-testing-evidence.md. This is a controller-owned documentation-only closeout addition; no runtime/test changes or repeated tests. Preserve unresolved aggregate FD growth and native application/platform qualification boundaries in the task notes and handoffs. Mark task/plan complete only after exact review/evidence reconciliation.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented MCP hooks through the existing normal Console tool, checkpoint, approval, connection and budget owners. Strict original typed results preserve error-first native normalization and exact call identity; provisional admission, actual AgentService binding, nested context staging, causal checks and guarded bounded teardown retain current authority and real resource custody. Fix1 revalidates the original normal MCP owner after required post hooks and final hook acceptance without replay or another prompt, retaining final validation work until its actual completion.
+
+Initial frozen verification passed474 affected tests plus selected35/2/22 and ordinary63. After Fix1, the seven affected files passed252 and ordinary exact-three passed83; counts overlap. Root verified58 exact Fix1 BASE snapshots,62 frozen paths, raw result hashes and five-file syntax/Ruff/Black exact BASE parity; whitespace clean. Independent Fix1 review accepts I1 with zero new Critical/Important/Minor findings. The prior aggregate FD growth418 remains unexplained and recorded for I7/final review. Actual native managed graph/owned-provider Console publication remains TASK-32686; Darwin controlled peers do not qualify other platforms, external authenticated peers or optional unavailable integration. Uncertain standalone custody remains retained without positive terminal evidence.
+
+ADR required: yes; existing backlog/decisions/162-managed-agent-plugins.md and 163-expanded-console-hook-runtime.md apply. R70–R73 and the accepted result-owner correction are recorded in the hook design/subplan/ADR. Implementation f344d461b97e60a59f356b253cea2dc321a93e5a; Fix1 f4952cafe98ee4ddab4c53d0fd5c67a371146e80. Runtime/test changes cover the existing Agents hooks/MCP, Console lifecycle/approval, MCP connection and Plugins provider seams, with actual transport/application controls. The factual post-hook authority incident is recorded in backlog/docs/lessons-testing-evidence.md.
+<!-- SECTION:NOTES:END -->
