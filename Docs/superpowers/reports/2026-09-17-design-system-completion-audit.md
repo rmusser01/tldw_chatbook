@@ -99,3 +99,11 @@ Both lesson additions and the incoming parent-side STT diagnostics are preserved
 captures predate that callback-only merge; the receipt states this boundary.
 
 The [conflict review](2026-09-17-pr-2704-conflict-review.md) reconstructs all four dev integration merges through `96d4ca2b96`: 20 conflicted file entries / 30 blocks, exact parent references, selected outcomes and recorded native captures. The user requires visual review and explicit green light before the PR is merged into dev.
+
+The [fresh PR visual gallery](../qa/2026-09-17-pr-2704-visual-review/README.md)
+records eight Console/Notes captures from source commit `7c28855825`, inspected
+in dark/light at 80×24 and 170×48 with clean native shutdown. Wide Notes shows
+the complete `Remove placement` label. Compact Notes still truncates its
+introductory next-step status after `Create a note or add from`; reconcile this
+observed residual during the remaining Library review. This gallery does not
+close any whole-destination or provider-execution gate.

@@ -1,0 +1,44 @@
+{
+  "pid": 36359,
+  "runner_sha256": "2b185bf2eb5da8b8e85cb0c129b26f08854de64ca09f542258b14e18d97c616d",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "e583f0efa848f32e2209f056608bac4d352e4be82e6bd27b5a40a275d57f6814",
+    "tldw_chatbook/Widgets/Console/console_bounded_section.py": "cae8e50e9cacf5b5609ffaeaef1481171e25e99be0c534543addb5459e0123b8",
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": "6a383d528a16396f38678bbe2973cd4bd02868806944afa0c2062dc197c4a55a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3614411d7ad34a3a7aa14d9ea9816a9d0695a2b9db082efdc9f64fb3a3a11fc9",
+    "tldw_chatbook/css/screen_agentic_library.tcss": "59be3f4aa8edb3a6e9192870426e5d056c909097fcb0d122e02c0c905d89b1da"
+  },
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ]
+    }
+  ],
+  "waiting_for": "Notices clear",
+  "passed": true,
+  "app_run_returned": true
+}

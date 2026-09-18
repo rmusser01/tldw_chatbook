@@ -79,7 +79,17 @@ The numerous Interface screenshots, test outputs, lifecycle manifests, QA receip
 - This audit identifies what was selected; it does not certify every imported feature or subsequent Settings repairs. The reconstruction did not change source or merge state. Git used temporary objects for read-only remerge reconstruction; the conflict diffs, manifest and this report were subsequently saved in the PR for review.
 
 
-## Visual inspection of the integrated UI
+## Current branch visual review
+
+The [fresh eight-capture gallery](../qa/2026-09-17-pr-2704-visual-review/README.md)
+shows Console and Library Notes at source commit `7c28855825`, after the recorded
+merges and subsequent Settings repairs. It covers dark/light at 80×24 and 170×48
+with real terminal rendering, inspected captures and verified shutdown. The
+gallery explicitly flags compact Notes introductory text truncation and bounds
+its claims to the captured navigation/rendering states. These are current-result
+images, not parent-side before/after comparisons.
+
+## Historical visual inspection of the integration
 
 These are the recorded native captures for the second integration, not newly generated before/after images. They show the resolved Console and Library layouts at compact and wide sizes. The [QA receipt](../qa/2026-09-17-component-current-dev/README.md) defines the exact tested source and limitations. Later Interface, rail and Console/Storage work has separate receipts in the [completion ledger](2026-09-17-design-system-completion-audit.md).
 
