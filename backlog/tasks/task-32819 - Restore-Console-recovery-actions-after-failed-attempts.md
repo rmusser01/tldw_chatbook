@@ -18,7 +18,7 @@ modified_files:
 - Tests/UI/test_console_dispatch_recovery_repeated_actions.py
 - Docs/User_Guide/console/chat-basics.md
 - backlog/docs/lessons-console-wiring.md
-updated_date: 2026-09-18 20:33
+updated_date: 2026-09-18 20:36
 ---
 
 ## Description
@@ -59,11 +59,13 @@ Formerly TASK-32568 (created 2026-09-18 18:54). The older Library Notes task ret
 Instruction-scope correction: the tldw_server2 human-written summary/manual task-file approval policies do not govern this separate Chatbook repository. Chatbook AGENTS.md and TASK-19601 older-keeps-ID rule apply. The copied younger duplicate record is removed; the older Library Notes TASK-32568 remains unchanged. Latest-dev rebase reports branch already up to date.
 Follow-up validation complete: 80 recovery/composer cases passed in the first run; its sole remaining obsolete healthy-checkpoint Queue-label assertion was corrected to the store recovery fence and passed with all 38 queue cases (39 passed). The separate pure recovery/display/backlog selection passed 61 cases. Thus all 180 unique targeted cases are verified on current dev e89f28d751. Pure recovery tests also pass in isolation after using the repository's no-full-app catalog fixture override. Requests warning resolved by installing stable chardet 5.2.0 within the existing <6 dependency constraint in the local test venv. No file-descriptor growth warning remains in the recovery run after deterministic DB closure. Thirteen changed Python files parse; Ruff dev baseline284/current280/zero new; Bandit10 existing/zero new after normalizing snippet line numbers. Focused UI test formatting and lint, diff whitespace and backlog uniqueness pass. Two independent read-only review passes found no actionable findings. Logs: /tmp/chatbook2709-harness-tests.log, /tmp/chatbook2709-queue-tests.log, /tmp/chatbook2709-pure-fixed.log. Latest dev refreshed immediately before publication; still e89f28d751. Awaiting GitHub CI and Qodo review.
 Qodo review on 652cc816cc raised four actionable items: pending pre-claim click latch can be cleared by an ordinary repaint; repaint failure can mask original action exception/cancellation; new integration case should use real in-memory SQLite; trigger DDL should use db.transaction. Plan: reproduce the two behavioral failures, add owner/token-scoped action completion instead of clearing local pending intent from stale model state, preserve the primary unwind when repaint also fails with sanitized logging, and convert the new SQLite regression to memory/transaction contexts. Reverify before replying and pushing.
+Qodo fixes committed as 2d29204b77: token-owned completion prevents stale repaint/worker releases; primary exceptions and cancellation survive secondary repaint failures. New mounted DB tests use in-memory SQLite and transaction-managed trigger DDL. Reproduced 3 failing cases before fix; final recovery selection 20 passed, bringing unique targeted coverage to 188 cases. Ruff baseline 284/current 280/zero new; 13 Python files parse; Bandit 10 existing/zero new. Independent review found no actionable findings. All four Qodo findings now show resolved on the updated head. Auditing the new sanitized warning against the diagnostic inventory before final CI.
+Diagnostic inventory review: the sole new row is UI/Console_Modules/prompt_queue.py (one warning). --statements against origin/dev confirms it contains fixed text plus type(exc).__name__ only; no exception payload, user text, secret, path, URL or new sink. Regenerating the approved inventory to record this intended diagnostic. The initial Qodo review now shows all four findings resolved on 2d29204b77.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Recovery controls and composer copy fixed; dev-compatible private-profile harnesses, gateway doubles, assertions and database cleanup verified across 180 targeted cases. Recovery task renumbered to TASK-32819 to clear CI collision. Publishing updated PR #2709; CI/review/merge remain open.
+Recovery controls and composer copy fixed; dev harness failures and backlog ID collision repaired. All four initial Qodo findings addressed in 2d29204b77; 188 targeted cases verified, including 20 final recovery tests. Latest-head CI and merge remain open.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->
