@@ -15861,3 +15861,15 @@ terminal outcomes; a native real-service lock delay confirms exact-once removal.
 Test persisted state, observed outcome and refreshed UI together across this
 boundary. Swallowing cancellation to retain an observer would introduce a
 different lifecycle contract and needs separate design/qualification.
+
+## Config publication generation does not cover external TOML reloads
+
+TASK-32791 initially scoped retained root-save receipts to the config path and
+publication generation. Independent private review saved B with a cache publication
+failure, externally edited TOML to C, then forced the supported bootstrap reload.
+The reader returned C while the generation was unchanged; the retained override
+still returned B. Root receipts now capture device/inode/mtime/size under the
+existing mutation lock and after replacement, and fence both the cache override
+and later canonicalization with that file revision. A real private-config
+regression reproduces the unchanged-generation external reload. Do not use a
+publication counter alone to prove a disk-backed setting is unchanged.

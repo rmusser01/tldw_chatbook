@@ -24,11 +24,11 @@ from textual.widgets import ContentSwitcher, DataTable
 from textual.worker import Worker
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
-    BuiltinPermRow,
     LOCAL_TOOLS_DEFAULT_ENABLED,
+    BuiltinPermRow,
     builtin_permission_rows,
-    tool_ref,
     tool_gate_breadcrumb,
+    tool_ref,
 )
 
 # task-24458: the workspace tool-execution providers are deferred to their
@@ -40,21 +40,24 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
 # annotation in this module is a string (`from __future__ import annotations`
 # above), so no type reference here evaluates at runtime.
 from tldw_chatbook.config import (
+    apply_settings_mutation_to_cli_config,
     coerce_bool_setting,
+    current_config_identity,
+    get_cli_config_path,
     get_cli_setting,
     save_setting_to_cli_config,
-)
-from tldw_chatbook.MCP.hub_tool_catalog import (
-    HubTool,
-    builtin_tools_from_inventory,
-    local_tools_from_record,
-    server_tools_from_inventory,
 )
 from tldw_chatbook.MCP.hub_test_execution import (
     LocalHubExecutionOutcome,
     ToolTestAdmissionBlocked,
     ToolTestAdmissionPreview,
     ToolTestAdmissionStale,
+)
+from tldw_chatbook.MCP.hub_tool_catalog import (
+    HubTool,
+    builtin_tools_from_inventory,
+    local_tools_from_record,
+    server_tools_from_inventory,
 )
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
@@ -84,22 +87,29 @@ from tldw_chatbook.MCP.readiness import (
     server_target_readiness,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
+from tldw_chatbook.MCP.root_settings import (
+    RootSaveRequest,
+    RootSaveResult,
+    RootSaveUnavailable,
+    get_mcp_root_saves,
+    root_config_file_revision,
+)
 from tldw_chatbook.MCP.unified_control_plane_service import (
     MCPServerSourceDisplayOnlyError,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+    MCPInspector,
     _safe_diagnostic_message,
     _safe_exception_text,
     _safe_tool_test_text,
-    MCPInspector,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+    _PROFILE_HINT_TEXT,
     MCPPermissionsMode,
     PermissionProfileContext,
     PermRow,
     ToolPolicyProfileOption,
-    _PROFILE_HINT_TEXT,
     _undiscovered_servers_hint,
     format_tool_state_label,
 )
@@ -121,6 +131,63 @@ _TOOL_TEST_LIFECYCLE_UNAVAILABLE_TEXT = (
 _STALE_PROFILE_CATEGORIES = frozenset(
     {"stale_profile", "stale_revision", "lifecycle_invalid", "profile_tombstone"}
 )
+
+
+def _persist_mcp_workspace_root(request: RootSaveRequest) -> RootSaveResult:
+    """Validate and save a captured root without retaining its originating UI."""
+    requested = request.raw_root.strip()
+    stored = ""
+    if requested:
+        try:
+            candidate = Path(requested).expanduser()
+            if not candidate.is_absolute():
+                candidate = request.cwd / candidate
+            resolved = validate_path(
+                candidate, candidate.parent, redact_paths=True, allow_hidden=True
+            )
+            if not resolved.is_dir():
+                return RootSaveResult("invalid")
+            stored = str(resolved)
+        except (OSError, RuntimeError, ValueError):
+            return RootSaveResult("invalid")
+    generation = None
+    file_revision = None
+
+    def capture_file_revision() -> None:
+        nonlocal file_revision
+        file_revision = root_config_file_revision(request.config_path)
+
+    def same_configuration() -> bool:
+        nonlocal generation
+        generation = current_config_identity()[0]
+        capture_file_revision()
+        return get_cli_config_path() == request.config_path
+
+    mutation = apply_settings_mutation_to_cli_config(
+        {"console": {"workspace_root": stored}},
+        mutation_precondition=same_configuration,
+        after_replace=capture_file_revision,
+    )
+    if mutation.conflict:
+        return RootSaveResult("changed")
+    if mutation.file_replaced and not mutation.caches_reloaded:
+        return RootSaveResult(
+            "cache_refresh",
+            stored,
+            cache_generation=generation,
+            file_revision=file_revision,
+        )
+    if mutation.failure_phase is not None:
+        return RootSaveResult("failed")
+    return RootSaveResult(
+        "saved",
+        stored,
+        mutation.caches_reloaded,
+        generation + 1
+        if generation is not None and mutation.caches_reloaded
+        else generation,
+        file_revision,
+    )
 
 
 def _is_stale_profile_error(exc: Exception) -> bool:
@@ -907,6 +974,7 @@ class MCPWorkbench(Container):
         # F-057: set the initial compact-mode class once the first layout
         # gives the grid a real width (`on_resize` keeps it current after).
         self.call_after_refresh(self._sync_compact_class)
+        self.set_interval(0.25, self._sync_root_save_status)
 
     async def on_unmount(self) -> None:
         """Invalidate preview work and revoke the visible nonce best effort."""
@@ -1637,6 +1705,7 @@ class MCPWorkbench(Container):
             enabled=enabled,
             workspace_root=workspace_root,
             visible=self._source == "local",
+            config_path=get_cli_config_path(),
         )
         await canvas.update_tools(
             tools,
@@ -1648,17 +1717,22 @@ class MCPWorkbench(Container):
             selected_server_key=self._selected_server_key,
         )
 
-    @staticmethod
-    def _local_tools_config_values() -> tuple[bool, str]:
+    def _local_tools_config_values(self) -> tuple[bool, str]:
         """Read the persisted values rendered by Tools mode."""
         enabled = coerce_bool_setting(
-            get_cli_setting(
-                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
-            ),
+            get_cli_setting("console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED),
             LOCAL_TOOLS_DEFAULT_ENABLED,
         )
         raw_root = get_cli_setting("console", "workspace_root", "")
         workspace_root = raw_root.strip() if isinstance(raw_root, str) else ""
+        owner = getattr(self.app_instance, "_mcp_root_saves", None)
+        if owner is not None:
+            workspace_root = owner.known_root(
+                get_cli_config_path(),
+                workspace_root,
+                current_config_identity()[0],
+                root_config_file_revision(get_cli_config_path()),
+            )
         return enabled, workspace_root
 
     def _refresh_local_tools_controls(self) -> MCPToolsMode | None:
@@ -1671,6 +1745,7 @@ class MCPWorkbench(Container):
             enabled=enabled,
             workspace_root=workspace_root,
             visible=self._source == "local",
+            config_path=get_cli_config_path(),
         )
         return canvas
 
@@ -4107,81 +4182,87 @@ class MCPWorkbench(Container):
     def on_mcp_tools_mode_workspace_root_save_requested(
         self, event: MCPToolsMode.WorkspaceRootSaveRequested
     ) -> None:
-        """Validate and persist Tools mode's workspace confinement root."""
+        """Admit the exact visible draft before its disposable observer yields."""
         event.stop()
+        canvas = self.query_one(MCPToolsMode)
+        if (
+            event.draft_identity is None
+            or event.draft_identity[0] is not canvas.workspace_root_draft_identity[0]
+            or event.config_path != get_cli_config_path()
+        ):
+            return
+        request = RootSaveRequest(
+            event.workspace_root, event.draft_identity, event.config_path, Path.cwd()
+        )
+        try:
+            owner = get_mcp_root_saves(self.app_instance)
+            task = owner.submit(request, partial(_persist_mcp_workspace_root, request))
+        except RootSaveUnavailable:
+            canvas.set_workspace_root_status(
+                "Root changes are unavailable while the app is closing.", error=True
+            )
+            return
+        self._sync_root_save_status()
         self.run_worker(
-            self._save_tools_mode_workspace_root(event.workspace_root),
+            self._observe_workspace_root_save(task),
             group="mcp-tools-workspace-root",
             exclusive=True,
         )
 
-    async def _save_tools_mode_workspace_root(self, raw_root: str) -> None:
-        requested = raw_root.strip()
-        stored = ""
-        display = "the app folder"
-        if requested:
-            try:
-                candidate = Path(requested).expanduser()
-                if not candidate.is_absolute():
-                    candidate = Path.cwd() / candidate
-                resolved = validate_path(
-                    candidate,
-                    candidate.parent,
-                    redact_paths=True,
-                    allow_hidden=True,
-                )
-                if not resolved.is_dir():
-                    raise ValueError("path is not an existing directory")
-            except (OSError, RuntimeError, ValueError) as exc:
-                canvas = self.query_one(MCPToolsMode)
-                canvas.set_local_config_status(
-                    f"Workspace root not saved: {exc}.", error=True
-                )
-                self.app.notify(
-                    _toast(f"Workspace root not saved: {exc}."), severity="error"
-                )
-                return
-            stored = str(resolved)
-            display = stored
-
-        try:
-            saved = await asyncio.to_thread(
-                save_setting_to_cli_config,
-                "console",
-                "workspace_root",
-                stored,
-            )
-        except Exception as exc:
-            logger.warning(
-                "MCP Tools-mode workspace root save failed (error_type={}).",
-                type(exc).__name__,
-            )
-            canvas = self._refresh_local_tools_controls()
-            if canvas is not None:
-                canvas.set_local_config_status(
-                    "Save failed. The persisted workspace root is shown.",
-                    error=True,
-                )
-            self.app.notify(
-                _toast(f"Failed to save workspace root: {exc}"), severity="error"
-            )
+    def _sync_root_save_status(self) -> None:
+        """Project current-profile receipts, including after screen recreation."""
+        if not self.is_attached or not self.query(MCPToolsMode):
             return
-        if not saved:
-            canvas = self._refresh_local_tools_controls()
-            if canvas is not None:
-                canvas.set_local_config_status(
-                    "Save failed. The persisted workspace root is shown.",
-                    error=True,
-                )
-            self.app.notify("Failed to save workspace root.", severity="error")
+        owner = getattr(self.app_instance, "_mcp_root_saves", None)
+        state = owner.state if owner is not None else None
+        if state is None:
             return
-
-        self._snapshots = await self._collect_snapshots()
-        await self._sync_children()
-        self.query_one(MCPToolsMode).set_local_config_status(
-            f"Saved. The next Console agent run is confined to {display}.",
-            error=False,
+        stamp = (
+            state.revision,
+            state.result is None,
+            owner.completion_revision,
+            current_config_identity(),
+            root_config_file_revision(get_cli_config_path()),
         )
+        if stamp == getattr(self, "_root_save_projection", None):
+            return
+        canvas = self._refresh_local_tools_controls()
+        self._root_save_projection = stamp
+        if canvas is not None:
+            canvas.project_workspace_root_save(
+                state,
+                generation=current_config_identity()[0],
+                file_revision=root_config_file_revision(get_cli_config_path()),
+            )
+
+    async def _observe_workspace_root_save(self, task) -> None:
+        """Publish persistence before best-effort catalog presentation refresh."""
+        outcome = await asyncio.shield(task)
+        self._sync_root_save_status()
+        if not self.is_attached or outcome.result.phase not in {"saved", "cache_refresh"}:
+            return
+        try:
+            self._snapshots = await self._collect_snapshots()
+            await self._sync_children()
+        except Exception:  # noqa: BLE001 - presentation cannot reverse an admitted save
+            owner = getattr(self.app_instance, "_mcp_root_saves", None)
+            if (
+                self.is_attached
+                and owner is not None
+                and owner.state == outcome
+                and outcome.request.config_path == get_cli_config_path()
+            ):
+                canvas = self.query_one(MCPToolsMode)
+                canvas.project_workspace_root_save(
+                    outcome,
+                    generation=current_config_identity()[0],
+                    file_revision=root_config_file_revision(get_cli_config_path()),
+                )
+                status = canvas.query_one("#mcp-tools-workspace-status")
+                canvas.set_workspace_root_status(
+                    str(status.renderable) + " Catalog refresh failed; use r to refresh.",
+                    error=True,
+                )
 
     async def on_mcp_tools_mode_empty_action_requested(
         self, event: MCPToolsMode.EmptyActionRequested

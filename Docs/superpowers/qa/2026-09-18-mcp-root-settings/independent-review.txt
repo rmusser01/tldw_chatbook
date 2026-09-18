@@ -1,0 +1,20 @@
+Independent review identified and verified repairs for:
+- Returning to the prior saved value while a newer write is held must remain a dirty draft.
+- A cached partial-success root must yield to a newer independent config publication.
+- Recreated views must not claim a discarded failed draft is retained.
+- Old successful receipts must not canonicalize newer configuration back to an older root.
+- External TOML edits can refresh the reader without advancing publication generation;
+  root overrides and receipt canonicalization also need the captured file revision.
+
+The reviewer independently replayed saved/cache_refresh outcomes across submitted,
+previously clean and newer dirty drafts, and reproduced both atomic publication and
+external-edit cases. FIFO task retention, observer cancellation and shutdown drain
+had no additional findings. Final file-revision re-review found no remaining actionable issues: six focused
+tests, twelve mounted supersession cases and changed-file no-op warning behavior
+passed. Native qualification was completed separately by the main reviewer.
+
+Related-suite disposition: the reviewer confirmed an unchanged Permissions
+canvas/table resize observation gap. Exact baseline failure and a passing current
+retry establish its intermittent preexisting behavior; root receipt polling exits
+without changing controls when no root-save state exists. This remains a separate
+repair, not a suppressed root regression.

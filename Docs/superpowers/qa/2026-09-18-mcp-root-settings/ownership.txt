@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+5.75s call     Tests/UI/test_tool_profile_app_ownership.py::test_real_embedded_app_remains_outside_process_exit_authority
+1.42s call     Tests/UI/test_tool_profile_app_ownership.py::test_tool_writes_drain_before_a_later_owner_can_fail
+1.38s call     Tests/UI/test_tool_profile_app_ownership.py::test_existing_watchdog_is_armed_before_first_app_owned_drain
+1.38s call     Tests/UI/test_tool_profile_app_ownership.py::test_shutdown_cannot_lazily_construct_an_unused_owner
+
+(8 durations < 1s hidden.)
+4 passed in 10.68s

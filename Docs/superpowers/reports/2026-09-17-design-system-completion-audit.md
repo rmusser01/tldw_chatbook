@@ -133,3 +133,13 @@ the complete `Remove placement` label. That historical gallery truncates the com
 introductory status; TASK-32765 fixed this residual in the refreshed gallery
 linked above. This historical gallery does not
 close any whole-destination or provider-execution gate.
+
+
+TASK-32791 qualifies MCP root draft/save lifetime and corrects the root's actual
+local MCP/Hub scope. [Targeted and native evidence](../qa/2026-09-18-mcp-root-settings/README.md)
+records 26 root cases, adjacent checks, ten reviewed captures, independent review
+and ADR-168. Its related rerun also reproduces a preexisting Permissions table
+resize clip on both current and saved baseline code; that separate repair remains
+open in the MCP ledger. PR2707 remains draft/unmerged, and its pre-save head has an
+unresolved Windows GGUF SelectOverlay CI failure. Neither the component review
+nor integration is declared complete.

@@ -1,0 +1,604 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+______ test_read_only_refresh_preserves_root_draft_and_validation_receipt ______
+
+self = <Coroutine test_read_only_refresh_preserves_root_draft_and_validation_receipt>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_read_only_refresh_preserves_root_draft_and_validation_receipt>>, 'monk...te/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_read_only_refresh_preserv0')}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_read_only_refresh_preserv0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ______ test_read_only_refresh_preserves_root_draft_and_validation_receipt ______
+E
+E           request = <FixtureRequest for <Coroutine test_read_only_refresh_preserves_root_draft_and_validation_receipt>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111408830>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_read_only_refresh_preserv0/private-profile-process/pytest/test_read_only_refresh_preserv0')
+E
+E               @private_profile_test
+E               async def test_read_only_refresh_preserves_root_draft_and_validation_receipt(
+E                   request, monkeypatch, tmp_path
+E               ):
+E                   writes = []
+E                   _persistence(monkeypatch, lambda root: writes.append(root))
+E                   app = WorkbenchAppWithBundledCSS()
+E                   async with app.run_test(size=(80, 24)) as pilot:
+E                       workbench, canvas = await _open(pilot)
+E                       field = canvas.query_one("#mcp-tools-workspace-root", Input)
+E                       field.value = str(tmp_path / "not-a-directory")
+E                       await _settle(pilot)
+E                       canvas.query_one("#mcp-tools-workspace-save", Button).press()
+E                       await pilot.pause()
+E                       await app.workers.wait_for_complete()
+E                       await _settle(pilot)
+E                       await workbench._sync_children()
+E                       await _settle(pilot)
+E           >           assert field.value == str(tmp_path / "not-a-directory")
+E           E           AssertionError: assert '' == '/private/var...t-a-directory'
+E           E
+E           E             - /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_read_only_refresh_preserv0/private-profile-process/pytest/test_read_only_refresh_preserv0/not-a-directory
+E
+E           Tests/UI/test_mcp_root_settings.py:74: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 06:57:42.410 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 06:57:42.415 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 06:57:42.415 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 06:57:42.415 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 06:57:42.864 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 06:57:43.027 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 06:57:43.497 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           1.16s call     Tests/UI/test_mcp_root_settings.py::test_read_only_refresh_preserves_root_draft_and_validation_receipt
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_root_settings.py::test_read_only_refresh_preserves_root_draft_and_validation_receipt
+E           1 failed in 2.75s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 06:57:40.794 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 06:57:40.800 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 06:57:40.800 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 06:57:40.800 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_____________ test_explicit_root_saves_finish_in_submission_order ______________
+
+self = <Coroutine test_explicit_root_saves_finish_in_submission_order>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_explicit_root_saves_finish_in_submission_order>>, 'monkeypatch': <_pyt...te/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_explicit_root_saves_finis0')}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_explicit_root_saves_finis0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _____________ test_explicit_root_saves_finish_in_submission_order ______________
+E
+E           request = <FixtureRequest for <Coroutine test_explicit_root_saves_finish_in_submission_order>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111e606e0>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_explicit_root_saves_finis0/private-profile-process/pytest/test_explicit_root_saves_finis0')
+E
+E               @private_profile_test
+E               async def test_explicit_root_saves_finish_in_submission_order(
+E                   request, monkeypatch, tmp_path
+E               ):
+E                   first, second = tmp_path / "first", tmp_path / "second"
+E                   first.mkdir()
+E                   second.mkdir()
+E                   entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+E                   calls = []
+E
+E                   def write(root):
+E                       calls.append(root)
+E                       if root == str(first):
+E                           entered.set()
+E                           assert release.wait(10)
+E                           finished.set()
+E                       return ConfigMutationResult(True, True, None)
+E
+E                   values = _persistence(monkeypatch, write)
+E                   app = WorkbenchAppWithBundledCSS()
+E                   async with app.run_test() as pilot:
+E                       _, canvas = await _open(pilot)
+E                       field = canvas.query_one("#mcp-tools-workspace-root", Input)
+E                       button = canvas.query_one("#mcp-tools-workspace-save", Button)
+E                       try:
+E                           field.value = str(first)
+E                           await _settle(pilot)
+E                           button.press()
+E                           await _wait(pilot, entered.is_set)
+E                           field.value = str(second)
+E                           await _settle(pilot)
+E                           button.press()
+E                           await pilot.pause(0.1)
+E           >               assert calls == [str(first)], "new save must wait for admitted older write"
+E           E               AssertionError: new save must wait for admitted older write
+E           E               assert ['/private/va...inis0/second'] == ['/private/va...finis0/first']
+E           E
+E           E                 Left contains one more item: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_explicit_root_saves_finis0/private-profile-process/pytest/test_explicit_root_saves_finis0/second'
+E           E                 Use -v to get more diff
+E
+E           Tests/UI/test_mcp_root_settings.py:114: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 06:57:45.968 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 06:57:45.973 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 06:57:45.973 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 06:57:45.974 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 06:57:46.415 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 06:57:46.575 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 06:57:47.061 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           1.10s call     Tests/UI/test_mcp_root_settings.py::test_explicit_root_saves_finish_in_submission_order
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_root_settings.py::test_explicit_root_saves_finish_in_submission_order
+E           1 failed in 2.74s
+
+Tests/private_profile.py:84: Failed
+___________ test_older_save_does_not_canonicalize_a_newer_aba_draft ____________
+
+self = <Coroutine test_older_save_does_not_canonicalize_a_newer_aba_draft>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_older_save_does_not_canonicalize_a_newer_aba_draft>>, 'monkeypatch': <...te/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_older_save_does_not_canon0')}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_older_save_does_not_canon0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ___________ test_older_save_does_not_canonicalize_a_newer_aba_draft ____________
+E
+E           request = <FixtureRequest for <Coroutine test_older_save_does_not_canonicalize_a_newer_aba_draft>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1156d0440>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_older_save_does_not_canon0/private-profile-process/pytest/test_older_save_does_not_canon0')
+E
+E               @private_profile_test
+E               async def test_older_save_does_not_canonicalize_a_newer_aba_draft(
+E                   request, monkeypatch, tmp_path
+E               ):
+E                   root = tmp_path / "root"
+E                   root.mkdir()
+E                   raw = str(root) + "/."
+E                   entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+E
+E                   def write(value):
+E                       entered.set()
+E                       assert release.wait(10)
+E                       finished.set()
+E                       return ConfigMutationResult(True, True, None)
+E
+E                   _persistence(monkeypatch, write)
+E                   app = WorkbenchAppWithBundledCSS()
+E                   async with app.run_test() as pilot:
+E                       _, canvas = await _open(pilot)
+E                       field = canvas.query_one("#mcp-tools-workspace-root", Input)
+E                       try:
+E                           field.value = raw
+E                           await _settle(pilot)
+E                           canvas.query_one("#mcp-tools-workspace-save", Button).press()
+E                           await _wait(pilot, entered.is_set)
+E                           field.value = "another draft"
+E                           await _settle(pilot)
+E                           field.value = raw
+E                           await _settle(pilot)
+E                       finally:
+E                           release.set()
+E                           assert await asyncio.to_thread(finished.wait, 5)
+E                           await app.workers.wait_for_complete()
+E                       await _settle(pilot)
+E           >           assert field.value == raw
+E           E           AssertionError: assert '/private/var...t_canon0/root' == '/private/var...canon0/root/.'
+E           E
+E           E             Skipping 179 identical leading characters in diff, use -v to show
+E           E             - canon0/root/.
+E           E             ?            --
+E           E             + canon0/root
+E
+E           Tests/UI/test_mcp_root_settings.py:158: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 06:57:49.339 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 06:57:49.344 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 06:57:49.344 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 06:57:49.344 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 06:57:49.788 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 06:57:49.955 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 06:57:50.567 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           1.31s call     Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft
+E           1 failed in 2.91s
+
+Tests/private_profile.py:84: Failed
+_________________ test_failed_root_save_keeps_draft_for_retry __________________
+
+self = <Coroutine test_failed_root_save_keeps_draft_for_retry>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_failed_root_save_keeps_draft_for_retry>>, 'monkeypatch': <_pytest.monk...te/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_failed_root_save_keeps_dr0')}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_failed_root_save_keeps_dr0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _________________ test_failed_root_save_keeps_draft_for_retry __________________
+E
+E           request = <FixtureRequest for <Coroutine test_failed_root_save_keeps_draft_for_retry>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1118c8530>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_failed_root_save_keeps_dr0/private-profile-process/pytest/test_failed_root_save_keeps_dr0')
+E
+E               @private_profile_test
+E               async def test_failed_root_save_keeps_draft_for_retry(request, monkeypatch, tmp_path):
+E                   root = tmp_path / "root"
+E                   root.mkdir()
+E                   results = [ConfigMutationResult(False, False, "before_replace"), ConfigMutationResult(True, True, None)]
+E                   values = _persistence(monkeypatch, lambda root: results.pop(0))
+E                   app = WorkbenchAppWithBundledCSS()
+E                   async with app.run_test() as pilot:
+E                       workbench, canvas = await _open(pilot)
+E                       field = canvas.query_one("#mcp-tools-workspace-root", Input)
+E                       button = canvas.query_one("#mcp-tools-workspace-save", Button)
+E                       field.value = str(root)
+E                       await _settle(pilot)
+E                       button.press()
+E                       await pilot.pause()
+E                       await app.workers.wait_for_complete()
+E                       await _settle(pilot)
+E                       await workbench._sync_children()
+E           >           assert field.value == str(root)
+E           E           AssertionError: assert '' == '/private/var...eeps_dr0/root'
+E           E
+E           E             - /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1918/test_failed_root_save_keeps_dr0/private-profile-process/pytest/test_failed_root_save_keeps_dr0/root
+E
+E           Tests/UI/test_mcp_root_settings.py:181: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 06:57:52.922 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 06:57:52.928 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 06:57:52.928 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 06:57:52.928 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 06:57:53.372 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 06:57:53.538 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 06:57:54.042 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1537 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           1.12s call     Tests/UI/test_mcp_root_settings.py::test_failed_root_save_keeps_draft_for_retry
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_root_settings.py::test_failed_root_save_keeps_draft_for_retry
+E           1 failed in 2.70s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+3.53s call     Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft
+3.38s call     Tests/UI/test_mcp_root_settings.py::test_read_only_refresh_preserves_root_draft_and_validation_receipt
+3.35s call     Tests/UI/test_mcp_root_settings.py::test_explicit_root_saves_finish_in_submission_order
+3.31s call     Tests/UI/test_mcp_root_settings.py::test_failed_root_save_keeps_draft_for_retry
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_root_settings.py::test_read_only_refresh_preserves_root_draft_and_validation_receipt
+FAILED Tests/UI/test_mcp_root_settings.py::test_explicit_root_saves_finish_in_submission_order
+FAILED Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft
+FAILED Tests/UI/test_mcp_root_settings.py::test_failed_root_save_keeps_draft_for_retry
+4 failed in 15.47s

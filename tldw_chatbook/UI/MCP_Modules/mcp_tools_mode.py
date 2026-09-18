@@ -12,6 +12,7 @@ through the workbench.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from rich.text import Text
@@ -24,6 +25,7 @@ from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.root_settings import RootSaveState
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     format_tool_state_label,
     state_text,
@@ -225,9 +227,17 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
     class WorkspaceRootSaveRequested(Message, namespace="mcp_tools_mode"):
         """Request validation and persistence of the workspace root."""
 
-        def __init__(self, workspace_root: str) -> None:
+        def __init__(
+            self,
+            workspace_root: str,
+            *,
+            draft_identity: tuple[object, int] | None = None,
+            config_path: Path | None = None,
+        ) -> None:
             super().__init__()
             self.workspace_root = workspace_root
+            self.draft_identity = draft_identity
+            self.config_path = config_path
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -261,6 +271,13 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         # (mirrors `mcp_servers_mode._tool_gates_by_id`'s same read-not-
         # widget-state pattern; a Button carries no `.value` of its own).
         self._local_tools_enabled: bool = False
+        self._workspace_root_saved: str | None = None
+        self._workspace_root_draft = ""
+        self._workspace_root_dirty = False
+        self._workspace_root_revision = 0
+        self._workspace_root_origin = object()
+        self._workspace_root_config: Path | None = None
+        self._workspace_root_pending = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-tools-local-config"):
@@ -281,7 +298,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
             )
             with Horizontal(id="mcp-tools-workspace-row"):
                 yield Input(
-                    placeholder="Workspace root (blank uses the app folder)",
+                    placeholder="Local MCP / Hub test root",
                     id="mcp-tools-workspace-root",
                 )
                 yield Button(
@@ -290,13 +307,27 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
                     classes="console-action-primary",
                     compact=True,
                     tooltip=(
-                        "Save this workspace root for the next Console agent run; "
-                        "blank uses the app folder."
+                        "Save the root for local MCP serving and Hub tool tests. "
+                        "Blank uses the serving process's current folder."
                     ),
                 )
             yield Static(
-                "Changes apply to the next Console agent run.",
+                "",
                 id="mcp-tools-local-config-status",
+                markup=False,
+            )
+            yield Static(
+                "",
+                id="mcp-tools-workspace-status",
+                classes="h-auto ds-text-muted",
+                markup=False,
+            )
+            yield Static(
+                "Root: local MCP serving and Hub tests. Blank uses the serving "
+                "process's current folder. Console uses Chat scratch and "
+                "admitted Workspace folders.",
+                id="mcp-tools-workspace-help",
+                classes="h-auto ds-text-muted",
                 markup=False,
             )
         with Horizontal(id="mcp-tools-filter-bar", classes="ds-toolbar"):
@@ -452,26 +483,111 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         enabled: bool,
         workspace_root: str,
         visible: bool,
+        config_path: Path | None = None,
     ) -> None:
         """Refresh local-tool controls from persisted configuration truth.
 
         Args:
             enabled: State of the workspace, web, and Watchlists master switch.
-            workspace_root: Persisted workspace confinement root, or an empty
-                string when the app launch directory is the root.
+            workspace_root: Saved local MCP/Hub root; blank selects process cwd.
             visible: Whether the local-source configuration panel is visible.
+            config_path: Configuration identity owning this field and receipt.
         """
         panel = self.query_one("#mcp-tools-local-config", Vertical)
         panel.display = visible
         self._local_tools_enabled = bool(enabled)
-        self.query_one("#mcp-tools-local-enabled", Button).label = (
-            _local_tools_toggle_label(self._local_tools_enabled)
-        )
+        self.query_one(
+            "#mcp-tools-local-enabled", Button
+        ).label = _local_tools_toggle_label(self._local_tools_enabled)
         root_input = self.query_one("#mcp-tools-workspace-root", Input)
-        with root_input.prevent(Input.Changed):
-            root_input.value = workspace_root
-        self.set_local_config_status(
-            "Changes apply to the next Console agent run.", error=False
+        if config_path != self._workspace_root_config:
+            self._workspace_root_saved = None
+            self._workspace_root_dirty = False
+            self._workspace_root_origin = object()
+            self._workspace_root_revision = 0
+            self._workspace_root_config = config_path
+            self._workspace_root_pending = False
+            self.set_workspace_root_status("", error=False)
+        if self._workspace_root_saved is None or not self._workspace_root_dirty:
+            with root_input.prevent(Input.Changed):
+                root_input.value = workspace_root
+            self._workspace_root_draft = workspace_root
+        self._workspace_root_saved = workspace_root
+
+    @property
+    def workspace_root_draft_identity(self) -> tuple[object, int]:
+        """Identify the current draft without keeping its widget in a receipt."""
+        return self._workspace_root_origin, self._workspace_root_revision
+
+    def set_workspace_root_status(self, message: str, *, error: bool) -> None:
+        """Keep root outcomes independent of the local-tool master switch."""
+        status = self.query_one("#mcp-tools-workspace-status", Static)
+        status.update(message)
+        status.set_class(error, "is-error", "ds-text-error")
+        status.set_class(not error, "ds-text-muted")
+
+    def project_workspace_root_save(
+        self,
+        state: RootSaveState,
+        *,
+        generation: int | None = None,
+        file_revision: tuple[int, int, int, int] | None = None,
+    ) -> None:
+        """Project an owned outcome without overwriting a newer local draft."""
+        if state.request.config_path != self._workspace_root_config:
+            return
+        field = self.query_one("#mcp-tools-workspace-root", Input)
+        same_draft = state.request.draft_identity == self.workspace_root_draft_identity
+        newer_draft = not same_draft and (
+            state.request.draft_identity[0] is self._workspace_root_origin
+            or self._workspace_root_dirty
+        )
+        self._workspace_root_pending = state.result is None
+        if state.result is None:
+            text = "Saving local MCP / Hub test root…"
+            error = False
+        else:
+            result = state.result
+            error = result.phase in {"invalid", "failed", "changed"}
+            text = {
+                "saved": "Saved local MCP / Hub test root.",
+                "cache_refresh": "Root saved to file. Restart to refresh live settings.",
+                "invalid": "Root not saved: choose an existing directory. Your edits are kept.",
+                "failed": "Root save failed. Your edits are kept; choose Save root to retry.",
+                "changed": "Configuration changed. Root not saved; reopen MCP before retrying.",
+            }[result.phase]
+            same_origin = state.request.draft_identity[0] is self._workspace_root_origin
+            if result.phase in {"failed", "invalid"} and not same_origin:
+                text = "An earlier root save failed. Review the current root and choose Save root to retry."
+            superseded = (
+                result.cache_generation is not None
+                and result.cache_generation != generation
+            ) or (
+                result.file_revision is not None and result.file_revision != file_revision
+            )
+            if result.phase in {"saved", "cache_refresh"} and superseded:
+                text = "Root saved earlier; live settings have since changed."
+                newer_draft = self._workspace_root_dirty
+            if result.phase in {"saved", "cache_refresh"} and same_draft and not superseded:
+                with field.prevent(Input.Changed):
+                    field.value = result.stored or ""
+                self._workspace_root_draft = field.value
+                self._workspace_root_saved = field.value
+                self._workspace_root_dirty = False
+        if newer_draft:
+            text += " Current edits are not saved."
+        self.set_workspace_root_status(text, error=error)
+
+    def _record_workspace_root_edit(self, value: str) -> None:
+        if value == self._workspace_root_draft:
+            return
+        self._workspace_root_draft = value
+        self._workspace_root_dirty = True
+        self._workspace_root_revision += 1
+        prefix = "Saving submitted root. " if self._workspace_root_pending else ""
+        self.set_workspace_root_status(
+            prefix + "Current edits are not saved. Choose Save root to apply them.",
+            error=False,
         )
 
     def set_local_config_status(self, message: str, *, error: bool) -> None:
@@ -487,7 +603,14 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
 
     def _request_workspace_root_save(self) -> None:
         value = self.query_one("#mcp-tools-workspace-root", Input).value
-        self.post_message(self.WorkspaceRootSaveRequested(value))
+        self._record_workspace_root_edit(value)
+        self.post_message(
+            self.WorkspaceRootSaveRequested(
+                value,
+                draft_identity=self.workspace_root_draft_identity,
+                config_path=self._workspace_root_config,
+            )
+        )
 
     def update_states(self, states: dict[tuple[str, str], EffectiveToolState]) -> None:
         """Refresh the cached State-column data in place and re-render rows,
@@ -740,6 +863,11 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
     # -- events ---------------------------------------------------------------
 
     def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "mcp-tools-workspace-root":
+            event.stop()
+            if event.value == event.input.value:
+                self._record_workspace_root_edit(event.value)
+            return
         if event.input.id != "mcp-tools-filter-text":
             return
         event.stop()
