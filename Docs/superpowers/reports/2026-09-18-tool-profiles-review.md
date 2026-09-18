@@ -142,14 +142,27 @@ specificity and declarations, without applying the compact rule to Import.
 button styles, geometry, visibility and painted text. Independent review found
 no issue. [Evidence](../qa/2026-09-18-tool-profile-css-fastpath/README.md).
 
+## MCP Edit handoff — TASK-32785
+
+The real Settings route now reveals its permission table after content layout,
+including restored MCP visits. The canvas permits keyboard reading of controls
+and policy feedback; Space mutates only while the table owns focus. Exact
+profile/revision authority and newer focus ownership remain intact.
+
+129 distinct targeted cases pass. Four final native size/theme cells and 20
+inspected captures verify real imports, first/last rows, horizontal State-column
+access, saved selected-profile policy and fresh-revision return. Private lifecycle
+checks pass. Older mode tests required the established process-isolation wrapper
+and one stale CSS assertion required its already-existing token. Independent
+review found no introduced blocker. [QA and gallery](../qa/2026-09-18-mcp-permission-handoff/README.md).
+
 ## Remaining scope
 
-The MCP Edit handoff selects the exact profile, including return visits, but
-real routed probes show a geometry gap: focused permission rows are below the
-canvas clip at 80×24, and Ctrl+End reaches a clipped row at 140×40. Standalone
-profile selection tests pass but do not cover this routed layout. Repair and
-native qualification remain open. Concurrent-workflow review also remains open.
+Concurrent-workflow review remains open. This Edit repair does not close the
+whole MCP destination: compact rail/header wrapping and simultaneous tool/state
+readability remain part of its broader layout review. State remains accessible
+with the existing horizontal keyboard scroll, now qualified natively.
 
-The compact-selector CI failure is repaired locally by TASK-32784; remote
-checks still need to run on the new head.
-These bounded management reviews do not complete the broader component workstream.
+The TASK-32784 structural CSS guard passed remotely on head 1b16329e03; the new
+head still requires its own checks. These bounded management reviews do not
+complete the broader component workstream.
