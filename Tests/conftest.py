@@ -1037,7 +1037,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
     keep_bootstrap_profile = (
         is_private_profile_child(request)
         or request.node.path.name in {
-            "test_mcp_workbench.py", "test_mcp_tools_mode.py",
+            "test_mcp_workbench.py", "test_mcp_tools_mode.py", "test_mcp_servers_mode.py",
         }
     )
     test_data_dir = (

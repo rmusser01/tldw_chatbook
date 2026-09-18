@@ -1,0 +1,308 @@
+FF..                                                                     [100%]
+=================================== FAILURES ===================================
+____ test_master_controls_and_receipts_paint_completely[size0-textual-dark] ____
+
+self = <Coroutine test_master_controls_and_receipts_paint_completely[size0-textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_master_controls_and_receipts_paint_completely[size0-textual-dark]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x1160102c0>, 'theme': 'textual-dark', 'size': (80, 24)}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1972/test_master_controls_and_recei0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_master_controls_and_receipts_paint_completely[size0-textual-dark] ____
+E
+E           request = <FixtureRequest for <Coroutine test_master_controls_and_receipts_paint_completely[size0-textual-dark]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x116119370>
+E           theme = 'textual-dark', size = (80, 24)
+E
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("size", [(80, 24), (170, 48)])
+E               @private_profile_test
+E               async def test_master_controls_and_receipts_paint_completely(request, monkeypatch, theme, size):
+E                   _persistence(monkeypatch, lambda value: ConfigMutationResult(True, True, None))
+E                   app = WorkbenchAppWithBundledCSS()
+E                   app.theme = theme
+E                   async with app.run_test(size=size) as pilot:
+E                       workbench, _ = await _open(pilot)
+E                       await workbench._select_server_key(next(s.server_key for s in workbench._snapshots if s.source == "builtin"))
+E                       for mode, toggle_id, receipt_id in (
+E                           ("tools", "mcp-tools-local-enabled", "mcp-tools-local-config-status"),
+E                           ("servers", "mcp-gate-local_tools_enabled", "mcp-gate-local-master-status"),
+E                       ):
+E                           workbench.set_mode(mode)
+E                           await _settle(pilot)
+E                           toggle = workbench.query_one("#" + toggle_id, Button)
+E                           toggle.focus()
+E                           await _settle(pilot)
+E                           region, clip = app.screen._compositor.visible_widgets[toggle]
+E           >               assert region.intersection(clip) == region
+E           E               AssertionError: assert Region(x=20, ...=35, height=1) == Region(x=20, ...=66, height=1)
+E           E
+E           E                 Omitting 3 identical items, use -vv to show
+E           E                 Differing attributes:
+E           E                 ['width']
+E           E
+E           E                 Drill down into differing attribute width:
+E           E                   width: 35 != 66
+E           E                 Use -v to get more diff
+E
+E           Tests/UI/test_mcp_master_settings.py:521: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 08:21:56.770 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 08:21:56.776 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 08:21:56.777 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 08:21:56.777 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 08:21:57.343 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:21:57.538 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:21:57.927 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           1.94s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]
+E           1 failed in 3.88s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 08:21:54.811 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 08:21:54.817 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 08:21:54.818 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 08:21:54.818 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+___ test_master_controls_and_receipts_paint_completely[size0-textual-light] ____
+
+self = <Coroutine test_master_controls_and_receipts_paint_completely[size0-textual-light]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_master_controls_and_receipts_paint_completely[size0-textual-light]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x115ffbef0>, 'theme': 'textual-light', 'size': (80, 24)}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1972/test_master_controls_and_recei1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ___ test_master_controls_and_receipts_paint_completely[size0-textual-light] ____
+E
+E           request = <FixtureRequest for <Coroutine test_master_controls_and_receipts_paint_completely[size0-textual-light]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x116244aa0>
+E           theme = 'textual-light', size = (80, 24)
+E
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("size", [(80, 24), (170, 48)])
+E               @private_profile_test
+E               async def test_master_controls_and_receipts_paint_completely(request, monkeypatch, theme, size):
+E                   _persistence(monkeypatch, lambda value: ConfigMutationResult(True, True, None))
+E                   app = WorkbenchAppWithBundledCSS()
+E                   app.theme = theme
+E                   async with app.run_test(size=size) as pilot:
+E                       workbench, _ = await _open(pilot)
+E                       await workbench._select_server_key(next(s.server_key for s in workbench._snapshots if s.source == "builtin"))
+E                       for mode, toggle_id, receipt_id in (
+E                           ("tools", "mcp-tools-local-enabled", "mcp-tools-local-config-status"),
+E                           ("servers", "mcp-gate-local_tools_enabled", "mcp-gate-local-master-status"),
+E                       ):
+E                           workbench.set_mode(mode)
+E                           await _settle(pilot)
+E                           toggle = workbench.query_one("#" + toggle_id, Button)
+E                           toggle.focus()
+E                           await _settle(pilot)
+E                           region, clip = app.screen._compositor.visible_widgets[toggle]
+E           >               assert region.intersection(clip) == region
+E           E               AssertionError: assert Region(x=20, ...=35, height=1) == Region(x=20, ...=66, height=1)
+E           E
+E           E                 Omitting 3 identical items, use -vv to show
+E           E                 Differing attributes:
+E           E                 ['width']
+E           E
+E           E                 Drill down into differing attribute width:
+E           E                   width: 35 != 66
+E           E                 Use -v to get more diff
+E
+E           Tests/UI/test_mcp_master_settings.py:521: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 08:22:01.704 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 08:22:01.710 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 08:22:01.710 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 08:22:01.711 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 08:22:02.270 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:22:02.467 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:22:02.873 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           1.95s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]
+E           1 failed in 3.83s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+4.84s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]
+4.78s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]
+4.58s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-dark]
+4.58s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-light]
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]
+FAILED Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]
+2 failed, 2 passed, 16 deselected in 20.86s

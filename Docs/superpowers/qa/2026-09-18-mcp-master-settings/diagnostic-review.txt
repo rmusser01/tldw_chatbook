@@ -1,0 +1,9 @@
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py: 47 -> 46 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 0
+
+- REMOVED -- these statements no longer exist:
+  - warning 78b003c9d13d0e5f (was line 4149)
+      | logger.warning(
+      |     "MCP Tools-mode local master save failed (error_type={}).",
+      |     type(exc).__name__,
+      | )

@@ -3440,7 +3440,8 @@ Button.mcp-callout {
 }
 
 
-#mcp-tools-local-enabled {
+#mcp-tools-local-enabled,
+#mcp-gate-local_tools_enabled {
     width: $ds-width-full;
     height: $ds-height-auto;
     text-wrap: wrap;

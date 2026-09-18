@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from rich.markup import escape as escape_markup
@@ -35,6 +36,7 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_local_master_button import MCPLocalMasterButton
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
@@ -414,14 +416,20 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         rebuilt fresh from `all_tool_gates()` -- reflects the round trip.
         """
 
-        def __init__(self, section: str, key: str, value: bool) -> None:
+        def __init__(
+            self, section: str, key: str, value: bool, *, config_path: Path | None = None
+        ) -> None:
             super().__init__()
             self.section = section
             self.key = key
             self.value = value
+            self.config_path = config_path
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._local_master_projection: tuple[bool, str, bool] | None = None
+        self._local_config_path: Path | None = None
+        self.submit_local_master: Callable[[bool, Path | None], None] | None = None
         self._snapshots: list[ReadinessSnapshot] = []
         self._detail_snapshot: ReadinessSnapshot | None = None
         # Maps the (possibly `#N`-suffixed) DataTable row key back to the
@@ -1289,7 +1297,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         markup (every other title-derived label in this file already goes
         through the same `escape_markup` import).
         """
-        return Button(
+        is_master = (gate.section, gate.key) == ("console", LOCAL_TOOLS_MASTER_KEY)
+        button_type = MCPLocalMasterButton if is_master else Button
+        button = button_type(
             _tool_gate_label(gate.title, gate.enabled),
             id=f"{_TOOL_GATE_ID_PREFIX}{gate.key}",
             classes="console-action-secondary",
@@ -1297,6 +1307,41 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             tooltip=gate.description,
             disabled=disabled,
         )
+        if is_master:
+            button.enabled, button.config_path = gate.enabled, self._local_config_path
+        return button
+
+    def project_local_master(
+        self,
+        enabled: bool,
+        message: str,
+        *,
+        error: bool,
+        config_path: Path,
+        pending: bool = False,
+    ) -> None:
+        """Project both the master label and the value its next press reverses."""
+        self._local_master_projection = enabled, message, error
+        self._local_config_path = config_path
+        button_id = f"{_TOOL_GATE_ID_PREFIX}{LOCAL_TOOLS_MASTER_KEY}"
+        gate = self._tool_gates_by_id.get(button_id)
+        if gate is not None:
+            self._tool_gates_by_id[button_id] = replace(gate, enabled=enabled)
+            for button in self.query(f"#{button_id}"):
+                button.enabled, button.config_path = enabled, config_path
+                button.label = _tool_gate_label(gate.title, enabled)
+        for status in self.query("#mcp-gate-local-master-status"):
+            status.update(message)
+            status.set_class(error, "ds-text-error")
+            status.set_class(not error, "ds-text-muted")
+        # Pending choices are presentation only: do not claim the persisted
+        # master is off, or leave dependents disabled after a pending reversal.
+        for note in self.query("#mcp-gate-local-master-off-note"):
+            note.display = not enabled and not pending
+        for gate_id, gate in self._tool_gates_by_id.items():
+            if gate.group == "local" and gate.key != LOCAL_TOOLS_MASTER_KEY:
+                for button in self.query(f"#{gate_id}"):
+                    button.disabled = not enabled
 
     def _tool_gate_widgets(self) -> list[Widget]:
         """Build the `[tools]`/`[console]` gate rows (task-3240).
@@ -1320,6 +1365,14 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             self._tool_gates_by_id = {}
             return []
         gates = all_tool_gates()
+        if self._local_master_projection is not None:
+            enabled, _, _ = self._local_master_projection
+            gates = [
+                replace(gate, enabled=enabled)
+                if (gate.section, gate.key) == ("console", LOCAL_TOOLS_MASTER_KEY)
+                else gate
+                for gate in gates
+            ]
         self._tool_gates_by_id = {
             f"{_TOOL_GATE_ID_PREFIX}{gate.key}": gate for gate in gates
         }
@@ -1379,15 +1432,30 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                         markup=False,
                     )
                 )
-            widgets.extend(
-                self._gate_button(
-                    gate,
-                    disabled=(
-                        not master_enabled and gate.key != LOCAL_TOOLS_MASTER_KEY
-                    ),
+            for gate in local_gates:
+                widgets.append(
+                    self._gate_button(
+                        gate,
+                        disabled=(
+                            not master_enabled and gate.key != LOCAL_TOOLS_MASTER_KEY
+                        ),
+                    )
                 )
-                for gate in local_gates
-            )
+                if gate.key == LOCAL_TOOLS_MASTER_KEY:
+                    _, message, error = self._local_master_projection or (
+                        False,
+                        "",
+                        False,
+                    )
+                    widgets.append(
+                        Static(
+                            message,
+                            id="mcp-gate-local-master-status",
+                            markup=False,
+                            classes="h-auto "
+                            + ("ds-text-error" if error else "ds-text-muted"),
+                        )
+                    )
         widgets.append(
             Static(
                 _TOOL_GATE_NOTE_TEXT,
@@ -1565,12 +1633,28 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # resyncs on failure too, rebuilding these rows from
             # `all_tool_gates()`, so a rejected write repaints the truth.
             event.stop()
-            requested = not gate.enabled
+            is_master = (gate.section, gate.key) == ("console", LOCAL_TOOLS_MASTER_KEY)
+            requested, config_path = (
+                getattr(
+                    event,
+                    "mcp_local_master_choice",
+                    (not gate.enabled, self._local_config_path),
+                )
+                if is_master
+                else (not gate.enabled, None)
+            )
             self._tool_gates_by_id[button_id] = replace(gate, enabled=requested)
             event.button.label = _tool_gate_label(gate.title, requested)
-            self.post_message(
-                self.ToolGateChanged(gate.section, gate.key, requested)
-            )
+            if is_master:
+                event.button.enabled = requested
+            if is_master and self.submit_local_master is not None:
+                self.submit_local_master(requested, config_path)
+            else:
+                self.post_message(
+                    self.ToolGateChanged(
+                        gate.section, gate.key, requested, config_path=config_path
+                    )
+                )
             return
         if button_id == "mcp-add-server":
             event.stop()

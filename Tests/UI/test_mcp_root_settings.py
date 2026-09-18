@@ -12,10 +12,10 @@ from Tests.UI.test_mcp_compact_readability import _settle
 from Tests.UI.test_mcp_workbench import WorkbenchAppWithBundledCSS
 from Tests.UI.test_tool_profile_review_lifetime import _wait
 from tldw_chatbook.config import ConfigMutationResult
-from tldw_chatbook.MCP.root_settings import (
-    RootSaveRequest,
-    RootSaveUnavailable,
-    get_mcp_root_saves,
+from tldw_chatbook.MCP.local_config_saves import (
+    ConfigSaveRequest,
+    ConfigSaveUnavailable,
+    get_mcp_local_config_saves,
 )
 from tldw_chatbook.UI.MCP_Modules import mcp_workbench as module
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
@@ -254,7 +254,7 @@ async def test_root_save_survives_recreated_workbench(
             )
         finally:
             release.set()
-            await get_mcp_root_saves(app).close_and_drain()
+            await get_mcp_local_config_saves(app).close_and_drain()
         await _wait(
             pilot,
             lambda: (
@@ -302,14 +302,17 @@ async def test_catalog_refresh_failure_does_not_report_save_failure(
         assert "Saved local MCP" in status and "private failure" not in status
 
 
+@pytest.mark.parametrize("key", ["workspace_root", "local_tools_enabled"])
 @private_profile_test
-async def test_root_shutdown_drains_and_fences_both_config_owners(request, monkeypatch):
+async def test_local_config_shutdown_drains_and_fences_both_config_owners(
+    request, monkeypatch, key
+):
     from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.MCP.root_settings import RootSaveResult
+    from tldw_chatbook.MCP.local_config_saves import ConfigSaveResult
     from tldw_chatbook.Tool_Packs.operations import ToolProfileWriteUnavailable
 
     app = object.__new__(TldwCli)
-    owner = get_mcp_root_saves(app)
+    owner = get_mcp_local_config_saves(app)
     profiles = app._get_tool_profile_operations()
     entered, release = threading.Event(), threading.Event()
     later = []
@@ -323,18 +326,25 @@ async def test_root_shutdown_drains_and_fences_both_config_owners(request, monke
     def write():
         entered.set()
         assert release.wait(5)
-        return RootSaveResult("saved", "", True)
+        return ConfigSaveResult("saved", "", True)
 
     task = owner.submit(
-        RootSaveRequest("", (None, 0), Path("config"), Path.cwd()), write
+        ConfigSaveRequest(
+            False if key == "local_tools_enabled" else "",
+            (None, 0),
+            Path("config"),
+            Path.cwd(),
+            key=key,
+        ),
+        write,
     )
     try:
         assert await asyncio.to_thread(entered.wait, 2)
         shutdown = asyncio.create_task(app._shutdown_app_owned_lifecycles())
         await asyncio.sleep(0)
         assert not shutdown.done() and not later
-        with pytest.raises(RootSaveUnavailable):
-            get_mcp_root_saves(app)
+        with pytest.raises(ConfigSaveUnavailable):
+            get_mcp_local_config_saves(app)
         with pytest.raises(ToolProfileWriteUnavailable):
             profiles.start("import", "test", lambda cancelled: None)
         shutdown.cancel()
@@ -367,7 +377,7 @@ def test_root_writer_uses_captured_cwd_and_locked_config_fence(
         return ConfigMutationResult(False, False, None)
 
     monkeypatch.setattr(module, "apply_settings_mutation_to_cli_config", mutate)
-    submitted = RootSaveRequest("relative", (None, 0), profile, root.parent)
+    submitted = ConfigSaveRequest("relative", (None, 0), profile, root.parent)
     outcome = module._persist_mcp_workspace_root(submitted)
     assert outcome.phase == "saved" and outcome.stored == str(root)
     current[0] = tmp_path / "other.toml"
@@ -381,7 +391,7 @@ def test_root_writer_uses_captured_cwd_and_locked_config_fence(
 async def test_newer_publication_cannot_be_hidden_by_old_save_receipt(
     request, monkeypatch, phase, changed
 ):
-    from tldw_chatbook.MCP.root_settings import RootSaveResult, RootSaveState
+    from tldw_chatbook.MCP.local_config_saves import ConfigSaveResult, ConfigSaveState
 
     values = _persistence(monkeypatch, lambda root: None)
     app = WorkbenchAppWithBundledCSS()
@@ -390,15 +400,15 @@ async def test_newer_publication_cannot_be_hidden_by_old_save_receipt(
         field = canvas.query_one("#mcp-tools-workspace-root", Input)
         field.value = "submitted B"
         await _settle(pilot)
-        old = RootSaveState(
+        old = ConfigSaveState(
             1,
-            RootSaveRequest(
+            ConfigSaveRequest(
                 field.value,
                 canvas.workspace_root_draft_identity,
                 module.get_cli_config_path(),
                 Path.cwd(),
             ),
-            RootSaveResult(phase, "canonical B", phase == "saved", 1, (1, 1, 1, 1)),
+            ConfigSaveResult(phase, "canonical B", phase == "saved", 1, (1, 1, 1, 1)),
         )
         values[("test", "generation")] = 2 if changed == "generation" else 1
         values[("console", "workspace_root")] = "independent C"
@@ -418,7 +428,7 @@ def test_real_atomic_root_save_pins_publication_generation_on_repeat(request, tm
     root = tmp_path / "real-root"
     root.mkdir()
     before = module.current_config_identity()[0]
-    submitted = RootSaveRequest(
+    submitted = ConfigSaveRequest(
         str(root), (None, 0), module.get_cli_config_path(), Path.cwd()
     )
     result = module._persist_mcp_workspace_root(submitted)
@@ -440,13 +450,16 @@ async def test_external_config_reload_supersedes_partial_save_without_generation
     import toml
 
     from tldw_chatbook import config
-    from tldw_chatbook.MCP.root_settings import MCPRootSaves, root_config_file_revision
+    from tldw_chatbook.MCP.local_config_saves import (
+        MCPLocalConfigSaves,
+        config_file_revision,
+    )
 
     root, external = tmp_path / "saved", tmp_path / "external"
     root.mkdir()
     external.mkdir()
-    owner = MCPRootSaves()
-    submitted = RootSaveRequest(
+    owner = MCPLocalConfigSaves()
+    submitted = ConfigSaveRequest(
         str(root), (None, 0), module.get_cli_config_path(), Path.cwd()
     )
     publish = config._publish_runtime_config_unlocked
@@ -464,7 +477,7 @@ async def test_external_config_reload_supersedes_partial_save_without_generation
         submitted.config_path,
         "stale",
         generation,
-        root_config_file_revision(submitted.config_path),
+        config_file_revision(submitted.config_path),
     ) == str(root)
     monkeypatch.setattr(config, "_publish_runtime_config_unlocked", publish)
     data = toml.loads(submitted.config_path.read_text())
@@ -478,5 +491,5 @@ async def test_external_config_reload_supersedes_partial_save_without_generation
         submitted.config_path,
         cached,
         generation,
-        root_config_file_revision(submitted.config_path),
+        config_file_revision(submitted.config_path),
     ) == str(external)

@@ -19015,14 +19015,14 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
-        self._mcp_root_saves_closed = True
+        self._mcp_local_config_saves_closed = True
         self._tool_profile_operations_closed = True
-        root_saves = getattr(self, "_mcp_root_saves", None)
+        local_config_saves = getattr(self, "_mcp_local_config_saves", None)
         tool_profiles = getattr(self, "_tool_profile_operations", None)
         if tool_profiles is not None:
             tool_profiles.close_admission()
-        if root_saves is not None:
-            await root_saves.close_and_drain()
+        if local_config_saves is not None:
+            await local_config_saves.close_and_drain()
         if tool_profiles is not None:
             # Settle these writes before another owner's failure can advance
             # teardown to the workspace databases used by their final checks.

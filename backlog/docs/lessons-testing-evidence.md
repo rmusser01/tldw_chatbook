@@ -15882,3 +15882,14 @@ existing mutation lock and after replacement, and fence both the cache override
 and later canonicalization with that file revision. A real private-config
 regression reproduces the unchanged-generation external reload. Do not use a
 publication counter alone to prove a disk-backed setting is unchanged.
+
+
+## App-owned writes still need synchronous UI admission (TASK-32793)
+
+The shared MCP save queue serialized admitted requests, but independent review
+pressed Off, ran the 250ms projection before the child message reached its parent,
+and pressed again. Projection reset the cached control to On, so both actions
+requested Off. The same poll refreshed root input before Input.Changed and erased
+its newest edit. Synchronous canvas admission, activation-time target/config
+capture, and master-only projection fixed both mounted reproductions. Queue
+ownership starts after admission; test the event boundary before it as well.
