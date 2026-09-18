@@ -1,0 +1,14 @@
+tldw_chatbook/app.py: 404 -> 406 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 2
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning fd9916d895c65091 (now line 9846)
+      | self.loguru_logger.warning(
+      |     "Workspace profile initialization failed; "
+      |     f"error_type={type(exc).__name__}"
+      | )
+  + warning 8b704e3974716811 (now line 9853)
+      | self.loguru_logger.warning(
+      |     "Workspace agent provisioning wiring failed; "
+      |     f"error_type={type(exc).__name__}"
+      | )

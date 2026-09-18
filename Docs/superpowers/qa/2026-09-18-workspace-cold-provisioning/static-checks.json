@@ -1,0 +1,13 @@
+{
+  "tldw_chatbook/app.py": {
+    "baseline": 491,
+    "current": 491,
+    "added": []
+  },
+  "Tests/App/test_startup_init_hygiene.py": {
+    "baseline": 3,
+    "current": 2,
+    "added": []
+  },
+  "new_app_methods_format": "pass"
+}

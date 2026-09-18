@@ -16,8 +16,8 @@ the property that would go quietly wrong again:
 from __future__ import annotations
 
 import ast
-from contextlib import contextmanager
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -25,6 +25,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.app import TldwCli
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -133,7 +134,11 @@ def keyring_spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return calls
 
 
-def test_app_construction_touches_no_os_keyring(keyring_spy: list[str]) -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_app_construction_touches_no_os_keyring(
+    request, keyring_spy: list[str]
+) -> None:
     """Constructing the app must not discover or query an OS credential store.
 
     Four sites did: the generated-video store's retention pass (a real
@@ -149,7 +154,10 @@ def test_app_construction_touches_no_os_keyring(keyring_spy: list[str]) -> None:
     assert keyring_spy == [], f"app construction reached the OS keyring: {keyring_spy}"
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_the_credential_store_still_resolves_when_asked(
+    request,
     keyring_spy: list[str],
 ) -> None:
     """Deferred, not deleted: the first read still builds the real store."""
@@ -168,7 +176,10 @@ def test_the_credential_store_still_resolves_when_asked(
     assert len(keyring_spy) == before
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_the_skills_stack_defers_only_the_trust_service(
+    request,
     keyring_spy: list[str],
 ) -> None:
     """The Console takes the scope facade at mount; that must stay keyring-free.
@@ -197,7 +208,9 @@ def test_the_skills_stack_defers_only_the_trust_service(
     assert local.trust_service is app.local_skill_trust_service
 
 
-def test_an_injected_skills_service_is_not_clobbered_by_a_sibling_read() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_an_injected_skills_service_is_not_clobbered_by_a_sibling_read(request) -> None:
     """Filling the stack lazily must never overwrite a test's double."""
     from Tests.UI.app_factory import _build_test_app
 
@@ -444,8 +457,10 @@ def test_tool_pack_prerequisite_failure_attaches_no_guard() -> None:
     assert bootstrap.active_guard is None
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     import tldw_chatbook.app as app_module
     from tldw_chatbook.Tool_Packs.catalog_snapshot import PermissionInventoryRegistry

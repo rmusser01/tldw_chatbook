@@ -9804,12 +9804,55 @@ class TldwCli(
 
     def _deferred_wire_workspace_agent_provisioning(self) -> None:
         """Timer callback: run the (best-effort, non-fatal) provisioning wiring."""
+        from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
         try:
+            registry = getattr(self, "workspace_registry_service", None)
+            if (
+                registry is not None
+                and not registry.db.is_agent_backfill_complete()
+                and any(
+                    record.workspace_id != DEFAULT_WORKSPACE_ID
+                    and not record.archived
+                    and record.assistant_defaults is None
+                    and not record.assistant_defaults_explicit_none
+                    for record in registry.list_workspaces()
+                )
+            ):
+                # Existing workspaces are a real first use; an empty startup
+                # must not eagerly initialize the portable-profile subsystem.
+                self.run_worker(
+                    self.ensure_workspace_agent_provisioning(),
+                    group="workspace-agent-provisioning",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                return
             self._wire_workspace_agent_provisioning()
         except Exception as exc:
             self.loguru_logger.warning(
                 "Deferred workspace agent provisioning wiring failed; error_type={}",
                 type(exc).__name__,
+            )
+
+    async def ensure_workspace_agent_provisioning(self) -> None:
+        """Await app-owned profile authority before automatic workspace setup."""
+        worker = self._deferred_wire_tool_pack_service()
+        if worker is not None:
+            try:
+                # Modal cancellation must not cancel shared app composition.
+                await asyncio.shield(worker.wait())
+            except Exception as exc:  # noqa: BLE001 - convenience setup remains nonfatal
+                self.loguru_logger.warning(
+                    "Workspace profile initialization failed; "
+                    f"error_type={type(exc).__name__}"
+                )
+        try:
+            self._wire_workspace_agent_provisioning()
+        except Exception as exc:  # noqa: BLE001 - convenience setup remains nonfatal
+            self.loguru_logger.warning(
+                "Workspace agent provisioning wiring failed; "
+                f"error_type={type(exc).__name__}"
             )
 
     def _deferred_wire_tool_pack_service(self) -> Worker | None:
@@ -9972,6 +10015,16 @@ class TldwCli(
         persona_service = getattr(self, "local_character_persona_service", None)
         unified_service = getattr(self, "unified_mcp_service", None)
         permission_store = getattr(unified_service, "permission_store", None)
+        if registry is not None:
+            guard = registry.tool_profile_guard
+            if (
+                isinstance(guard, DeferredWorkspaceToolProfileGuard)
+                and guard.active_guard is None
+            ):
+                # Do not create Persona/profile records that cannot yet be
+                # bound. The create dialog or eligible startup backfill awaits
+                # the existing Tool Pack composition before retrying wiring.
+                return
         # Lazy import (boot budget, ADR-097): this wiring runs on a
         # post-ready timer, and importing at module scope would make
         # `Workspaces.agent_provisioning` resident at `_ui_ready`.
