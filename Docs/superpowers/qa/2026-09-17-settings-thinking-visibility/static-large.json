@@ -1,0 +1,11 @@
+{
+  "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+  "baseline_commit": "2afbe4a76f58ec6139b728ff012a016e3e2c7af8",
+  "baseline_lint_count": 116,
+  "current_lint_count": 116,
+  "introduced_lint": [],
+  "baseline_format_edits": 83,
+  "current_format_edits": 83,
+  "introduced_format_edits": [],
+  "source_compiles": true
+}

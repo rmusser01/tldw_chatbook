@@ -10,6 +10,7 @@ from typing import ClassVar
 import pytest
 from textual.app import App, ComposeResult
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from tldw_chatbook.Chat.console_chat_models import (
     PROPRIETARY_THINKING_NOTICE,
@@ -478,7 +479,10 @@ async def test_no_actual_evidence_mounts_no_thinking_disclosure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_visibility_gate_hides_only_thinking_and_restores_it_collapsed() -> None:
+@private_profile_test
+async def test_visibility_gate_hides_only_thinking_and_restores_it_collapsed(
+    request,
+) -> None:
     app = ThinkingTranscriptHarness()
     assistant = _assistant(
         content="Public answer",
@@ -527,7 +531,10 @@ async def test_visibility_gate_hides_only_thinking_and_restores_it_collapsed() -
 
 
 @pytest.mark.asyncio
-async def test_hidden_live_thinking_resumes_its_pending_expanded_lifecycle() -> None:
+@private_profile_test
+async def test_hidden_live_thinking_resumes_its_pending_expanded_lifecycle(
+    request,
+) -> None:
     app = ThinkingTranscriptHarness()
     live = _assistant(blocks=(_displayable("live private chain"),))
 

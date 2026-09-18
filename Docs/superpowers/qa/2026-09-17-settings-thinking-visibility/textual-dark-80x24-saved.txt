@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │                                         │
+│     Web Search               │  │  │  Console Behavior                       │
+│     Speech & TTS             │  │  │ ┌────────────────────────────────────┐  │
+│  Interface                   │  │  │ │ ┌────────────────────────────────┐ │  │
+│     Appearance               │  │  │ │ │                                │ │  │
+│     Theme                  ▁ │  │  │ │ │ Start here                     │ │  │
+│     Splash Screen            │  │  │ │ │▐X▌ Show model thinking (On)    │ │  │
+│   > Console Behavior         │  │  │ │ │ Applies immediately. Thinking  │ │  │
+│  Data & Privacy              │  │  │ │ │ remains part of the            │ │  │
+│     Storage                  │  │  │ │ │ conversation even when hidden. │ │  │
+│     Workspaces               │  │  │ │ │ Model thinking visibility      │ │  │
+│     Tool Profiles            │  │  │ │ │ saved.                         │ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Presentation only. Off hides actual model-thinking rows; capture, saved
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

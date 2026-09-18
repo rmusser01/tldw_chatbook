@@ -675,6 +675,7 @@ class _ConsoleToggleWrite:
     screen: "SettingsScreen"
     running: bool = False
     revision: int = 0
+    result: str = ""
     lock: Any = field(default_factory=threading.Lock, repr=False)
 
 
@@ -2978,11 +2979,6 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_sidechat = False
         self._syncing_console_paste_toggle = False
         self._syncing_console_thinking_visibility = False
-        self._thinking_visibility_write_revision = 0
-        initial_thinking_visibility = self._loaded_show_model_thinking()
-        self._thinking_visibility_desired_value = initial_thinking_visibility
-        self._thinking_visibility_confirmed_value = initial_thinking_visibility
-        self._thinking_visibility_in_flight: tuple[bool, int] | None = None
         toggle_writes = getattr(app_instance, "_settings_console_toggle_writes", None)
         if toggle_writes is None:
             toggle_writes = {}
@@ -6532,7 +6528,22 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _apply_console_toggle_runtime(self, key: str, value: bool | str) -> None:
-        """Keep the immediate preference and any mounted button in sync."""
+        """Keep the immediate preference and any mounted control in sync."""
+        if key == "model-thinking":
+            changed = self._loaded_show_model_thinking() != value
+            self._console_settings()["show_model_thinking"] = value
+            try:
+                checkbox = self.query_one(
+                    "#settings-console-show-model-thinking", Checkbox
+                )
+                with checkbox.prevent(Checkbox.Changed):
+                    checkbox.value = bool(value)
+                checkbox.label = self._show_model_thinking_label()
+            except QueryError:
+                pass
+            if changed:
+                self._signal_console_appearance_refresh()
+            return
         app_config = getattr(self.app_instance, "app_config", None)
         if key == "remote-images":
             if isinstance(app_config, dict):
@@ -6571,6 +6582,13 @@ class SettingsScreen(BaseAppScreen):
             state.revision += 1
             state.screen = self
             state.running = True
+            state.result = (
+                "Saving model thinking visibility…" if key == "model-thinking" else ""
+            )
+        if key == "model-thinking":
+            self._set_static_text(
+                "#settings-console-model-thinking-result", state.result
+            )
         if start:
             host = self.app
             host.run_worker(
@@ -6603,7 +6621,13 @@ class SettingsScreen(BaseAppScreen):
                 payload = (
                     {"chat.images": {"render_remote_images": value}}
                     if key == "remote-images"
-                    else {"console": {"status_chips_position": value}}
+                    else {
+                        "console": {
+                            "show_model_thinking"
+                            if key == "model-thinking"
+                            else "status_chips_position": value
+                        }
+                    }
                 )
                 try:
                     mutation = apply_settings_mutation_to_cli_config(payload)
@@ -6644,14 +6668,27 @@ class SettingsScreen(BaseAppScreen):
             if revision != state.revision:
                 return
             screen, value = state.screen, state.desired
-        label = "Linked images" if key == "remote-images" else "Status row placement"
+        label = {
+            "remote-images": "Linked images",
+            "status-row-position": "Status row placement",
+            "model-thinking": "Model thinking visibility",
+        }[key]
         screen._apply_console_toggle_runtime(key, value)
         if not saved:
             message = f"Could not save {label.lower()}; the prior setting was restored. Try again."
+            thinking_result = "Save failed; setting restored.\nToggle again to retry."
         elif mutation.file_replaced and not mutation.caches_reloaded:
             message = f"{label} saved, but live settings could not be refreshed."
+            thinking_result = "Saved. Reload settings to refresh."
         else:
             message = f"{label} saved."
+            thinking_result = message
+        with state.lock:
+            state.result = thinking_result if key == "model-thinking" else message
+        if key == "model-thinking":
+            screen._set_static_text(
+                "#settings-console-model-thinking-result", state.result
+            )
         screen._console_behavior_result = message
         if screen.is_attached:
             screen._set_static_text("#settings-console-behavior-result", message)
@@ -17400,6 +17437,12 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-show-model-thinking-help",
                 classes="settings-detail-row",
             )
+            thinking_write = self._console_toggle_writes.get("model-thinking")
+            yield Static(
+                thinking_write.result if thinking_write is not None else "",
+                id="settings-console-model-thinking-result",
+                classes="settings-status-row",
+            )
             yield Static("Local reasoning history", classes="destination-section")
             yield Select(
                 REASONING_HISTORY_OPTIONS,
@@ -25430,12 +25473,8 @@ class SettingsScreen(BaseAppScreen):
         next_value = bool(event.value)
         if next_value == previous:
             return
-        self._console_settings()["show_model_thinking"] = next_value
-        event.checkbox.label = self._show_model_thinking_label()
-        self._signal_console_appearance_refresh()
-        self._thinking_visibility_write_revision += 1
-        self._thinking_visibility_desired_value = next_value
-        self._start_thinking_visibility_persist_if_idle()
+        self._queue_console_toggle("model-thinking", next_value, previous)
+        self._apply_console_toggle_runtime("model-thinking", next_value)
 
     @on(Checkbox.Changed, "#settings-console-reasoning-native-tools")
     def handle_console_reasoning_native_tools_changed(
@@ -30104,100 +30143,6 @@ class SettingsScreen(BaseAppScreen):
                             generation,
                             type(exc).__name__,
                         )
-
-    def _apply_thinking_visibility_persist_result(
-        self,
-        mutation: ConfigMutationResult,
-        next_value: bool,
-        revision: int,
-    ) -> None:
-        """Advance one serialized write and reconcile the latest desired value."""
-
-        if self._thinking_visibility_in_flight != (next_value, revision):
-            return
-        self._thinking_visibility_in_flight = None
-        successful_noop = (
-            not mutation.file_replaced
-            and not mutation.conflict
-            and mutation.failure_phase is None
-        )
-        if mutation.file_replaced or successful_noop:
-            self._thinking_visibility_confirmed_value = next_value
-            if mutation.file_replaced and not mutation.caches_reloaded:
-                self._console_behavior_result = (
-                    "Model thinking visibility was saved, but live settings "
-                    "could not be refreshed."
-                )
-                self._set_static_text(
-                    "#settings-console-behavior-result",
-                    self._console_behavior_result,
-                )
-                self.app.notify(self._console_behavior_result, severity="error")
-            else:
-                self._console_behavior_result = "Model thinking visibility saved."
-                self._set_static_text(
-                    "#settings-console-behavior-result", self._console_behavior_result
-                )
-            if self._thinking_visibility_desired_value != next_value:
-                self._start_thinking_visibility_persist_if_idle()
-            return
-        if revision != self._thinking_visibility_write_revision:
-            if (
-                self._thinking_visibility_desired_value
-                != self._thinking_visibility_confirmed_value
-            ):
-                self._start_thinking_visibility_persist_if_idle()
-            return
-        restored = self._thinking_visibility_confirmed_value
-        self._thinking_visibility_desired_value = restored
-        self._console_settings()["show_model_thinking"] = restored
-        try:
-            checkbox = self.query_one("#settings-console-show-model-thinking", Checkbox)
-            self._syncing_console_thinking_visibility = True
-            try:
-                with checkbox.prevent(Checkbox.Changed):
-                    checkbox.value = restored
-                checkbox.label = self._show_model_thinking_label()
-            finally:
-                self._syncing_console_thinking_visibility = False
-        except QueryError:
-            pass
-        self._signal_console_appearance_refresh()
-        self._console_behavior_result = (
-            "Could not save model thinking visibility; the prior setting was restored."
-        )
-        self._set_static_text(
-            "#settings-console-behavior-result", self._console_behavior_result
-        )
-        self.app.notify(self._console_behavior_result, severity="error")
-
-    def _start_thinking_visibility_persist_if_idle(self) -> None:
-        """Dispatch only the newest desired visibility when no write is active."""
-
-        if self._thinking_visibility_in_flight is not None:
-            return
-        next_value = self._thinking_visibility_desired_value
-        if next_value == self._thinking_visibility_confirmed_value:
-            return
-        revision = self._thinking_visibility_write_revision
-        self._thinking_visibility_in_flight = (next_value, revision)
-        self._settings_persist_thinking_visibility(next_value, revision)
-
-    @work(group="settings-console-thinking-visibility", thread=True)
-    def _settings_persist_thinking_visibility(
-        self,
-        next_value: bool,
-        revision: int,
-    ) -> None:
-        mutation = apply_settings_mutation_to_cli_config(
-            {"console": {"show_model_thinking": next_value}}
-        )
-        self.app.call_from_thread(
-            self._apply_thinking_visibility_persist_result,
-            mutation,
-            next_value,
-            revision,
-        )
 
     def _signal_library_reader_layout_refresh(self) -> None:
         """Publish saved reader layout defaults to live Library screens."""

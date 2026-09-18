@@ -530,6 +530,12 @@ Most controls are drafted. Groups marked **applies immediately** save as you edi
 | **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. |
 | **Background effects** | An Enabled/Disabled toggle, **Background effect** (None / Snow / Rain / Matrix), **Scope**, **Intensity**, and **Frame rate** (1–12). |
 
+The **Show model thinking** result stays beside its checkbox when you reopen
+Settings. A failed save restores the previous value; fix the config-file problem
+and toggle again to retry. Pending writes keep your latest choice when you leave
+Settings. **Saved. Reload settings to refresh.** means the file was saved but
+live settings could not refresh; use **Diagnostics → Reload Config** or restart.
+
 Permission-summary results appear inside their group. **Changes not saved** keeps
 your edits when you switch categories or reopen Settings; correct the config-file
 problem and choose **Retry**. The previously saved choice remains active until a

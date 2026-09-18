@@ -1,0 +1,82 @@
+[
+  {
+    "file": "textual-dark-190x55-failed.svg",
+    "original_sha256": "7ecd824302dba7b11f28a02ac8b07c58f25e904d082fd1e220f6ef9b255c614d",
+    "stored_sha256": "c40bd8a32b46e8b4b914c951293119759f3b5777491a1fb3ad6f1e9a5df50db8"
+  },
+  {
+    "file": "textual-dark-190x55-failed.txt",
+    "original_sha256": "d188d3deabe4cb3acafa4212f0b1f138278bd3a31485fcef19e4a7cc037e784a",
+    "stored_sha256": "d188d3deabe4cb3acafa4212f0b1f138278bd3a31485fcef19e4a7cc037e784a"
+  },
+  {
+    "file": "textual-dark-190x55-saved.svg",
+    "original_sha256": "9bdf8558dbb85bee750ab74d585ae2dcde1f9cb1f938a20f4fa6a47994ec3b79",
+    "stored_sha256": "d8b02d9fb067334c7c0a95e9cf5e45efaa371a7c0a0db0192d4f6eed14fc07d0"
+  },
+  {
+    "file": "textual-dark-190x55-saved.txt",
+    "original_sha256": "ee28332840f424d88b4e46225ceec8e9e3339b4c24cfcd57ab3593bf2ef6b905",
+    "stored_sha256": "ee28332840f424d88b4e46225ceec8e9e3339b4c24cfcd57ab3593bf2ef6b905"
+  },
+  {
+    "file": "textual-dark-80x24-failed.svg",
+    "original_sha256": "a77f0aa4e29adbe3605cbba0f3565a9ab3d6214c7b8f916f108da7903a786ba5",
+    "stored_sha256": "165ce8c8e02af834dc9e9dca013362fd6c172af1fc746c2cb32ddfe9db62dc76"
+  },
+  {
+    "file": "textual-dark-80x24-failed.txt",
+    "original_sha256": "7d9a6992835458dc05785e001d3f9b606148c54608f8898dbbdb8d25c16e37ba",
+    "stored_sha256": "7d9a6992835458dc05785e001d3f9b606148c54608f8898dbbdb8d25c16e37ba"
+  },
+  {
+    "file": "textual-dark-80x24-saved.svg",
+    "original_sha256": "a190ef5297634404bd8b6faa0d06697857877183f8cdc7a9bbd5d7ad36f09106",
+    "stored_sha256": "7b3a76a7949bf92d2c6806f11a0386c0976ebba670ce26227ad1e9831384207e"
+  },
+  {
+    "file": "textual-dark-80x24-saved.txt",
+    "original_sha256": "d4228bf742744d66c8c9fd58fcbb276c1ed611472720b14a514dff8909717039",
+    "stored_sha256": "d4228bf742744d66c8c9fd58fcbb276c1ed611472720b14a514dff8909717039"
+  },
+  {
+    "file": "textual-light-190x55-failed.svg",
+    "original_sha256": "bf8df31bc27a9cc16ac6076845757a5cd8012b25174881fd6d88a3cfeda614a5",
+    "stored_sha256": "bed771d1e18de3ed1b9c248fd6405b85f35103f7f9ed9bfc5dfcfe4ff694eaac"
+  },
+  {
+    "file": "textual-light-190x55-failed.txt",
+    "original_sha256": "d7a29ae7deaff6a7ecc81f29ffda1b6c8b455f02efca9ecbc405ff317c9cb84d",
+    "stored_sha256": "d7a29ae7deaff6a7ecc81f29ffda1b6c8b455f02efca9ecbc405ff317c9cb84d"
+  },
+  {
+    "file": "textual-light-190x55-saved.svg",
+    "original_sha256": "66760d7c7314ab38946043a97dafd8f8673fe6af818a957f6c765b0d88e4775c",
+    "stored_sha256": "a16e0b8b628b15054b471cf212babee5c9084dcd381c7f2ef38fbe8dfeac68b7"
+  },
+  {
+    "file": "textual-light-190x55-saved.txt",
+    "original_sha256": "ee28332840f424d88b4e46225ceec8e9e3339b4c24cfcd57ab3593bf2ef6b905",
+    "stored_sha256": "ee28332840f424d88b4e46225ceec8e9e3339b4c24cfcd57ab3593bf2ef6b905"
+  },
+  {
+    "file": "textual-light-80x24-failed.svg",
+    "original_sha256": "47a6864c234b65daaa84182aa9b3cf6629fe14b89f7639dd7602f22a4c8fac2c",
+    "stored_sha256": "064ea6aee446553fc2f1977c9b1564dd8bbf72f2e9f2137a62e197fce8f66e4e"
+  },
+  {
+    "file": "textual-light-80x24-failed.txt",
+    "original_sha256": "7d9a6992835458dc05785e001d3f9b606148c54608f8898dbbdb8d25c16e37ba",
+    "stored_sha256": "7d9a6992835458dc05785e001d3f9b606148c54608f8898dbbdb8d25c16e37ba"
+  },
+  {
+    "file": "textual-light-80x24-saved.svg",
+    "original_sha256": "959ea1f94b0bf21acead312471b71e8c2cd3247b9edaec77669001def7de7449",
+    "stored_sha256": "eb194fe4528eac4a799fc04c8cc8743b715a342827f5ec1b32ee5ae3eede460a"
+  },
+  {
+    "file": "textual-light-80x24-saved.txt",
+    "original_sha256": "d4228bf742744d66c8c9fd58fcbb276c1ed611472720b14a514dff8909717039",
+    "stored_sha256": "d4228bf742744d66c8c9fd58fcbb276c1ed611472720b14a514dff8909717039"
+  }
+]
