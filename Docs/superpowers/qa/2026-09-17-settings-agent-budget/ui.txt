@@ -1,0 +1,28 @@
+..................................                                       [100%]
+============================= slowest 25 durations =============================
+106.43s call     Tests/UI/test_settings_agent_budget_journeys.py::test_budget_keyboard_save_revert_recovery_and_next_run_agree[size0-textual-light]
+102.60s call     Tests/UI/test_settings_agent_budget_journeys.py::test_budget_keyboard_save_revert_recovery_and_next_run_agree[size0-textual-dark]
+97.28s call     Tests/UI/test_settings_agent_budget_journeys.py::test_budget_keyboard_save_revert_recovery_and_next_run_agree[size1-textual-light]
+96.95s call     Tests/UI/test_settings_agent_budget_journeys.py::test_budget_keyboard_save_revert_recovery_and_next_run_agree[size1-textual-dark]
+17.79s call     Tests/UI/test_settings_agent_budget_journeys.py::test_over_limit_steps_are_refused_without_saving_a_different_runtime_budget
+4.94s call     Tests/UI/test_settings_agent_run_budget.py::test_an_edit_saves_and_reaches_the_run_budget_resolver
+4.71s call     Tests/UI/test_settings_agent_run_budget.py::test_the_budget_section_mounts_in_console_behavior
+4.56s call     Tests/UI/test_settings_agent_run_budget.py::test_opening_the_category_does_not_create_a_draft
+3.67s call     Tests/UI/test_settings_agent_budget_journeys.py::test_legacy_over_limit_steps_display_the_runtime_fallback
+2.33s call     Tests/UI/test_settings_agent_run_budget.py::test_all_five_limits_are_exposed
+2.02s call     Tests/UI/test_settings_agent_run_budget.py::test_warning_when_the_step_budget_will_bind_first
+2.00s call     Tests/UI/test_settings_agent_run_budget.py::test_no_warning_when_the_step_budget_clears_the_derived_floor
+1.94s call     Tests/UI/test_settings_agent_run_budget.py::test_an_invalid_value_is_explained_in_place
+1.93s call     Tests/UI/test_settings_agent_run_budget.py::test_unset_values_fall_back_to_the_shipped_default
+1.92s call     Tests/UI/test_settings_agent_run_budget.py::test_seconds_are_rendered_as_a_readable_duration[90.0-1m 30s]
+1.91s call     Tests/UI/test_settings_agent_run_budget.py::test_field_ids_and_keys_are_unique
+1.88s call     Tests/UI/test_settings_agent_run_budget.py::test_every_field_is_wired_into_the_console_save_path
+1.87s call     Tests/UI/test_settings_agent_run_budget.py::test_the_token_budget_is_presented_first
+1.86s call     Tests/UI/test_settings_agent_run_budget.py::test_zero_is_valid_where_it_means_unlimited
+1.85s call     Tests/UI/test_settings_agent_run_budget.py::test_the_warning_is_recomputed_from_staged_values
+1.83s call     Tests/UI/test_settings_agent_run_budget.py::test_seconds_are_rendered_as_a_readable_duration[86400.0-1d]
+1.82s call     Tests/UI/test_settings_agent_run_budget.py::test_no_warning_while_a_field_is_mid_edit
+1.81s call     Tests/UI/test_settings_agent_run_budget.py::test_seconds_are_rendered_as_a_readable_duration[45.0-45s]
+1.79s call     Tests/UI/test_settings_agent_run_budget.py::test_the_unlimited_token_budget_says_what_it_costs_you
+1.79s call     Tests/UI/test_settings_agent_run_budget.py::test_invalid_text_is_kept_staged_rather_than_discarded
+34 passed in 489.60s (0:08:09)

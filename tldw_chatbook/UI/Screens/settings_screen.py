@@ -176,6 +176,7 @@ from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
     DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+    MAX_CONSOLE_AGENT_MAX_STEPS,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
@@ -1161,7 +1162,7 @@ AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
     ),
     AgentBudgetField(
         key="agent_max_wall_seconds",
-        label="Wall-clock limit (seconds)",
+        label="Wall-clock (seconds)",
         widget_id="settings-console-agent-max-wall-seconds",
         default=DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
         minimum=MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
@@ -1175,7 +1176,7 @@ AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
     ),
     AgentBudgetField(
         key="agent_max_tool_call_seconds",
-        label="Per-tool-call limit (seconds)",
+        label="Per-tool-call (seconds)",
         widget_id="settings-console-agent-max-tool-call-seconds",
         default=DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
         minimum=MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
@@ -1216,7 +1217,8 @@ AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
             "Individual loop steps. One tool round costs 3 (think, call, "
             "result) and the closing reply costs 1, so N turns need "
             "3*(N-1)+1 steps. Set below that and this, not the turn "
-            "count, becomes your limiter."
+            "count, becomes your limiter. "
+            f"Maximum supported: {MAX_CONSOLE_AGENT_MAX_STEPS:,} steps."
         ),
     ),
 )
@@ -5905,7 +5907,16 @@ class SettingsScreen(BaseAppScreen):
             return coerce_float_setting(
                 raw, float(field.default), minimum=field.minimum
             )
-        return coerce_int_setting(raw, int(field.default), minimum=int(field.minimum))
+        return coerce_int_setting(
+            raw,
+            int(field.default),
+            minimum=int(field.minimum),
+            maximum=(
+                MAX_CONSOLE_AGENT_MAX_STEPS
+                if field.key == "agent_max_steps"
+                else None
+            ),
+        )
 
     def _agent_budget_value(self, field: AgentBudgetField) -> float | str:
         """The value to display: the staged draft if any, else the saved one.
@@ -5923,11 +5934,9 @@ class SettingsScreen(BaseAppScreen):
     ) -> float:
         """Coerce one budget field's input, or raise with a usable message.
 
-        Floors only -- no ceiling is enforced anywhere in this feature
-        (owner decision: these are user-owned trade-offs, same call as
-        `max_parallel_runs`). A below-floor value is REFUSED rather than
-        clamped: silently running at a number the user did not choose is
-        how a 2000-turn budget quietly becomes an 8-turn one.
+        Steps also respect the runtime's existing trace-storage ceiling.
+        Other fields retain their open-ended range. Invalid values are
+        refused rather than silently replaced with a different run budget.
 
         Raises:
             ValueError: With copy naming the field and its floor.
@@ -5948,6 +5957,10 @@ class SettingsScreen(BaseAppScreen):
                 f"{field.label} must be at least "
                 f"{self._format_agent_budget_number(field, field.minimum)} "
                 f"{field.unit}."
+            )
+        if field.key == "agent_max_steps" and parsed > MAX_CONSOLE_AGENT_MAX_STEPS:
+            raise ValueError(
+                f"{field.label} must be at most {MAX_CONSOLE_AGENT_MAX_STEPS:,} steps."
             )
         return float(parsed) if field.is_float else int(parsed)
 
