@@ -118,6 +118,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-159](159-console-native-reasoning-prefill.md) | Accepted | Keep native reasoning prefill adapter-qualified, with exclusive per-turn seed ownership, conversation-owned pins, and exact tool/recovery semantics. |
 | [ADR-162](162-managed-agent-plugins.md) | Accepted | Manage immutable agent-capability packages with Git marketplaces, reviewed adapters, workspace activation and authenticated lifecycle recovery. |
 | [ADR-163](163-expanded-console-hook-runtime.md) | Accepted | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
+| [ADR-166](166-agent-assisted-archive-recovery.md) | Proposed | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
 
 ## Historical Decision Material
 
