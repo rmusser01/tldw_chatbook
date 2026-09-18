@@ -77,21 +77,32 @@ owned import revise/accept/cancel, destination capture, admitted outcomes and
 existing workflow/loading behavior. [Evidence](../qa/2026-09-18-tool-profile-review-lifetime/README.md).
 This is mounted production-CSS evidence, not new native visual qualification.
 
-## Confirmed remaining defect
+## Focus and native management journeys — TASK-32781
 
-- **Unchanged profile refresh loses focused actions.** Import/Edit/Remove
-  focus falls to the detail-pane body after recomposition. Cancelling import
-  or removal also triggers this through Settings resume. Restore by stable
-  profile/action identity while respecting newer navigation and focus.
+Unchanged listings now retain controls, while changed/reordered listings restore
+the same profile/action after serialized recomposition. Newer focus wins; an
+unavailable action falls back to another enabled action on the profile or Import.
+Overlapping renders no longer cancel a teardown. Exact originating-control
+identity still governs queued actions.
 
-Read-only boundary probes confirmed that cancelling import review performs no
-import, cancelling removal performs no removal, and real removal rejects a
-stale revision without changing permission-store bytes. Those bounded probes
-do not qualify the remaining native management journeys.
+At 80×24, full-paint assertions exposed Remove clipping (10 columns allocated,
+8 visible). The compact row now uses a token-backed two-column grid. Wide rows
+retain their existing layout. 112 final-source targeted checks pass, with no
+introduced Ruff diagnostics. Twelve prior action/loading lifecycle cases also
+passed before that compact-only CSS adjustment. Independent reviews found no
+introduced blocker.
+
+Four real native import/removal journeys cover compact/wide dark/light, revise,
+cancel, actual unbound import, removal cancellation, listing reorder and actual
+removal with a permanent tombstone. All 24 captures were rendered and inspected;
+focus and default/private-profile lifecycle assertions passed. [Evidence and
+gallery](../qa/2026-09-18-tool-profile-focus/README.md).
 
 ## Remaining scope
 
-Remaining removal boundaries, focus through refresh, and complete native
-import/removal compact/wide dark/light journeys remain to be qualified. This ledger does
-not claim the Tool Profiles feature review or the broader component workstream
-is complete.
+Remaining removal boundaries and the MCP Edit/Bind handoffs still need review.
+The read-only stale-revision probe previously confirmed real removal rejects a
+changed revision without changing permission-store bytes; it does not qualify
+all mounted error and uncertain-outcome paths. The native journeys above close
+the import/removal happy/cancel/focus matrix, not every Tool Profiles boundary
+or the broader component workstream.

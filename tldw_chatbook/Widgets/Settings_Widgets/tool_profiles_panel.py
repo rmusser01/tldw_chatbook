@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -154,6 +155,7 @@ class ToolProfilesPanel(Vertical):
             profile.profile_id: self._present(profile) for profile in self._profiles
         }
         self._button_actions: dict[Button, tuple[str, ToolProfilePresentation]] = {}
+        self._listing_lock = asyncio.Lock()
 
     @staticmethod
     def _present(profile: ToolProfilePresentation) -> ToolProfileRow:
@@ -182,14 +184,62 @@ class ToolProfilesPanel(Vertical):
         return self._rows[profile_id]
 
     async def apply_listing(self, listing: ToolProfileListing) -> None:
-        """Replace presentation state with one complete service snapshot."""
-        self._listing = listing
-        self._profiles = listing.profiles
-        self._rows = {
-            profile.profile_id: self._present(profile) for profile in self._profiles
-        }
-        self._button_actions.clear()
-        await self.recompose()
+        """Refresh changed facts while retaining the user's current action."""
+        async with self._listing_lock:
+            if listing == self._listing or not self.is_attached:
+                return
+            screen = self.screen
+            focused = screen.focused
+            context = self._button_actions.get(focused)
+            focus_key = (context[0], context[1].profile_id) if context else None
+            if focused is self.query_one("#tool-profiles-import", Button):
+                focus_key = ("import", None)
+            if focus_key is not None:
+                # Prevent teardown's automatic fallback from being mistaken for
+                # deliberate user focus. Any newer focus during the await wins.
+                screen.set_focus(None)
+            self._listing = listing
+            self._profiles = listing.profiles
+            self._rows = {
+                profile.profile_id: self._present(profile) for profile in self._profiles
+            }
+            self._button_actions.clear()
+            await self.recompose()
+            if focus_key is None or not self.is_attached or screen.focused is not None:
+                return
+            action, profile_id = focus_key
+            enabled = [
+                (button, kind, profile.profile_id)
+                for button, (kind, profile) in self._button_actions.items()
+                if not button.disabled
+            ]
+            target = next(
+                (button for button, kind, key in enabled if (kind, key) == focus_key),
+                None,
+            )
+            if target is None and action != "import":
+                target = next(
+                    (button for button, _, key in enabled if key == profile_id), None
+                )
+            if target is None:
+                target = self.query_one("#tool-profiles-import", Button)
+                if target.disabled:
+                    target = next(
+                        (ancestor for ancestor in self.ancestors if ancestor.focusable),
+                        None,
+                    )
+            screen.set_focus(target)
+
+            def reveal() -> None:
+                if (
+                    target is not None
+                    and target.is_attached
+                    and self.app.screen is screen
+                    and screen.focused is target
+                ):
+                    target.scroll_visible(animate=False, immediate=True)
+
+            self.call_after_refresh(reveal)
 
     def set_result(self, result: str) -> None:
         """Show one bounded path-free workflow outcome."""

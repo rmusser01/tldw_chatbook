@@ -10146,6 +10146,20 @@ WorktreeRecoveryDialog {
     color: $ds-focus-fg;
 }
 
+
+
+.settings-workbench-compact ToolProfilesPanel .tool-profile-actions {
+    layout: grid;
+    grid-size: $ds-size-2;
+    grid-columns: 1fr 1fr;
+    grid-rows: $ds-control-height-compact;
+    grid-gutter: $ds-space-stack $ds-space-inline;
+}
+
+.settings-workbench-compact ToolProfilesPanel .tool-profile-actions Button {
+    width: $ds-width-fill;
+}
+
 .settings-speech-stacked .settings-speech-input-row .settings-input-label,
 .settings-speech-stacked .settings-speech-input-row .settings-speech-control-stack,
 .settings-speech-stacked .settings-speech-input-row > Input,

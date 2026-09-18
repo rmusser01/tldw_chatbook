@@ -1,0 +1,24 @@
+       ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ ‹   ⌃0▊                                                               ▎More ▾
+───────▊  Choose Tool Pack identity                                    ▎────────
+ Settin▊  The profile is imported unbound. Add mappings only when a    ▎Local
+ Mode: ▊  source MCP server should target a different local server.    ▎
+┌──────▊                                                               ▎───────┐
+│  Filt▊  ┌─────────────────────────────────────────────────────────┐  ▎s      │
+│  Core▊  │  native-light-80                                        │  ▎       │
+│     O▊  └─────────────────────────────────────────────────────────┘  ▎erves  │
+│     P▊  Server mappings · one `source -> destination` pair per line  ▎       │
+│     W▊                                                               ▎     ▂ │
+│     S▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ▎       │
+│  Inte▊  ▊                                                         ▎  ▎     ▄ │
+│     A▊  ▊                                                         ▎  ▎       │
+│     T▊  ▊                                                         ▎  ▎────┐  │
+│     S▊  ▊                                                         ▎  ▎    │  │
+│     C▊  ▊                                                         ▎  ▎cle │  │
+│  Data▊  ▊                                                         ▎  ▎    │  │
+│     S▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ▎icy │  │
+│     W▊                                                               ▎    │  │
+│   > T▊                                                               ▎eb7 │  │
+└──────▊                                     Cancel     Inspect pack   ▎───────┘
+ Inspec▊                                                               ▎
+  F1 he▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
