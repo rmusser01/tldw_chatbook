@@ -1,0 +1,16 @@
+..........                                                               [100%]
+============================= slowest 25 durations =============================
+12.00s call     Tests/UI/test_profile_interview_answer_journeys.py::test_failed_answer_retains_entry_and_retry_clears_only_after_acceptance[ValueError]
+11.94s call     Tests/UI/test_profile_interview_answer_journeys.py::test_review_return_preserves_applied_edit_without_rebuilding_answers
+10.56s call     Tests/UI/test_profile_interview_answer_journeys.py::test_failed_answer_retains_entry_and_retry_clears_only_after_acceptance[RuntimeError]
+10.35s call     Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-light-size1]
+10.34s call     Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-dark-size0]
+9.98s call     Tests/UI/test_profile_interview_answer_journeys.py::test_queued_submit_does_not_duplicate_a_pending_answer
+9.50s call     Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-light-size0]
+9.19s call     Tests/UI/test_profile_interview_answer_journeys.py::test_review_payload_value_remains_readable_while_focused
+8.73s call     Tests/UI/test_profile_interview_answer_journeys.py::test_closing_final_review_restores_review_action_without_writing
+8.57s call     Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-dark-size1]
+1.96s setup    Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-dark-size0]
+
+(14 durations < 1s hidden.)
+10 passed in 104.19s (0:01:44)

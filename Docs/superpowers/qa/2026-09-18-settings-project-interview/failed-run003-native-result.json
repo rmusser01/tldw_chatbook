@@ -1,0 +1,40 @@
+{
+  "pid": 65252,
+  "cells": [],
+  "runner_sha256": "ee1771d9e66cba24850a6fdffbe55eddaf399e8e2a302ca29bb05d5740ffa623",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "9d82c8baa46106e5c6712a351c03baa45b96acae0e94f88066b6522b8f29c79b",
+    "tldw_chatbook/UI/Screens/profile_interview_screen.py": "8654cbcda9e88a5bd1ec21b3c230864f6cae1f43c6bc2d30ecb0ecfb5257702e",
+    "tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py": "ef54a37f57bda136f93045eb1b45235609090b15d5d37f76fda79658842c9692",
+    "tldw_chatbook/Personal_Context/interview_coordinator.py": "9a82f6ca3d457d7c6736e97f6be4b6067547b400ebcc86013b3c8f39b73c7d28",
+    "tldw_chatbook/css/components/_profile_interview.tcss": "054de1c7522253f85bfea59478d886f6d3d9cc58ffb72dfde03b06b8eb9972bb",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "d3aeea4bf2f7ca514fe80c54c6f517321b099004af8cff0b05138c2688045830",
+    "tldw_chatbook/css/features/_settings.tcss": "60aa5ed477b868d548a68ed199a620b09a5b1e8ae791bc22ce1e9136e1445a99",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_dialogs.tcss": "4a790234fa12836d4dd4121f685cca7fbd9edec0c759ca38afa3a5c39cf3e43d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "5c33e3ccdfa2458257347bb2cbd95653c2e29b90a14e423114753b5ef544029f",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "d83fc0a40e6b23c8481a9e0ee687746fefa9a6001977363428d24a836d0166d2",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "1889f679e60b75e715493ec7ff5084bcb97298c068bf11f51b478a62e743bd6e",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Review edit applied",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Real workspace registry, auto-provisioned Persona, fixed local interview coordinator, memory-only draft fallback, encrypted Personal Context repository with private passphrase protector. No provider requests.",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-settings-project-interview/native_check.py\", line 355, in journey\n    await wait_for(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-settings-project-interview/native_check.py\", line 98, in wait_for\n    if predicate():\n       ^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-settings-project-interview/native_check.py\", line 360, in <lambda>\n    ].change.proposed_payload.value\n                              ^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pydantic/main.py\", line 1042, in __getattr__\n    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')\nAttributeError: 'GoalPayload' object has no attribute 'value'\n",
+  "focused_id": null,
+  "focused_region": "None",
+  "app_run_returned": true
+}

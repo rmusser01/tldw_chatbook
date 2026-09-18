@@ -1,0 +1,23 @@
+........................................................................ [ 85%]
+............                                                             [100%]
+============================= slowest 25 durations =============================
+13.97s call     Tests/Personal_Context/test_interview_coordinator.py::test_expired_working_context_reinterview_creates_fresh_bounded_record
+3.14s call     Tests/UI/test_personal_context_review_modal.py::test_review_edit_is_coordinator_validated_and_refreshes_selected_id
+1.83s call     Tests/UI/test_personal_context_review_modal.py::test_partial_commit_reports_runtime_and_cleanup_independently_without_retrying_commit
+1.76s call     Tests/UI/test_personal_context_review_modal.py::test_irreversible_commit_cannot_be_dismissed_while_busy[escape]
+1.69s call     Tests/UI/test_personal_context_review_modal.py::test_commit_uses_only_checked_rows_and_distinguishes_runtime_choice[personal-context-review-save-only-False]
+1.60s call     Tests/UI/test_profile_interview_screen.py::test_answer_skip_retry_and_fixed_fallback_use_coordinator_workers
+1.53s call     Tests/UI/test_personal_context_review_modal.py::test_commit_uses_only_checked_rows_and_distinguishes_runtime_choice[personal-context-review-save-use-True]
+1.52s teardown Tests/UI/test_personal_context_review_modal.py::test_irreversible_commit_cannot_be_dismissed_while_busy[close]
+1.44s call     Tests/UI/test_personal_context_review_modal.py::test_irreversible_commit_cannot_be_dismissed_while_busy[close]
+1.39s call     Tests/UI/test_personal_context_review_modal.py::test_selection_is_frozen_while_review_rewrite_is_running
+1.37s call     Tests/UI/test_personal_context_review_modal.py::test_runtime_failure_copy_is_neutral_for_both_commit_modes[personal-context-review-save-only]
+1.21s call     Tests/UI/test_profile_interview_screen.py::test_adaptive_disclosure_is_visible_before_answer_becomes_usable
+1.20s teardown Tests/UI/test_personal_context_review_modal.py::test_irreversible_commit_cannot_be_dismissed_while_busy[backdrop]
+1.10s teardown Tests/UI/test_personal_context_review_modal.py::test_known_commit_failure_restores_retryable_review
+1.07s teardown Tests/UI/test_personal_context_review_modal.py::test_commit_uses_only_checked_rows_and_distinguishes_runtime_choice[personal-context-review-save-only-False]
+1.04s teardown Tests/UI/test_personal_context_review_modal.py::test_review_edit_is_coordinator_validated_and_refreshes_selected_id
+1.01s call     Tests/UI/test_profile_interview_screen.py::test_live_unknown_commit_returns_unknown_result_through_parent
+
+(8 durations < 1s hidden.)
+84 passed in 75.11s (0:01:15)
