@@ -13,8 +13,8 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
-from tldw_chatbook.Tool_Packs.contracts import PortableToolRule
 from tldw_chatbook.Tool_Packs.binding import ToolProfileBindingReview
+from tldw_chatbook.Tool_Packs.contracts import PortableToolRule
 from tldw_chatbook.Tool_Packs.export import ToolPackExportReview
 from tldw_chatbook.Tool_Packs.importer import (
     ServerMapping,
@@ -117,7 +117,8 @@ class ToolPackImportOptionsModal(
         align: right middle;
     }
 
-    ToolPackImportOptionsModal #tool-pack-import-options-actions Button {
+    ToolPackImportOptionsModal Button#tool-pack-import-options-cancel,
+    ToolPackImportOptionsModal Button#tool-pack-import-options-review {
         width: auto;
         min-width: 12;
         margin-left: 1;
@@ -285,7 +286,9 @@ class ToolPackImportReviewModal(
         align: right middle;
     }
 
-    ToolPackImportReviewModal #tool-pack-import-actions Button {
+    ToolPackImportReviewModal Button#tool-pack-import-cancel,
+    ToolPackImportReviewModal Button#tool-pack-import-revise,
+    ToolPackImportReviewModal Button#tool-pack-import-unbound {
         width: auto;
         min-width: 12;
         margin-left: 1;
@@ -472,7 +475,8 @@ class ToolPackExportReviewModal(
         align: right middle;
     }
 
-    ToolPackExportReviewModal #tool-pack-export-actions Button {
+    ToolPackExportReviewModal Button#tool-pack-export-cancel,
+    ToolPackExportReviewModal Button#tool-pack-export-continue {
         width: auto;
         min-width: 12;
         margin-left: 1;
@@ -516,7 +520,7 @@ class ToolPackExportReviewModal(
 
     def _policy_copy(self) -> str:
         payload = self.review.snapshot.payload
-        states = [rule.state for rule in payload.rules]
+        states = [rule.state for rule in payload.tools]
         lines = [
             f"Fallback · {item.authority}/{_plain_text(item.server_key)}: "
             f"{item.state.title()}"

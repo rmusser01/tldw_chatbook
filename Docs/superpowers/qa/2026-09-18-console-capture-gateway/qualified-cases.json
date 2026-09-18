@@ -1,0 +1,408 @@
+[
+  {
+    "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-final-003/001",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-subset-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-final-003/002",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-subset-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_collapsed_paste_sends_full_payload_not_visible_token",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_collapsed_paste_sends_full_payload_not_visible_token",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_collapsed_paste_sends_full_payload_not_visible_token",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_collapsed_paste_sends_full_payload_not_visible_token",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-green-002/003",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "initial-consumer-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_preserves_expanded_payload_whitespace",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_preserves_expanded_payload_whitespace",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_preserves_expanded_payload_whitespace",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_preserves_expanded_payload_whitespace",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-green-002/004",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "initial-consumer-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_clears_composer_after_acceptance_and_updates_store",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_clears_composer_after_acceptance_and_updates_store",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_clears_composer_after_acceptance_and_updates_store",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_clears_composer_after_acceptance_and_updates_store",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-green-002/005",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "initial-consumer-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_chat_lifecycle_state_survives_screen_recreation_return",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_chat_lifecycle_state_survives_screen_recreation_return",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_chat_lifecycle_state_survives_screen_recreation_return",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_chat_lifecycle_state_survives_screen_recreation_return",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-lifecycle-004/001",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "lifecycle-green-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_refreshes_workspace_conversation_rail_after_persistence",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_refreshes_workspace_conversation_rail_after_persistence",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_refreshes_workspace_conversation_rail_after_persistence",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_refreshes_workspace_conversation_rail_after_persistence",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-final-003/004",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-subset-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-final-003/005",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-subset-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_accepted_send_records_first_send_flag",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_accepted_send_records_first_send_flag",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_accepted_send_records_first_send_flag",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_accepted_send_records_first_send_flag",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-green-002/009",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "initial-consumer-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_edit_resend_clears_replaced_descendant_original_attempt",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_edit_resend_clears_replaced_descendant_original_attempt",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_edit_resend_clears_replaced_descendant_original_attempt",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_edit_resend_clears_replaced_descendant_original_attempt",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-green-002/010",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "initial-consumer-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_continue_action_streams_new_message_from_selected_turn",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_continue_action_streams_new_message_from_selected_turn",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_continue_action_streams_new_message_from_selected_turn",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_continue_action_streams_new_message_from_selected_turn",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-green-002/011",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "initial-consumer-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_regenerate_action_streams_selected_variant",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_regenerate_action_streams_selected_variant",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_regenerate_action_streams_selected_variant",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_regenerate_action_streams_selected_variant",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-green-002/012",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "initial-consumer-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_routine_send_fires_no_success_toast",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_routine_send_fires_no_success_toast",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_routine_send_fires_no_success_toast",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_routine_send_fires_no_success_toast",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-green-002/013",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "initial-consumer-results.json"
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_workspace_conversation_resume_uses_real_local_services",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_workspace_conversation_resume_uses_real_local_services",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_workspace_conversation_resume_uses_real_local_services",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_workspace_conversation_resume_uses_real_local_services",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32817-restored-adjacent-005/001",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "restored-adjacent-results.json"
+  }
+]

@@ -1,0 +1,20 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 R  More ▾
+─▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎──
+ ▊                                               ▎ •
+ ▊    Some Roleplay drafts could not be saved    ▎
+ ▊                                               ▎
+ ▊  Failed: character form, character visuals,   ▎
+ ▊  Persona visuals, attachments                 ▎
+ ▊                                               ▎ *
+ ▊                                               ▎
+ ▊                                               ▎
+ ▊                      Retry         Stay       ▎
+ ▊                                               ▎ •
+ ▊                                               ▎
+ ▊                                               ▎
+ ▊                                               ▎
+ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ *
+   │                                            │
+   │  ┃───────────────────┃                     │  ·
+  … F1 · F6 · Ctrl+P · Ctrl+Q

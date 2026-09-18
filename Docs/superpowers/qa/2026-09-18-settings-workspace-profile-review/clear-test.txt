@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+26.17s call     Tests/UI/test_settings_workspace_profile_review_journeys.py::test_failed_clear_preserves_memory_confirmation_and_label
+
+(2 durations < 1s hidden.)
+1 passed, 8 deselected in 35.72s

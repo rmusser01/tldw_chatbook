@@ -1,0 +1,20 @@
+1 file left unchanged
+1 file left unchanged
+1 file already formatted
+1 file already formatted
+1 file left unchanged
+1 file left unchanged
+1 file already formatted
+1 file already formatted
+1 file reformatted
+1 file left unchanged
+1 file already formatted
+1 file already formatted
+1 file reformatted
+1 file left unchanged
+1 file already formatted
+1 file already formatted
+1 file left unchanged
+1 file already formatted
+3 files already formatted
+All checks passed!

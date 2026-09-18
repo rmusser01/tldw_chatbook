@@ -1,0 +1,55 @@
+{
+  "pid": 53311,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "profile_id": "import-textual-dark-170x48",
+      "workspace_id": "ws-textual-dark-170x48",
+      "unbound_import": true,
+      "keyboard_policy_details": true,
+      "cancel_preserves_defaults_and_draft": true,
+      "changed_revision_refused": true,
+      "retry_binds_exact_defaults": true,
+      "first_bind_marker_cleared": true,
+      "return_focus_visible": true
+    }
+  ],
+  "runner_sha256": "227857e6c50c08b1667e385ba448dfaf4893004f9fb3c05b6072e0fc80bbe805",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "9d82c8baa46106e5c6712a351c03baa45b96acae0e94f88066b6522b8f29c79b",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_pack_import_review.py": "15fb8169b8fc5173553908558f3a5bf875bbf54253ac496ac40f6d2fc3f2157f",
+    "tldw_chatbook/Tool_Packs/binding.py": "611b893df89753dcf9e54bfb2e12878c56a921b9af7f07eddeed48e0eb42bd89",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3fc64a43a4cc4507e5e1cad0d4590311fc63744acd59795453bd37a5d060d8bf",
+    "tldw_chatbook/css/features/_settings.tcss": "60aa5ed477b868d548a68ed199a620b09a5b1e8ae791bc22ce1e9136e1445a99",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_dialogs.tcss": "4a790234fa12836d4dd4121f685cca7fbd9edec0c759ca38afa3a5c39cf3e43d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "5c33e3ccdfa2458257347bb2cbd95653c2e29b90a14e423114753b5ef544029f",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "d83fc0a40e6b23c8481a9e0ee687746fefa9a6001977363428d24a836d0166d2",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "1889f679e60b75e715493ec7ff5084bcb97298c068bf11f51b478a62e743bd6e",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Notices clear",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Real production catalog export, serialized archive, inspected unbound import, receipt store, permission lifecycle and workspace registry; no tool execution",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-settings-workspace-profile-review/native_check.py\", line 331, in journey\n    painted(title)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-settings-workspace-profile-review/native_check.py\", line 201, in painted\n    region, clip = app.screen._compositor.visible_widgets[widget]\n                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^\nKeyError: CollapsibleTitle()\n",
+  "focused_id": null,
+  "focused_region": "Region(x=10, y=17, width=20, height=3)",
+  "app_run_returned": true
+}

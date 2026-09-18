@@ -262,9 +262,9 @@ def test_actual_current_summary_is_read_only_and_mounted_independently(
 ):
     import asyncio
 
-    from textual.app import App
     from textual.widgets import Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery import bootstrap
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 

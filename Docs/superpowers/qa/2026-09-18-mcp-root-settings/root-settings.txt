@@ -1,0 +1,24 @@
+..........................                                               [100%]
+============================= slowest 25 durations =============================
+3.87s call     Tests/UI/test_mcp_root_settings.py::test_root_save_survives_recreated_workbench[True]
+3.85s call     Tests/UI/test_mcp_root_settings.py::test_root_save_survives_recreated_workbench[False]
+3.83s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[file-saved]
+3.80s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[file-cache_refresh]
+3.62s call     Tests/UI/test_mcp_root_settings.py::test_failed_root_save_keeps_draft_for_retry
+3.62s call     Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft[True]
+3.55s call     Tests/UI/test_mcp_root_settings.py::test_explicit_root_saves_finish_in_submission_order
+3.54s call     Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft[False]
+3.52s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[generation-cache_refresh]
+3.41s call     Tests/UI/test_mcp_root_settings.py::test_read_only_refresh_preserves_root_draft_and_validation_receipt
+3.25s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+3.23s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[generation-saved]
+3.00s call     Tests/UI/test_mcp_root_settings.py::test_catalog_refresh_failure_does_not_report_save_failure
+2.83s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+2.51s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+2.42s call     Tests/UI/test_mcp_root_settings.py::test_external_config_reload_supersedes_partial_save_without_generation_bump
+2.40s call     Tests/UI/test_mcp_root_settings.py::test_real_atomic_root_save_pins_publication_generation_on_repeat
+2.05s call     Tests/UI/test_mcp_root_settings.py::test_root_shutdown_drains_and_fences_both_config_owners
+1.99s call     Tests/UI/test_mcp_root_settings.py::test_root_writer_uses_captured_cwd_and_locked_config_fence
+
+(6 durations < 1s hidden.)
+26 passed, 346 deselected in 63.83s (0:01:03)

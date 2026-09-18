@@ -1,0 +1,533 @@
+{
+  "pid": 4794,
+  "base_commit": "d7b4c10a7d9a761ecc7fbe54a587e2d72308d620",
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "4127c071e1c8b0d0c871a3c5aceba4d0c162420982662587596d4d31ad5e7e20",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "6e6a717a72eb52d6d3c7cfa3d75c1561df426813610f5380049453aa54710149",
+    "tldw_chatbook/UI/MCP_Modules/mcp_rail.py": "f0a5ba16235f850a2c63787a426c2813ddbd42d3211900a6b3b105b4bf9e0bc4",
+    "tldw_chatbook/Agents/builtin_tool_gate.py": "ea9b8f1384e3319e1a483a2db90748dfada31857dfc89c00b67d138a1c8f0155",
+    "tldw_chatbook/Agents/tool_catalog.py": "f2cb99e3eb046febc6ba35567056233e4cfadbb602929a7b70dd11f7d727d15c",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "fc46f9883511d563022d33a0c7635b1bedd10871cf283ab6aa15cb14b433d22c",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "410b2894a0c0fc64b989fb76dc4d65157b68e15314ea108f8bcb9a2be5d6d96b",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "2042e083a1d49186a2eb4022140eceff20d269d92ebd0b36f36f9b3d29a65fce",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "Docs/superpowers/qa/2026-09-18-mcp-gate-labels/native_check.py": "e0eb7d457dcc1212d227293e382b53c4527af8659727609d1a50515d614e24be",
+    "Tests/UI/test_mcp_gate_label_layout.py": "3274924da2bee518381fbf505738a7d6f60190c400edf038f6a1e847846670d2"
+  },
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "painted_gate_labels": [
+        {
+          "id": "mcp-gate-read_file_enabled",
+          "label": "Read file: off \u25b8",
+          "region": [
+            18,
+            15,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-list_directory_enabled",
+          "label": "List directory: off \u25b8",
+          "region": [
+            18,
+            16,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-write_file_enabled",
+          "label": "Write file: off \u25b8",
+          "region": [
+            18,
+            17,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-create_note_enabled",
+          "label": "Create note: off \u25b8",
+          "region": [
+            18,
+            18,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-update_note_enabled",
+          "label": "Update note: off \u25b8",
+          "region": [
+            18,
+            19,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-glob_files_enabled",
+          "label": "Find files: off \u25b8",
+          "region": [
+            18,
+            20,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-grep_files_enabled",
+          "label": "Search in files: off \u25b8",
+          "region": [
+            18,
+            21,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-expand_document_enabled",
+          "label": "Expand document: off \u25b8",
+          "region": [
+            18,
+            15,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-local_tools_enabled",
+          "label": "Local workspace, web, and Watchlists tools (master switch): on \u25b8",
+          "region": [
+            18,
+            14,
+            39,
+            2
+          ]
+        },
+        {
+          "id": "mcp-gate-web_deep_search_enabled",
+          "label": "Deep web research (web_deep_search): off \u25b8",
+          "region": [
+            18,
+            17,
+            39,
+            2
+          ]
+        },
+        {
+          "id": "mcp-gate-ask_user_enabled",
+          "label": "Ask you a question (ask_user): on \u25b8",
+          "region": [
+            18,
+            19,
+            39,
+            1
+          ]
+        }
+      ],
+      "real_save_reversal": [
+        true,
+        false
+      ],
+      "focus_restored": true,
+      "only_requested_tool_setting_changed": true,
+      "permission_profiles_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "painted_gate_labels": [
+        {
+          "id": "mcp-gate-read_file_enabled",
+          "label": "Read file: off \u25b8",
+          "region": [
+            48,
+            21,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-list_directory_enabled",
+          "label": "List directory: off \u25b8",
+          "region": [
+            48,
+            22,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-write_file_enabled",
+          "label": "Write file: off \u25b8",
+          "region": [
+            48,
+            23,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-create_note_enabled",
+          "label": "Create note: off \u25b8",
+          "region": [
+            48,
+            24,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-update_note_enabled",
+          "label": "Update note: off \u25b8",
+          "region": [
+            48,
+            25,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-glob_files_enabled",
+          "label": "Find files: off \u25b8",
+          "region": [
+            48,
+            26,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-grep_files_enabled",
+          "label": "Search in files: off \u25b8",
+          "region": [
+            48,
+            27,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-expand_document_enabled",
+          "label": "Expand document: off \u25b8",
+          "region": [
+            48,
+            28,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-local_tools_enabled",
+          "label": "Local workspace, web, and Watchlists tools (master switch): on \u25b8",
+          "region": [
+            48,
+            34,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-web_deep_search_enabled",
+          "label": "Deep web research (web_deep_search): off \u25b8",
+          "region": [
+            48,
+            36,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-ask_user_enabled",
+          "label": "Ask you a question (ask_user): on \u25b8",
+          "region": [
+            48,
+            37,
+            73,
+            1
+          ]
+        }
+      ],
+      "real_save_reversal": [
+        true,
+        false
+      ],
+      "focus_restored": true,
+      "only_requested_tool_setting_changed": true,
+      "permission_profiles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "painted_gate_labels": [
+        {
+          "id": "mcp-gate-read_file_enabled",
+          "label": "Read file: off \u25b8",
+          "region": [
+            18,
+            15,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-list_directory_enabled",
+          "label": "List directory: off \u25b8",
+          "region": [
+            18,
+            16,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-write_file_enabled",
+          "label": "Write file: off \u25b8",
+          "region": [
+            18,
+            17,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-create_note_enabled",
+          "label": "Create note: off \u25b8",
+          "region": [
+            18,
+            18,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-update_note_enabled",
+          "label": "Update note: off \u25b8",
+          "region": [
+            18,
+            19,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-glob_files_enabled",
+          "label": "Find files: off \u25b8",
+          "region": [
+            18,
+            20,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-grep_files_enabled",
+          "label": "Search in files: off \u25b8",
+          "region": [
+            18,
+            21,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-expand_document_enabled",
+          "label": "Expand document: off \u25b8",
+          "region": [
+            18,
+            15,
+            39,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-local_tools_enabled",
+          "label": "Local workspace, web, and Watchlists tools (master switch): on \u25b8",
+          "region": [
+            18,
+            14,
+            39,
+            2
+          ]
+        },
+        {
+          "id": "mcp-gate-web_deep_search_enabled",
+          "label": "Deep web research (web_deep_search): off \u25b8",
+          "region": [
+            18,
+            17,
+            39,
+            2
+          ]
+        },
+        {
+          "id": "mcp-gate-ask_user_enabled",
+          "label": "Ask you a question (ask_user): on \u25b8",
+          "region": [
+            18,
+            19,
+            39,
+            1
+          ]
+        }
+      ],
+      "real_save_reversal": [
+        true,
+        false
+      ],
+      "focus_restored": true,
+      "only_requested_tool_setting_changed": true,
+      "permission_profiles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "painted_gate_labels": [
+        {
+          "id": "mcp-gate-read_file_enabled",
+          "label": "Read file: off \u25b8",
+          "region": [
+            48,
+            21,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-list_directory_enabled",
+          "label": "List directory: off \u25b8",
+          "region": [
+            48,
+            22,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-write_file_enabled",
+          "label": "Write file: off \u25b8",
+          "region": [
+            48,
+            23,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-create_note_enabled",
+          "label": "Create note: off \u25b8",
+          "region": [
+            48,
+            24,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-update_note_enabled",
+          "label": "Update note: off \u25b8",
+          "region": [
+            48,
+            25,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-glob_files_enabled",
+          "label": "Find files: off \u25b8",
+          "region": [
+            48,
+            26,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-grep_files_enabled",
+          "label": "Search in files: off \u25b8",
+          "region": [
+            48,
+            27,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-expand_document_enabled",
+          "label": "Expand document: off \u25b8",
+          "region": [
+            48,
+            28,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-local_tools_enabled",
+          "label": "Local workspace, web, and Watchlists tools (master switch): on \u25b8",
+          "region": [
+            48,
+            34,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-web_deep_search_enabled",
+          "label": "Deep web research (web_deep_search): off \u25b8",
+          "region": [
+            48,
+            36,
+            73,
+            1
+          ]
+        },
+        {
+          "id": "mcp-gate-ask_user_enabled",
+          "label": "Ask you a question (ask_user): on \u25b8",
+          "region": [
+            48,
+            37,
+            73,
+            1
+          ]
+        }
+      ],
+      "real_save_reversal": [
+        true,
+        false
+      ],
+      "focus_restored": true,
+      "only_requested_tool_setting_changed": true,
+      "permission_profiles_unchanged": true
+    }
+  ],
+  "fixture_scope": "Real TldwCli and private config/service. Production MCP navigation, keyboard Servers/built-in selection, direct focus of first gate followed by real Tab traversal, and real deep-research gate save/reversal. No tool execution, remote server, permission mutation or broader gate-save concurrency qualification.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

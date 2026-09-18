@@ -1,0 +1,311 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_pending_master_choice_survives_read_only_refresh _____________
+
+self = <Coroutine test_pending_master_choice_survives_read_only_refresh>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_pending_master_choice_survives_read_only_refresh>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x115c65d60>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2004/test_pending_master_choice_sur0/private-profile-process/pytest.log
+E           SELECT_BOUNDARY mcp-rail-source pruning True attached True app_exit False mounted False
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____________ test_pending_master_choice_survives_read_only_refresh _____________
+E
+E           request = <FixtureRequest for <Coroutine test_pending_master_choice_survives_read_only_refresh>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1133d0d10>
+E
+E               @private_profile_test
+E               async def test_pending_master_choice_survives_read_only_refresh(request, monkeypatch):
+E                   from textual.widgets import Select
+E                   real_mount = Select._on_mount
+E                   def traced_mount(control, event):
+E                       try:
+E                           return real_mount(control, event)
+E                       except Exception:
+E                           print("SELECT_BOUNDARY", control.id, "pruning",control._pruning,"attached",control.is_attached,"app_exit",control.app._exit,"mounted",control.is_mounted, flush=True)
+E                           raise
+E                   monkeypatch.setattr(Select, "_on_mount", traced_mount)
+E                   entered, release = threading.Event(), threading.Event()
+E
+E                   def write(enabled):
+E                       entered.set()
+E                       assert release.wait(10)
+E                       return ConfigMutationResult(True, True, None)
+E
+E                   _persistence(monkeypatch, write)
+E                   app = WorkbenchAppWithBundledCSS()
+E           >       async with app.run_test() as pilot:
+E                              ^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_mcp_master_settings.py:114:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:217: in __aexit__
+E               await anext(self.gen)
+E           .venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+E               raise self._exception
+E           .venv/lib/python3.12/site-packages/textual/message_pump.py:604: in _pre_process
+E               await self._dispatch_message(events.Mount())
+E           .venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+E               await self.on_event(message)
+E           .venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+E               await self._on_message(event)
+E           .venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+E               await invoke(method, message)
+E           .venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+E               return await _invoke(callback, *params)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           .venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+E               result = callback(*params[:parameter_count])
+E                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Tests/UI/test_mcp_master_settings.py:100: in traced_mount
+E               return real_mount(control, event)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           .venv/lib/python3.12/site-packages/textual/widgets/_select.py:628: in _on_mount
+E               self._setup_options_renderables()
+E           .venv/lib/python3.12/site-packages/textual/widgets/_select.py:549: in _setup_options_renderables
+E               option_list = self.query_one(SelectOverlay)
+E                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = Select(id='mcp-rail-source')
+E           selector = <class 'textual.widgets._select.SelectOverlay'>, expect_type = None
+E
+E               def query_one(
+E                   self,
+E                   selector: str | type[QueryType],
+E                   expect_type: type[QueryType] | None = None,
+E               ) -> QueryType | Widget:
+E                   """Get a widget from this widget's children that matches a selector or widget type.
+E
+E                   Args:
+E                       selector: A selector or widget type.
+E                       expect_type: Require the object be of the supplied type, or None for any type.
+E
+E                   Raises:
+E                       WrongType: If the wrong type was found.
+E                       NoMatches: If no node matches the query.
+E
+E                   Returns:
+E                       A widget matching the selector.
+E                   """
+E                   _rich_traceback_omit = True
+E
+E                   base_node = self._get_dom_base()
+E
+E                   if isinstance(selector, str):
+E                       query_selector = selector
+E                   else:
+E                       query_selector = selector.__name__
+E
+E                   if is_id_selector(query_selector):
+E                       cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E                       cached_result = base_node._query_one_cache.get(cache_key)
+E                       if cached_result is not None:
+E                           return cached_result
+E                       if (
+E                           node := walk_breadth_search_id(
+E                               base_node, query_selector[1:], with_root=False
+E                           )
+E                       ) is not None:
+E                           if expect_type is not None and not isinstance(node, expect_type):
+E                               raise WrongType(
+E                                   f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                               )
+E                           base_node._query_one_cache[cache_key] = node
+E                           return node
+E                       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E
+E                   try:
+E                       selector_set = parse_selectors(query_selector)
+E                   except TokenError:
+E                       raise InvalidQueryFormat(
+E                           f"Unable to parse {query_selector!r} as a query; check for syntax errors"
+E                       ) from None
+E
+E                   if all(selectors.is_simple for selectors in selector_set):
+E                       cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E                       cached_result = base_node._query_one_cache.get(cache_key)
+E                       if cached_result is not None:
+E                           return cached_result
+E                   else:
+E                       cache_key = None
+E
+E                   for node in walk_breadth_first(base_node, with_root=False):
+E                       if not match(selector_set, node):
+E                           continue
+E                       if expect_type is not None and not isinstance(node, expect_type):
+E                           raise WrongType(
+E                               f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                           )
+E                       if cache_key is not None:
+E                           base_node._query_one_cache[cache_key] = node
+E                       return node
+E
+E           >       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           E       textual.css.query.NoMatches: No nodes match 'SelectOverlay' on Select(id='mcp-rail-source')
+E
+E           .venv/lib/python3.12/site-packages/textual/dom.py:1533: NoMatches
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:20:31.034 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:20:31.039 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:20:31.040 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:20:31.040 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 09:20:31.513 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 09:20:31.673 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 09:20:32.066 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 09:20:32.330 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/Tests/UI/test_mcp_master_settings.py:100 in traced_mount          │
+E           │                                                                              │
+E           │    97 │   real_mount = Select._on_mount                                      │
+E           │    98 │   def traced_mount(control, event):                                  │
+E           │    99 │   │   try:                                                           │
+E           │ ❱ 100 │   │   │   return real_mount(control, event)                          │
+E           │   101 │   │   except Exception:                                              │
+E           │   102 │   │   │   print("SELECT_BOUNDARY", control.id, "pruning",control._pr │
+E           │   103 │   │   │   raise                                                      │
+E           │                                                                              │
+E           │ ╭──────────────── locals ────────────────╮                                   │
+E           │ │ control = Select(id='mcp-rail-source') │                                   │
+E           │ │   event = Mount()                      │                                   │
+E           │ ╰────────────────────────────────────────╯                                   │
+E           │                                                                              │
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:628 │
+E           │  in _on_mount                                                                │
+E           │                                                                              │
+E           │   625 │                                                                      │
+E           │   626 │   def _on_mount(self, _event: events.Mount) -> None:                 │
+E           │   627 │   │   """Set initial values."""                                      │
+E           │ ❱ 628 │   │   self._setup_options_renderables()                              │
+E           │   629 │   │   self._init_selected_option(self._value)                        │
+E           │   630 │                                                                      │
+E           │   631 │   def _watch_expanded(self, expanded: bool) -> None:                 │
+E           │                                                                              │
+E           │ ╭─────────────── locals ────────────────╮                                    │
+E           │ │ _event = Mount()                      │                                    │
+E           │ │   self = Select(id='mcp-rail-source') │                                    │
+E           │ ╰───────────────────────────────────────╯                                    │
+E           │                                                                              │
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:549 │
+E           │  in _setup_options_renderables                                               │
+E           │                                                                              │
+E           │   546 │   │   │   for prompt, value in self._options                         │
+E           │   547 │   │   ]                                                              │
+E           │   548 │   │                                                                  │
+E           │ ❱ 549 │   │   option_list = self.query_one(SelectOverlay)                    │
+E           │   550 │   │   option_list.clear_options()                                    │
+E           │   551 │   │   option_list.add_options(options)                               │
+E           │   552                                                                        │
+E           │                                                                              │
+E           │ ╭─────────────────── locals ────────────────────╮                            │
+E           │ │ options = [Option('Local'), Option('Server')] │                            │
+E           │ │    self = Select(id='mcp-rail-source')        │                            │
+E           │ ╰───────────────────────────────────────────────╯                            │
+E           ╰──────────────────────────────────────────────────────────────────────────────╯
+E           NoMatches: No nodes match 'SelectOverlay' on Select(id='mcp-rail-source')
+E           ============================= slowest 25 durations =============================
+E           1.33s call     Tests/UI/test_mcp_master_settings.py::test_pending_master_choice_survives_read_only_refresh
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_master_settings.py::test_pending_master_choice_survives_read_only_refresh
+E           1 failed in 2.99s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 09:20:29.395 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 09:20:29.401 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 09:20:29.401 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 09:20:29.401 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+3.65s call     Tests/UI/test_mcp_master_settings.py::test_pending_master_choice_survives_read_only_refresh
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_master_settings.py::test_pending_master_choice_survives_read_only_refresh
+1 failed in 5.27s

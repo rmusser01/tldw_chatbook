@@ -1,0 +1,24 @@
+                                  ╭────────╮
+ ‹ ts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││     Add server       Import…             ││                  │
+│ Source       ││  ◦  Built-in server is off — enable it   ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││     to let MCP clients use chatbook's    ││  Pick a server,  │
+│ ▊Local    ▼▎ ││     tools.                               ││  tool, or entry  │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  Name                      Connection  S ││  to see what's   │
+│              ││  tldw_chatbook (built-in)  stdio       ◦ ││  wrong and what  │
+│ Servers      ││                                          ││  you can do.     │
+│  ◦ off · ⌂   ││                                          ││                  │
+│  built-in    ││   tldw_chatbook (built-in) is turned     ││                  │
+│    All       ││                                          ││    Advanced…     │
+│  servers     ││                                          ││                  │
+│  ◦ ⌂ t…      ││ ● ready · ◐ checking · ○ needs setup · ! ││                  │
+│              ││ needs attention · ∅ no tools · ◌ stale · ││                  │
+│              ││ ◦ off (opt-in) · ⌂ built-in              ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

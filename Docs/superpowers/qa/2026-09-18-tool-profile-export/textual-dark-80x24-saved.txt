@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Tool Profiles
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Reviewed actions | Imports      │
+│  Core                        │  │  │  stay unbound; MCP owns policy          │
+│     Overview (view)          │  │  │  editing; removal permanently reserves  │
+│     Providers & Models       │  │  │  the profile id.                        │
+│     Web Search               │  │  │  Exported Tool Pack ·                   │
+│     Speech & TTS             │  │  │  5f370076ee2d27d87dff8962686117a266e3 ▃ │
+│  Interface                   │  │  │  945d5ccea0a3c8c801d6405c1390           │
+│     Appearance               │  │  │   Import Tool Pack                      │
+│     Theme                  ▁ │  │  │ ┌────────────────────────────────────┐▁ │
+│     Splash Screen            │  │  │ │ default                            │  │
+│     Console Behavior         │  │  │ │ Local · Unbound · Policy lifecycle │  │
+│  Data & Privacy              │  │  │ │ valid                              │  │
+│     Storage                  │  │  │ │ Unversioned local profile · Policy │  │
+│     Workspaces               │  │  │ │ digest                             │  │
+│   > Tool Profiles            │  │  │ │ 682eb7b8de0afa216a9d7b73c5f53b1bf1 │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

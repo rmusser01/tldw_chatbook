@@ -1,0 +1,24 @@
+   ▊                                                                      ▎
+ ‹ ▊                                                                      ▎e ▾
+───▊                                                                      ▎───
+ Se▊  Existing, copied and moved conversations keep their Persona.        ▎al
+ Mo▊  Persona memory                                                      ▎
+┌──▊  Read only                                                      ▼    ▎───
+│  ▊                                                                      ▎
+│  ▊                                                                      ▎e
+│  ▊                                                                      ▎
+│  ▊  ▐X▌ Confirm this Persona may write memory across sessions           ▎
+│  ▊  ~/path/to/project (optional)         Browse…        Add folder      ▎
+│  ▊  /private/tmp/tldw-32773-native-004-fixtures/textu     Remove        ▎
+│  ▊  al-dark-80x24                                                       ▎
+│  ▊  ▐X▌ Switch to this workspace                                        ▎
+│  ▊  ▐X▌ Define project context after creating                           ▎
+│  ▊                                                                      ▎
+│  ▊                                    Keep workspace  Retry folders     ▎
+│  ▊  Created Review 2. Retry the failed folders or keep the workspace    ▎
+│  ▊  with its successful bindings.                                       ▎  ▃
+│  ▊  /private/tmp/tldw-32773-native-004-fixtures/textual-dark-80x24:     ▎
+│  ▊  Folder does not exist or is not a directory:                        ▎
+└──▊  /private/tmp/tldw-32773-native-004-fixtures/textual-dark-80x24      ▎───
+   ▊                                                                      ▎
+  F▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎

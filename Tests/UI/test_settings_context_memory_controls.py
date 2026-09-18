@@ -442,7 +442,10 @@ def test_model_context_window_state_distinguishes_detection_from_override() -> N
 
 
 @pytest.mark.asyncio
-async def test_console_memory_controls_mount_stage_and_fit_narrow_settings() -> None:
+@private_profile_test
+async def test_console_memory_controls_mount_stage_and_fit_narrow_settings(
+    request,
+) -> None:
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
     async with host.run_test(size=(80, 34)) as pilot:
@@ -494,7 +497,7 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings() -> 
             == "Representation"
         )
         advanced_labels = {
-            "#settings-console-context-target-percent": "Reduce conversation to (%)",
+            "#settings-console-context-target-percent": "Reduce context to (%)",
             "#settings-console-context-summary-max-tokens": "Summary response max",
             "#settings-console-context-failure-behavior": "If compaction fails",
             "#settings-console-context-carry-forward-mode": "Keep after compaction",
@@ -521,7 +524,8 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings() -> 
 
 
 @pytest.mark.asyncio
-async def test_console_memory_save_blocks_invalid_trigger_target_pair() -> None:
+@private_profile_test
+async def test_console_memory_save_blocks_invalid_trigger_target_pair(request) -> None:
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(110, 40)) as pilot:
@@ -540,9 +544,10 @@ async def test_console_memory_save_blocks_invalid_trigger_target_pair() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_memory_save_routes_normalized_values_to_console_section() -> (
-    None
-):
+@private_profile_test
+async def test_console_memory_save_routes_normalized_values_to_console_section(
+    request,
+) -> None:
     app = _build_test_app()
     captured: list[tuple[dict[str, object], dict[str, object], bool]] = []
 
@@ -597,7 +602,10 @@ async def test_console_memory_save_routes_normalized_values_to_console_section()
 
 
 @pytest.mark.asyncio
-async def test_summary_prompt_route_focuses_existing_internal_prompt_editor() -> None:
+@private_profile_test
+async def test_summary_prompt_route_focuses_existing_internal_prompt_editor(
+    request,
+) -> None:
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(110, 40)) as pilot:

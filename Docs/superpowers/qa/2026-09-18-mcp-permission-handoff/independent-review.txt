@@ -1,0 +1,6 @@
+Independent review: no introduced blocker.
+An 80x24 production-CSS PermissionsApp probe verified table Space changed only its private default state ask→deny; canvas End scrolled, then Space left store bytes unchanged. Delayed reveal preserved newer dialog and Tools-mode focus and scroll.
+Probe: /private/tmp/mcp-permissions-scroll-ownership-audit.py
+Evidence: /private/tmp/mcp-permissions-scroll-ownership-audit.log
+Ruff baselines: mode 3→3; workbench 68→68; existing mode tests 2→2. New routed tests and native runner clean. Changed production methods and new files pass formatting; unchanged legacy formatting is outside this repair.
+Backlog ID guard passes. Diagnostic inventory: 607 owners, 1407 TASK-492 calls, 55 TASK-31551 calls, 7763 TASK-494 calls, 14 sink files.

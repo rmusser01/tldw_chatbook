@@ -28,7 +28,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from textual._path import CSSPathType, _css_path_type_as_list
 from textual.app import App
@@ -116,7 +116,10 @@ def _merge_screen_css_paths(css_path: CSSPathType | None) -> list[str]:
     ]
 
 
-class ConsolidatedCSSApp(App):
+_ReturnType = TypeVar("_ReturnType")
+
+
+class ConsolidatedCSSApp(App[_ReturnType]):
     """An ``App`` that loads the consolidated widget CSS, as the real app does."""
 
     CSS_PATH = [str(_SCREEN_CSS_SCOPED), str(_SCREEN_CSS_SELF)]

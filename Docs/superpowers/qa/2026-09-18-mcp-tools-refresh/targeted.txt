@@ -1,0 +1,21 @@
+........................................................................ [ 76%]
+......................                                                   [100%]
+============================= slowest 25 durations =============================
+18.10s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-light]
+17.83s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-dark]
+9.36s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-light]
+9.01s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-dark]
+4.03s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[True]
+3.64s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[False]
+3.12s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+2.45s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+2.27s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+1.72s call     Tests/UI/test_mcp_workbench.py::test_double_space_cycle_on_tool_row_stays_on_that_row
+1.54s call     Tests/UI/test_mcp_workbench.py::test_cycling_the_selected_tool_refreshes_its_open_permission_block
+1.46s call     Tests/UI/test_mcp_workbench.py::test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_resync
+1.44s call     Tests/UI/test_mcp_workbench.py::test_space_cycle_on_builtin_server_tool_row_round_trips_through_store
+1.15s call     Tests/UI/test_mcp_workbench.py::test_slow_tool_result_does_not_render_under_a_different_selected_tool
+1.03s call     Tests/UI/test_mcp_workbench.py::test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync
+
+(10 durations < 1s hidden.)
+94 passed, 320 deselected in 111.81s (0:01:51)

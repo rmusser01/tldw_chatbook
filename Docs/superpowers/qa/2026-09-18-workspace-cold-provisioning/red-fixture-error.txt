@@ -1,0 +1,564 @@
+FFFFFFFF                                                                 [100%]
+=================================== FAILURES ===================================
+_____________ test_cold_wiring_creates_no_orphans_before_authority _____________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_wiring_creates_no_or0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _____________ test_cold_wiring_creates_no_orphans_before_authority _____________
+E
+E   request = <FixtureRequest for <Coroutine test_cold_wiring_creates_no_orphans_before_authority>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_wiring_creates_no_or0/private-profile-process/pytest/test_cold_wiring_creates_no_or0')
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_cold_wiring_creates_no_orphans_before_authority(request, tmp_path):
+E   >       host = Host(tmp_path)
+E                  ^^^^^^^^^^^^^^
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:96:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   self = Host(title='Host', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})
+E   root = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_wiring_creates_no_or0/private-profile-process/pytest/test_cold_wiring_creates_no_or0')
+E
+E       def __init__(self, root):
+E           super().__init__()
+E           from tldw_chatbook.app import TldwCli
+E
+E           self.root = root
+E           self.loguru_logger = logger
+E           self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+E   >       self.workspace_registry_service = LocalWorkspaceRegistryService(
+E               WorkspaceDB(root / "workspace.sqlite", client_id="cold-test"),
+E               tool_profile_guard=self._tool_pack_guard_bootstrap,
+E           )
+E   E       TypeError: LocalWorkspaceRegistryService.__init__() got an unexpected keyword argument 'tool_profile_guard'
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:38: TypeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 01:43:04.665 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-18 01:43:04.735 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E   2026-09-18 01:43:05.127 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 01:43:05.236 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 01:43:05.237 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 01:43:05.238 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-09-18 01:43:05.848 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-18 01:43:06.939 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 01:43:07.079 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_wiring_creates_no_or0/private-profile-process/pytest/test_cold_wiring_creates_no_or0/workspace.sqlite [Client: cold-test]
+E   ============================= slowest 25 durations =============================
+E   3.08s setup    Tests/UI/test_workspace_cold_provisioning.py::test_cold_wiring_creates_no_orphans_before_authority
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_workspace_cold_provisioning.py::test_cold_wiring_creates_no_orphans_before_authority
+E   1 failed in 4.74s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 01:43:01.330 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 01:43:01.342 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 01:43:01.807 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 01:43:02.160 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 01:43:02.161 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 01:43:02.161 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+__________ test_startup_initializes_only_for_eligible_backfill[False] __________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_startup_initializes_only_0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   __________ test_startup_initializes_only_for_eligible_backfill[False] __________
+E
+E   request = <FixtureRequest for <Coroutine test_startup_initializes_only_for_eligible_backfill[False]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_startup_initializes_only_0/private-profile-process/pytest/test_startup_initializes_only_0')
+E   eligible = False
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("eligible", [False, True])
+E       @private_profile_test
+E       async def test_startup_initializes_only_for_eligible_backfill(request, tmp_path, eligible):
+E   >       host = Host(tmp_path)
+E                  ^^^^^^^^^^^^^^
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:112:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   self = Host(title='Host', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'})
+E   root = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_startup_initializes_only_0/private-profile-process/pytest/test_startup_initializes_only_0')
+E
+E       def __init__(self, root):
+E           super().__init__()
+E           from tldw_chatbook.app import TldwCli
+E
+E           self.root = root
+E           self.loguru_logger = logger
+E           self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+E   >       self.workspace_registry_service = LocalWorkspaceRegistryService(
+E               WorkspaceDB(root / "workspace.sqlite", client_id="cold-test"),
+E               tool_profile_guard=self._tool_pack_guard_bootstrap,
+E           )
+E   E       TypeError: LocalWorkspaceRegistryService.__init__() got an unexpected keyword argument 'tool_profile_guard'
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:38: TypeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 01:43:11.957 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-18 01:43:12.025 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E   2026-09-18 01:43:12.291 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 01:43:12.463 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 01:43:12.463 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 01:43:12.464 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-09-18 01:43:12.973 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-18 01:43:13.764 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 01:43:14.245 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_startup_initializes_only_0/private-profile-process/pytest/test_startup_initializes_only_0/workspace.sqlite [Client: cold-test]
+E   ============================= slowest 25 durations =============================
+E   2.62s setup    Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[False]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[False]
+E   1 failed in 5.19s
+__________ test_startup_initializes_only_for_eligible_backfill[True] ___________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_startup_initializes_only_1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   __________ test_startup_initializes_only_for_eligible_backfill[True] ___________
+E
+E   request = <FixtureRequest for <Coroutine test_startup_initializes_only_for_eligible_backfill[True]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_startup_initializes_only_1/private-profile-process/pytest/test_startup_initializes_only_0')
+E   eligible = True
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("eligible", [False, True])
+E       @private_profile_test
+E       async def test_startup_initializes_only_for_eligible_backfill(request, tmp_path, eligible):
+E   >       host = Host(tmp_path)
+E                  ^^^^^^^^^^^^^^
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:112:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   self = Host(title='Host', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'})
+E   root = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_startup_initializes_only_1/private-profile-process/pytest/test_startup_initializes_only_0')
+E
+E       def __init__(self, root):
+E           super().__init__()
+E           from tldw_chatbook.app import TldwCli
+E
+E           self.root = root
+E           self.loguru_logger = logger
+E           self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+E   >       self.workspace_registry_service = LocalWorkspaceRegistryService(
+E               WorkspaceDB(root / "workspace.sqlite", client_id="cold-test"),
+E               tool_profile_guard=self._tool_pack_guard_bootstrap,
+E           )
+E   E       TypeError: LocalWorkspaceRegistryService.__init__() got an unexpected keyword argument 'tool_profile_guard'
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:38: TypeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 01:43:18.819 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-18 01:43:18.831 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E   2026-09-18 01:43:19.064 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 01:43:19.287 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 01:43:19.287 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 01:43:19.288 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-09-18 01:43:19.533 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-18 01:43:20.346 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 01:43:20.706 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_startup_initializes_only_1/private-profile-process/pytest/test_startup_initializes_only_0/workspace.sqlite [Client: cold-test]
+E   ============================= slowest 25 durations =============================
+E   1.73s setup    Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[True]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[True]
+E   1 failed in 3.87s
+________ test_cold_create_waits_without_duplicate_or_late_commits[save] ________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ________ test_cold_create_waits_without_duplicate_or_late_commits[save] ________
+E
+E   request = <FixtureRequest for <Coroutine test_cold_create_waits_without_duplicate_or_late_commits[save]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without0/private-profile-process/pytest/test_cold_create_waits_without0')
+E   outcome = 'save'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("outcome", ["save", "cancel", "unavailable"])
+E       @private_profile_test
+E       async def test_cold_create_waits_without_duplicate_or_late_commits(request, tmp_path, outcome):
+E   >       host = Host(tmp_path)
+E                  ^^^^^^^^^^^^^^
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:138:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   self = Host(title='Host', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'})
+E   root = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without0/private-profile-process/pytest/test_cold_create_waits_without0')
+E
+E       def __init__(self, root):
+E           super().__init__()
+E           from tldw_chatbook.app import TldwCli
+E
+E           self.root = root
+E           self.loguru_logger = logger
+E           self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+E   >       self.workspace_registry_service = LocalWorkspaceRegistryService(
+E               WorkspaceDB(root / "workspace.sqlite", client_id="cold-test"),
+E               tool_profile_guard=self._tool_pack_guard_bootstrap,
+E           )
+E   E       TypeError: LocalWorkspaceRegistryService.__init__() got an unexpected keyword argument 'tool_profile_guard'
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:38: TypeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 01:43:26.064 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-18 01:43:26.075 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E   2026-09-18 01:43:26.318 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 01:43:26.717 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 01:43:26.718 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 01:43:26.718 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-09-18 01:43:27.183 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-18 01:43:28.064 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 01:43:28.248 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without0/private-profile-process/pytest/test_cold_create_waits_without0/workspace.sqlite [Client: cold-test]
+E   ============================= slowest 25 durations =============================
+E   2.79s setup    Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[save]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[save]
+E   1 failed in 5.13s
+_______ test_cold_create_waits_without_duplicate_or_late_commits[cancel] _______
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _______ test_cold_create_waits_without_duplicate_or_late_commits[cancel] _______
+E
+E   request = <FixtureRequest for <Coroutine test_cold_create_waits_without_duplicate_or_late_commits[cancel]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without1/private-profile-process/pytest/test_cold_create_waits_without0')
+E   outcome = 'cancel'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("outcome", ["save", "cancel", "unavailable"])
+E       @private_profile_test
+E       async def test_cold_create_waits_without_duplicate_or_late_commits(request, tmp_path, outcome):
+E   >       host = Host(tmp_path)
+E                  ^^^^^^^^^^^^^^
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:138:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   self = Host(title='Host', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'})
+E   root = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without1/private-profile-process/pytest/test_cold_create_waits_without0')
+E
+E       def __init__(self, root):
+E           super().__init__()
+E           from tldw_chatbook.app import TldwCli
+E
+E           self.root = root
+E           self.loguru_logger = logger
+E           self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+E   >       self.workspace_registry_service = LocalWorkspaceRegistryService(
+E               WorkspaceDB(root / "workspace.sqlite", client_id="cold-test"),
+E               tool_profile_guard=self._tool_pack_guard_bootstrap,
+E           )
+E   E       TypeError: LocalWorkspaceRegistryService.__init__() got an unexpected keyword argument 'tool_profile_guard'
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:38: TypeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 01:43:33.189 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-18 01:43:33.205 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E   2026-09-18 01:43:33.423 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 01:43:33.550 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 01:43:33.551 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 01:43:33.552 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-09-18 01:43:33.998 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-18 01:43:34.803 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 01:43:35.026 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without1/private-profile-process/pytest/test_cold_create_waits_without0/workspace.sqlite [Client: cold-test]
+E   ============================= slowest 25 durations =============================
+E   2.10s setup    Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[cancel]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[cancel]
+E   1 failed in 4.57s
+____ test_cold_create_waits_without_duplicate_or_late_commits[unavailable] _____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_cold_create_waits_without_duplicate_or_late_commits[unavailable] _____
+E
+E   request = <FixtureRequest for <Coroutine test_cold_create_waits_without_duplicate_or_late_commits[unavailable]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without2/private-profile-process/pytest/test_cold_create_waits_without0')
+E   outcome = 'unavailable'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("outcome", ["save", "cancel", "unavailable"])
+E       @private_profile_test
+E       async def test_cold_create_waits_without_duplicate_or_late_commits(request, tmp_path, outcome):
+E   >       host = Host(tmp_path)
+E                  ^^^^^^^^^^^^^^
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:138:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   self = Host(title='Host', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})
+E   root = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without2/private-profile-process/pytest/test_cold_create_waits_without0')
+E
+E       def __init__(self, root):
+E           super().__init__()
+E           from tldw_chatbook.app import TldwCli
+E
+E           self.root = root
+E           self.loguru_logger = logger
+E           self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+E   >       self.workspace_registry_service = LocalWorkspaceRegistryService(
+E               WorkspaceDB(root / "workspace.sqlite", client_id="cold-test"),
+E               tool_profile_guard=self._tool_pack_guard_bootstrap,
+E           )
+E   E       TypeError: LocalWorkspaceRegistryService.__init__() got an unexpected keyword argument 'tool_profile_guard'
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:38: TypeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 01:43:39.949 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-18 01:43:39.961 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E   2026-09-18 01:43:40.044 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 01:43:40.244 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 01:43:40.244 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 01:43:40.245 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-09-18 01:43:40.442 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-18 01:43:42.311 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 01:43:42.731 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_cold_create_waits_without2/private-profile-process/pytest/test_cold_create_waits_without0/workspace.sqlite [Client: cold-test]
+E   ============================= slowest 25 durations =============================
+E   2.85s setup    Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[unavailable]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[unavailable]
+E   1 failed in 5.24s
+_ test_explicit_choice_does_not_initialize_automatic_provisioning[WorkspacePersonaChoice.NONE] _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_explicit_choice_does_not_0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_explicit_choice_does_not_initialize_automatic_provisioning[WorkspacePersonaChoice.NONE] _
+E
+E   request = <FixtureRequest for <Coroutine test_explicit_choice_does_not_initialize_automatic_provisioning[WorkspacePersonaChoice.NONE]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_explicit_choice_does_not_0/private-profile-process/pytest/test_explicit_choice_does_not_0')
+E   choice = <WorkspacePersonaChoice.NONE: 2>
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("choice", [WorkspacePersonaChoice.NONE, "saved"])
+E       @private_profile_test
+E       async def test_explicit_choice_does_not_initialize_automatic_provisioning(request, tmp_path, choice):
+E   >       host = Host(tmp_path)
+E                  ^^^^^^^^^^^^^^
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:188:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   self = Host(title='Host', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'})
+E   root = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_explicit_choice_does_not_0/private-profile-process/pytest/test_explicit_choice_does_not_0')
+E
+E       def __init__(self, root):
+E           super().__init__()
+E           from tldw_chatbook.app import TldwCli
+E
+E           self.root = root
+E           self.loguru_logger = logger
+E           self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+E   >       self.workspace_registry_service = LocalWorkspaceRegistryService(
+E               WorkspaceDB(root / "workspace.sqlite", client_id="cold-test"),
+E               tool_profile_guard=self._tool_pack_guard_bootstrap,
+E           )
+E   E       TypeError: LocalWorkspaceRegistryService.__init__() got an unexpected keyword argument 'tool_profile_guard'
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:38: TypeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 01:43:47.402 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-18 01:43:47.453 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E   2026-09-18 01:43:47.545 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 01:43:47.693 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 01:43:47.693 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 01:43:47.694 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-09-18 01:43:48.458 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-18 01:43:49.985 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 01:43:50.301 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_explicit_choice_does_not_0/private-profile-process/pytest/test_explicit_choice_does_not_0/workspace.sqlite [Client: cold-test]
+E   ============================= slowest 25 durations =============================
+E   3.45s setup    Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[WorkspacePersonaChoice.NONE]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[WorkspacePersonaChoice.NONE]
+E   1 failed in 5.23s
+____ test_explicit_choice_does_not_initialize_automatic_provisioning[saved] ____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_explicit_choice_does_not_1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_explicit_choice_does_not_initialize_automatic_provisioning[saved] ____
+E
+E   request = <FixtureRequest for <Coroutine test_explicit_choice_does_not_initialize_automatic_provisioning[saved]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_explicit_choice_does_not_1/private-profile-process/pytest/test_explicit_choice_does_not_0')
+E   choice = 'saved'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("choice", [WorkspacePersonaChoice.NONE, "saved"])
+E       @private_profile_test
+E       async def test_explicit_choice_does_not_initialize_automatic_provisioning(request, tmp_path, choice):
+E   >       host = Host(tmp_path)
+E                  ^^^^^^^^^^^^^^
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:188:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   self = Host(title='Host', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})
+E   root = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_explicit_choice_does_not_1/private-profile-process/pytest/test_explicit_choice_does_not_0')
+E
+E       def __init__(self, root):
+E           super().__init__()
+E           from tldw_chatbook.app import TldwCli
+E
+E           self.root = root
+E           self.loguru_logger = logger
+E           self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+E   >       self.workspace_registry_service = LocalWorkspaceRegistryService(
+E               WorkspaceDB(root / "workspace.sqlite", client_id="cold-test"),
+E               tool_profile_guard=self._tool_pack_guard_bootstrap,
+E           )
+E   E       TypeError: LocalWorkspaceRegistryService.__init__() got an unexpected keyword argument 'tool_profile_guard'
+E
+E   Tests/UI/test_workspace_cold_provisioning.py:38: TypeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 01:43:55.450 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-18 01:43:55.481 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E   2026-09-18 01:43:55.949 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 01:43:56.265 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 01:43:56.266 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 01:43:56.267 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-09-18 01:43:56.687 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-18 01:43:57.755 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 01:43:57.996 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1803/test_explicit_choice_does_not_1/private-profile-process/pytest/test_explicit_choice_does_not_0/workspace.sqlite [Client: cold-test]
+E   ============================= slowest 25 durations =============================
+E   2.73s setup    Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[saved]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[saved]
+E   1 failed in 5.46s
+============================= slowest 25 durations =============================
+8.03s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[save]
+7.49s call     Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[WorkspacePersonaChoice.NONE]
+7.29s call     Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[False]
+7.24s call     Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[saved]
+7.22s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[unavailable]
+6.53s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_wiring_creates_no_orphans_before_authority
+6.39s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[cancel]
+6.25s call     Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[True]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_workspace_cold_provisioning.py::test_cold_wiring_creates_no_orphans_before_authority
+FAILED Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[False]
+FAILED Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[True]
+FAILED Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[save]
+FAILED Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[cancel]
+FAILED Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[unavailable]
+FAILED Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[WorkspacePersonaChoice.NONE]
+FAILED Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[saved]
+8 failed in 59.47s

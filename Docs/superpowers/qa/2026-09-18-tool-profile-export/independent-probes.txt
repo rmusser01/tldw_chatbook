@@ -1,0 +1,14 @@
+tool-profile-import-stale-audit.log
+RESULT {"mode": "import-stale", "category": "theme", "screen": "ToolPackImportReviewModal", "focus": {"id": "tool-pack-import-unbound", "attached": true, "region": "Region(x=48, y=18, width=24, height=1)"}, "calls": [["inspect", "audit", []]]}
+
+tool-profile-focus-audit.log
+RESULT {"mode": "focus", "selector": "#tool-profiles-import", "before": {"id": "tool-profiles-import", "attached": true, "region": "Region(x=39, y=17, width=20, height=1)"}, "after": {"id": "settings-detail-pane-body", "attached": true, "region": "Region(x=39, y=10, width=39, height=11)"}, "old_attached": false}
+RESULT {"mode": "focus", "selector": "#tool-profile-edit-0", "before": {"id": "tool-profile-edit-0", "attached": true, "region": "Region(x=51, y=14, width=8, height=1)"}, "after": {"id": "settings-detail-pane-body", "attached": true, "region": "Region(x=39, y=10, width=39, height=11)"}, "old_attached": false}
+RESULT {"mode": "focus", "selector": "#tool-profile-remove-1", "before": {"id": "tool-profile-remove-1", "attached": true, "region": "Region(x=67, y=19, width=10, height=1)"}, "after": {"id": "settings-detail-pane-body", "attached": true, "region": "Region(x=39, y=10, width=39, height=11)"}, "old_attached": false}
+
+tool-profile-removal-stale-audit.log
+RESULT {"receipt": "Remove failed \u00b7 stale", "bytes_unchanged": true, "kind": "tool_pack_imported", "revision": 4, "focus": {"id": "settings-detail-pane-body", "attached": true, "region": "Region(x=39, y=10, width=39, height=11)"}}
+
+tool-export-invalid-parent-audit.log
+RETRY {"location": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tool-profile-audit-ikzvyplq/authority/missing", "filename": "lost.tldw-tool-pack", "error": "Use a .tldw-tool-pack filename in an existing folder.", "focus": {"id": null, "attached": true, "region": "Region(x=3, y=10, width=74, height=3)"}}
+RESULT {"receipt": "Exported Tool Pack \u00b7 40cea3b4496b0661970b080a6836373874f690a8848dc0f085afa95ec32b76de", "created": true}

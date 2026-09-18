@@ -1,0 +1,88 @@
+[
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-red/001",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-red/002",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_catalog_only_materializes_requested_page",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_catalog_only_materializes_requested_page",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_catalog_only_materializes_requested_page",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_catalog_only_materializes_requested_page",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-red/003",
+    "classes": [],
+    "mismatches": 0
+  }
+]

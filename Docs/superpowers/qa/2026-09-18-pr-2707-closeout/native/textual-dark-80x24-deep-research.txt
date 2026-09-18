@@ -1,0 +1,24 @@
+   ╭────────╮
+ ‹ │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Me  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││   ← All servers  ◦ Off (opt-in)          ││                  │
+│ Source       ││  Includes web_search, web_fetch, and     ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││  web_crawl, plus workspace file, Git,    ││  ◦ Off (opt-in)  │
+│ ▊Local    ▼▎ ││  Watchlists search/detail, and session   ││  tldw_chatbook   │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  todo tools. web_deep_search is          ││  (built-in)      │
+│              ││  separately gated.                       ││  Why · Off —     │
+│ Servers      ││  Local workspace, web, and Watchlists    ││  enable it to    │
+│  ◦ off · ⌂   ││       tools (master switch): on ▸        ││  let MCP         │
+│  built-in    ││ Applies immediately - no Save needed.  ▅ ││  clients use     │
+│    All       ││  Deep web research (web_deep_search):    ││  chatbook's      │
+│  servers     ││                  on ▸                    ││  tools.          │
+│  ◦ ⌂ t…      ││   Ask you a question (ask_user): on ▸    ││  Add server      │
+│              ││  Applies to the next Console agent run ▆ ││    Advanced…     │
+│              ││  — each run builds its tool catalog      ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

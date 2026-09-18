@@ -1,0 +1,24 @@
+         ╭──────────────╮
+ ⌃1 ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▾
+────▊                                                                      ▎────
+    ▊  Review restored skills                                              ▎
+    ▊  Review these current local files. Setup preserves the imported      ▎
+    ▊  trust files and creates fresh local trust. If finishing an          ▎
+    ▊  interrupted setup, use the same passphrase you chose then. Script   ▎
+    ▊  execution still requires a separate explicit grant.                 ▎
+    ▊                                                                      ▎   *
+    ▊  Local trust folder: /private/tmp/tldw-32813-native-002              ▎
+    ▊                                                                      ▎   *
+    ▊  Retained script grants (inactive):                                  ▎
+    ▊  None                                                                ▎
+    ▊                                                                   ▃  ▎
+    ▊  This setup uses a local file marker. Protection against restoring   ▎   •
+    ▊  an older copy of the entire trust folder is reduced.                ▎
+    ▊                                                                      ▎   *
+    ▊                                        Cancel       Confirm review   ▎
+    ▊                                                                      ▎
+    ▊                                                                      ▎   ·
+    ▊                                                                      ▎
+    ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+    ·  │                                                                │     ••
+  Ctrl+Shift+F focus | F6 next pane | F1 · Ctrl+P · Ctrl+Q

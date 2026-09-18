@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                         Speak replies   ▌   Hands-free   ▌     Blocked
+   New tab     Settings     Context rail     Search Library     Help
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Chat 1                                                                                                           │
+                  Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                               │
+   Terminal                  │                                                                                                                                 │
+ ──────────────────────────  │                                                   p        z                                 2                                  │
+ Workspaces             ▸    │                                                                                           q                                     │
+ ──────────────────────────  │                                                                                      3                                          │
+ Conversations          ▾    │                                                                b                               d              v                 │
+     Archive this chat       │                                                    5                                         5       l                          │
+      Archived chats         │                      g   b                               4            r                            z    n                       │
+     Search all chats…       │             n       k                                  2              u           v                        s                    │
+   Chat 1                    │                           s                 t           r     u         5                         9    p      fa    7           │
+                             │    i                                               i         h q              k        l                                        │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │        p          t                                              f                                                              │
+  ▊  Filter      ▎           │        kk                     p   h                                       r          8     vo                    4         d    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  b  x        n   p             9     5                  4k     j      t                                              o     l    │
+                             │                                           o      e     i   3     d              g      f                                        │
+  Chats                 ▾    │    j                 a      v       i                              v      q                  2   9                      r       │
+   ▢     Chat 1       *      │              u  l     s  i  5                 s           3   p       ln     a    o k              x          l       6         │◂ Inspect
+         active              │    c2 a               y              e f  r            j   t                                   a                           w    │
+                             │  b                  4                 w     m      q     x                    r                z 2      s    mu  f r  p u       │
+                             │     a0       t                 t           e                 2   z   u               l         f                         d  v   │
+ ──────────────────────────  │       t9        5    u p                  r        6      6          ra                     x                        6          │
+ Character · No chats   ▸    │              p  3           g i    4     t              6                  6        v         4      m  w7 8j  k      5         │
+ ──────────────────────────  │           5             e  0    b  x b  8         t            b    4      r      3                     t  1                    │
+ Model                  ▸    │           l m          v                                            d l    d d           z             s                        │
+ ──────────────────────────  │         7           b            9    3     l 3    o            l                               k    d        8 5 58js 7        │
+ Agent                  ▸    │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────  │   User                                                                                                                          │
+ Details                ▸    │   Keep this sample question visible.                                                                                            │
+                             │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                             │  ▊ Assistant                                                                                                                    │
+                             │  ▊                                                                                                                              │
+                             │  ▊  Keep this sample answer unchanged.                                                                                          │
+                             │  ▊                                                                                                                              │
+                             │  ▊                                                                                                                              │
+                             │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  setup
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: openai     Model: model-a     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pend
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                       Send blocked — add an API key to continue ›       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

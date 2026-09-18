@@ -1,0 +1,17 @@
+................                                                         [100%]
+============================= slowest 25 durations =============================
+5.25s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review
+5.12s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token
+4.76s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_profile_selection_is_applied_with_default
+4.75s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_requires_two_presses
+4.73s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only
+4.45s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-new]
+4.37s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_clear_removes_default
+4.35s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-slow]
+4.31s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_section_renders_effective_status_and_pickers
+4.04s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_degrades_without_tool_catalog
+3.99s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_default_workspace_renders_locked_note_not_picker
+3.99s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_degraded_persona_shows_reason_copy
+
+(13 durations < 1s hidden.)
+16 passed in 56.54s

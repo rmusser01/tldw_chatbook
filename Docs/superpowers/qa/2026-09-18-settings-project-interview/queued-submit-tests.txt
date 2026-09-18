@@ -1,0 +1,7 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+12.80s call     Tests/UI/test_profile_interview_answer_journeys.py::test_queued_submit_does_not_duplicate_a_pending_answer
+2.40s setup    Tests/UI/test_profile_interview_answer_journeys.py::test_queued_submit_does_not_duplicate_a_pending_answer
+
+(1 durations < 1s hidden.)
+1 passed, 8 deselected in 16.79s

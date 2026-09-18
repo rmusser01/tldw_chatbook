@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appea▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ Mode: Workspaces                    ▊                                                                                              ▎
+┌──────────────────────────────┐  │  ▊  Review first Tool Profile bind                                                              ▎  │  ┌──────────────────────────────┐
+│                              │  │  ▊                                                                                              ▎  │  │                              │
+│  Filter categories (/)       │  │  ▊  ▊  builtin:tldw_chatbook/search_conversations, builtin:tldw_chatbook/search_notes,      ▎   ▎  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  ▊  ▊  builtin:tldw_chatbook/search_rag, local:__local__/fs_edit, local:__local__/fs_glob,  ▎   ▎  │  │                              │
+│  category search             │  │  ▊  ▊  local:__local__/fs_grep, local:__local__/fs_list, local:__local__/fs_patch,          ▎   ▎  │  │ Selected category:           │
+│                              │  │  ▊  ▊  local:__local__/fs_read, local:__local__/fs_write, local:__local__/git_blame,        ▎   ▎  │  │ Workspaces                   │
+│  Core                        │  │  ▊  ▊  local:__local__/git_branches, local:__local__/git_diff, local:__local__/git_log,     ▎   ▎  │  │ No unsaved changes           │
+│     Overview (view)          │  │  ▊  ▊  local:__local__/git_status, local:__local__/shell_exec, local:__local__/todo_create, ▎   ▎  │  │  Immediate actions:          │
+│     Providers & Models       │  │  ▊  ▊  local:__local__/todo_get, local:__local__/todo_list, local:__local__/todo_update,    ▎   ▎  │  │  workspace changes apply as  │
+│     Web Search               │  │  ▊  ▊  local:__local__/watchlists_check_sources,                                            ▎   ▎  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  ▊  ▊  local:__local__/watchlists_create_collection,                                        ▎   ▎  │  │  draft to save or revert.    │
+│  Interface                   │  │  ▊  ▊  local:__local__/watchlists_create_sources,                                           ▎   ▎  │  │ Local-only: saves write your │
+│     Appearance               │  │  ▊  ▊  local:__local__/watchlists_generate_briefing,                                        ▎   ▎  │  │ config file.                 │
+│     Theme                    │  │  ▊  ▊  local:__local__/watchlists_get_briefing, local:__local__/watchlists_get_item,        ▎   ▎  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  ▊  ▊  local:__local__/watchlists_get_operation_status,                                     ▎   ▎  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  ▊  ▊  local:__local__/watchlists_get_operations_status,                                    ▎   ▎  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  ▊  ▊  local:__local__/watchlists_list_briefings,                                           ▎   ▎  │  │ tools.                       │
+│     Storage                  │  │  ▊  ▊  local:__local__/watchlists_list_collections,                                         ▎   ▎  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  ▊  ▊  local:__local__/watchlists_list_sources, local:__local__/watchlists_search_items,    ▎   ▎  │  │  registry (immediate         │
+│     Tool Profiles            │  │  ▊  ▊  local:__local__/watchlists_set_briefing_schedule,                                    ▎   ▎  │  │  actions)                    │
+│     Privacy & Security       │  │  ▊  ▊  local:__local__/watchlists_update_collection_sources, local:__local__/web_crawl,     ▎   ▎  │  │                              │
+│     Network                  │  │  ▊  ▊  local:__local__/web_fetch, local:__local__/web_search, local:__virtual_cli__/cat,    ▎   ▎  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  ▊  ▊  local:__virtual_cli__/find, local:__virtual_cli__/git_blame,                         ▎   ▎  │  │                              │
+│  Troubleshooting             │  │  ▊  ▊  local:__virtual_cli__/git_branches, local:__virtual_cli__/git_diff,                  ▎▇  ▎  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  ▊  ▊  local:__virtual_cli__/git_log, local:__virtual_cli__/git_status,                     ▎   ▎  │  │  lifecycle records and       │
+│     About (view)             │  │  ▊  ▊  local:__virtual_cli__/grep, local:__virtual_cli__/ls, local:__virtual_cli__/stat     ▎   ▎  │  │  their bound folders         │
+│     Agents                   │  │  ▊  ▊                                                                                       ▎   ▎  │  │                              │
+│  Expert                      │  │  ▊  ▊                                                                                       ▎   ▎  │  │  Recovery:                   │
+│     Internal Prompts         │  │  ▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ▎  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  ▊  │                                                                                           ▎  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  ▊  Confirmation boundary                                                                       ▎  │  │  workspace in Library        │
+│                              │  │  ▊  Confirming authorizes this exact workspace, assistant defaults, profile revision, policy    ▎  │  │                              │
+│                              │  │  ▊  digest, and tool inventory once. Any change requires a new review. This is separate from    ▎  │  │  Boundary: lifecycle and     │
+│                              │  │  ▊  the read_write memory acknowledgement.                                                      ▎  │  │  folder bindings apply       │
+│                              │  │  ▊                                                                                              ▎  │  │  immediately; there is no    │
+│                              │  │  ▊                                                                                              ▎  │  │  draft state here            │
+│                              │  │  ▊                                                              Cancel     Confirm exact bind   ▎  │  │                              │
+│                              │  │  ▊                                                                                              ▎  │  │                              │
+│                              │  │  ▊                                                                                              ▎  │  │                              │
+│                              │  │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

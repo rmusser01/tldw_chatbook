@@ -1,0 +1,61 @@
+{
+  "task": "TASK-32784",
+  "base_commit": "41262f265a",
+  "ci_failure": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35335586309/job/105569547849",
+  "census_before": 275,
+  "census_after": 274,
+  "unchanged_limit": 274,
+  "selector_specificity_before_and_after": [
+    0,
+    2,
+    2
+  ],
+  "computed_style_geometry_visibility_and_rendered_text_equal": true,
+  "before_and_after_sha256": "4af5f9934766594e24cce80d7346b9476b5757721c7556b7d484c85fd954c20c",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "buttons": 9
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "buttons": 9
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "buttons": 9
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "buttons": 9
+    }
+  ],
+  "fixture_adjustment": "Initial unconstrained scrolling differed by one row in one cell, with identical styles. Final comparison settles animation and explicitly scrolls to the end before capturing. It compares the base-commit CSS with original classes against the new CSS/classes. Automatic focus remains covered by existing compact focus tests.",
+  "native_scope": "No new native captures; declaration, specificity and mounted four-cell paint equivalence qualify this mechanical indexing change.",
+  "targeted_tests": 80,
+  "ruff": "Panel passes",
+  "format": "Panel passes",
+  "backlog": "4135 unique tasks; Windows-compatible paths",
+  "independent_review": "No actionable findings; equal specificity/declarations and exact action coverage verified",
+  "source_sha256": {
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": "9c8ee520a270f8e423c429bdd466beafd55664137919429efdfc39d61df0ead0",
+    "tldw_chatbook/css/features/_settings.tcss": "4d7359558e0ee21c398bca401d6cdd68eff6c811e91574e4f11df92e2e436214",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "edc2ce62547c6715661d28ca25762cbde5419e50a23c2e941c3db75b41a5d69a"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "files": [
+    {
+      "file": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "current": 208,
+      "baseline": 208,
+      "introduced": []
+    },
+    {
+      "file": "Tests/UI/test_console_footer_shutdown.py",
+      "current": 0,
+      "baseline": 0,
+      "introduced": []
+    }
+  ],
+  "comparison": "Normalize only embedded F811 source line numbers shifted by added guard lines; code/message/count comparison otherwise exact."
+}

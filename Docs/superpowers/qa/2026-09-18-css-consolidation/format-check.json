@@ -1,0 +1,21 @@
+{
+  "scope": "Ruff formatting of changed Python ranges; full formatting for new Python files. Baseline whole-file formatting debt is outside this task.",
+  "files": 67,
+  "changed_by_final_pass": [
+    "tldw_chatbook/css/widget_css.py"
+  ],
+  "new_files": [
+    "Tests/UI/css_destination_tour.py",
+    "Tests/UI/test_css_consolidation_recovery_dialogs.py",
+    "Docs/superpowers/qa/2026-09-18-css-consolidation/native_check.py",
+    "Docs/superpowers/qa/2026-09-18-css-consolidation/migration_parity.py",
+    "Docs/superpowers/qa/2026-09-18-css-consolidation/run_consumer_cases.py"
+  ],
+  "final_harness_files": [
+    "Tests/UI/test_consolidated_css_harness.py",
+    "Tests/UI/test_library_notes_w5_kbd_focus.py",
+    "Tests/UI/test_workspace_persona_picker_identity.py"
+  ],
+  "final_harness_format_changes": [],
+  "whitespace_check": "Source and authored documentation pass git diff --check. Verbatim pytest logs and native SVG/text captures retain tool-emitted trailing whitespace."
+}

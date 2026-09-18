@@ -11,12 +11,11 @@ not five copies of a widget-mounting test.
 from __future__ import annotations
 
 import pytest
-
 from textual.widgets import Input
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
-    SettingsDraft,
 )
 from tldw_chatbook.UI.Screens.settings_screen import (
     AGENT_BUDGET_FIELDS,
@@ -62,7 +61,8 @@ class _Screen:
 # -- the table's contract ---------------------------------------------------
 
 
-def test_all_five_limits_are_exposed():
+@private_profile_test
+def test_all_five_limits_are_exposed(request):
     """AC#1: the section covers every limit the owner asked for, and the
     per-tool-call ceiling that makes a long wall budget actually usable."""
     assert set(AGENT_BUDGET_KEYS) == {
@@ -74,7 +74,8 @@ def test_all_five_limits_are_exposed():
     }
 
 
-def test_every_field_is_wired_into_the_console_save_path():
+@private_profile_test
+def test_every_field_is_wired_into_the_console_save_path(request):
     """A field in the table but absent from these two collections would
     render, stage, and then silently fail to save."""
     for key in AGENT_BUDGET_KEYS:
@@ -82,12 +83,14 @@ def test_every_field_is_wired_into_the_console_save_path():
         assert key in CONSOLE_BEHAVIOR_SAVE_ORDER, key
 
 
-def test_field_ids_and_keys_are_unique():
+@private_profile_test
+def test_field_ids_and_keys_are_unique(request):
     assert len({f.widget_id for f in AGENT_BUDGET_FIELDS}) == len(AGENT_BUDGET_FIELDS)
     assert len({f.key for f in AGENT_BUDGET_FIELDS}) == len(AGENT_BUDGET_FIELDS)
 
 
-def test_the_token_budget_is_presented_first():
+@private_profile_test
+def test_the_token_budget_is_presented_first(request):
     """It is the limit that actually stops a run, so it leads the section
     rather than sitting under two backstops nobody will hit."""
     assert AGENT_BUDGET_FIELDS[0].key == "agent_max_total_tokens"
@@ -96,7 +99,8 @@ def test_the_token_budget_is_presented_first():
 # -- loading and staging ----------------------------------------------------
 
 
-def test_saved_values_are_loaded():
+@private_profile_test
+def test_saved_values_are_loaded(request):
     screen = _Screen({"agent_max_model_turns": 55, "agent_max_wall_seconds": 12.5})
     assert (
         screen._loaded_agent_budget_value(
@@ -112,13 +116,15 @@ def test_saved_values_are_loaded():
     )
 
 
-def test_unset_values_fall_back_to_the_shipped_default():
+@private_profile_test
+def test_unset_values_fall_back_to_the_shipped_default(request):
     screen = _Screen({})
     for field in AGENT_BUDGET_FIELDS:
         assert screen._loaded_agent_budget_value(field) == field.default
 
 
-def test_staging_a_value_marks_the_draft_dirty():
+@private_profile_test
+def test_staging_a_value_marks_the_draft_dirty(request):
     screen = _Screen({})
     field = AGENT_BUDGET_FIELDS_BY_KEY["agent_max_model_turns"]
     screen._stage_agent_budget_value(field, "77")
@@ -127,7 +133,8 @@ def test_staging_a_value_marks_the_draft_dirty():
     assert draft.is_dirty
 
 
-def test_staging_back_to_the_saved_value_clears_the_draft():
+@private_profile_test
+def test_staging_back_to_the_saved_value_clears_the_draft(request):
     """Otherwise Save stays enabled after a user types a change and undoes
     it, and 'no changes to save' never fires."""
     screen = _Screen({"agent_max_model_turns": 40})
@@ -138,7 +145,8 @@ def test_staging_back_to_the_saved_value_clears_the_draft():
     assert SettingsCategoryId.CONSOLE_BEHAVIOR not in screen._settings_drafts
 
 
-def test_invalid_text_is_kept_staged_rather_than_discarded():
+@private_profile_test
+def test_invalid_text_is_kept_staged_rather_than_discarded(request):
     """Mid-edit text ('1', on the way to '1000') must survive a re-render;
     the save path re-normalises and reports the error."""
     screen = _Screen({})
@@ -151,7 +159,8 @@ def test_invalid_text_is_kept_staged_rather_than_discarded():
 # -- validation -------------------------------------------------------------
 
 
-def test_below_floor_values_are_refused_not_clamped():
+@private_profile_test
+def test_below_floor_values_are_refused_not_clamped(request):
     """AC#4: silently clamping is how a 2000-turn budget quietly becomes
     something the user never chose."""
     screen = _Screen({})
@@ -161,14 +170,16 @@ def test_below_floor_values_are_refused_not_clamped():
     assert "at least" in str(exc.value)
 
 
-def test_zero_is_valid_where_it_means_unlimited():
+@private_profile_test
+def test_zero_is_valid_where_it_means_unlimited(request):
     screen = _Screen({})
     for key in ("agent_max_total_tokens", "agent_max_tool_call_seconds"):
         field = AGENT_BUDGET_FIELDS_BY_KEY[key]
         assert screen._normalise_agent_budget_value(field, "0") == 0
 
 
-def test_non_finite_input_is_refused():
+@private_profile_test
+def test_non_finite_input_is_refused(request):
     screen = _Screen({})
     field = AGENT_BUDGET_FIELDS_BY_KEY["agent_max_wall_seconds"]
     for bad in ("inf", "nan"):
@@ -176,7 +187,8 @@ def test_non_finite_input_is_refused():
             screen._normalise_agent_budget_value(field, bad)
 
 
-def test_large_values_are_accepted():
+@private_profile_test
+def test_large_values_are_accepted(request):
     """No ceiling: the whole point of the task is long expensive runs."""
     screen = _Screen({})
     field = AGENT_BUDGET_FIELDS_BY_KEY["agent_max_total_tokens"]
@@ -197,13 +209,15 @@ def test_large_values_are_accepted():
         (0.0, "unlimited"),
     ],
 )
-def test_seconds_are_rendered_as_a_readable_duration(seconds, expected):
+@private_profile_test
+def test_seconds_are_rendered_as_a_readable_duration(request, seconds, expected):
     """86400 is not a number anyone reads as a day at a glance, and this
     field exists to be set to large values deliberately."""
     assert _Screen()._humanise_seconds(seconds) == expected
 
 
-def test_the_unlimited_token_budget_says_what_it_costs_you():
+@private_profile_test
+def test_the_unlimited_token_budget_says_what_it_costs_you(request):
     """Unlimited tokens remove the spending backstop despite loop detection."""
     screen = _Screen({"agent_max_total_tokens": 0})
     field = AGENT_BUDGET_FIELDS_BY_KEY["agent_max_total_tokens"]
@@ -212,7 +226,8 @@ def test_the_unlimited_token_budget_says_what_it_costs_you():
     assert "backstop" in hint
 
 
-def test_an_invalid_value_is_explained_in_place():
+@private_profile_test
+def test_an_invalid_value_is_explained_in_place(request):
     screen = _Screen({})
     field = AGENT_BUDGET_FIELDS_BY_KEY["agent_max_model_turns"]
     screen._stage_agent_budget_value(field, "0")
@@ -222,12 +237,14 @@ def test_an_invalid_value_is_explained_in_place():
 # -- the derived step floor -------------------------------------------------
 
 
-def test_no_warning_when_the_step_budget_clears_the_derived_floor():
+@private_profile_test
+def test_no_warning_when_the_step_budget_clears_the_derived_floor(request):
     screen = _Screen({})  # shipped defaults: 25000 steps vs 5998 needed
     assert screen._agent_budget_step_floor_warning() == ""
 
 
-def test_warning_when_the_step_budget_will_bind_first():
+@private_profile_test
+def test_warning_when_the_step_budget_will_bind_first(request):
     """AC#6: 100 steps against 2000 turns means runs stop on 'step budget
     exhausted' at round ~34 -- a silent misconfiguration with a confusing
     symptom."""
@@ -238,7 +255,8 @@ def test_warning_when_the_step_budget_will_bind_first():
     assert "2000" in warning
 
 
-def test_the_warning_is_recomputed_from_staged_values():
+@private_profile_test
+def test_the_warning_is_recomputed_from_staged_values(request):
     """It is a function of TWO fields, so editing either must update it --
     including before anything is saved."""
     screen = _Screen({})
@@ -248,13 +266,12 @@ def test_the_warning_is_recomputed_from_staged_values():
     assert screen._agent_budget_step_floor_warning()
 
 
-def test_no_warning_while_a_field_is_mid_edit():
+@private_profile_test
+def test_no_warning_while_a_field_is_mid_edit(request):
     """An empty or half-typed field must not flash a warning derived from
     a number the user has not finished entering."""
     screen = _Screen({})
-    screen._stage_agent_budget_value(
-        AGENT_BUDGET_FIELDS_BY_KEY["agent_max_steps"], ""
-    )
+    screen._stage_agent_budget_value(AGENT_BUDGET_FIELDS_BY_KEY["agent_max_steps"], "")
     assert screen._agent_budget_step_floor_warning() == ""
 
 
@@ -262,7 +279,8 @@ def test_no_warning_while_a_field_is_mid_edit():
 
 
 @pytest.mark.asyncio
-async def test_the_budget_section_mounts_in_console_behavior():
+@private_profile_test
+async def test_the_budget_section_mounts_in_console_behavior(request):
     """compose() builds these five rows in a loop over the spec table, which
     is the one part of this feature the pure staging tests above cannot
     reach: a bad `with Horizontal(...)` nesting or a duplicate id would
@@ -281,16 +299,15 @@ async def test_the_budget_section_mounts_in_console_behavior():
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         for field in AGENT_BUDGET_FIELDS:
-            await _wait_for_selector(
-                screen, pilot, f"#{field.widget_id}", timeout=8.0
-            )
+            await _wait_for_selector(screen, pilot, f"#{field.widget_id}", timeout=8.0)
         await _wait_for_selector(
             screen, pilot, "#settings-console-agent-budget-step-warning", timeout=8.0
         )
 
 
 @pytest.mark.asyncio
-async def test_opening_the_category_does_not_create_a_draft():
+@private_profile_test
+async def test_opening_the_category_does_not_create_a_draft(request):
     """Mounting must not stage anything. Textual fires Input.Changed when a
     widget is created with an initial `value`, so five new inputs are five
     new chances to open the category already dirty -- which would enable
@@ -322,7 +339,8 @@ async def test_opening_the_category_does_not_create_a_draft():
 
 
 @pytest.mark.asyncio
-async def test_an_edit_saves_and_reaches_the_run_budget_resolver(monkeypatch):
+@private_profile_test
+async def test_an_edit_saves_and_reaches_the_run_budget_resolver(request, monkeypatch):
     """The full integration the staging tests cannot cover: a user edit in
     the mounted screen is staged, saved through the real save path, written
     into the app config the resolver reads, and `console_run_budget()`
@@ -353,9 +371,7 @@ async def test_an_edit_saves_and_reaches_the_run_budget_resolver(monkeypatch):
             saved.append(section_values)
             return True
 
-    monkeypatch.setattr(
-        settings_screen_module, "SettingsConfigAdapter", FakeAdapter
-    )
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
@@ -366,14 +382,10 @@ async def test_an_edit_saves_and_reaches_the_run_budget_resolver(monkeypatch):
         )
         widget = screen.query_one(f"#{tokens_field.widget_id}", Input)
         widget.value = "1234567"
-        screen.handle_console_agent_budget_changed(
-            Input.Changed(widget, widget.value)
-        )
+        screen.handle_console_agent_budget_changed(Input.Changed(widget, widget.value))
         await pilot.pause()
         await pilot.click("#settings-save-category")
-        await _wait_for_settings_text(
-            screen, pilot, "Console behavior settings saved."
-        )
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
 
     # The save path persisted the staged value under the resolver's key...
     assert saved == [{"console": {"agent_max_total_tokens": 1234567}}]
@@ -391,8 +403,6 @@ async def test_an_edit_saves_and_reaches_the_run_budget_resolver(monkeypatch):
             return default
         return written.get(key, default)
 
-    monkeypatch.setattr(
-        "tldw_chatbook.config.get_cli_setting", _fake_get, raising=True
-    )
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", _fake_get, raising=True)
     budget = console_agent_bridge.console_run_budget()
     assert budget.max_total_tokens == 1234567

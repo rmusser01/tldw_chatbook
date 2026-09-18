@@ -1,0 +1,10 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+67.10s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size1-textual-dark]
+64.73s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size0-textual-light]
+64.11s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size0-textual-dark]
+31.55s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size1-textual-light]
+28.49s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token
+
+(10 durations < 1s hidden.)
+5 passed in 267.86s (0:04:27)

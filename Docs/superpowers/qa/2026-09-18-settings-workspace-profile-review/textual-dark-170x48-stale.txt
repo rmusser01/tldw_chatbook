@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each action reversible: unarchive, rename again, or set        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  active.                                                                                     │  │  │                              │
+│  category search             │  │  │  Workspace management                                                                      ▅ │  │  │ Selected category:           │
+│                              │  │  │  Create workspace…                                                                           │  │  │ Workspaces                   │
+│  Core                        │  │  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                       │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ ▊ ▐X▌ Show archived  ▎                                                                       │  │  │  Immediate actions:          │
+│     Providers & Models       │  │  │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                       │  │  │  workspace changes apply as  │
+│     Web Search               │  │  │  Default (active) - 0 folders                                                                │  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  │  Review textual-dark-170x48 - 0 folders                                                      │  │  │  draft to save or revert.    │
+│  Interface                   │  │  │                                                                                              │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │                                                                                              │  │  │ config file.                 │
+│     Theme                    │  │  │  Selected workspace                                                                          │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │ ┌─────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  │ │ │ Review textual-dark-170x48                                                Rename      │  │  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  │ │    Set active                                                                           │  │  │  │ tools.                       │
+│     Storage                  │  │  │ │     Archive                                                                             │  │  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  │ │                                                                                         │  │  │  │  registry (immediate         │
+│     Tool Profiles            │  │  │ │                                                                                         │  │  │  │  actions)                    │
+│     Privacy & Security       │  │  │ │  Folders (agent file-tool access)                                                       │  │  │  │                              │
+│     Network                  │  │  │ │ │ ~/path/to/folder                                                        Add folder    │▄ │  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  │ │                                                                                         │  │  │  │                              │
+│  Troubleshooting             │  │  │ │                                                                                         │  │  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  │ │  Change review (post-run diffs)                                                         │  │  │  │  lifecycle records and       │
+│     About (view)             │  │  │ │  Change Review stores shadow Git history in application data, including file contents,  │  │  │  │  their bound folders         │
+│     Agents                   │  │  │ │  for 30 days by default. Disabling stops new review snapshots but does not erase        │  │  │  │                              │
+│  Expert                      │  │  │ │  existing history.                                                                      │  │  │  │  Recovery:                   │
+│     Internal Prompts         │  │  │ │  Tracking disabled for this workspace: runs record no diffs and offer no review.        │  │  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  │ │  Enable change review                                                                   │  │  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  │ │                                                                                         │  │  │  │  workspace in Library        │
+│                              │  │  │ │                                                                                         │  │  │  │                              │
+│                              │  │  │ │  Default assistant                                                                      │  │  │  │  Boundary: lifecycle and     │
+│                              │  │  │ │  Effective: Review [helper] (memory: read_only)                                         │  │  │  │  folder bindings apply       │
+│                              │  │  │ │ Review textual-dark-170x48 Agent                                                        │  │  │  │  immediately; there is no    │
+│                              │  │  │ │ Review [helper]                                                                         │  │  │  │  draft state here            │
+│                              │  │  │ │  Apply (memory: read_only)                                                              │  │  │  │                              │
+│                              │  │  │ │  Tool Profile bind failed · confirmation_stale                                          │  │  │  │                              │
+│                              │  │  │ │ default                                                                                 │  │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

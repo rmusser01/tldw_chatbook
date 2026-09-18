@@ -1,0 +1,24 @@
+
+ █ Dialogs & modals
+
+ ╭───────────────────────────────────────────────────────────────────────────╮
+ │                                                                           │
+ │ Confirm deletion                                                          │▂
+ │                                                                           │
+ │                          This cannot be undone.                           │▆
+ │                                                                           │
+ │                                                                           │
+ │                                                                           │
+ │                                                                           │
+ │                                                   Cancel       Delete     │
+ │                                     ╭─────────────────────────────────────╮
+ │                                     │                                     │
+ │                                     │ Context rail collapsed — the        │
+ │                                     │ terminal is too narrow for it.      │
+ ╰─────────────────────────────────────│ Reopen it from the Context handle   │
+                                       │ (or widen the terminal).            │
+ █ Status, empty & loading             │                                     │
+                                       ╰─────────────────────────────────────╯
+
+ ╭───────────────────────────────────────────────────────────────────────────╮
+

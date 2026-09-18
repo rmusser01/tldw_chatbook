@@ -1,0 +1,19 @@
+..............                                                           [100%]
+============================= slowest 25 durations =============================
+3.59s call     Tests/UI/test_buddy_management_modal.py::test_preview_pointer_focus_and_disclosed_geometry_fit[size0]
+3.12s call     Tests/UI/test_buddy_management_modal.py::test_preview_pointer_focus_and_disclosed_geometry_fit[size2]
+3.11s call     Tests/UI/test_buddy_management_modal.py::test_preview_pointer_focus_and_disclosed_geometry_fit[size1]
+2.80s call     Tests/UI/test_buddy_management_modal.py::test_cancel_returns_no_mutation_after_staged_changes
+2.75s call     Tests/UI/test_buddy_management_modal.py::test_actions_remain_visible_and_fields_keyboard_accessible[size0]
+2.74s call     Tests/UI/test_buddy_management_modal.py::test_actions_remain_visible_and_fields_keyboard_accessible[size1]
+2.70s call     Tests/UI/test_buddy_management_modal.py::test_artwork_paging_retains_selected_label_and_staged_choice
+2.66s call     Tests/UI/test_buddy_management_modal.py::test_petdex_staging_is_discarded_on_cancel_and_character_uses_selected_owner
+2.54s call     Tests/UI/test_buddy_management_modal.py::test_apply_failure_preserves_form_and_blocks_dismissal_while_saving
+2.47s call     Tests/UI/test_buddy_management_modal.py::test_invalid_artwork_keeps_form_open_with_recovery_copy
+2.47s call     Tests/UI/test_buddy_management_modal.py::test_apply_captures_explicit_binding_and_static_preference
+2.44s call     Tests/UI/test_buddy_management_modal.py::test_buddy_form_rejects_overlong_archive_at_shared_input_boundary
+2.43s call     Tests/UI/test_buddy_management_modal.py::test_current_persona_name_is_literal_text[workspace]
+2.42s call     Tests/UI/test_buddy_management_modal.py::test_current_persona_name_is_literal_text[conversation]
+
+(11 durations < 1s hidden.)
+14 passed in 39.17s

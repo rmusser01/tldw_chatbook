@@ -1,0 +1,10 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+CSS destination tour: ['home', 'console', 'library', 'personas', 'watchlists_collections', 'artifacts', 'schedules', 'workflows', 'mcp', 'acp', 'lab', 'logs', 'settings', 'research', 'meetings']
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+85.91s call     Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit
+3.81s setup    Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit
+1.62s teardown Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit
+1 passed in 91.57s (0:01:31)

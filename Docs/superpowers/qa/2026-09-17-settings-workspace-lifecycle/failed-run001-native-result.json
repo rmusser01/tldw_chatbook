@@ -1,0 +1,33 @@
+{
+  "pid": 29683,
+  "cells": [],
+  "runner_sha256": "6764623be7bcaafe0dff86b5d2c5de0922dcdd35f6c2fb6f846c90b1b9fe50e3",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "0dc9f306e64d0674f36f3908729ba430ab6c97ae9cdef2bb493f2596008d0ea9",
+    "tldw_chatbook/Widgets/workspace_create_modal.py": "e9f5d0c8633a9218f671eea0fcf9fa33172df4b9ef8fdc58e58bbc18c50acd86",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "6fa772fe15dc43d3977ae7f6c6547389cf8ca85c4b6550a9c23edb268017c452",
+    "tldw_chatbook/css/features/_settings.tcss": "60aa5ed477b868d548a68ed199a620b09a5b1e8ae791bc22ce1e9136e1445a99",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "1889f679e60b75e715493ec7ff5084bcb97298c068bf11f51b478a62e743bd6e",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Pane settled",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Real registry; sibling folders removed and restored to exercise binding recovery",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-workspace-lifecycle/native_check.py\", line 302, in journey\n    await press(\"#settings-workspace-set-active\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-workspace-lifecycle/native_check.py\", line 142, in press\n    await focus(selector)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-workspace-lifecycle/native_check.py\", line 122, in focus\n    control = app.screen.query_one(selector)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/dom.py\", line 1505, in query_one\n    raise NoMatches(f\"No nodes match {query_selector!r} on {base_node!r}\")\ntextual.css.query.NoMatches: No nodes match '#settings-workspace-set-active' on SettingsScreen(classes='shell-header-normal')\n",
+  "focused_id": "settings-workspace-rename-apply",
+  "focused_region": "Region(x=112, y=21, width=16, height=1)",
+  "app_run_returned": true
+}

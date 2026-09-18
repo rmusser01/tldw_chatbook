@@ -8259,6 +8259,8 @@ class TldwCli(
         )
         self._tool_pack_wiring_started = False
         self._tool_pack_composition_worker: Worker | None = None
+        self._tool_profile_operations = None
+        self._tool_profile_operations_closed = False
         self._screen_preimport_thread: threading.Thread | None = None
         # task-21110: the splash-overlapped warm-up of the INITIAL route's
         # module. Separate from `_screen_preimport_thread` (the whole-registry
@@ -9804,13 +9806,71 @@ class TldwCli(
 
     def _deferred_wire_workspace_agent_provisioning(self) -> None:
         """Timer callback: run the (best-effort, non-fatal) provisioning wiring."""
+        from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
         try:
+            registry = getattr(self, "workspace_registry_service", None)
+            if (
+                registry is not None
+                and not registry.db.is_agent_backfill_complete()
+                and any(
+                    record.workspace_id != DEFAULT_WORKSPACE_ID
+                    and not record.archived
+                    and record.assistant_defaults is None
+                    and not record.assistant_defaults_explicit_none
+                    for record in registry.list_workspaces()
+                )
+            ):
+                # Existing workspaces are a real first use; an empty startup
+                # must not eagerly initialize the portable-profile subsystem.
+                self.run_worker(
+                    self.ensure_workspace_agent_provisioning(),
+                    group="workspace-agent-provisioning",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                return
             self._wire_workspace_agent_provisioning()
         except Exception as exc:
             self.loguru_logger.warning(
                 "Deferred workspace agent provisioning wiring failed; error_type={}",
                 type(exc).__name__,
             )
+
+    async def ensure_workspace_agent_provisioning(self) -> None:
+        """Await app-owned profile authority before automatic workspace setup."""
+        worker = self._deferred_wire_tool_pack_service()
+        if worker is not None:
+            try:
+                # Modal cancellation must not cancel shared app composition.
+                await asyncio.shield(worker.wait())
+            except Exception as exc:  # noqa: BLE001 - convenience setup remains nonfatal
+                self.loguru_logger.warning(
+                    "Workspace profile initialization failed; "
+                    f"error_type={type(exc).__name__}"
+                )
+        try:
+            self._wire_workspace_agent_provisioning()
+        except Exception as exc:  # noqa: BLE001 - convenience setup remains nonfatal
+            self.loguru_logger.warning(
+                "Workspace agent provisioning wiring failed; "
+                f"error_type={type(exc).__name__}"
+            )
+
+    def _get_tool_profile_operations(self):
+        """Lazily own admitted Tool Profile writes for this app session."""
+        from .Tool_Packs.operations import (
+            ToolProfileOperations,
+            ToolProfileWriteUnavailable,
+        )
+
+        if getattr(self, "_tool_profile_operations_closed", False):
+            raise ToolProfileWriteUnavailable("shutdown")
+        owner = getattr(self, "_tool_profile_operations", None)
+        if owner is None:
+            owner = ToolProfileOperations()
+            self._tool_profile_operations = owner
+        return owner
 
     def _deferred_wire_tool_pack_service(self) -> Worker | None:
         """Schedule one complete Tool Pack composition on first feature use."""
@@ -9972,6 +10032,16 @@ class TldwCli(
         persona_service = getattr(self, "local_character_persona_service", None)
         unified_service = getattr(self, "unified_mcp_service", None)
         permission_store = getattr(unified_service, "permission_store", None)
+        if registry is not None:
+            guard = registry.tool_profile_guard
+            if (
+                isinstance(guard, DeferredWorkspaceToolProfileGuard)
+                and guard.active_guard is None
+            ):
+                # Do not create Persona/profile records that cannot yet be
+                # bound. The create dialog or eligible startup backfill awaits
+                # the existing Tool Pack composition before retrying wiring.
+                return
         # Lazy import (boot budget, ADR-097): this wiring runs on a
         # post-ready timer, and importing at module scope would make
         # `Workspaces.agent_provisioning` resident at `_ui_ready`.
@@ -18945,6 +19015,18 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        self._mcp_local_config_saves_closed = True
+        self._tool_profile_operations_closed = True
+        local_config_saves = getattr(self, "_mcp_local_config_saves", None)
+        tool_profiles = getattr(self, "_tool_profile_operations", None)
+        if tool_profiles is not None:
+            tool_profiles.close_admission()
+        if local_config_saves is not None:
+            await local_config_saves.close_and_drain()
+        if tool_profiles is not None:
+            # Settle these writes before another owner's failure can advance
+            # teardown to the workspace databases used by their final checks.
+            await tool_profiles.close_and_drain()
         recovery_cancellation = await TldwCli._shutdown_recovery_service(self)
         monitor_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
         recovery_cancellation = recovery_cancellation or monitor_cancellation
@@ -19004,6 +19086,9 @@ class TldwCli(
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""
+        # Ordinary Quit reaches these drains before on_unmount. Use the same
+        # process-owned, idempotent watchdog here so the drains are bounded too.
+        arm_exit_watchdog(reason="app shutdown")
         cancellation: asyncio.CancelledError | None = None
         owner_error: BaseException | None = None
         shutdown_task = asyncio.current_task()

@@ -7,6 +7,8 @@ import pytest
 from rich.text import Text
 from textual.app import ComposeResult
 
+from Tests.private_profile import private_profile_test
+
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -30,7 +32,8 @@ _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 
 
 @pytest.mark.asyncio
-async def test_matrix_events_capture_exact_profile_context():
+@private_profile_test
+async def test_matrix_events_capture_exact_profile_context(request):
     app = PermissionsModeApp()
     context = PermissionProfileContext("research", 4, "a" * 64, 2)
     async with app.run_test() as pilot:
@@ -53,7 +56,10 @@ async def test_matrix_events_capture_exact_profile_context():
 
 
 @pytest.mark.asyncio
-async def test_tool_policy_selector_marks_unavailable_profile_and_hides_no_rows():
+@private_profile_test
+async def test_tool_policy_selector_marks_unavailable_profile_and_hides_no_rows(
+    request,
+):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -71,7 +77,10 @@ async def test_tool_policy_selector_marks_unavailable_profile_and_hides_no_rows(
 
 
 @pytest.mark.asyncio
-async def test_tool_policy_selector_renders_untrusted_profile_ids_as_plain_text():
+@private_profile_test
+async def test_tool_policy_selector_renders_untrusted_profile_ids_as_plain_text(
+    request,
+):
     app = PermissionsModeApp()
     profile_id = "[bold]not markup[/bold]"
     async with app.run_test() as pilot:
@@ -178,7 +187,8 @@ def _row_texts(table: DataTable, row_index: int) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_rows_render_in_given_order_with_pinned_row_keys():
+@private_profile_test
+async def test_rows_render_in_given_order_with_pinned_row_keys(request):
     """The widget is render-only: it renders `PermRow`s in the exact order
     given (grouping/sorting is the workbench's job) but the ROW KEYS it
     assigns must follow the spec-verbatim formats: `__global__`,
@@ -254,7 +264,8 @@ async def test_rows_render_in_given_order_with_pinned_row_keys():
 
 
 @pytest.mark.asyncio
-async def test_update_matrix_skips_duplicate_row_keys_instead_of_crashing():
+@private_profile_test
+async def test_update_matrix_skips_duplicate_row_keys_instead_of_crashing(request):
     """Minor 7 (DuplicateKey guard parity): two `PermRow`s sharing the same
     identity (same `_row_key()` -- here, two `tool` rows for the same
     `(server_key, tool_name)`) would raise Textual's `DuplicateKey` out of
@@ -292,7 +303,8 @@ async def test_update_matrix_skips_duplicate_row_keys_instead_of_crashing():
 
 
 @pytest.mark.asyncio
-async def test_state_label_renders_verbatim_and_markup_safe():
+@private_profile_test
+async def test_state_label_renders_verbatim_and_markup_safe(request):
     """`state_label` may embed a bullet/warning/flag marker already baked in
     by the workbench -- the widget must render it literally as plain `Text`,
     not parse it as Rich markup (a server label a user typed could otherwise
@@ -319,7 +331,8 @@ async def test_state_label_renders_verbatim_and_markup_safe():
 
 
 @pytest.mark.asyncio
-async def test_mount_alone_posts_no_kill_switch_event():
+@private_profile_test
+async def test_mount_alone_posts_no_kill_switch_event(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -327,7 +340,8 @@ async def test_mount_alone_posts_no_kill_switch_event():
 
 
 @pytest.mark.asyncio
-async def test_update_matrix_sets_kill_switch_label_without_posting_a_toggle():
+@private_profile_test
+async def test_update_matrix_sets_kill_switch_label_without_posting_a_toggle(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -339,7 +353,8 @@ async def test_update_matrix_sets_kill_switch_label_without_posting_a_toggle():
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_button_default_label_reads_off():
+@private_profile_test
+async def test_kill_switch_button_default_label_reads_off(request):
     app = PermissionsModeApp()
     async with app.run_test():
         button = app.query_one("#mcp-perm-kill-switch", Button)
@@ -347,7 +362,8 @@ async def test_kill_switch_button_default_label_reads_off():
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_scope_hint_states_built_in_blast_radius():
+@private_profile_test
+async def test_kill_switch_scope_hint_states_built_in_blast_radius(request):
     """task-2242/task-32285: the kill switch's blast radius (it also
     disables the built-in tools, not just MCP-sourced ones) is stated
     persistently on a hint line under the toggle -- not hidden in a
@@ -368,7 +384,8 @@ async def test_kill_switch_scope_hint_states_built_in_blast_radius():
 
 
 @pytest.mark.asyncio
-async def test_user_press_posts_kill_switch_toggled_exactly_once():
+@private_profile_test
+async def test_user_press_posts_kill_switch_toggled_exactly_once(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -383,7 +400,8 @@ async def test_user_press_posts_kill_switch_toggled_exactly_once():
 
 
 @pytest.mark.asyncio
-async def test_user_press_toggles_off_when_currently_on():
+@private_profile_test
+async def test_user_press_toggles_off_when_currently_on(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -401,7 +419,8 @@ async def test_user_press_toggles_off_when_currently_on():
 
 
 @pytest.mark.asyncio
-async def test_space_on_tool_row_posts_next_state_per_cycle_helper():
+@private_profile_test
+async def test_space_on_tool_row_posts_next_state_per_cycle_helper(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -435,7 +454,8 @@ async def test_space_on_tool_row_posts_next_state_per_cycle_helper():
 
 
 @pytest.mark.asyncio
-async def test_space_on_server_row_allows_cycling_back_to_inherit():
+@private_profile_test
+async def test_space_on_server_row_allows_cycling_back_to_inherit(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -463,7 +483,8 @@ async def test_space_on_server_row_allows_cycling_back_to_inherit():
 
 
 @pytest.mark.asyncio
-async def test_space_on_global_row_never_posts_none():
+@private_profile_test
+async def test_space_on_global_row_never_posts_none(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -488,7 +509,8 @@ async def test_space_on_global_row_never_posts_none():
 
 
 @pytest.mark.asyncio
-async def test_space_with_no_rows_is_a_noop():
+@private_profile_test
+async def test_space_with_no_rows_is_a_noop(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -503,7 +525,8 @@ async def test_space_with_no_rows_is_a_noop():
 
 
 @pytest.mark.asyncio
-async def test_enter_on_tool_row_posts_row_selected_with_tool_fields():
+@private_profile_test
+async def test_enter_on_tool_row_posts_row_selected_with_tool_fields(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -530,7 +553,8 @@ async def test_enter_on_tool_row_posts_row_selected_with_tool_fields():
 
 
 @pytest.mark.asyncio
-async def test_enter_on_global_row_posts_row_selected_with_no_tool_name():
+@private_profile_test
+async def test_enter_on_global_row_posts_row_selected_with_no_tool_name(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -551,7 +575,8 @@ async def test_enter_on_global_row_posts_row_selected_with_no_tool_name():
 
 
 @pytest.mark.asyncio
-async def test_enter_on_server_row_posts_row_selected_with_no_tool_name():
+@private_profile_test
+async def test_enter_on_server_row_posts_row_selected_with_no_tool_name(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -580,7 +605,8 @@ async def test_enter_on_server_row_posts_row_selected_with_no_tool_name():
 
 
 @pytest.mark.asyncio
-async def test_select_tool_row_moves_cursor_to_matching_tool_row():
+@private_profile_test
+async def test_select_tool_row_moves_cursor_to_matching_tool_row(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -602,7 +628,8 @@ async def test_select_tool_row_moves_cursor_to_matching_tool_row():
 
 
 @pytest.mark.asyncio
-async def test_select_tool_row_returns_false_for_tool_not_in_matrix():
+@private_profile_test
+async def test_select_tool_row_returns_false_for_tool_not_in_matrix(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -616,7 +643,8 @@ async def test_select_tool_row_returns_false_for_tool_not_in_matrix():
 
 
 @pytest.mark.asyncio
-async def test_preview_text_renders_verbatim():
+@private_profile_test
+async def test_preview_text_renders_verbatim(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -630,7 +658,8 @@ async def test_preview_text_renders_verbatim():
 
 
 @pytest.mark.asyncio
-async def test_update_matrix_without_echo_renders_preview_unprefixed():
+@private_profile_test
+async def test_update_matrix_without_echo_renders_preview_unprefixed(request):
     """`echo` defaults to `None` -- every pre-Task-3 `update_matrix()` call
     site (every full `_sync_children()` pass) must render the preview
     unchanged, exactly as before this parameter existed."""
@@ -644,7 +673,8 @@ async def test_update_matrix_without_echo_renders_preview_unprefixed():
 
 
 @pytest.mark.asyncio
-async def test_update_matrix_with_echo_prefixes_preview():
+@private_profile_test
+async def test_update_matrix_with_echo_prefixes_preview(request):
     """A standalone mutation resync (Space-cycle/kill-switch/re-allow) passes
     `echo` -- the workbench's own transient "{tool_name} → {ui_label} · "
     (or kill-switch) copy -- and it is prepended verbatim to the preview
@@ -665,7 +695,8 @@ async def test_update_matrix_with_echo_prefixes_preview():
 
 
 @pytest.mark.asyncio
-async def test_update_matrix_echo_none_clears_a_previously_shown_echo():
+@private_profile_test
+async def test_update_matrix_echo_none_clears_a_previously_shown_echo(request):
     """The NEXT `update_matrix()` call that passes `echo=None` (a full
     resync that isn't itself a standalone mutation resync) must clear
     whatever transient echo a previous call rendered -- no separate "clear"
@@ -689,7 +720,8 @@ async def test_update_matrix_echo_none_clears_a_previously_shown_echo():
 
 
 @pytest.mark.asyncio
-async def test_legend_line_renders_fixed_marker_key():
+@private_profile_test
+async def test_legend_line_renders_fixed_marker_key(request):
     """The legend is a fixed, dimmed hint line -- not derived from any
     `PermRow`/preview text -- explaining the matrix's own State-column
     glyphs and giving Space-cycling minimal discoverability."""
@@ -708,7 +740,8 @@ async def test_legend_line_renders_fixed_marker_key():
 
 
 @pytest.mark.asyncio
-async def test_update_matrix_appends_gate_breadcrumb_to_the_legend():
+@private_profile_test
+async def test_update_matrix_appends_gate_breadcrumb_to_the_legend(request):
     """PRIMARY discoverability breadcrumb (task-3240): when the workbench
     passes a non-None `gate_breadcrumb`, it renders as a second line under
     the fixed `_LEGEND_TEXT` -- the legend itself must stay intact so the
@@ -730,7 +763,8 @@ async def test_update_matrix_appends_gate_breadcrumb_to_the_legend():
 
 
 @pytest.mark.asyncio
-async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
+@private_profile_test
+async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend(request):
     """`gate_breadcrumb=None` (the default -- every gate is on) must render
     exactly the bare legend, and a later call must be how a previously
     shown breadcrumb clears (mirrors `echo`'s own "next render clears"
@@ -754,7 +788,8 @@ async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
 
 
 @pytest.mark.asyncio
-async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns():
+@private_profile_test
+async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
     """task-32285: live evidence at 250x50 showed the legend + gate
     breadcrumb clipping mid-sentence ("... in Tools mode; other" then the
     pane border). Both `#mcp-perm-legend` and `#mcp-perm-kill-switch-hint`
@@ -800,7 +835,8 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns():
 
 
 @pytest.mark.asyncio
-async def test_tags_column_omitted_when_no_row_has_tags():
+@private_profile_test
+async def test_tags_column_omitted_when_no_row_has_tags(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -816,7 +852,8 @@ async def test_tags_column_omitted_when_no_row_has_tags():
 
 
 @pytest.mark.asyncio
-async def test_tags_column_shown_when_any_row_has_tags():
+@private_profile_test
+async def test_tags_column_shown_when_any_row_has_tags(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -839,7 +876,8 @@ async def test_tags_column_shown_when_any_row_has_tags():
 # -- T8: shared state-label rendering helper -----------------------------
 
 
-def test_format_tool_state_label_marker_precedence():
+@private_profile_test
+def test_format_tool_state_label_marker_precedence(request):
     """Module-level helper (imported by `MCPWorkbench._tool_state_label` in
     mcp_workbench.py and by `MCPToolsMode`'s own State column) -- pinned
     directly here, independent of how a real `EffectiveToolState` gets
@@ -880,7 +918,8 @@ def test_format_tool_state_label_marker_precedence():
     )
 
 
-def test_format_tool_state_label_gate_error_reads_unknown_not_off():
+@private_profile_test
+def test_format_tool_state_label_gate_error_reads_unknown_not_off(request):
     """task-2870: a gate_error row (resolver raised; fail-closed deny) must
     render "Unknown" in the matrix/State column, never "Off" -- and bare,
     with no origin marker (gate_error is synthesized, never an explicit
@@ -904,7 +943,8 @@ def test_format_tool_state_label_gate_error_reads_unknown_not_off():
 
 
 @pytest.mark.asyncio
-async def test_update_server_profiles_renders_pointer_and_profile_names():
+@private_profile_test
+async def test_update_server_profiles_renders_pointer_and_profile_names(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -932,7 +972,8 @@ async def test_update_server_profiles_renders_pointer_and_profile_names():
 
 
 @pytest.mark.asyncio
-async def test_update_server_profiles_none_leaves_section_absent():
+@private_profile_test
+async def test_update_server_profiles_none_leaves_section_absent(request):
     """Local/builtin sources (or a guarded fetch failure) pass `None` --
     the section is entirely absent, not merely hidden."""
     app = PermissionsModeApp()
@@ -944,7 +985,10 @@ async def test_update_server_profiles_none_leaves_section_absent():
 
 
 @pytest.mark.asyncio
-async def test_update_server_profiles_empty_list_still_shows_pointer_with_no_rows():
+@private_profile_test
+async def test_update_server_profiles_empty_list_still_shows_pointer_with_no_rows(
+    request,
+):
     """Server source, fetch succeeded, zero profiles configured -- a
     distinct case from `None`: the section (and its pointer text) still
     renders, just with no profile rows."""
@@ -958,7 +1002,10 @@ async def test_update_server_profiles_empty_list_still_shows_pointer_with_no_row
 
 
 @pytest.mark.asyncio
-async def test_update_server_profiles_defensive_reads_handle_missing_and_malformed_entries():
+@private_profile_test
+async def test_update_server_profiles_defensive_reads_handle_missing_and_malformed_entries(
+    request,
+):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -979,7 +1026,8 @@ async def test_update_server_profiles_defensive_reads_handle_missing_and_malform
 
 
 @pytest.mark.asyncio
-async def test_update_server_profiles_transitions_from_present_to_absent():
+@private_profile_test
+async def test_update_server_profiles_transitions_from_present_to_absent(request):
     """A source switch (server -> local) must tear the whole section back
     down, not just clear its rows -- `update_server_profiles(None)` after a
     populated call removes the section entirely."""
@@ -996,7 +1044,8 @@ async def test_update_server_profiles_transitions_from_present_to_absent():
 
 
 @pytest.mark.asyncio
-async def test_update_server_profiles_markup_safe():
+@private_profile_test
+async def test_update_server_profiles_markup_safe(request):
     """Raw profile name/id text must render literally, not parsed as Rich
     markup -- same rationale as `test_state_label_renders_verbatim_and_
     markup_safe` above (a server-supplied name could otherwise inject
@@ -1013,12 +1062,13 @@ async def test_update_server_profiles_markup_safe():
 # -- T9: bundle-parity (dual-layer CSS) -----------------------------------
 
 
-def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+@private_profile_test
+def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle(request) -> None:
     """`MCPPermissionsMode.BUNDLED_CSS` gives `#mcp-perm-table` the same
     `height: auto; max-height: 70%;` discipline T7 (P3 UX batch) gave
     `#mcp-tools-table`/`#mcp-servers-table` -- so it hugs its own row count
     instead of ballooning to fill the canvas and stranding the
-    policy-preview strip below it. Pins the matching bundle-layer copy
+    policy-preview strip below it. Pins the matching token-backed bundle copy
     (added in lockstep, T9) in both the bundle-source file and the
     generated bundle (`tldw_cli_modular.tcss`) -- the latter also proves
     `build_css.py` was re-run after the source edit, mirroring
@@ -1027,6 +1077,10 @@ def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     bundle_source_and_bundle` in test_mcp_servers_mode.py."""
     agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
     bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    variables = (_CSS_ROOT / "core" / "_variables.tcss").read_text(encoding="utf-8")
+    table_cap = "$ds-agentic-mcp-table-cap: 70%;"
+    assert table_cap in variables
+    assert table_cap in bundled_stylesheet
 
     for text, label in (
         (agentic_terminal, "_agentic_terminal.tcss"),
@@ -1040,12 +1094,13 @@ def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert "height: auto;" in block, (
             f"{label}'s {selector!r} block is missing 'height: auto;'"
         )
-        assert "max-height: 70%;" in block, (
-            f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        assert "max-height: $ds-agentic-mcp-table-cap;" in block, (
+            f"{label}'s {selector!r} block is missing its table-cap token"
         )
 
 
-def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+@private_profile_test
+def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle(request) -> None:
     """`MCPPermissionsMode.BUNDLED_CSS` gives `#mcp-perm-preview`
     `height: auto;` so the policy-preview Static hugs its own (one- or
     two-sentence) content instead of competing with the matrix table above
@@ -1096,7 +1151,8 @@ class PermissionsModeAppWithBundledCSS(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
-async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
+@private_profile_test
+async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css(request):
     app = PermissionsModeAppWithBundledCSS()
     async with app.run_test(size=(120, 40)) as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -1163,7 +1219,8 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
 
 
 @pytest.mark.asyncio
-async def test_filter_text_input_has_nonzero_geometry_with_bundled_css():
+@private_profile_test
+async def test_filter_text_input_has_nonzero_geometry_with_bundled_css(request):
     """Task 6 (MCP Hub Phase 6) dual-layer CSS audit: `#mcp-perm-filter-
     text`'s own DEFAULT_CSS comment (Task 4) explicitly deferred verifying
     it against the REAL bundled stylesheet to this task ("T6 note") rather
@@ -1191,7 +1248,8 @@ async def test_filter_text_input_has_nonzero_geometry_with_bundled_css():
 # -- Task 1 (MCP Hub Phase 6): semantic state colors ------------------------
 
 
-def test_state_text_styles_each_kind_and_falls_back_safely():
+@private_profile_test
+def test_state_text_styles_each_kind_and_falls_back_safely(request):
     """`state_text()`'s own contract: a concrete, kind-specific Rich style,
     verbatim label text (no markup parsing), and a safe fallback (no style
     at all, not a crash) for an unrecognized kind."""
@@ -1209,7 +1267,8 @@ def test_state_text_styles_each_kind_and_falls_back_safely():
     assert unsafe.plain == "[bold red]x[/bold red]"
 
 
-def test_tool_state_kind_maps_allow_ask_deny_to_ready_warning_error():
+@private_profile_test
+def test_tool_state_kind_maps_allow_ask_deny_to_ready_warning_error(request):
     """`tool_state_kind()` keys purely off `EffectiveToolState.state` --
     `config_changed`/`risk_floored` both already resolve `state` to `"ask"`
     themselves (see `permission_store.resolve_effective_state()`), so a
@@ -1233,7 +1292,8 @@ def test_tool_state_kind_maps_allow_ask_deny_to_ready_warning_error():
 
 
 @pytest.mark.asyncio
-async def test_state_column_cells_carry_semantic_color_by_resolved_word():
+@private_profile_test
+async def test_state_column_cells_carry_semantic_color_by_resolved_word(request):
     """The matrix's State cell is now colored by the resolved verdict its
     own leading word names -- Allow -> ready/green, Ask -> warning/amber,
     Off -> error/red -- regardless of row kind (global/server/tool) or
@@ -1306,7 +1366,8 @@ async def _type_filter(pilot, text: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_filter_input_is_present_above_the_matrix_with_placeholder():
+@private_profile_test
+async def test_filter_input_is_present_above_the_matrix_with_placeholder(request):
     app = PermissionsModeApp()
     async with app.run_test():
         filter_input = app.query_one("#mcp-perm-filter-text", Input)
@@ -1314,7 +1375,8 @@ async def test_filter_input_is_present_above_the_matrix_with_placeholder():
 
 
 @pytest.mark.asyncio
-async def test_empty_filter_shows_every_row():
+@private_profile_test
+async def test_empty_filter_shows_every_row(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -1325,7 +1387,10 @@ async def test_empty_filter_shows_every_row():
 
 
 @pytest.mark.asyncio
-async def test_filter_narrows_to_matching_tool_rows_and_hides_unrelated_pinned_rows():
+@private_profile_test
+async def test_filter_narrows_to_matching_tool_rows_and_hides_unrelated_pinned_rows(
+    request,
+):
     """Task 4: a filter matching exactly one tool must still show the
     global row and that tool's OWN server-default row (its server has >=1
     visible tool row), but hides the OTHER server's default row and tools
@@ -1356,7 +1421,10 @@ async def test_filter_narrows_to_matching_tool_rows_and_hides_unrelated_pinned_r
 
 
 @pytest.mark.asyncio
-async def test_filter_matches_server_label_reveals_every_tool_under_that_server():
+@private_profile_test
+async def test_filter_matches_server_label_reveals_every_tool_under_that_server(
+    request,
+):
     """Filter text matching a TOOL row's `server_label` field (not just its
     own name) is a match too -- so a filter equal to a server's label
     reveals every tool under that server, per the spec's "name +
@@ -1383,7 +1451,8 @@ async def test_filter_matches_server_label_reveals_every_tool_under_that_server(
 
 
 @pytest.mark.asyncio
-async def test_filter_is_case_insensitive():
+@private_profile_test
+async def test_filter_is_case_insensitive(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -1395,7 +1464,10 @@ async def test_filter_is_case_insensitive():
 
 
 @pytest.mark.asyncio
-async def test_filter_matching_across_two_servers_keeps_both_pinned_server_rows():
+@private_profile_test
+async def test_filter_matching_across_two_servers_keeps_both_pinned_server_rows(
+    request,
+):
     """A filter that matches a tool in EACH server keeps both servers'
     pinned default rows (plus global) and both matching tools -- the
     non-matching third tool ("gamma_tool") is dropped."""
@@ -1420,7 +1492,8 @@ async def test_filter_matching_across_two_servers_keeps_both_pinned_server_rows(
 
 
 @pytest.mark.asyncio
-async def test_clearing_the_filter_after_narrowing_restores_every_row():
+@private_profile_test
+async def test_clearing_the_filter_after_narrowing_restores_every_row(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -1434,7 +1507,8 @@ async def test_clearing_the_filter_after_narrowing_restores_every_row():
 
 
 @pytest.mark.asyncio
-async def test_cursor_row_key_survives_a_refilter_that_still_shows_it():
+@private_profile_test
+async def test_cursor_row_key_survives_a_refilter_that_still_shows_it(request):
     """Task 4: typing into the filter re-renders the table (`DataTable.
     clear()` unconditionally resets the cursor to (0, 0)) -- the cursor's
     ROW KEY, not its numeric position, must survive that rebuild exactly
@@ -1462,7 +1536,8 @@ async def test_cursor_row_key_survives_a_refilter_that_still_shows_it():
 
 
 @pytest.mark.asyncio
-async def test_cursor_falls_back_to_row_zero_when_its_row_is_filtered_out():
+@private_profile_test
+async def test_cursor_falls_back_to_row_zero_when_its_row_is_filtered_out(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -1476,7 +1551,8 @@ async def test_cursor_falls_back_to_row_zero_when_its_row_is_filtered_out():
 
 
 @pytest.mark.asyncio
-async def test_space_after_filter_cycles_the_row_actually_under_the_cursor():
+@private_profile_test
+async def test_space_after_filter_cycles_the_row_actually_under_the_cursor(request):
     """Task 4: Space must resolve whatever row is ACTUALLY rendered at the
     cursor's current table position post-filter, not some row that would
     have been there before filtering narrowed the table. Filtering to
@@ -1509,7 +1585,8 @@ async def test_space_after_filter_cycles_the_row_actually_under_the_cursor():
 
 
 @pytest.mark.asyncio
-async def test_echo_prefixed_preview_survives_a_refilter():
+@private_profile_test
+async def test_echo_prefixed_preview_survives_a_refilter(request):
     """T3's mutation echo is part of the preview Static's own text --
     typing into the filter only re-renders the TABLE, never touches
     `#mcp-perm-preview`, so a previously shown echo must still read
@@ -1529,7 +1606,8 @@ async def test_echo_prefixed_preview_survives_a_refilter():
 
 
 @pytest.mark.asyncio
-async def test_filter_persists_across_a_full_matrix_resync():
+@private_profile_test
+async def test_filter_persists_across_a_full_matrix_resync(request):
     """A background `update_matrix()` resync (e.g. after a Space-cycle
     elsewhere resolves a fresh matrix) must not silently clear whatever
     filter text the user was mid-typing -- mirrors `MCPToolsMode`'s own
@@ -1553,7 +1631,10 @@ async def test_filter_persists_across_a_full_matrix_resync():
 
 
 @pytest.mark.asyncio
-async def test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target():
+@private_profile_test
+async def test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target(
+    request,
+):
     """T7's external-drill entry point must not be silently defeated by an
     active filter typed by the user in the meantime -- mirrors
     `MCPToolsMode.select_tool_row()`'s own "an external drill's target row
@@ -1582,7 +1663,8 @@ async def test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target
 
 
 @pytest.mark.asyncio
-async def test_filter_input_has_nonzero_geometry_with_bundled_css():
+@private_profile_test
+async def test_filter_input_has_nonzero_geometry_with_bundled_css(request):
     app = PermissionsModeAppWithBundledCSS()
     async with app.run_test(size=(120, 40)) as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -1601,7 +1683,8 @@ async def test_filter_input_has_nonzero_geometry_with_bundled_css():
 # -- Wave C (2026-09-11 MCP Hub UX program): flow fixes ---------------------
 
 
-def test_undiscovered_servers_hint_names_zero_tool_servers():
+@private_profile_test
+def test_undiscovered_servers_hint_names_zero_tool_servers(request):
     """C2/F3: local servers that are KNOWN but have no discovered tools are
     invisible in the matrix (registration/discovery precedes permission) --
     the hint line names them so "where is docs?" has an answer at the point
@@ -1641,7 +1724,8 @@ def test_undiscovered_servers_hint_names_zero_tool_servers():
 
 
 @pytest.mark.asyncio
-async def test_update_matrix_renders_discovery_hint_line():
+@private_profile_test
+async def test_update_matrix_renders_discovery_hint_line(request):
     """C2/F3: the discovery hint renders as its own dim line under the
     legend (same slot family as the gate breadcrumb), and clears on the
     next ordinary render that passes no hint."""

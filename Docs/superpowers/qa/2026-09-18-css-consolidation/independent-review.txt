@@ -1,0 +1,49 @@
+Independent static review by ci_performance_review — TASK-32813 / TASK-32814
+
+Scope: current changes against bc1b1215 in the isolated component-pattern-library
+worktree. Reviewer ran no apps/tests and did not inspect native screenshots.
+
+Initial findings and resolution:
+- Production standalone RecoveryApp did not load the main bundle. It now
+  registers only BackupRestoreScreen.BUNDLED_CSS in native default scope/tier.
+- Its subprocess harness must patch native textual.app.App.run. That exact
+  interception was restored; real-host computed log/action geometry is asserted.
+- Native capture originally could leave passed=True after an App.run error.
+  It now records/checks return_code and _exception after App.run returns.
+- launch.json is now written only after validating private profile paths.
+- Qualification records actual pytest call outcomes and rejects skip/xfail,
+  missing-call and nonzero teardown/exit. Mounted coverage is reported separately.
+- Source tour now requires actual destination bodies. Research follows F5 to
+  ResearchWorkspaceScreen; Lab requires its deferred LLMManagementWindow.
+
+Other checks:
+- Original 29 CSS snapshots match HEAD. Removing added subject classes restores
+  original declarations. Generated comment removal preserves parsed tokens and
+  selector structure; provenance banners stay present.
+- Three intentionally broad selectors retain internal/inherited control reach.
+  Three Tool Pack action ID rules cover actual controls at unchanged specificity.
+- Layout parity normalization is restricted to CSS strategy identity: Textual
+  process_layout creates a new layout object from its single name. Grid and
+  other independent rules remain exact comparisons.
+- Markdown dialog Cancel is a real implemented action; no Escape binding was
+  added. Native cancellation explicitly refocuses the safe action after toggling
+  disabled state and then presses Enter.
+- All 60 original assertions across the 16 endpoint tests are preserved. Writer
+  cases keep the selected private profile before imports and retain real config
+  writes plus TOML round trips.
+- TASK-32814 changes only the expected ellipsis glyph, matching Rich truncation.
+- Snapshot agrees with all five generated files: 583097 bytes. Ceiling608090
+  tightens the old limit. No source/selector limit or allowlist exception grew.
+
+Final assessment: no remaining actionable static findings. This does not replace
+runtime parity, native screenshots, final budget results or merge approval.
+
+Final integration checks by the primary agent:
+- Added actual LibraryScreen.CSS_PATH expansion to the audit resolver instead
+  of exempting four valid hosts. Two genuinely bare hosts now load app sheets.
+- Preserved the other BUNDLED_STYLESHEET use in the Notes focus test; the final
+  lint comparison caught its missing import and the affected case was rerun.
+- All 28 native renders were inspected. Compact Appearance clipping and the
+  baseline unstyled Roleplay recovery view are disclosed in the gallery.
+- One original archive teardown failure remains TASK-32815 despite a passing
+  isolated rerun. Final source hashes still match the native capture receipt.

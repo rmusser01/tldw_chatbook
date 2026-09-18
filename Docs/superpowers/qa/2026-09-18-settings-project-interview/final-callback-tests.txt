@@ -1,0 +1,6 @@
+.........                                                                [100%]
+============================= slowest 25 durations =============================
+1.93s call     Tests/UI/test_profile_interview_screen.py::test_stale_review_failure_restores_review_control
+
+(24 durations < 1s hidden.)
+9 passed, 75 deselected in 11.93s

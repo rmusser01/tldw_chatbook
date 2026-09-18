@@ -1,0 +1,11 @@
+...............................                                          [100%]
+============================= slowest 25 durations =============================
+1.98s call     Tests/UI/test_mcp_workbench.py::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers
+1.75s call     Tests/UI/test_mcp_workbench.py::test_double_space_cycle_echo_replaces_not_appends
+1.73s call     Tests/UI/test_mcp_workbench.py::test_double_space_cycle_on_tool_row_stays_on_that_row
+1.57s call     Tests/UI/test_mcp_workbench.py::test_space_cycle_on_builtin_server_tool_row_round_trips_through_store
+1.53s call     Tests/UI/test_mcp_workbench.py::test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_resync
+1.50s call     Tests/UI/test_mcp_workbench.py::test_space_cycle_ring_continues_through_ask_deny_and_back_to_inherit_for_builtin
+
+(19 durations < 1s hidden.)
+31 passed, 319 deselected in 30.69s

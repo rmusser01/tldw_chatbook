@@ -2259,9 +2259,43 @@ FileSave.-compact InputBar Input {
     align: center middle;
 }
 
+
+.dialog-buttons.button-group-left {
+    align-horizontal: left;
+}
+
+.dialog-buttons.button-group-right {
+    align-horizontal: right;
+}
+
 .dialog-buttons Button {
     margin: $ds-space-0 $ds-space-inline;
     min-width: $ds-size-12;
+}
+
+
+RoleplayDraftRecoveryDialog {
+    align: center middle;
+}
+
+#roleplay-draft-recovery-dialog {
+    width: $ds-size-64;
+    max-width: $ds-percent-96;
+    height: auto;
+    max-height: $ds-height-full;
+    border: tall $ds-control-edge;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#roleplay-draft-recovery-dialog .dialog-title {
+    color: $ds-text-primary;
+}
+
+#roleplay-draft-recovery-domains {
+    color: $ds-text-primary;
+    margin-bottom: $ds-space-stack;
 }
 
 
@@ -2325,6 +2359,17 @@ Button#skill-trust-bootstrap-submit {
     min-width: $ds-size-10;
     height: $ds-control-height;
     min-height: $ds-control-height;
+}
+
+
+WorkspaceCreateModal #workspace-create-modal {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: tall $ds-control-edge;
+}
+
+WorkspaceCreateModal #workspace-create-error {
+    color: $ds-status-error-readable;
 }
 
 /* ===== MODULE: components/_status.tcss ===== */
@@ -3307,10 +3352,27 @@ ListItem.personas-library-row.is-active.-highlight {
     min-width: $ds-size-24;
 }
 
+
+#mcp-hub-rail Button.mcp-rail-row {
+    min-width: $ds-size-0;
+    height: $ds-height-auto;
+
+    padding: $ds-space-0;
+}
+
 #mcp-hub-rail .mcp-rail-heading {
     height: $ds-size-1;
     min-height: $ds-size-1;
     margin-top: $ds-space-1;
+}
+
+
+#mcp-purpose {
+    height: $ds-height-auto;
+}
+
+#mcp-hub-grid.mcp-compact #mcp-rail-source > SelectCurrent {
+    padding: $ds-space-0;
 }
 
 
@@ -3417,6 +3479,25 @@ Button.mcp-callout {
 #mcp-tools-table {
     height: auto;
     max-height: $ds-agentic-mcp-table-cap;
+}
+
+
+#mcp-tools-local-enabled,
+#mcp-detail-tool-gates .console-action-secondary {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    text-wrap: wrap;
+}
+
+
+.mcp-compact #mcp-tools-filter-bar {
+    layout: vertical;
+}
+
+.mcp-compact #mcp-tools-filter-text,
+.mcp-compact #mcp-tools-filter-server-slot,
+.mcp-compact #mcp-tools-filter-server {
+    width: $ds-width-full;
 }
 
 
@@ -5135,6 +5216,16 @@ PersonalContextLinkModal {
     padding: $ds-space-0 $ds-space-1;
 }
 
+
+#profile-interview-shell .profile-interview-disclosure,
+#profile-interview-shell .profile-interview-state,
+#profile-interview-shell .profile-interview-progress,
+#profile-interview-question,
+#profile-interview-answer,
+#profile-interview-error {
+    margin-bottom: $ds-space-0;
+}
+
 #profile-interview-body,
 #personal-context-review-list,
 #personal-context-link-review-list {
@@ -5191,6 +5282,16 @@ PersonalContextLinkModal {
     border-left: thick $accent;
     background: $accent 10%;
     text-style: bold;
+}
+
+
+#profile-interview-answer:focus,
+PersonalContextReviewModal .personal-context-review-row Input.personal-context-review-input:focus {
+    outline: none;
+    border: none;
+    border-left: solid $ds-input-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
 }
 
 .profile-interview-actions {
@@ -10107,6 +10208,26 @@ WorktreeRecoveryDialog {
 #global-speech-tts-leave-modal .settings-action-row Button {
     width: $ds-width-full;
     margin-right: $ds-space-0;
+}
+
+#settings-workspace-persona-picker:focus > .option-list--option-highlighted,
+#settings-workspace-profile-picker:focus > .option-list--option-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+
+
+.settings-workbench-compact ToolProfilesPanel .tool-profile-actions {
+    layout: grid;
+    grid-size: $ds-size-2;
+    grid-columns: 1fr 1fr;
+    grid-rows: $ds-control-height-compact;
+    grid-gutter: $ds-space-stack $ds-space-inline;
+}
+
+.settings-workbench-compact ToolProfilesPanel Button.tool-profile-action {
+    width: $ds-width-fill;
 }
 
 .settings-speech-stacked .settings-speech-input-row .settings-input-label,

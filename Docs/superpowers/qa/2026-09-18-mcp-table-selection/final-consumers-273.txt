@@ -1,0 +1,31 @@
+........................................................................ [ 26%]
+........................................................................ [ 52%]
+........................................................................ [ 79%]
+.........................................................                [100%]
+============================= slowest 25 durations =============================
+9.44s call     Tests/UI/test_mcp_table_click_selects_end_to_end.py::test_clicking_a_tool_row_updates_the_inspector_end_to_end
+9.12s call     Tests/UI/test_mcp_table_click_selects_end_to_end.py::test_opening_tools_mode_selects_nothing_on_its_own
+4.86s call     Tests/UI/test_mcp_permissions_mode.py::test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css
+4.71s call     Tests/UI/test_mcp_permissions_mode.py::test_space_on_global_row_never_posts_none
+4.71s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_narrows_to_matching_tool_rows_and_hides_unrelated_pinned_rows
+4.70s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_persists_across_a_full_matrix_resync
+4.70s call     Tests/UI/test_mcp_permissions_mode.py::test_enter_on_tool_row_posts_row_selected_with_tool_fields
+4.66s call     Tests/UI/test_mcp_permissions_mode.py::test_enter_on_server_row_posts_row_selected_with_no_tool_name
+4.65s call     Tests/UI/test_mcp_permissions_mode.py::test_update_matrix_sets_kill_switch_label_without_posting_a_toggle
+4.63s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-down-cell]
+4.61s call     Tests/UI/test_mcp_permissions_mode.py::test_space_after_filter_cycles_the_row_actually_under_the_cursor
+4.61s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-click-row]
+4.58s call     Tests/UI/test_mcp_permissions_mode.py::test_update_matrix_with_echo_prefixes_preview
+4.57s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[tools]
+4.56s call     Tests/UI/test_mcp_permissions_mode.py::test_kill_switch_scope_hint_states_built_in_blast_radius
+4.54s call     Tests/UI/test_mcp_permissions_mode.py::test_cursor_row_key_survives_a_refilter_that_still_shows_it
+4.54s call     Tests/UI/test_mcp_permissions_mode.py::test_state_label_renders_verbatim_and_markup_safe
+4.54s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-enter-row]
+4.50s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_input_is_present_above_the_matrix_with_placeholder
+4.50s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_input_has_nonzero_geometry_with_bundled_css
+4.47s call     Tests/UI/test_mcp_permissions_mode.py::test_update_server_profiles_transitions_from_present_to_absent
+4.44s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-down-row]
+4.43s call     Tests/UI/test_mcp_permissions_mode.py::test_update_server_profiles_none_leaves_section_absent
+4.41s call     Tests/UI/test_mcp_permissions_mode.py::test_space_on_tool_row_posts_next_state_per_cycle_helper
+4.40s call     Tests/UI/test_mcp_permissions_mode.py::test_legend_line_renders_fixed_marker_key
+273 passed, 4 deselected in 404.06s (0:06:44)

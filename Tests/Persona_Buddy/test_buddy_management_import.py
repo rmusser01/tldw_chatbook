@@ -273,9 +273,9 @@ async def test_modal_can_recover_from_a_missing_file_and_import_the_pasted_path(
 ):
     import asyncio
 
-    from textual.app import App
     from textual.widgets import Button, Input
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
         BuddyManagementModal,
     )

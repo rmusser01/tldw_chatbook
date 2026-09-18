@@ -1,0 +1,142 @@
+{
+  "headRefOid": "fb16c9087cff1c797d412bed333cc1bf594da12a",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:28:31Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441725/job/105636847062",
+      "name": "platform-evidence",
+      "startedAt": "2026-09-18T14:28:32Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-19637 pinned workspace platform evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:28:31Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441660/job/105636875660",
+      "name": "Linux storage - Python ${{ matrix.python }}",
+      "startedAt": "2026-09-18T14:28:37Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-32011 one-off Linux storage evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:28:54Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441637/job/105636842263",
+      "name": "No duplicate backlog task IDs",
+      "startedAt": "2026-09-18T14:28:34Z",
+      "status": "COMPLETED",
+      "workflowName": "Backlog Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:28:58Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441768/job/105636844058",
+      "name": "CSS bundle reproduces from its sources",
+      "startedAt": "2026-09-18T14:28:35Z",
+      "status": "COMPLETED",
+      "workflowName": "CSS Bundle Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:38:34Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441743/job/105636843137",
+      "name": "PR Fast Lane",
+      "startedAt": "2026-09-18T14:28:34Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:32:49Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441542/job/105636841194",
+      "name": "UI latency guardrails",
+      "startedAt": "2026-09-18T14:28:34Z",
+      "status": "COMPLETED",
+      "workflowName": "Perf Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:29:35Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441849/job/105636842970",
+      "name": "GGUF import evidence - ubuntu-latest",
+      "startedAt": "2026-09-18T14:28:34Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.1 GGUF import evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:31:17Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441784/job/105636842814",
+      "name": "GGUF source evidence - ubuntu-latest",
+      "startedAt": "2026-09-18T14:28:34Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.2 GGUF source evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:29:31Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441849/job/105636843183",
+      "name": "GGUF import evidence - macos-latest",
+      "startedAt": "2026-09-18T14:28:39Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.1 GGUF import evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:31:26Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441784/job/105636843009",
+      "name": "GGUF source evidence - macos-latest",
+      "startedAt": "2026-09-18T14:28:39Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.2 GGUF source evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:30:10Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441849/job/105636843189",
+      "name": "GGUF import evidence - windows-latest",
+      "startedAt": "2026-09-18T14:28:34Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.1 GGUF import evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:38:21Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441784/job/105636842710",
+      "name": "GGUF source evidence - windows-latest",
+      "startedAt": "2026-09-18T14:28:34Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.2 GGUF source evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-18T14:41:56Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35356441743/job/105640336400",
+      "name": "Derived artifacts reproduce from their sources",
+      "startedAt": "2026-09-18T14:38:36Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-09-18T14:28:32Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    }
+  ]
+}

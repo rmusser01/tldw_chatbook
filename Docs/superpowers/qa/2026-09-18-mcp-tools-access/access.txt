@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+18.51s call     Tests/UI/test_mcp_tools_compact_access.py::test_tools_filters_and_first_last_rows_visible_through_resize[textual-dark]
+18.48s call     Tests/UI/test_mcp_tools_compact_access.py::test_tools_filters_and_first_last_rows_visible_through_resize[textual-light]
+9.09s call     Tests/UI/test_mcp_tools_compact_access.py::test_complete_local_switch_label_survives_compact_pane[textual-light]
+8.86s call     Tests/UI/test_mcp_tools_compact_access.py::test_overflowing_catalog_retains_visible_cursor_on_resize[textual-light]
+8.77s call     Tests/UI/test_mcp_tools_compact_access.py::test_complete_local_switch_label_survives_compact_pane[textual-dark]
+8.57s call     Tests/UI/test_mcp_tools_compact_access.py::test_overflowing_catalog_retains_visible_cursor_on_resize[textual-dark]
+
+(12 durations < 1s hidden.)
+6 passed in 74.17s (0:01:14)

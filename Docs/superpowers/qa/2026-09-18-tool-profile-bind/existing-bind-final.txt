@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+4.83s call     Tests/UI/test_settings_tool_profiles.py::test_bind_request_stages_profile_in_active_workspace_without_binding
+4.83s call     Tests/UI/test_settings_tool_profiles.py::test_bind_request_without_explicit_workspace_shows_recovery_guidance
+
+(4 durations < 1s hidden.)
+2 passed, 28 deselected in 11.57s

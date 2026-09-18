@@ -1,0 +1,27 @@
+......................                                                   [100%]
+============================= slowest 25 durations =============================
+9.74s call     Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page
+5.88s call     Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails
+4.55s call     Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page
+4.12s call     Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]
+4.07s call     Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]
+2.71s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+2.65s call     Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]
+2.52s call     Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]
+2.33s call     Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]
+2.33s call     Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]
+1.82s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.50s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.49s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+1.48s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+1.47s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+1.45s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.45s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+1.44s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+1.43s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.42s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.42s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.40s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+
+(3 durations < 1s hidden.)
+22 passed in 60.03s (0:01:00)

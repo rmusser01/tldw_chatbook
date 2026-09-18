@@ -7,9 +7,10 @@ import time
 
 import pytest
 
+import tldw_chatbook.Workspaces.change_review_consent as consent_module
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
-import tldw_chatbook.Workspaces.change_review_consent as consent_module
 
 
 def _registry(tmp_path) -> LocalWorkspaceRegistryService:
@@ -54,7 +55,8 @@ def _join_thread(
         raise errors[0]
 
 
-def test_disabled_admission_never_schedules_initializer(tmp_path) -> None:
+@private_profile_test
+def test_disabled_admission_never_schedules_initializer(request, tmp_path) -> None:
     """Missing consent is a silent opt-out, not background filesystem work."""
     registry = _registry(tmp_path)
     root = tmp_path / "root"
@@ -83,8 +85,9 @@ def test_disabled_admission_never_schedules_initializer(tmp_path) -> None:
         consent_module.ChangeReviewState.UNAVAILABLE,
     ],
 )
+@private_profile_test
 def test_unavailable_global_capability_schedules_no_work(
-    tmp_path, capability_state
+    request, tmp_path, capability_state
 ) -> None:
     """Disabled or unreadable global capability fails tracking off."""
     registry = _registry(tmp_path)
@@ -108,7 +111,10 @@ def test_unavailable_global_capability_schedules_no_work(
         service.shutdown(timeout=0.2)
 
 
-def test_enabled_admission_prepares_once_then_returns_ready_root(tmp_path) -> None:
+@private_profile_test
+def test_enabled_admission_prepares_once_then_returns_ready_root(
+    request, tmp_path
+) -> None:
     """A cold enabled root is skipped until one bounded initializer settles."""
     registry = _registry(tmp_path)
     root = tmp_path / "root"
@@ -142,8 +148,9 @@ def test_enabled_admission_prepares_once_then_returns_ready_root(tmp_path) -> No
 
         release.set()
         _wait_until(
-            lambda: service.admit_turn("ws-review").ready_roots
-            == (str(root.resolve()),)
+            lambda: (
+                service.admit_turn("ws-review").ready_roots == (str(root.resolve()),)
+            )
         )
         ready = service.admit_turn("ws-review")
         assert ready.ready_aliases == (binding.binding_id,)
@@ -153,7 +160,8 @@ def test_enabled_admission_prepares_once_then_returns_ready_root(tmp_path) -> No
         service.shutdown(timeout=0.2)
 
 
-def test_enabling_consent_starts_background_preparation(tmp_path) -> None:
+@private_profile_test
+def test_enabling_consent_starts_background_preparation(request, tmp_path) -> None:
     """Opting in prepares existing bindings without waiting for a chat turn."""
     registry = _registry(tmp_path)
     root = tmp_path / "root"
@@ -188,7 +196,8 @@ def test_enabling_consent_starts_background_preparation(tmp_path) -> None:
         service.shutdown(timeout=0.2)
 
 
-def test_admission_and_disable_linearize_on_one_lock(tmp_path) -> None:
+@private_profile_test
+def test_admission_and_disable_linearize_on_one_lock(request, tmp_path) -> None:
     """A toggle waits for an admission already holding the consent lock."""
     registry = _registry(tmp_path)
     root = tmp_path / "root"
@@ -241,7 +250,8 @@ def test_admission_and_disable_linearize_on_one_lock(tmp_path) -> None:
         service.shutdown(timeout=0.2)
 
 
-def test_disable_then_reenable_rejects_old_initializer_aba(tmp_path) -> None:
+@private_profile_test
+def test_disable_then_reenable_rejects_old_initializer_aba(request, tmp_path) -> None:
     """A completion captured under an older enabled revision cannot publish."""
     registry = _registry(tmp_path)
     root = tmp_path / "root"
@@ -268,9 +278,7 @@ def test_disable_then_reenable_rejects_old_initializer_aba(tmp_path) -> None:
     try:
         assert service.admit_turn("ws-review").skipped_roots
         assert entered.wait(1.0), "initializer never started"
-        disabled = service.toggle(
-            "ws-review", expected=first_revision, enabled=False
-        )
+        disabled = service.toggle("ws-review", expected=first_revision, enabled=False)
         service.toggle("ws-review", expected=disabled, enabled=True)
 
         release.set()
@@ -279,8 +287,9 @@ def test_disable_then_reenable_rejects_old_initializer_aba(tmp_path) -> None:
         assert next_admission.ready_roots == ()
         assert next_admission.skipped_roots
         _wait_until(
-            lambda: service.admit_turn("ws-review").ready_roots
-            == (str(root.resolve()),)
+            lambda: (
+                service.admit_turn("ws-review").ready_roots == (str(root.resolve()),)
+            )
         )
         assert calls == 2
     finally:
@@ -288,7 +297,8 @@ def test_disable_then_reenable_rejects_old_initializer_aba(tmp_path) -> None:
         service.shutdown(timeout=0.2)
 
 
-def test_external_revision_change_rejects_old_initializer(tmp_path) -> None:
+@private_profile_test
+def test_external_revision_change_rejects_old_initializer(request, tmp_path) -> None:
     """A second registry process can invalidate in-flight initialization."""
     db_path = tmp_path / "workspaces.sqlite"
     registry = LocalWorkspaceRegistryService(
@@ -327,8 +337,9 @@ def test_external_revision_change_rejects_old_initializer(tmp_path) -> None:
         _wait_until(lambda: calls == 1)
         assert service.admit_turn("ws-review").ready_roots == ()
         _wait_until(
-            lambda: service.admit_turn("ws-review").ready_roots
-            == (str(root.resolve()),)
+            lambda: (
+                service.admit_turn("ws-review").ready_roots == (str(root.resolve()),)
+            )
         )
         assert calls == 2
     finally:
@@ -336,7 +347,8 @@ def test_external_revision_change_rejects_old_initializer(tmp_path) -> None:
         service.shutdown(timeout=0.2)
 
 
-def test_failed_toggle_cas_preserves_readiness(tmp_path, monkeypatch) -> None:
+@private_profile_test
+def test_failed_toggle_cas_preserves_readiness(request, tmp_path, monkeypatch) -> None:
     """A rejected toggle has no runtime side effects."""
     registry = _registry(tmp_path)
     root = tmp_path / "root"
@@ -364,9 +376,7 @@ def test_failed_toggle_cas_preserves_readiness(tmp_path, monkeypatch) -> None:
         def fail_cas(*_args, **_kwargs):
             raise consent_module.ChangeReviewStateConflict("stale")
 
-        monkeypatch.setattr(
-            registry, "compare_and_set_change_review_consent", fail_cas
-        )
+        monkeypatch.setattr(registry, "compare_and_set_change_review_consent", fail_cas)
         with pytest.raises(consent_module.ChangeReviewStateConflict):
             service.toggle("ws-review", expected=expected, enabled=False)
 
@@ -376,7 +386,10 @@ def test_failed_toggle_cas_preserves_readiness(tmp_path, monkeypatch) -> None:
         service.shutdown(timeout=0.2)
 
 
-def test_full_initializer_queue_fails_fast_and_retry_is_bounded(tmp_path) -> None:
+@private_profile_test
+def test_full_initializer_queue_fails_fast_and_retry_is_bounded(
+    request, tmp_path
+) -> None:
     """Queue pressure never blocks admission or creates duplicate work."""
     registry = _registry(tmp_path)
     first_root = tmp_path / "root-1"
@@ -423,26 +436,29 @@ def test_full_initializer_queue_fails_fast_and_retry_is_bounded(tmp_path) -> Non
 
         release.set()
         _wait_until(
-            lambda: len(
-                [
-                    root
-                    for root in service.status("ws-review").roots
-                    if root.state is consent_module.RootReadinessState.READY
-                ]
+            lambda: (
+                len(
+                    [
+                        root
+                        for root in service.status("ws-review").roots
+                        if root.state is consent_module.RootReadinessState.READY
+                    ]
+                )
+                == 2
             )
-            == 2
         )
         assert service.retry_failed_roots("ws-review") == 1
-        _wait_until(
-            lambda: len(service.admit_turn("ws-review").ready_roots) == 3
-        )
+        _wait_until(lambda: len(service.admit_turn("ws-review").ready_roots) == 3)
         assert len(calls) == 3
     finally:
         release.set()
         service.shutdown(timeout=0.2)
 
 
-def test_shutdown_is_bounded_and_late_completion_reads_no_registry(tmp_path) -> None:
+@private_profile_test
+def test_shutdown_is_bounded_and_late_completion_reads_no_registry(
+    request, tmp_path
+) -> None:
     """A blocked initializer becomes generation-inert after shutdown."""
     registry = _registry(tmp_path)
     root = tmp_path / "root"

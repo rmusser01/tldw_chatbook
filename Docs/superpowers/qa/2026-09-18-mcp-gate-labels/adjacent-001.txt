@@ -1,0 +1,23 @@
+.                                                                        [100%]
+==================================== PASSES ====================================
+_______ test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog _______
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 14:33:20.879 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 14:33:20.940 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 14:33:20.976 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 14:33:20.976 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 14:33:20.977 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-18 14:33:21.077 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 14:33:21.350 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 14:33:21.562 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+2026-09-18 14:33:21.831 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+2026-09-18 14:33:22.136 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+2026-09-18 14:33:22.374 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+2026-09-18 14:33:22.646 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+2026-09-18 14:33:22.896 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+============================= slowest 25 durations =============================
+1.67s call     Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog
+
+(2 durations < 1s hidden.)
+1 passed in 2.79s

@@ -213,7 +213,7 @@ class ConsoleEditThinkingModal(
             baseline for the store's save-time ``expected_text`` guard.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleEditThinkingModal {
         align: center middle;
     }
@@ -280,9 +280,7 @@ class ConsoleEditThinkingModal(
             yield Static("", id="console-edit-thinking-error", markup=False)
             with Horizontal(id="console-edit-thinking-actions"):
                 yield Button("Cancel", id="console-edit-thinking-cancel")
-                yield Button(
-                    "Save", id="console-edit-thinking-save", variant="primary"
-                )
+                yield Button("Save", id="console-edit-thinking-save", variant="primary")
 
     def on_mount(self, event: events.Mount) -> None:  # type: ignore[override]
         """Arm the TASK-360 stale-key guard and focus the editor.

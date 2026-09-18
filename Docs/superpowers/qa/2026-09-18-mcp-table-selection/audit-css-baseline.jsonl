@@ -1,0 +1,6 @@
+{"base": "20de195131", "unchanged_inputs": {"Tests/UI/test_mcp_audit_mode.py": true, "tldw_chatbook/css/components/_agentic_terminal.tcss": true, "tldw_chatbook/css/tldw_cli_modular.tcss": true, "tldw_chatbook/css/core/_variables.tcss": true}}
+{"BUNDLED_CSS_unchanged": true}
+{"test": "test_audit_table_height_rule_pinned_in_bundle_source_and_bundle", "baseline_result": "AssertionError: _agentic_terminal.tcss's '#mcp-audit-table {' block is missing 'max-height: 70%;'"}
+{"test": "test_findings_table_height_rule_pinned_in_bundle_source_and_bundle", "baseline_result": "AssertionError: _agentic_terminal.tcss's '#mcp-audit-findings-table {' block is missing 'max-height: 70%;'"}
+{"test": "test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle", "baseline_result": "AssertionError: _agentic_terminal.tcss's '#mcp-audit-filter-decision {' block is missing 'width: 24;'"}
+{"test": "test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle", "baseline_result": "AssertionError: _agentic_terminal.tcss's '#mcp-audit-filter-initiator {' block is missing 'width: 20;'"}

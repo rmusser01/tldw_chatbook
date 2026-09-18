@@ -1,0 +1,10 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+CSS destination tour: ['home', 'console', 'library', 'personas', 'watchlists_collections', 'artifacts', 'schedules', 'workflows', 'mcp', 'acp', 'lab', 'logs', 'settings', 'research', 'meetings']
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+73.14s call     Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff
+3.06s setup    Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff
+1.04s teardown Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff
+1 passed in 77.82s (0:01:17)

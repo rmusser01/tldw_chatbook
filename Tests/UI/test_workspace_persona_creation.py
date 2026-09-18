@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.Workspaces.test_agent_provisioning import StubPersonaService, build
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
+from tldw_chatbook.Widgets.workspace_persona_default import WorkspacePersonaChoice
 
 
 class Personas(StubPersonaService):
-    def list_persona_profiles(self):
+    def list_persona_profiles(self, **_kwargs):
         return [{"id": "author", "name": "Author", "system_prompt": "Write clearly."}]
 
     def get_persona_profile(self, persona_id):
@@ -22,8 +24,11 @@ class Personas(StubPersonaService):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("choice", ["none", "author"])
-async def test_create_choice_survives_folder_recompose_and_saves(tmp_path, choice):
+@pytest.mark.parametrize("choice", [WorkspacePersonaChoice.NONE, "author"])
+@private_profile_test
+async def test_create_choice_survives_folder_recompose_and_saves(
+    request, tmp_path, choice
+):
     personas = Personas()
     registry, _permissions = build(tmp_path, personas)
     app = App()
@@ -43,7 +48,7 @@ async def test_create_choice_survives_folder_recompose_and_saves(tmp_path, choic
         saved = next(
             item for item in registry.list_workspaces() if item.name == "Chosen"
         )
-        if choice == "none":
+        if choice is WorkspacePersonaChoice.NONE:
             assert saved.assistant_defaults is None
             assert saved.assistant_defaults_explicit_none
         else:
@@ -52,7 +57,8 @@ async def test_create_choice_survives_folder_recompose_and_saves(tmp_path, choic
 
 
 @pytest.mark.asyncio
-async def test_read_write_create_requires_visible_confirmation(tmp_path):
+@private_profile_test
+async def test_read_write_create_requires_visible_confirmation(request, tmp_path):
     personas = Personas()
     registry, _permissions = build(tmp_path, personas)
     app = App()
@@ -79,7 +85,8 @@ async def test_read_write_create_requires_visible_confirmation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_default_modal_cancel_preserves_and_apply_clears(tmp_path):
+@private_profile_test
+async def test_default_modal_cancel_preserves_and_apply_clears(request, tmp_path):
     from tldw_chatbook.Widgets.workspace_persona_default import (
         WorkspacePersonaDefaultModal,
     )
@@ -92,7 +99,9 @@ async def test_default_modal_cancel_preserves_and_apply_clears(tmp_path):
         await app.push_screen(
             WorkspacePersonaDefaultModal(registry, personas, "chosen")
         )
-        app.screen.query_one("#workspace-default-persona", Select).value = "none"
+        app.screen.query_one(
+            "#workspace-default-persona", Select
+        ).value = WorkspacePersonaChoice.NONE
         app.screen.query_one("#workspace-default-cancel", Button).press()
         await pilot.pause()
         assert (
@@ -102,7 +111,9 @@ async def test_default_modal_cancel_preserves_and_apply_clears(tmp_path):
         await app.push_screen(
             WorkspacePersonaDefaultModal(registry, personas, "chosen")
         )
-        app.screen.query_one("#workspace-default-persona", Select).value = "none"
+        app.screen.query_one(
+            "#workspace-default-persona", Select
+        ).value = WorkspacePersonaChoice.NONE
         app.screen.query_one("#workspace-default-apply", Button).press()
         await pilot.pause()
         assert registry.get_workspace("chosen").assistant_defaults is None
@@ -110,7 +121,10 @@ async def test_default_modal_cancel_preserves_and_apply_clears(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_console_bootstrap_workspace_activation_and_details_use_target_default():
+@private_profile_test
+async def test_console_bootstrap_workspace_activation_and_details_use_target_default(
+    request,
+):
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_console_workspace_action_row_geometry import StyledConsoleHarness
     from tldw_chatbook.Widgets.workspace_persona_default import (
@@ -158,7 +172,9 @@ async def test_console_bootstrap_workspace_activation_and_details_use_target_def
         button.press()
         await pilot.pause()
         assert isinstance(host.screen, WorkspacePersonaDefaultModal)
-        host.screen.query_one("#workspace-default-persona", Select).value = "none"
+        host.screen.query_one(
+            "#workspace-default-persona", Select
+        ).value = WorkspacePersonaChoice.NONE
         host.screen.query_one("#workspace-default-apply", Button).press()
         await pilot.pause()
         assert registry.get_workspace("second").assistant_defaults is None

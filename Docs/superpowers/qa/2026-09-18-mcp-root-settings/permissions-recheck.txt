@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+8.97s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-light]
+
+(2 durations < 1s hidden.)
+1 passed in 10.59s

@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹┌──────────────────────────── Export Tool Pack ────────────────────────────┐
+──│   🏠   ›   private   ›   tmp   ›   tldw-32779-native-002   ›   exports   │──
+ S│                                                                          │
+ M│▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁│
+┌─│                                                                          │─┐
+│ │ Sort Discovery order                 ▼ Ascending                       ▼ │ │
+│ │Loaded · 1 entries                                                        │ │
+│ │      Name                                      Size            Modified  │ │
+│ │──────────────────────────────────────────────────────────────────────────│ │
+│ │                                                                          │ │
+│ │   📁 ..                                                            —     │ │
+│ │                                                                          │ │
+│ │  Ctrl+B Bookmarks  Ctrl+R Recent  Ctrl+F Search  Ctrl+L Path  1-9 Jump   │ │
+│ │                      Enter Save  Esc Cancel  ? Hide                      │ │
+│ │ Name already exists. Choose a new filename.                              │ │
+│ │                                                                          │ │
+│ │┌─────────────┐▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎       Save            Cancel      │ │
+│ ││  ool-pack   │▊  Tool Pack        ▼  ▎                                   │ │
+│ │└─────────────┘▊  archives            ▎                                   │ │
+│ │               ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                   │ │
+└─│                                                                          │─┘
+  └──────────────────────────────────────────────────────────────────────────┘
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,28 @@
+{
+  "exitstatus": 1,
+  "cases": [
+    "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name"
+  ],
+  "outcomes": [
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+      "phase": "setup",
+      "outcome": "passed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+      "phase": "call",
+      "outcome": "failed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+      "phase": "teardown",
+      "outcome": "passed",
+      "wasxfail": null
+    }
+  ],
+  "classes": {},
+  "mismatches": []
+}

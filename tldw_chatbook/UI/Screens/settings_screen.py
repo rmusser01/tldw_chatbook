@@ -140,11 +140,6 @@ from ...Terminal.contracts import TERMINAL_DISCLOSURE_LINES
 # lazily at its render/use sites (settings interaction only) so it stays out
 # of the UI-ready module census.
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
-from ...Workspaces.change_review_consent import (
-    ChangeReviewState,
-    ChangeReviewStateConflict,
-    RootReadinessState,
-)
 from ...Workspaces.models import RuntimeBindingStatus, WorkspaceAssistantDefaults
 from ...Workspaces.registry_service import (
     DEFAULT_WORKSPACE_ID,
@@ -176,6 +171,7 @@ from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
     DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+    MAX_CONSOLE_AGENT_MAX_STEPS,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
@@ -967,6 +963,35 @@ PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 # catalog module (imported at the top) so Settings and Console match.
 
 
+@dataclass(frozen=True)
+class _SettingsWorkspaceMemoryConfirmation:
+    """The saved and intended defaults reviewed by the first memory press."""
+
+    workspace_id: str
+    saved_defaults: WorkspaceAssistantDefaults | None
+    intended_defaults: WorkspaceAssistantDefaults
+
+
+class _SettingsWorkspaceLifecycleResult(Static):
+    """Reveal lifecycle feedback after its text has wrapped."""
+
+    def on_resize(self) -> None:
+        screen = self.screen
+        if isinstance(screen, SettingsScreen):
+            screen._reveal_workspace_lifecycle_result()
+
+
+class _SettingsWorkspaceAssistantResult(Static):
+    """Recheck visibility when wrapping changes the receipt's measured height."""
+
+    def on_resize(self) -> None:
+        screen = self.screen
+        if isinstance(screen, SettingsScreen):
+            result = screen._settings_workspace_assistant_result
+            if result is not None:
+                screen._reveal_workspace_assistant_result(result)
+
+
 class _SettingsWorkspacePersonaOption(Option):
     """A persona row in the workspace "Default assistant" picker (Task 10).
 
@@ -976,7 +1001,7 @@ class _SettingsWorkspacePersonaOption(Option):
     """
 
     def __init__(self, prompt: str, *, persona_id: str) -> None:
-        super().__init__(prompt)
+        super().__init__(Text(prompt))
         self.persona_id = persona_id
 
 
@@ -1161,7 +1186,7 @@ AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
     ),
     AgentBudgetField(
         key="agent_max_wall_seconds",
-        label="Wall-clock limit (seconds)",
+        label="Wall-clock (seconds)",
         widget_id="settings-console-agent-max-wall-seconds",
         default=DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
         minimum=MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
@@ -1175,7 +1200,7 @@ AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
     ),
     AgentBudgetField(
         key="agent_max_tool_call_seconds",
-        label="Per-tool-call limit (seconds)",
+        label="Per-tool-call (seconds)",
         widget_id="settings-console-agent-max-tool-call-seconds",
         default=DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
         minimum=MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
@@ -1216,7 +1241,8 @@ AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
             "Individual loop steps. One tool round costs 3 (think, call, "
             "result) and the closing reply costs 1, so N turns need "
             "3*(N-1)+1 steps. Set below that and this, not the turn "
-            "count, becomes your limiter."
+            "count, becomes your limiter. "
+            f"Maximum supported: {MAX_CONSOLE_AGENT_MAX_STEPS:,} steps."
         ),
     ),
 )
@@ -2900,6 +2926,11 @@ class SettingsScreen(BaseAppScreen):
         )
         self._tool_profiles_listing_generation = 0
         self._tool_profiles_result = ""
+        self._tool_profiles_result_profile_id: str | None = None
+        self._tool_profile_review_intent: object | None = None
+        self._tool_profile_review_modal: ModalScreen | None = None
+        self._tool_profile_operation_revision = 0
+        self._tool_profile_completion_revision = 0
 
         # Network category pending edits. Deliberately NOT a SettingsDraft in
         # _settings_drafts: the category bypasses the draft-staging machinery
@@ -3263,6 +3294,10 @@ class SettingsScreen(BaseAppScreen):
         #: cached separately, so there is no stale-watcher state to wipe.
         self._settings_show_archived_workspaces: bool = False
         self._settings_workspaces_result = ""
+        self._settings_workspace_lifecycle_result: tuple[str, str, str] | None = None
+        self._settings_workspace_first_bind_intent: object | None = None
+        self._settings_workspace_first_bind_modal: object | None = None
+        self._settings_workspace_folder_result: tuple[str, str | None, str] | None = None
         #: Task 10 (workspace assistant defaults): the staged-but-unapplied
         #: selection in the "Default assistant" section
         #: (``{"workspace_id", "persona_id", "persona_label",
@@ -3270,10 +3305,13 @@ class SettingsScreen(BaseAppScreen):
         #: section's render; cleared on apply/clear and whenever the pane
         #: recomposes for a different workspace.
         self._settings_workspace_assistant_pending: dict | None = None
-        #: Task 10: the workspace id whose read_write memory press is
-        #: awaiting the second (confirming) press. Any selection change
-        #: or pane refresh disarms it.
-        self._settings_workspace_memory_armed: str | None = None
+        self._settings_workspace_persona_page: tuple[str | None, int] = (None, 0)
+        self._settings_workspace_assistant_result: tuple[str, str, str] | None = None
+        #: A read_write acknowledgement belongs to these exact defaults.
+        #: Selection changes and screen suspension discard the review.
+        self._settings_workspace_memory_armed: (
+            _SettingsWorkspaceMemoryConfirmation | None
+        ) = None
         self._advanced_config_settings: AdvancedConfigSettings | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
         # Lazily-memoized cache, NOT a recompose=True reactive (P3 whole-branch
@@ -3575,6 +3613,7 @@ class SettingsScreen(BaseAppScreen):
         the screen mounts) are a no-op: ``compose_content`` reads
         ``active_category`` fresh, so the first paint is already correct.
         """
+        self._tool_profile_review_intent = None
         self._register_footer_shortcuts()
         self._sync_category_chrome()
         # `is_running`, not `is_mounted`: a bare `SettingsScreen(app)` built in
@@ -3728,11 +3767,35 @@ class SettingsScreen(BaseAppScreen):
     def _restore_category_pane_focus(self, focus_id: str) -> None:
         """Re-focus ``focus_id`` if the rebuilt panes still contain it."""
         try:
-            self.query_one(f"#{focus_id}").focus()
+            control = self.query_one(f"#{focus_id}")
         except QueryError:
-            # No counterpart in the rebuilt pane (a different category, or a
-            # control this state does not render) -- leave focus alone.
-            pass
+            # A successful lifecycle action can remove its own control.
+            # Keep keyboard context on the next action in that same card.
+            replacement = {
+                "settings-workspace-set-active": "settings-workspace-archive",
+                "settings-workspace-unarchive": "settings-workspace-set-active",
+                "settings-workspace-archive-undo": "settings-workspace-set-active",
+            }.get(focus_id)
+            if replacement is None:
+                return
+            try:
+                control = self.query_one(f"#{replacement}")
+            except QueryError:
+                return
+        control.focus()
+
+        def reveal() -> None:
+            # The new pane has no final geometry when focus is restored.
+            # Reveal only if that same control still owns focus after layout.
+            if (
+                self.is_attached
+                and self.app.screen is self
+                and control.is_attached
+                and self.app.focused is control
+            ):
+                control.scroll_visible(animate=False, immediate=True)
+
+        self.call_after_refresh(reveal)
 
     def _after_category_panes(self, callback: Callable[..., object], *args) -> None:
         """Run ``callback`` once the new category's panes are on screen.
@@ -3950,6 +4013,8 @@ class SettingsScreen(BaseAppScreen):
     def on_unmount(self) -> None:
         """Fence late credential and Model Library results before replacement."""
 
+        self._tool_profile_review_intent = None
+        self._settings_workspace_first_bind_intent = None
         if self._subscription_readiness_timer is not None:
             self._subscription_readiness_timer.stop()
             self._subscription_readiness_timer = None
@@ -3982,6 +4047,8 @@ class SettingsScreen(BaseAppScreen):
         if not self.is_attached or not self.is_current:
             return
         category = self._active_category_id()
+        if category is SettingsCategoryId.TOOL_PROFILES:
+            self._sync_tool_profile_operations()
         if category not in {
             SettingsCategoryId.OVERVIEW,
             SettingsCategoryId.PROVIDERS_MODELS,
@@ -4382,6 +4449,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _request_tool_profiles_listing(self) -> None:
         """Refresh Tool Profiles from the app-owned service off the UI thread."""
+        self._sync_tool_profile_operations(refresh_listing=False)
         composition_worker = None
         if getattr(self.app_instance, "tool_pack_service", None) is None:
             reason = getattr(
@@ -4406,10 +4474,16 @@ class SettingsScreen(BaseAppScreen):
     @work(group="settings-tool-pack-composition-wait", exclusive=True)
     async def _await_tool_pack_composition(self, composition_worker: object) -> None:
         """Refresh the listing once first-use service composition settles."""
-        try:
-            await composition_worker.wait()  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 - the listing exposes stable failure state
-            pass
+
+        async def wait_for_shared_composition() -> None:
+            try:
+                await composition_worker.wait()  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - the listing exposes stable failure state
+                pass
+
+        # Settings observes app-owned initialization. Refresh/unmount may cancel
+        # this observer, but must not cancel the shared worker or leak its error.
+        await asyncio.shield(wait_for_shared_composition())
         self._tool_profiles_listing_generation += 1
         self._load_tool_profiles_worker(self._tool_profiles_listing_generation)
 
@@ -4462,18 +4536,22 @@ class SettingsScreen(BaseAppScreen):
         self.run_worker(
             panel.apply_listing(listing),
             group="settings-tool-profiles-render",
-            exclusive=True,
+            # The panel serializes renders; never cancel a teardown mid-await.
+            exclusive=False,
             exit_on_error=False,
         )
 
-    def _set_tool_profiles_result(self, text: str) -> None:
+    def _set_tool_profiles_result(
+        self, text: str, *, profile_id: str | None = None
+    ) -> None:
         """Persist and render one bounded, path-free operation outcome."""
         self._tool_profiles_result = text[:512]
+        self._tool_profiles_result_profile_id = profile_id
         try:
             panel = self.query_one("#settings-tool-profiles-panel", ToolProfilesPanel)
         except QueryError:
             return
-        panel.set_result(self._tool_profiles_result)
+        panel.set_result(self._tool_profiles_result, profile_id=profile_id)
 
     def _tool_profile_action_is_current(
         self,
@@ -4495,9 +4573,125 @@ class SettingsScreen(BaseAppScreen):
         self._request_tool_profiles_listing()
         return False
 
+    def _tool_profile_write_pending(self, operation: str) -> bool:
+        """Refuse replacement before its exclusive worker can cancel a write."""
+        owner = getattr(self.app_instance, "_tool_profile_operations", None)
+        pending = owner.pending(operation) if owner is not None else None
+        if pending is None:
+            return False
+        label = "Removal" if operation == "remove" else operation.title()
+        self._set_tool_profiles_result(
+            f"{label} in progress. Wait for it to finish.",
+            profile_id=pending.profile_id,
+        )
+        return True
+
+    def _sync_tool_profile_operations(self, *, refresh_listing: bool = True) -> None:
+        """Project app-owned progress and outcomes into this attached view."""
+        if not self.is_attached:
+            return
+        owner = getattr(self.app_instance, "_tool_profile_operations", None)
+        state = owner.state if owner is not None else None
+        if state is None or state.revision == self._tool_profile_operation_revision:
+            return
+        from ...Tool_Packs.contracts import ToolPackError
+
+        self._tool_profile_operation_revision = state.revision
+        completed = owner.completion_revision != self._tool_profile_completion_revision
+        self._tool_profile_completion_revision = owner.completion_revision
+        profile_id = (
+            state.profile_id
+            if state.in_progress or state.operation == "remove"
+            else None
+        )
+        if state.in_progress:
+            label = (
+                "Removal" if state.operation == "remove" else state.operation.title()
+            )
+            copy = f"{label} in progress. Wait for it to finish."
+        elif state.error_category:
+            copy = self._tool_pack_failure_copy(
+                state.operation, ToolPackError(state.operation, state.error_category)
+            )
+        elif state.operation == "import":
+            copy = (
+                f"Imported {state.result.installed.profile_id} unbound · "
+                f"revision {state.result.installed.revision}"
+            )
+        elif state.operation == "remove":
+            copy = (
+                f"Removed {state.result.tombstone.profile_id} · id permanently reserved"
+            )
+        elif state.result.durability_uncertain:
+            copy = "Export may have completed · durability_uncertain"
+        elif state.result.committed:
+            copy = f"Exported Tool Pack · {state.result.archive_sha256}"
+        else:
+            copy = "Export failed · publication_failed"
+        self._set_tool_profiles_result(copy, profile_id=profile_id)
+        if completed and refresh_listing:
+            self._request_tool_profiles_listing()
+
+    async def _run_tool_profile_write(
+        self,
+        operation: str,
+        profile_id: str | None,
+        write: Callable[[Callable[[], bool]], object],
+    ):
+        """Observe admitted work without owning its thread lifetime."""
+        from ...Tool_Packs.operations import ToolProfileWriteUnavailable
+
+        try:
+            owner = self.app_instance._get_tool_profile_operations()
+            task = owner.start(operation, profile_id, write)
+        except ToolProfileWriteUnavailable as error:
+            if str(error) == "busy":
+                self._tool_profile_write_pending(operation)
+            else:
+                self._set_tool_profiles_result(
+                    "Tool Profile changes unavailable while the app is closing."
+                )
+            return None
+        self._sync_tool_profile_operations()
+        outcome = await asyncio.shield(task)
+        self._sync_tool_profile_operations()
+        return outcome
+
     @staticmethod
     def _tool_pack_failure_copy(operation: str, error: "ToolPackError") -> str:
         """Return bounded recovery copy for one stable Tool Pack error."""
+        if operation == "export" and error.category == "cancelled":
+            return "Export cancelled before publication."
+        if operation == "export" and error.category == "destination_changed":
+            return "Export destination changed. Choose a new filename."
+        if operation == "import" and error.category == "activation_uncertain":
+            return (
+                "Import outcome uncertain. Check the current profile state "
+                "before retrying."
+            )
+        if operation == "export" and error.category == "durability_uncertain":
+            return (
+                "Export outcome uncertain. Check the chosen destination "
+                "before retrying."
+            )
+        if operation == "remove":
+            return {
+                "outcome_uncertain": (
+                    "Removal outcome uncertain. Check the current profile state "
+                    "before retrying."
+                ),
+                "stale": "Profile changed. Review its current details before removing it.",
+                "in_use": (
+                    "Profile is in use. Finish its active run, then reopen Tool Profiles."
+                ),
+                "referenced": (
+                    "Profile is referenced by a workspace. Update its active and "
+                    "archived workspace defaults first."
+                ),
+                "non_removable": "Profile cannot be removed. Review its current details.",
+            }.get(
+                error.category, "Removal unavailable. Check the current profile state."
+            )
         if operation == "export" and error.category == "publication_unsupported":
             if os.name == "nt":
                 return (
@@ -4517,7 +4711,29 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         """Start one review-first, unbound Tool Pack import."""
         event.stop()
+        if self._tool_profile_write_pending("import"):
+            return
         self._tool_profile_import_flow()
+
+    def _tool_profile_review_is_current(self, intent: object) -> bool:
+        """Allow review preparation only within its original Settings visit."""
+        return (
+            self._tool_profile_review_intent is intent
+            and self.is_attached
+            and self.app.screen is self
+            and self._active_category_id() is SettingsCategoryId.TOOL_PROFILES
+        )
+
+    async def _push_tool_profile_modal(self, modal: ModalScreen, intent: object) -> Any:
+        """Exempt only this workflow's own dialog from visit invalidation."""
+        if not self._tool_profile_review_is_current(intent):
+            return None
+        self._tool_profile_review_modal = modal
+        try:
+            return await self.app.push_screen_wait(modal)
+        finally:
+            if self._tool_profile_review_modal is modal:
+                self._tool_profile_review_modal = None
 
     @work(
         group="settings-tool-pack-import",
@@ -4526,7 +4742,6 @@ class SettingsScreen(BaseAppScreen):
     )
     async def _tool_profile_import_flow(self) -> None:
         """Inspect and explicitly activate a Tool Pack outside the event loop."""
-        from ...Tool_Packs.activation import ToolPackActivationResult
         from ...Tool_Packs.contracts import ToolPackError
         from ...Tool_Packs.importer import ToolPackImportReview
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
@@ -4535,12 +4750,16 @@ class SettingsScreen(BaseAppScreen):
             ToolPackImportReviewModal,
         )
 
+        intent = self._tool_profile_review_intent = object()
+        if not self._tool_profile_review_is_current(intent):
+            return
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Import failed · service_unavailable")
             return
         worker = get_current_worker()
-        selected = await self.app.push_screen_wait(
+        mutation_started = False
+        selected = await self._push_tool_profile_modal(
             EnhancedFileOpen(
                 title="Import Tool Pack",
                 filters=Filters(
@@ -4551,8 +4770,11 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 context="tool_pack_import",
                 select_button="Inspect",
-            )
+            ),
+            intent,
         )
+        if not self._tool_profile_review_is_current(intent):
+            return
         if selected is None or worker.is_cancelled:
             self._set_tool_profiles_result("Import cancelled")
             return
@@ -4568,9 +4790,11 @@ class SettingsScreen(BaseAppScreen):
         )
         try:
             while options is not None and not worker.is_cancelled:
-                options = await self.app.push_screen_wait(
-                    ToolPackImportOptionsModal(options)
+                options = await self._push_tool_profile_modal(
+                    ToolPackImportOptionsModal(options), intent
                 )
+                if not self._tool_profile_review_is_current(intent):
+                    return
                 if options is None or worker.is_cancelled:
                     self._set_tool_profiles_result("Import cancelled")
                     return
@@ -4580,11 +4804,15 @@ class SettingsScreen(BaseAppScreen):
                     destination_id=options.destination_id,
                     mappings=options.mappings,
                 )
+                if not self._tool_profile_review_is_current(intent):
+                    return
                 if type(candidate) is not ToolPackImportReview:
                     raise ToolPackError("import", "archive_invalid")
-                decision = await self.app.push_screen_wait(
-                    ToolPackImportReviewModal(candidate)
+                decision = await self._push_tool_profile_modal(
+                    ToolPackImportReviewModal(candidate), intent
                 )
+                if not self._tool_profile_review_is_current(intent):
+                    return
                 if decision == "revise":
                     continue
                 if decision is not candidate:
@@ -4592,21 +4820,29 @@ class SettingsScreen(BaseAppScreen):
                     return
                 if worker.is_cancelled:
                     return
-                result = await asyncio.to_thread(service.import_unbound, candidate)
-                if type(result) is not ToolPackActivationResult:
-                    raise ToolPackError("import", "activation_failed")
-                self._set_tool_profiles_result(
-                    f"Imported {result.installed.profile_id} unbound · "
-                    f"revision {result.installed.revision}"
+                mutation_started = True
+                await self._run_tool_profile_write(
+                    "import",
+                    candidate.destination_id,
+                    lambda cancelled, candidate=candidate: service.import_unbound(
+                        candidate
+                    ),
                 )
-                self._request_tool_profiles_listing()
                 return
         except ToolPackError as exc:
-            self._set_tool_profiles_result(self._tool_pack_failure_copy("import", exc))
+            if mutation_started or self._tool_profile_review_is_current(intent):
+                self._set_tool_profiles_result(
+                    self._tool_pack_failure_copy("import", exc)
+                )
+                if mutation_started:
+                    self._request_tool_profiles_listing()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - optional workflow must stay bounded
-            self._set_tool_profiles_result("Import failed · activation_failed")
+            if mutation_started or self._tool_profile_review_is_current(intent):
+                self._set_tool_profiles_result("Import failed · activation_failed")
+                if mutation_started:
+                    self._request_tool_profiles_listing()
 
     @on(ToolProfilesPanel.ExportRequested)
     def _handle_tool_profile_export(
@@ -4615,6 +4851,8 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         """Start export for one exact rendered profile identity."""
         event.stop()
+        if self._tool_profile_write_pending("export"):
+            return
         if self._tool_profile_action_is_current(event):
             self._tool_profile_export_flow(
                 event.profile_id,
@@ -4636,19 +4874,20 @@ class SettingsScreen(BaseAppScreen):
         """Capture, review, and safely publish one immutable Tool Pack."""
         from ...Tool_Packs.contracts import ToolPackError
         from ...Tool_Packs.export import ToolPackExportReview
-        from ...Tool_Packs.publication import (
-            CapturedToolPackDestination,
-            ToolPackPublicationResult,
-        )
+        from ...Tool_Packs.publication import CapturedToolPackDestination
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
             ToolPackExportReviewModal,
         )
 
+        intent = self._tool_profile_review_intent = object()
+        if not self._tool_profile_review_is_current(intent):
+            return
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Export failed · service_unavailable")
             return
         worker = get_current_worker()
+        mutation_started = False
         try:
             candidate = await asyncio.to_thread(
                 service.capture_export,
@@ -4658,64 +4897,94 @@ class SettingsScreen(BaseAppScreen):
                 expected_revision=revision,
                 expected_policy_digest=policy_digest,
             )
+            if not self._tool_profile_review_is_current(intent):
+                return
             if type(candidate) is not ToolPackExportReview:
                 raise ToolPackError("export", "profile_invalid")
-            confirmed = await self.app.push_screen_wait(
+            confirmed = await self._push_tool_profile_modal(
                 ToolPackExportReviewModal(
                     candidate,
                     profile_id=profile_id,
                     revision=revision,
                     policy_digest=policy_digest,
-                )
+                ),
+                intent,
             )
+            if not self._tool_profile_review_is_current(intent):
+                return
             if confirmed is not candidate or worker.is_cancelled:
                 self._set_tool_profiles_result("Export cancelled")
                 return
-            selected = await self.app.push_screen_wait(
-                EnhancedFileSave(
+            location = Path(".")
+            filename = f"{candidate.snapshot.manifest.suggested_id}.tldw-tool-pack"
+            recovery = ""
+            while True:
+                mutation_started = False
+                picker = EnhancedFileSave(
+                    location=location,
                     title="Export Tool Pack",
                     filters=Filters(
                         (
                             "Tool Pack archives",
-                            lambda path: path.suffix.casefold()
-                            == ".tldw-tool-pack",
+                            lambda path: path.suffix.casefold() == ".tldw-tool-pack",
                         )
                     ),
-                    default_filename=f"{candidate.snapshot.manifest.suggested_id}.tldw-tool-pack",
+                    default_filename=filename,
                     context="tool_pack_export",
                 )
-            )
-            if selected is None or worker.is_cancelled:
-                self._set_tool_profiles_result("Export cancelled")
+                if recovery:
+                    picker.call_after_refresh(picker._set_error, recovery)
+                selected = await self._push_tool_profile_modal(picker, intent)
+                if not self._tool_profile_review_is_current(intent):
+                    return
+                if selected is None or worker.is_cancelled:
+                    self._set_tool_profiles_result("Export cancelled")
+                    return
+                selected_path = Path(selected)
+                location, filename = selected_path.parent, selected_path.name
+                try:
+                    destination = await asyncio.to_thread(
+                        CapturedToolPackDestination.capture,
+                        selected_path,
+                    )
+                except ToolPackError as exc:
+                    if exc.category != "destination_invalid":
+                        raise
+                    recovery = "Use a .tldw-tool-pack filename in an existing folder."
+                    continue
+                if not self._tool_profile_review_is_current(intent):
+                    return
+                if destination.target_identity is not None:
+                    recovery = "Name already exists. Choose a new filename."
+                    continue
+                mutation_started = True
+                outcome = await self._run_tool_profile_write(
+                    "export",
+                    profile_id,
+                    lambda cancelled, candidate=candidate, destination=destination: (
+                        service.publish_export(
+                            candidate,
+                            destination,
+                            cancelled=lambda: worker.is_cancelled or cancelled(),
+                        )
+                    ),
+                )
+                if outcome is None:
+                    return
+                if outcome.error_category == "destination_changed":
+                    recovery = "Destination changed. Choose a new filename."
+                    continue
                 return
-            destination = await asyncio.to_thread(
-                CapturedToolPackDestination.capture,
-                Path(selected),
-            )
-            result = await asyncio.to_thread(
-                service.publish_export,
-                candidate,
-                destination,
-                cancelled=lambda: worker.is_cancelled,
-            )
-            if type(result) is not ToolPackPublicationResult:
-                raise ToolPackError("export", "publication_failed")
-            if result.durability_uncertain:
-                self._set_tool_profiles_result(
-                    "Export may have completed · durability_uncertain"
-                )
-            elif result.committed:
-                self._set_tool_profiles_result(
-                    f"Exported Tool Pack · {result.archive_sha256}"
-                )
-            else:
-                raise ToolPackError("export", "publication_failed")
         except ToolPackError as exc:
-            self._set_tool_profiles_result(self._tool_pack_failure_copy("export", exc))
+            if mutation_started or self._tool_profile_review_is_current(intent):
+                self._set_tool_profiles_result(
+                    self._tool_pack_failure_copy("export", exc)
+                )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - optional workflow must stay bounded
-            self._set_tool_profiles_result("Export failed · publication_failed")
+            if mutation_started or self._tool_profile_review_is_current(intent):
+                self._set_tool_profiles_result("Export failed · publication_failed")
 
     @on(ToolProfilesPanel.RemoveRequested)
     def _handle_tool_profile_remove(
@@ -4724,6 +4993,8 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         """Start exact-revision removal for one eligible imported profile."""
         event.stop()
+        if self._tool_profile_write_pending("remove"):
+            return
         if (
             self._tool_profile_action_is_current(event, removable=True)
             and type(event.revision) is int
@@ -4741,12 +5012,11 @@ class SettingsScreen(BaseAppScreen):
         revision: int,
     ) -> None:
         """Confirm and replace one eligible profile with its permanent tombstone."""
-        from ...Tool_Packs.contracts import ToolPackError
-        from ...Tool_Packs.removal import ToolProfileRemovalResult
-
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
-            self._set_tool_profiles_result("Remove failed · service_unavailable")
+            self._set_tool_profiles_result(
+                "Remove failed · service_unavailable", profile_id=profile_id
+            )
             return
         worker = get_current_worker()
         display_profile_id = "".join(
@@ -4768,26 +5038,16 @@ class SettingsScreen(BaseAppScreen):
             )
         )
         if confirmed is not True or worker.is_cancelled:
-            self._set_tool_profiles_result("Remove cancelled")
+            self._set_tool_profiles_result("Remove cancelled", profile_id=profile_id)
             return
-        try:
-            candidate = await asyncio.to_thread(
-                service.remove_profile,
+        await self._run_tool_profile_write(
+            "remove",
+            profile_id,
+            lambda cancelled: service.remove_profile(
                 profile_id,
                 expected_revision=revision,
-            )
-            if type(candidate) is not ToolProfileRemovalResult:
-                raise ToolPackError("remove", "outcome_uncertain")
-            self._set_tool_profiles_result(
-                f"Removed {candidate.tombstone.profile_id} · id permanently reserved"
-            )
-            self._request_tool_profiles_listing()
-        except ToolPackError as exc:
-            self._set_tool_profiles_result(self._tool_pack_failure_copy("remove", exc))
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - optional workflow must stay bounded
-            self._set_tool_profiles_result("Remove failed · outcome_uncertain")
+            ),
+        )
 
     @on(ToolProfilesPanel.EditPolicyRequested)
     def _handle_tool_profile_edit_policy(
@@ -4835,30 +5095,99 @@ class SettingsScreen(BaseAppScreen):
         except WorkspaceRegistryServiceError:
             active = None
 
-        self._select_category(SettingsCategoryId.WORKSPACES.value)
+        # Keep an attached focus owner while the outgoing Bind button is removed.
+        # A newer user focus or navigation cancels the deferred continuation.
+        anchor = self.query_one("#settings-category-search", Input)
+        anchor.focus(scroll_visible=False)
+        self._discard_workspace_memory_confirmation()
         if active is None or active.workspace_id == DEFAULT_WORKSPACE_ID:
             self._settings_selected_workspace_id = None
             self._settings_workspace_assistant_pending = None
-            self._settings_workspace_memory_armed = None
+            self._settings_workspace_assistant_result = None
             self._settings_workspaces_result = (
-                "Choose a non-default workspace, then stage the Tool Profile in "
-                "Default assistant."
+                "Choose a non-default workspace or create one, make it active, "
+                "then return to Tool Profiles and choose Bind."
             )
-            return
-
-        defaults = active.assistant_defaults
-        self._settings_selected_workspace_id = active.workspace_id
-        self._settings_workspace_assistant_pending = {
-            "workspace_id": active.workspace_id,
-            "persona_id": getattr(defaults, "assistant_id", None),
-            "memory_mode": getattr(defaults, "persona_memory_mode", "read_only"),
-            "profile_id": event.profile_id,
-        }
-        self._settings_workspace_memory_armed = None
-        self._settings_workspaces_result = (
-            "Tool Profile staged — choose a persona and apply."
+            control_id = "settings-workspace-create"
+        else:
+            defaults = active.assistant_defaults
+            self._settings_selected_workspace_id = active.workspace_id
+            pending = self._settings_workspace_assistant_pending
+            if pending is None or pending.get("workspace_id") != active.workspace_id:
+                pending = {
+                    "workspace_id": active.workspace_id,
+                    "persona_id": getattr(defaults, "assistant_id", None),
+                    "memory_mode": getattr(defaults, "persona_memory_mode", "read_only"),
+                }
+            self._settings_workspace_assistant_pending = {
+                **pending,
+                "profile_id": event.profile_id,
+            }
+            control_id = (
+                "settings-workspace-memory-toggle"
+                if pending.get("persona_id")
+                else "settings-workspace-persona-picker"
+            )
+            self._settings_workspaces_result = ""
+            self._set_workspace_assistant_result(
+                active.workspace_id,
+                "Tool Profile staged — press Apply to review and save."
+                if pending.get("persona_id")
+                else "Tool Profile staged — choose a persona and apply.",
+                control_id=control_id,
+            )
+        self._select_category(SettingsCategoryId.WORKSPACES.value)
+        self._after_category_panes(
+            self.call_after_refresh,
+            self._finish_tool_profile_bind_handoff,
+            self._category_swap_revision,
+            self._settings_selected_workspace_id,
+            anchor,
+            control_id,
         )
-        self.call_after_refresh(self._refresh_settings_workspaces_pane)
+
+    def _finish_tool_profile_bind_handoff(
+        self,
+        revision: int,
+        workspace_id: str | None,
+        anchor: Input | Button,
+        control_id: str,
+    ) -> None:
+        """Reveal the current Bind continuation after its category panes settle."""
+        if (
+            not self.is_attached
+            or self.app.screen is not self
+            or self.active_category != SettingsCategoryId.WORKSPACES.value
+            or self._category_swap_revision != revision
+            or self._settings_selected_workspace_id != workspace_id
+            or self.app.focused is not anchor
+        ):
+            return
+        try:
+            control = self.query_one(f"#{control_id}")
+        except QueryError:
+            return
+        self.set_focus(control, scroll_visible=False)
+        if workspace_id is not None:
+            result = self._settings_workspace_assistant_result
+            if result is not None:
+                self._reveal_workspace_assistant_result(result)
+            return
+        receipt = self.query_one("#settings-workspaces-result")
+        parent = receipt.parent
+        if parent is not None and parent is control.parent:
+            siblings = list(parent.children)
+            if siblings.index(receipt) != siblings.index(control) + 1:
+                parent.move_child(receipt, after=control)
+                self.call_after_refresh(
+                    self._finish_tool_profile_bind_handoff,
+                    revision,
+                    workspace_id,
+                    control,
+                    control_id,
+                )
+                return
+        receipt.scroll_visible(animate=False, immediate=True)
 
     def _category_groups(
         self,
@@ -5905,7 +6234,16 @@ class SettingsScreen(BaseAppScreen):
             return coerce_float_setting(
                 raw, float(field.default), minimum=field.minimum
             )
-        return coerce_int_setting(raw, int(field.default), minimum=int(field.minimum))
+        return coerce_int_setting(
+            raw,
+            int(field.default),
+            minimum=int(field.minimum),
+            maximum=(
+                MAX_CONSOLE_AGENT_MAX_STEPS
+                if field.key == "agent_max_steps"
+                else None
+            ),
+        )
 
     def _agent_budget_value(self, field: AgentBudgetField) -> float | str:
         """The value to display: the staged draft if any, else the saved one.
@@ -5923,11 +6261,9 @@ class SettingsScreen(BaseAppScreen):
     ) -> float:
         """Coerce one budget field's input, or raise with a usable message.
 
-        Floors only -- no ceiling is enforced anywhere in this feature
-        (owner decision: these are user-owned trade-offs, same call as
-        `max_parallel_runs`). A below-floor value is REFUSED rather than
-        clamped: silently running at a number the user did not choose is
-        how a 2000-turn budget quietly becomes an 8-turn one.
+        Steps also respect the runtime's existing trace-storage ceiling.
+        Other fields retain their open-ended range. Invalid values are
+        refused rather than silently replaced with a different run budget.
 
         Raises:
             ValueError: With copy naming the field and its floor.
@@ -5948,6 +6284,10 @@ class SettingsScreen(BaseAppScreen):
                 f"{field.label} must be at least "
                 f"{self._format_agent_budget_number(field, field.minimum)} "
                 f"{field.unit}."
+            )
+        if field.key == "agent_max_steps" and parsed > MAX_CONSOLE_AGENT_MAX_STEPS:
+            raise ValueError(
+                f"{field.label} must be at most {MAX_CONSOLE_AGENT_MAX_STEPS:,} steps."
             )
         return float(parsed) if field.is_float else int(parsed)
 
@@ -17910,7 +18250,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
-                    "Reduce conversation to (%)", classes="settings-input-label"
+                    "Reduce context to (%)", classes="settings-input-label"
                 )
                 yield Input(
                     value=format_ratio_percent(
@@ -19770,9 +20110,10 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
         yield Static(
-            self._settings_workspaces_result,
+            "" if self._current_workspace_lifecycle_result() else self._settings_workspaces_result,
             id="settings-workspaces-result",
             classes="settings-status-row",
+            markup=False,
         )
         if getattr(self, "_settings_workspace_archive_receipt", None) is not None:
             with Horizontal(classes="settings-input-row"):
@@ -19848,6 +20189,7 @@ class SettingsScreen(BaseAppScreen):
                 yield Button(
                     "Restore workspace", id="settings-workspace-unarchive", compact=True
                 )
+                yield self._workspace_lifecycle_result_widget()
                 return
             with Horizontal(classes="settings-input-row"):
                 yield Input(
@@ -19865,6 +20207,7 @@ class SettingsScreen(BaseAppScreen):
                     "Set active", id="settings-workspace-set-active", compact=True
                 )
             yield Button("Archive", id="settings-workspace-archive", compact=True)
+            yield self._workspace_lifecycle_result_widget()
             yield from self._render_workspace_folder_bindings(
                 registry, record.workspace_id
             )
@@ -19880,129 +20223,31 @@ class SettingsScreen(BaseAppScreen):
         registry: LocalWorkspaceRegistryService,
         workspace_id: str,
     ) -> ComposeResult:
-        """Render the per-workspace change-review toggle (TASK-1979).
+        """Render independently observed consent without rebuilding workspace drafts."""
+        from ...Widgets.Settings_Widgets.workspace_change_review import (
+            WorkspaceChangeReviewPanel,
+        )
+        from ...Workspaces.change_tracking import ShadowRepoService
 
-        Honest availability: without a git binary the feature is absent,
-        so the row states the reason instead of offering a dead toggle.
-        Copy stays monochrome per the pane's conventions.
-        """
-        yield Static("Change review (post-run diffs)", classes="destination-section")
-        from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+        service = getattr(self.app_instance, "change_review_consent_service", None)
 
-        if not ShadowRepoService().available:
-            yield Static(
-                "Change review needs git — install git to enable.",
-                id="settings-workspace-change-review-unavailable",
-                classes="settings-detail-row",
-            )
-            return
-        service = getattr(
-            self.app_instance,
-            "change_review_consent_service",
-            None,
-        )
-        if service is None:
-            yield Static(
-                "Change Review state could not be read; chat and tools continue.",
-                id="settings-workspace-change-review-unavailable",
-                classes="settings-detail-row",
-            )
-            return
-        try:
-            status = service.status(workspace_id)
-        except Exception:  # noqa: BLE001 -- Settings must fail capability off
-            yield Static(
-                "Change Review state could not be read; chat and tools continue.",
-                id="settings-workspace-change-review-unavailable",
-                classes="settings-detail-row",
-            )
-            return
-        if status.capability.state is ChangeReviewState.DISABLED:
-            yield Static(
-                "Change review is disabled globally ([change_review] enabled = false).",
-                id="settings-workspace-change-review-global-off",
-                classes="settings-detail-row",
-            )
-            return
-        if (
-            status.capability.state is ChangeReviewState.UNAVAILABLE
-            or status.consent.state is ChangeReviewState.UNAVAILABLE
-        ):
-            yield Static(
-                "Change Review state could not be read; chat and tools continue.",
-                id="settings-workspace-change-review-unavailable",
-                classes="settings-detail-row",
-            )
-            return
-        from tldw_chatbook.Workspaces.change_bounds import (
-            DEFAULT_RETENTION_DAYS,
-            change_review_setting,
-        )
+        def read_status():
+            if service is None:
+                return None
+            try:
+                with _workspace_worker_connection(self):
+                    return service.status(workspace_id)
+            except Exception:  # noqa: BLE001 -- unreadable consent stays unavailable
+                return None
 
-        retention_days = change_review_setting(
-            "retention_days",
-            DEFAULT_RETENTION_DAYS,
+        yield WorkspaceChangeReviewPanel(
+            read_status=read_status,
+            toggle=lambda expected, enabled: service.toggle(
+                workspace_id, expected=expected, enabled=enabled
+            ),
+            retry=lambda: service.retry_failed_roots(workspace_id),
+            git_available=ShadowRepoService().available,
         )
-        yield Static(
-            "Change Review stores shadow Git history in application data, "
-            f"including file contents, for {retention_days} days by default. "
-            "Disabling stops new review snapshots but does not erase existing history.",
-            id="settings-workspace-change-review-retention",
-            classes="settings-detail-row",
-        )
-        enabled = status.consent.state is ChangeReviewState.ENABLED
-        yield Static(
-            "Tracking enabled: agent runs record per-turn diffs for this "
-            "workspace's folders."
-            if enabled
-            else "Tracking disabled for this workspace: runs record no "
-            "diffs and offer no review.",
-            id="settings-workspace-change-review-state",
-            classes="settings-detail-row",
-        )
-        if enabled:
-            preparing = sum(
-                root.state is RootReadinessState.PREPARING for root in status.roots
-            )
-            failed = sum(
-                root.state is RootReadinessState.FAILED for root in status.roots
-            )
-            ready = sum(
-                root.state is RootReadinessState.READY for root in status.roots
-            )
-            if preparing:
-                yield Static(
-                    f"Preparing change history for {preparing} folder(s) in the "
-                    "background; chat and tools continue.",
-                    id="settings-workspace-change-review-preparing",
-                    classes="settings-detail-row",
-                )
-            if failed:
-                yield Static(
-                    f"Change history preparation failed for {failed} folder(s); "
-                    "chat and tools continue.",
-                    id="settings-workspace-change-review-failed",
-                    classes="settings-detail-row",
-                )
-                yield Button(
-                    "Retry failed preparation",
-                    id="settings-workspace-change-review-retry",
-                    compact=True,
-                )
-            if ready:
-                yield Static(
-                    f"Change history ready for {ready} folder(s).",
-                    id="settings-workspace-change-review-ready",
-                    classes="settings-detail-row",
-                )
-        toggle = Button(
-            "Disable change review" if enabled else "Enable change review",
-            id="settings-workspace-change-review-toggle",
-            compact=True,
-        )
-        setattr(toggle, "change_review_expected", status.consent)
-        setattr(toggle, "change_review_target_enabled", not enabled)
-        yield toggle
 
     def _render_workspace_default_assistant(
         self,
@@ -20056,8 +20301,14 @@ class SettingsScreen(BaseAppScreen):
             status,
             id="settings-workspace-assistant-status",
             classes="settings-detail-row",
+            markup=False,
         )
 
+        from ...Widgets.workspace_persona_default import WORKSPACE_PERSONA_PAGE_SIZE
+
+        if self._settings_workspace_persona_page[0] != workspace_id:
+            self._settings_workspace_persona_page = (workspace_id, 0)
+        persona_offset = self._settings_workspace_persona_page[1]
         persona_options: list[Option] = []
         highlight_persona = (
             pending or {}
@@ -20065,11 +20316,27 @@ class SettingsScreen(BaseAppScreen):
             effective.assistant_id if effective.status == "available" else None
         )
         try:
-            persona_records = personas.list_persona_profiles()
+            persona_records = personas.list_persona_profiles(
+                limit=WORKSPACE_PERSONA_PAGE_SIZE + 1, offset=persona_offset
+            )
         except Exception:  # noqa: BLE001 -- picker degrades, never blocks
             persona_records = []
-        for index, persona in enumerate(persona_records or []):
-            if not isinstance(persona, dict):
+        persona_records = list(persona_records or [])
+        has_next_persona_page = len(persona_records) > WORKSPACE_PERSONA_PAGE_SIZE
+        persona_records = persona_records[:WORKSPACE_PERSONA_PAGE_SIZE]
+        if highlight_persona and not any(
+            isinstance(record, dict) and record.get("id") == highlight_persona
+            for record in persona_records
+        ):
+            selected = lookup(highlight_persona)
+            if (
+                selected is not None
+                and not selected.get("deleted")
+                and selected.get("id") == highlight_persona
+            ):
+                persona_records.append(selected)
+        for persona in persona_records:
+            if not isinstance(persona, dict) or persona.get("deleted"):
                 continue
             persona_id = str(persona.get("id") or "")
             if not persona_id:
@@ -20089,18 +20356,45 @@ class SettingsScreen(BaseAppScreen):
                 persona_picker.highlighted = index
                 break
         yield persona_picker
+        if persona_offset or has_next_persona_page:
+            yield Static(
+                f"Persona page {persona_offset // WORKSPACE_PERSONA_PAGE_SIZE + 1}",
+                classes="settings-detail-row",
+            )
+            yield Button(
+                "Previous Personas",
+                id="settings-workspace-persona-previous",
+                compact=True,
+                disabled=persona_offset == 0,
+            )
+            yield Button(
+                "Next Personas",
+                id="settings-workspace-persona-next",
+                compact=True,
+                disabled=not has_next_persona_page,
+            )
 
-        armed = self._settings_workspace_memory_armed == workspace_id
+        confirmation = self._settings_workspace_memory_armed
+        armed = confirmation is not None and confirmation.workspace_id == workspace_id
         if armed:
             memory_label = "Confirm read_write?"
         elif pending is not None:
             memory_label = f"Apply (memory: {pending.get('memory_mode', 'read_only')})"
-        elif effective.status == "available" and effective.persona_memory_mode == "read_write":
+        elif (
+            effective.status == "available"
+            and effective.persona_memory_mode == "read_write"
+        ):
             memory_label = "Set memory: read_only"
         else:
             memory_label = "Set memory: read_write"
-        yield Button(
-            memory_label, id="settings-workspace-memory-toggle", compact=True
+        yield Button(memory_label, id="settings-workspace-memory-toggle", compact=True)
+
+        result = self._settings_workspace_assistant_result
+        yield _SettingsWorkspaceAssistantResult(
+            result[2] if result and result[0] == workspace_id else "",
+            id="settings-workspace-assistant-result",
+            classes="settings-status-row",
+            markup=False,
         )
 
         store = self._settings_workspace_permission_store()
@@ -20226,6 +20520,7 @@ class SettingsScreen(BaseAppScreen):
                 f"{binding.locator} [{access}] {freshness}",
                 id=f"settings-workspace-folder-{binding.binding_id}",
                 classes="settings-detail-row",
+                markup=False,
             )
             with Horizontal(classes="settings-input-row"):
                 toggle_button = Button(
@@ -20244,6 +20539,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 remove_button.binding_id = binding.binding_id
                 yield remove_button
+            yield self._workspace_folder_result_widget(workspace_id, binding.binding_id)
         with Horizontal(classes="settings-input-row"):
             yield Input(
                 placeholder="~/path/to/folder",
@@ -20251,10 +20547,177 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-compact-input",
             )
             yield Button("Add folder", id="settings-workspace-folder-add", compact=True)
+        yield self._workspace_folder_result_widget(workspace_id)
 
-    def _set_settings_workspaces_result(self, text: str) -> None:
+    def _workspace_folder_result_widget(
+        self, workspace_id: str, binding_id: str | None = None
+    ) -> Static:
+        """Keep the latest folder outcome next to the action that produced it."""
+        result = self._settings_workspace_folder_result
+        text = result[2] if result and result[:2] == (workspace_id, binding_id) else ""
+        suffix = f"-{binding_id}" if binding_id else ""
+        return Static(
+            text,
+            id=f"settings-workspace-folder-result{suffix}",
+            classes="settings-status-row settings-workspace-folder-result",
+            markup=False,
+        )
+
+    def _set_workspace_folder_result(
+        self, text: str, binding_id: str | None = None
+    ) -> None:
+        """Publish folder feedback without recomposing a rejected input draft."""
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        self._settings_workspace_folder_result = (workspace_id, binding_id, text)
+        for result in self.query(".settings-workspace-folder-result"):
+            result.update("")
+        suffix = f"-{binding_id}" if binding_id else ""
+        self._set_static_text(f"#settings-workspace-folder-result{suffix}", text)
+        self.call_after_refresh(
+            self._reveal_workspace_folder_result, self._settings_workspace_folder_result
+        )
+
+    def _reveal_workspace_folder_result(
+        self, result: tuple[str, str | None, str]
+    ) -> None:
+        """Reveal the outcome only while its folder action still owns focus."""
+        if not self.is_attached or self._settings_workspace_folder_result != result:
+            return
+        workspace_id, binding_id, _text = result
+        if self._settings_selected_workspace_id != workspace_id:
+            return
+        targets = (
+            (
+                f"settings-workspace-folder-toggle-{binding_id}",
+                f"settings-workspace-folder-remove-{binding_id}",
+            )
+            if binding_id
+            else ("settings-workspace-folder-path", "settings-workspace-folder-add")
+        )
+        if getattr(self.app.focused, "id", None) not in targets:
+            return
+        suffix = f"-{binding_id}" if binding_id else ""
+        try:
+            self.query_one(f"#settings-workspace-folder-result{suffix}").scroll_visible(
+                animate=False
+            )
+        except QueryError:
+            pass
+
+    def _set_workspace_assistant_result(
+        self,
+        workspace_id: str,
+        text: str,
+        *,
+        control_id: str = "settings-workspace-memory-toggle",
+    ) -> None:
+        """Keep assistant feedback beside its control and on its own workspace."""
+        if self._settings_selected_workspace_id != workspace_id:
+            return
+        self._settings_workspace_assistant_result = (workspace_id, control_id, text)
+        self._set_static_text("#settings-workspace-assistant-result", text)
+        self.call_after_refresh(
+            self._reveal_workspace_assistant_result,
+            self._settings_workspace_assistant_result,
+        )
+
+    def _reveal_workspace_assistant_result(self, result: tuple[str, str, str]) -> None:
+        """Reveal a current receipt after its action, without moving newer focus."""
+        if (
+            not self.is_attached
+            or self._category_pane_swap_pending
+            or self._settings_workspace_assistant_result != result
+            or self._settings_selected_workspace_id != result[0]
+        ):
+            return
+        focused = self.app.focused
+        if not focus_is_on_screen(focused, self) or focused.id != result[1]:
+            return
+        try:
+            receipt = self.query_one("#settings-workspace-assistant-result")
+        except QueryError:
+            return
+        parent = receipt.parent
+        if parent is None or focused.parent is not parent:
+            return
+        siblings = list(parent.children)
+        if siblings.index(receipt) != siblings.index(focused) + 1:
+            parent.move_child(receipt, after=focused)
+            self.call_after_refresh(self._reveal_workspace_assistant_result, result)
+            return
+        # The guard runs after layout; don't queue another unguarded scroll.
+        if receipt.size:
+            receipt.scroll_visible(animate=False, immediate=True)
+
+    def _current_workspace_lifecycle_result(self) -> tuple[str, str, str] | None:
+        result = self._settings_workspace_lifecycle_result
+        if (
+            result is not None
+            and result[0] == self._settings_selected_workspace_id
+            and result[2] == self._settings_workspaces_result
+        ):
+            return result
+        return None
+
+    def _workspace_lifecycle_result_widget(self) -> Static:
+        result = self._current_workspace_lifecycle_result()
+        return _SettingsWorkspaceLifecycleResult(
+            result[2] if result else "",
+            id="settings-workspace-lifecycle-result",
+            classes="settings-status-row",
+            markup=False,
+        )
+
+    def _reveal_workspace_lifecycle_result(self) -> None:
+        result = self._current_workspace_lifecycle_result()
+        if not result or not self.is_attached or self.app.screen is not self:
+            return
+        focused = self.app.focused
+        if not focus_is_on_screen(focused, self) or focused.id != result[1]:
+            return
+        try:
+            receipt = self.query_one("#settings-workspace-lifecycle-result")
+        except QueryError:
+            return
+        parent = receipt.parent
+        if parent is None:
+            return
+        anchor = focused
+        while anchor.parent is not parent:
+            anchor = anchor.parent
+            if anchor is None or anchor is self:
+                return
+        children = list(parent.children)
+        if children.index(receipt) != children.index(anchor) + 1:
+            parent.move_child(receipt, after=anchor)
+            self.call_after_refresh(self._reveal_workspace_lifecycle_result)
+            return
+        receipt.scroll_visible(animate=False, immediate=True)
+
+    def _set_settings_workspaces_result(
+        self, text: str, *, control_id: str | None = None
+    ) -> None:
         self._settings_workspaces_result = text
-        self._set_static_text("#settings-workspaces-result", text)
+        workspace_id = self._settings_selected_workspace_id
+        self._settings_workspace_lifecycle_result = (
+            (workspace_id, control_id, text) if workspace_id and control_id else None
+        )
+        local = self._current_workspace_lifecycle_result()
+        self._set_static_text("#settings-workspaces-result", "" if local else text)
+        self._set_static_text("#settings-workspace-lifecycle-result", text if local else "")
+        if local:
+            self.call_after_refresh(self._reveal_workspace_lifecycle_result)
+
+    def _discard_workspace_memory_confirmation(
+        self, *, invalidate_first_bind: bool = True
+    ) -> None:
+        if invalidate_first_bind:
+            self._settings_workspace_first_bind_intent = None
+        if self._settings_workspace_memory_armed is not None:
+            self._settings_workspace_memory_armed = None
+            self._settings_workspace_assistant_result = None
 
     def _refresh_settings_workspaces_pane(self) -> None:
         """Re-render the Workspaces category via the screen's existing
@@ -20274,6 +20737,23 @@ class SettingsScreen(BaseAppScreen):
         go stale or get wiped by the recompose.
         """
         self.mutate_reactive(SettingsScreen.active_category)
+        if self._current_workspace_lifecycle_result() is not None:
+            self._after_category_panes(
+                self.call_after_refresh, self._reveal_workspace_lifecycle_result
+            )
+        if self._settings_workspace_assistant_result is not None:
+            self._after_category_panes(
+                self.call_after_refresh,
+                self._reveal_workspace_assistant_result,
+                self._settings_workspace_assistant_result,
+            )
+        if self._settings_workspace_folder_result is not None:
+            # Recomposition can move the retained target before its first layout.
+            self._after_category_panes(
+                self.call_after_refresh,
+                self._reveal_workspace_folder_result,
+                self._settings_workspace_folder_result,
+            )
 
     def _speech_tts_cached_runtime_state(
         self,
@@ -20516,6 +20996,7 @@ class SettingsScreen(BaseAppScreen):
             yield ToolProfilesPanel(
                 self._tool_profiles_listing,
                 result=self._tool_profiles_result,
+                result_profile_id=self._tool_profiles_result_profile_id,
                 id="settings-tool-profiles-panel",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
@@ -23241,6 +23722,7 @@ class SettingsScreen(BaseAppScreen):
             # (re)composed card at a workspace id a later visit's list may
             # not even show (e.g. after an archive elsewhere).
             self._settings_selected_workspace_id = None
+            self._discard_workspace_memory_confirmation()
         if (
             self.active_category == SettingsCategoryId.THEME.value
             and category_value != SettingsCategoryId.THEME.value
@@ -24392,8 +24874,10 @@ class SettingsScreen(BaseAppScreen):
         workspace_id = button_id.removeprefix(prefix)
         if not workspace_id:
             return
+        self._discard_workspace_memory_confirmation()
         self._settings_selected_workspace_id = workspace_id
         self._settings_workspaces_result = ""
+        self._settings_workspace_assistant_result = None
         self._refresh_settings_workspaces_pane()
 
     @on(Checkbox.Changed, "#settings-workspaces-show-archived")
@@ -24487,9 +24971,13 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.rename_workspace(workspace_id, rename_input.value)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_settings_workspaces_result(
+                str(exc), control_id="settings-workspace-rename-apply"
+            )
             return
-        self._settings_workspaces_result = ""
+        self._set_settings_workspaces_result(
+            "Workspace renamed.", control_id="settings-workspace-rename-apply"
+        )
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-set-active")
@@ -24504,9 +24992,13 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.set_active_workspace(workspace_id)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_settings_workspaces_result(
+                str(exc), control_id="settings-workspace-set-active"
+            )
             return
-        self._settings_workspaces_result = ""
+        self._set_settings_workspaces_result(
+            "This workspace is now active.", control_id="settings-workspace-archive"
+        )
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-archive")
@@ -24645,7 +25137,7 @@ class SettingsScreen(BaseAppScreen):
 
             dialog = ConfirmationDialog(
                 title="Archive workspace?",
-                message=(
+                message=Text(
                     f"Archive {record.name}? Its conversations stay saved and "
                     "remain visible in Library; the workspace disappears from "
                     "the active switcher list and the Console browser. Recover it using Show archived."
@@ -24755,6 +25247,10 @@ class SettingsScreen(BaseAppScreen):
             if _visible():
                 if self._settings_selected_workspace_id == selected_id:
                     self._settings_selected_workspace_id = restored.workspace_id
+                    self._set_settings_workspaces_result(
+                        self._settings_workspaces_result,
+                        control_id="settings-workspace-set-active",
+                    )
                 self._refresh_settings_workspaces_pane()
 
         self.app.run_worker(_undo(), group="settings-workspace-undo", exclusive=True)
@@ -24793,13 +25289,16 @@ class SettingsScreen(BaseAppScreen):
                 )
             except WorkspaceRegistryServiceError as exc:
                 if _current():
-                    self._set_settings_workspaces_result(str(exc))
+                    self._set_settings_workspaces_result(
+                        str(exc), control_id="settings-workspace-unarchive"
+                    )
                 return
             except Exception:
                 logger.exception("Unable to restore Settings workspace")
                 if _current():
                     self._set_settings_workspaces_result(
-                        "Workspace could not be restored. Retry Restore."
+                        "Workspace could not be restored. Retry Restore.",
+                        control_id="settings-workspace-unarchive",
                     )
                 return
             if (
@@ -24810,9 +25309,10 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_workspace_archive_receipt = None
             if not _current():
                 return
-            self._settings_workspaces_result = (
+            self._set_settings_workspaces_result(
                 f"Restored {restored.name}. Active workspace unchanged; "
-                "choose Set active to switch."
+                "choose Set active to switch.",
+                control_id="settings-workspace-set-active",
             )
             self._refresh_settings_workspaces_pane()
 
@@ -24836,74 +25336,6 @@ class SettingsScreen(BaseAppScreen):
             _restore(), group="settings-workspace-restore", exclusive=True
         )
 
-    @on(Button.Pressed, "#settings-workspace-change-review-toggle")
-    def _settings_workspace_toggle_change_review(self, event: Button.Pressed) -> None:
-        """Apply the exact revision-bound intent rendered on the button."""
-        event.stop()
-        workspace_id = self._settings_selected_workspace_id
-        if not workspace_id:
-            return
-        service = getattr(
-            self.app_instance,
-            "change_review_consent_service",
-            None,
-        )
-        expected = getattr(event.button, "change_review_expected", None)
-        target_enabled = getattr(
-            event.button,
-            "change_review_target_enabled",
-            None,
-        )
-        if service is None or expected is None or not isinstance(target_enabled, bool):
-            return
-        try:
-            service.toggle(
-                workspace_id,
-                expected=expected,
-                enabled=target_enabled,
-            )
-        except ChangeReviewStateConflict:
-            self._set_settings_workspaces_result(
-                "Change Review changed elsewhere; refreshed current state."
-            )
-            self._refresh_settings_workspaces_pane()
-            return
-        except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
-            self._refresh_settings_workspaces_pane()
-            return
-        except RuntimeError:
-            self._set_settings_workspaces_result(
-                "Change Review state could not be changed; refreshed current state."
-            )
-            self._refresh_settings_workspaces_pane()
-            return
-        self._settings_workspaces_result = ""
-        self._refresh_settings_workspaces_pane()
-
-    @on(Button.Pressed, "#settings-workspace-change-review-retry")
-    def _settings_workspace_retry_change_review(self, event: Button.Pressed) -> None:
-        """Retry failed background root preparation once."""
-        event.stop()
-        workspace_id = self._settings_selected_workspace_id
-        service = getattr(
-            self.app_instance,
-            "change_review_consent_service",
-            None,
-        )
-        if not workspace_id or service is None:
-            return
-        try:
-            scheduled = service.retry_failed_roots(workspace_id)
-        except Exception:  # noqa: BLE001 -- retry failure stays non-blocking
-            scheduled = 0
-        self._set_settings_workspaces_result(
-            f"Retry scheduled for {scheduled} folder(s)."
-            if scheduled
-            else "No failed Change Review folders were ready to retry."
-        )
-        self._refresh_settings_workspaces_pane()
-
     @on(Button.Pressed, "#settings-workspace-folder-add")
     def _settings_workspace_add_folder(self, event: Button.Pressed) -> None:
         """Bind a folder as a read-only file-tool access root (task 10)."""
@@ -24918,9 +25350,9 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.add_folder_binding(workspace_id, raw)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_folder_result(str(exc))
             return
-        self._set_settings_workspaces_result("Folder added (read-only).")
+        self._set_workspace_folder_result("Folder added (read-only).")
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, ".settings-workspace-folder-toggle")
@@ -24955,9 +25387,14 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.set_folder_binding_access(binding_id, allow_write=allow_write)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_folder_result(str(exc), binding_id)
             return
-        self._settings_workspaces_result = ""
+        self._set_workspace_folder_result(
+            "Folder access: read-write."
+            if allow_write
+            else "Folder access: read-only.",
+            binding_id,
+        )
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, ".settings-workspace-folder-remove")
@@ -24973,10 +25410,36 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.remove_runtime_binding(binding_id)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_folder_result(str(exc), binding_id)
             return
-        self._settings_workspaces_result = ""
+        self._set_workspace_folder_result("Folder removed.")
         self._refresh_settings_workspaces_pane()
+        # Query the replacement: focus() on the old Add is queued and may run
+        # during teardown, leaving focus attached to a removed control.
+        self._after_category_panes(
+            self._restore_category_pane_focus, "settings-workspace-folder-add"
+        )
+
+    @on(Button.Pressed, "#settings-workspace-persona-previous")
+    @on(Button.Pressed, "#settings-workspace-persona-next")
+    def _change_workspace_persona_page(self, event: Button.Pressed) -> None:
+        """Browse personas without staging a choice or changing memory consent."""
+        event.stop()
+        if event.button.disabled or not event.button.is_attached:
+            return
+        from ...Widgets.workspace_persona_default import WORKSPACE_PERSONA_PAGE_SIZE
+
+        workspace_id, offset = self._settings_workspace_persona_page
+        if workspace_id != self._settings_selected_workspace_id:
+            return
+        step = -1 if event.button.id == "settings-workspace-persona-previous" else 1
+        self._settings_workspace_persona_page = (
+            workspace_id, max(0, offset + step * WORKSPACE_PERSONA_PAGE_SIZE)
+        )
+        self._refresh_settings_workspaces_pane()
+        self._after_category_panes(
+            self._restore_category_pane_focus, "settings-workspace-persona-picker"
+        )
 
     @on(OptionList.OptionSelected, "#settings-workspace-persona-picker")
     def handle_workspace_persona_selected(
@@ -24993,12 +25456,6 @@ class SettingsScreen(BaseAppScreen):
         persona_id = str(getattr(event.option, "persona_id", "") or "")
         if not workspace_id or not persona_id:
             return
-        pending = self._settings_workspace_assistant_pending
-        if pending is None or pending.get("workspace_id") != workspace_id:
-            pending = {
-                "workspace_id": workspace_id,
-                "profile_id": None,
-            }
         defaults = getattr(
             getattr(self.app_instance, "workspace_registry_service", None)
             and self.app_instance.workspace_registry_service.get_workspace(
@@ -25007,9 +25464,14 @@ class SettingsScreen(BaseAppScreen):
             "assistant_defaults",
             None,
         )
+        pending = self._settings_workspace_assistant_pending
+        if pending is None or pending.get("workspace_id") != workspace_id:
+            pending = {
+                "workspace_id": workspace_id,
+                "profile_id": getattr(defaults, "tool_policy_profile_id", None),
+            }
         keep_mode = (
-            pending.get("persona_id") == persona_id
-            and pending.get("memory_mode")
+            pending.get("persona_id") == persona_id and pending.get("memory_mode")
         ) or (
             getattr(defaults, "assistant_id", None) == persona_id
             and getattr(defaults, "persona_memory_mode", None)
@@ -25017,9 +25479,11 @@ class SettingsScreen(BaseAppScreen):
         pending["persona_id"] = persona_id
         pending["memory_mode"] = str(keep_mode or "read_only")
         self._settings_workspace_assistant_pending = pending
-        self._settings_workspace_memory_armed = None
-        self._set_settings_workspaces_result(
-            "Persona staged — press the memory button to apply."
+        self._discard_workspace_memory_confirmation()
+        self._set_workspace_assistant_result(
+            workspace_id,
+            "Persona staged — press the memory button to apply.",
+            control_id="settings-workspace-persona-picker",
         )
         self._refresh_settings_workspaces_pane()
 
@@ -25035,31 +25499,53 @@ class SettingsScreen(BaseAppScreen):
             return
         pending = self._settings_workspace_assistant_pending
         if pending is None or pending.get("workspace_id") != workspace_id:
+            registry = getattr(self.app_instance, "workspace_registry_service", None)
+            record = registry.get_workspace(workspace_id) if registry else None
+            defaults = getattr(record, "assistant_defaults", None)
             pending = {
                 "workspace_id": workspace_id,
-                "persona_id": None,
-                "memory_mode": "read_only",
+                "persona_id": getattr(defaults, "assistant_id", None),
+                "memory_mode": getattr(defaults, "persona_memory_mode", "read_only"),
             }
         pending["profile_id"] = profile_id
         self._settings_workspace_assistant_pending = pending
-        self._settings_workspace_memory_armed = None
-        self._set_settings_workspaces_result(
-            "Profile staged — select a persona and press apply."
+        self._discard_workspace_memory_confirmation()
+        self._set_workspace_assistant_result(
+            workspace_id,
+            "Profile staged — press apply."
+            if pending.get("persona_id")
+            else "Profile staged — select a persona and press apply.",
+            control_id="settings-workspace-profile-picker",
         )
         self._refresh_settings_workspaces_pane()
 
-    @work(
-        group="settings-workspace-assistant-apply",
-        exclusive=True,
-        exit_on_error=False,
-    )
-    async def _settings_workspace_apply_assistant_default(
+    def _settings_workspace_apply_assistant_default(
         self,
         registry: LocalWorkspaceRegistryService,
         workspace_id: str,
         persona_id: str,
         memory_mode: str,
         profile_id: str | None,
+    ) -> None:
+        """Capture the Apply intent before its worker can yield to navigation."""
+        intent = self._settings_workspace_first_bind_intent = object()
+        self._run_workspace_assistant_apply(
+            registry, workspace_id, persona_id, memory_mode, profile_id, intent
+        )
+
+    @work(
+        group="settings-workspace-assistant-apply",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    async def _run_workspace_assistant_apply(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+        persona_id: str,
+        memory_mode: str,
+        profile_id: str | None,
+        intent: object,
     ) -> None:
         """Apply staged defaults, reviewing one imported first bind if required."""
         from ...Tool_Packs.binding import (
@@ -25079,6 +25565,16 @@ class SettingsScreen(BaseAppScreen):
             tool_policy_profile_id=profile_id or None,
         )
         confirm_read_write = memory_mode == "read_write"
+
+        def review_is_current() -> bool:
+            return (
+                self._settings_workspace_first_bind_intent is intent
+                and self.is_attached
+                and self.app.screen is self
+                and self._active_category_id() == SettingsCategoryId.WORKSPACES
+                and self._settings_selected_workspace_id == workspace_id
+            )
+
         try:
             await asyncio.to_thread(
                 registry.set_assistant_defaults,
@@ -25087,10 +25583,12 @@ class SettingsScreen(BaseAppScreen):
                 confirm_read_write=confirm_read_write,
             )
         except ToolProfileConfirmationRequired:
+            if not review_is_current():
+                return
             service = getattr(self.app_instance, "tool_pack_service", None)
             if service is None:
-                self._set_settings_workspaces_result(
-                    "Tool Profile bind unavailable · service_unavailable"
+                self._set_workspace_assistant_result(
+                    workspace_id, "Tool Profile bind unavailable · service_unavailable"
                 )
                 return
             try:
@@ -25106,26 +25604,32 @@ class SettingsScreen(BaseAppScreen):
                 )
                 if type(candidate) is not ToolProfileBindingReview:
                     raise ToolPackError("bind", "confirmation_invalid")
-                if self._settings_selected_workspace_id != workspace_id:
-                    raise ToolPackError("bind", "confirmation_stale")
+                if not review_is_current():
+                    return
 
-                confirmed = await self.app.push_screen_wait(
-                    ToolProfileFirstBindReviewModal(candidate, intended)
-                )
+                modal = ToolProfileFirstBindReviewModal(candidate, intended)
+                self._settings_workspace_first_bind_modal = modal
+                try:
+                    confirmed = await self.app.push_screen_wait(modal)
+                finally:
+                    if self._settings_workspace_first_bind_modal is modal:
+                        self._settings_workspace_first_bind_modal = None
+                if not review_is_current():
+                    return
                 if confirmed is not candidate:
-                    self._set_settings_workspaces_result(
-                        "Tool Profile bind cancelled; no assistant defaults changed."
+                    self._set_workspace_assistant_result(
+                        workspace_id,
+                        "Tool Profile bind cancelled; no assistant defaults changed.",
                     )
                     return
-                if self._settings_selected_workspace_id != workspace_id:
-                    raise ToolPackError("bind", "confirmation_stale")
-
                 token = await asyncio.to_thread(
                     service.confirm_first_bind,
                     candidate,
                 )
                 if type(token) is not str or not token:
                     raise ToolPackError("bind", "confirmation_invalid")
+                if not review_is_current():
+                    return
                 await asyncio.to_thread(
                     registry.set_assistant_defaults,
                     workspace_id,
@@ -25134,29 +25638,32 @@ class SettingsScreen(BaseAppScreen):
                     tool_profile_confirmation_token=token,
                 )
             except ToolPackError as exc:
-                self._set_settings_workspaces_result(
-                    f"Tool Profile bind failed · {exc.category}"
-                )
+                if review_is_current():
+                    self._set_workspace_assistant_result(
+                        workspace_id, f"Tool Profile bind failed · {exc.category}"
+                    )
                 return
             except WorkspaceRegistryServiceError as exc:
-                self._set_settings_workspaces_result(str(exc))
+                if review_is_current():
+                    self._set_workspace_assistant_result(workspace_id, str(exc))
                 return
             except Exception:  # noqa: BLE001 - keep optional UI failure bounded
-                self._set_settings_workspaces_result(
-                    "Default assistant apply failed · operation_failed"
-                )
+                if review_is_current():
+                    self._set_workspace_assistant_result(
+                        workspace_id, "Default assistant apply failed · operation_failed"
+                    )
                 return
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_assistant_result(workspace_id, str(exc))
             return
         except ToolPackError as exc:
-            self._set_settings_workspaces_result(
-                f"Tool Profile bind failed · {exc.category}"
+            self._set_workspace_assistant_result(
+                workspace_id, f"Tool Profile bind failed · {exc.category}"
             )
             return
         except Exception:  # noqa: BLE001 - Settings must surface a stable outcome
-            self._set_settings_workspaces_result(
-                "Default assistant apply failed · operation_failed"
+            self._set_workspace_assistant_result(
+                workspace_id, "Default assistant apply failed · operation_failed"
             )
             return
         pending = self._settings_workspace_assistant_pending
@@ -25168,9 +25675,11 @@ class SettingsScreen(BaseAppScreen):
         )
         if pending is not None and pending_matches:
             self._settings_workspace_assistant_pending = None
+        confirmation = self._settings_workspace_memory_armed
         if (
             pending_matches
-            and self._settings_workspace_memory_armed == workspace_id
+            and confirmation is not None
+            and confirmation.workspace_id == workspace_id
         ):
             self._settings_workspace_memory_armed = None
         if self._settings_selected_workspace_id != workspace_id or not pending_matches:
@@ -25186,10 +25695,12 @@ class SettingsScreen(BaseAppScreen):
                     else None
                 )
                 if row is not None and row.first_bind_confirmation_required:
-                    status += " Saved, but marker cleanup failed; a later use may ask again."
+                    status += (
+                        " Saved, but marker cleanup failed; a later use may ask again."
+                    )
             except Exception:
                 pass
-        self._set_settings_workspaces_result(status)
+        self._set_workspace_assistant_result(workspace_id, status)
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-memory-toggle")
@@ -25217,34 +25728,58 @@ class SettingsScreen(BaseAppScreen):
         if pending is not None and pending.get("workspace_id") != workspace_id:
             pending = None
 
-        if self._settings_workspace_memory_armed == workspace_id:
-            persona_id = str(
-                (pending or {}).get("persona_id")
-                or getattr(defaults, "assistant_id", "")
-                or ""
+        persona_id = str(
+            (pending or {}).get("persona_id")
+            or getattr(defaults, "assistant_id", "")
+            or ""
+        )
+        intended = (
+            WorkspaceAssistantDefaults(
+                assistant_id=persona_id,
+                persona_memory_mode="read_write",
+                tool_policy_profile_id=(
+                    pending.get("profile_id")
+                    if pending is not None and pending.get("persona_id")
+                    else getattr(defaults, "tool_policy_profile_id", None)
+                ) or None,
             )
-            if not persona_id:
+            if persona_id else None
+        )
+        confirmation = self._settings_workspace_memory_armed
+        if confirmation is not None:
+            if (
+                confirmation.workspace_id != workspace_id
+                or confirmation.saved_defaults != defaults
+                or confirmation.intended_defaults != intended
+            ):
                 self._settings_workspace_memory_armed = None
-                self._set_settings_workspaces_result("Select a persona first.")
+                self._set_workspace_assistant_result(
+                    workspace_id,
+                    "Assistant defaults changed. Review the current selection "
+                    "and press again to start a new confirmation.",
+                )
                 self._refresh_settings_workspaces_pane()
                 return
             self._settings_workspace_apply_assistant_default(
                 registry,
                 workspace_id,
-                persona_id,
+                confirmation.intended_defaults.assistant_id,
                 "read_write",
-                (pending or {}).get("profile_id")
-                or getattr(defaults, "tool_policy_profile_id", None),
+                confirmation.intended_defaults.tool_policy_profile_id,
             )
             return
 
         if pending is not None and pending.get("persona_id"):
             if str(pending.get("memory_mode", "read_only")) == "read_write":
-                self._settings_workspace_memory_armed = workspace_id
+                assert intended is not None
+                self._settings_workspace_memory_armed = _SettingsWorkspaceMemoryConfirmation(
+                    workspace_id, defaults, intended
+                )
                 event.button.label = "Confirm read_write?"
-                self._set_settings_workspaces_result(
+                self._set_workspace_assistant_result(
+                    workspace_id,
                     "read_write memory widens what this persona may "
-                    "remember across sessions — press again to confirm."
+                    "remember across sessions — press again to confirm.",
                 )
             else:
                 self._settings_workspace_apply_assistant_default(
@@ -25256,7 +25791,10 @@ class SettingsScreen(BaseAppScreen):
                 )
             return
 
-        if defaults is not None and getattr(defaults, "assistant_kind", "") == "persona":
+        if (
+            defaults is not None
+            and getattr(defaults, "assistant_kind", "") == "persona"
+        ):
             if defaults.persona_memory_mode == "read_write":
                 self._settings_workspace_apply_assistant_default(
                     registry,
@@ -25266,20 +25804,27 @@ class SettingsScreen(BaseAppScreen):
                     getattr(defaults, "tool_policy_profile_id", None),
                 )
             else:
-                self._settings_workspace_memory_armed = workspace_id
+                assert intended is not None
+                self._settings_workspace_memory_armed = _SettingsWorkspaceMemoryConfirmation(
+                    workspace_id, defaults, intended
+                )
                 event.button.label = "Confirm read_write?"
-                self._set_settings_workspaces_result(
+                self._set_workspace_assistant_result(
+                    workspace_id,
                     "read_write memory widens what this persona may "
-                    "remember across sessions — press again to confirm."
+                    "remember across sessions — press again to confirm.",
                 )
             return
 
-        self._set_settings_workspaces_result("Select a persona below first.")
+        self._set_workspace_assistant_result(
+            workspace_id, "Select a persona below first."
+        )
 
     @on(Button.Pressed, "#settings-workspace-assistant-clear")
     def _settings_workspace_clear_assistant(self, event: Button.Pressed) -> None:
         """Remove the selected workspace's default assistant (Task 10)."""
         event.stop()
+        self._settings_workspace_first_bind_intent = None
         workspace_id = self._settings_selected_workspace_id
         if not workspace_id:
             return
@@ -25289,11 +25834,17 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.clear_assistant_defaults(workspace_id)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_assistant_result(
+                workspace_id, str(exc), control_id="settings-workspace-assistant-clear"
+            )
             return
         self._settings_workspace_assistant_pending = None
         self._settings_workspace_memory_armed = None
-        self._set_settings_workspaces_result("Default assistant cleared.")
+        self._set_workspace_assistant_result(
+            workspace_id,
+            "Default assistant cleared.",
+            control_id="settings-workspace-assistant-clear",
+        )
         self._refresh_settings_workspaces_pane()
 
     @on(Input.Changed, "#settings-category-search")
@@ -26692,6 +27243,13 @@ class SettingsScreen(BaseAppScreen):
         self._openai_reconnect_token = None
 
     def on_screen_suspend(self) -> None:
+        if self.app.screen is not self._tool_profile_review_modal:
+            self._tool_profile_review_intent = None
+        self._discard_workspace_memory_confirmation(
+            invalidate_first_bind=(
+                self.app.screen is not self._settings_workspace_first_bind_modal
+            )
+        )
         if not self._openai_reconnect_prompt_open:
             self._discard_openai_reconnect_review()
         if not self._local_model_review_prompt_open:
@@ -30642,6 +31200,8 @@ class SettingsScreen(BaseAppScreen):
                 }
             self._console_settings().update(normalized_console_values)
             self._chat_defaults().update(chat_default_values)
+            if "background_effects" in console_values:
+                self._signal_console_appearance_refresh()
             if "user_display_name" in chat_default_values:
                 self._signal_console_identity_refresh()
             self._settings_drafts.pop(SettingsCategoryId.CONSOLE_BEHAVIOR, None)
@@ -30680,8 +31240,11 @@ class SettingsScreen(BaseAppScreen):
         chat_default_values: Mapping[str, object],
         workbench_scope_fallback: bool = False,
     ) -> None:
+        # An admitted write may finish after Settings has been unmounted.
+        # Retain its host before blocking; the detached screen has no app parent.
+        host = self.app
         saved = self._save_console_behavior_values(console_values, chat_default_values)
-        self.app.call_from_thread(
+        host.call_from_thread(
             self._apply_console_behavior_save_result,
             saved,
             dict(console_values),

@@ -1,0 +1,44 @@
+{
+  "task": "TASK-32781",
+  "base_commit": "30042faa29b22006e8450a34051158bcb49bab53",
+  "tests": {
+    "focus": 19,
+    "governance": 26,
+    "lifetime": 23,
+    "existing_workflows": 30,
+    "export": 9,
+    "css_sync": 5,
+    "final_source_total": 112
+  },
+  "earlier_source_lifecycle_cases": 12,
+  "earlier_source_scope": "Passed after focus repair, before compact-only CSS adjustment; excluded from final-source count.",
+  "ruff": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "before": 114,
+      "after": 114,
+      "introduced": []
+    },
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": {
+      "before": 1,
+      "after": 1,
+      "introduced": []
+    }
+  },
+  "format": "New test, native runner, panel and changed Settings method pass",
+  "backlog_guard": "4132 unique tasks; Windows-compatible paths",
+  "diagnostic_inventory": "No drift: 607 owners, 1407 TASK-492 calls, 55 TASK-31551 calls, 7763 TASK-494 calls, 14 sink files",
+  "native_cells": 4,
+  "captures_rendered_and_inspected": 24,
+  "normal_private_profile_lifecycle": "pass",
+  "source_and_capture_hashes_rechecked": true,
+  "independent_review": "No introduced blocker in focus or compact layout changes",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "55ca7cec2309b105dd55297f99779378edd241d407bf6519eae0b6ac28164f1f",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": "e2d07be454fd3da6e0e5d3a1c0aea394e4f23e360f596a9b11c4583aee1a197a",
+    "tldw_chatbook/css/features/_settings.tcss": "382e41451a525784dcc15045121286c7afb8161d72c1774730300811c3ead942",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "527cfc7921838381e7d83e59d13230a66353c7af5ef13e8b8f230298fec41507",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "04061eee10a1146347ce31223db94b131294ec74324c5a0ca28f21613481e72b",
+    "Tests/UI/test_tool_profile_focus.py": "9107dbaf55978ad0e9671dd82372814f2aa2f5c76317b0fb1fabf0c010bae40c",
+    "Docs/superpowers/qa/2026-09-18-tool-profile-focus/native_check.py": "aca79ce777e0cb1e872ada35e82845456656ade577ebd479d418accd5740ea06"
+  }
+}

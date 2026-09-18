@@ -1,0 +1,10 @@
+{
+  "distinct_qualified_cases": 14,
+  "source_hashes_match": true,
+  "unchanged_consumer_asts": 8,
+  "archive_module_assertions_unchanged": 32,
+  "lint_before": 22,
+  "lint_after": 22,
+  "introduced_lint": 0,
+  "formatted_changed_ranges": 7
+}

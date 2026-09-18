@@ -1,0 +1,260 @@
+PR Fast Lane	Run fast PR contract	﻿2026-09-18T16:07:14.1423738Z ##[group]Run pytest \
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1424049Z [36;1mpytest \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1424263Z [36;1m  Tests/CI \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1424494Z [36;1m  Tests/test_smoke.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1424800Z [36;1m  Tests/Agents/test_execution_capacity.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1425155Z [36;1m  Tests/Agents/test_fleet_messages.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1425518Z [36;1m  Tests/Agents/test_session_todo_store.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1425898Z [36;1m  Tests/DB/test_agent_orchestration_dev_migration.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1426289Z [36;1m  Tests/DB/test_agent_run_budget_accounting.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1426660Z [36;1m  Tests/DB/test_automatic_work_budget.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1427004Z [36;1m  Tests/DB/test_automatic_runtime_owner.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1427345Z [36;1m  Tests/DB/test_automatic_wake_attempts.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1427700Z [36;1m  Tests/Model_Artifacts/test_operation_leases.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1428121Z [36;1m  Tests/Model_Artifacts/test_operation_leases_process.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1428537Z [36;1m  Tests/UI/test_mcp_workbench.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1428841Z [36;1m  Tests/UI/test_mcp_tools_mode.py \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1429128Z [36;1m  --timeout=180 \[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1429367Z [36;1m  --tb=short[0m
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1468473Z shell: /usr/bin/bash -e {0}
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1468736Z env:
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1469018Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1469484Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1469939Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1470334Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1470723Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1471395Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:14.1471749Z ##[endgroup]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8434995Z ============================= test session starts ==============================
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8435963Z platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8436734Z rootdir: /home/runner/work/tldw_chatbook/tldw_chatbook
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8437441Z configfile: pyproject.toml
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8438044Z plugins: anyio-4.15.1, asyncio-1.4.0, timeout-2.4.0
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8439102Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8439818Z timeout: 180.0s
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8440055Z timeout method: signal
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8440309Z timeout func_only: False
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8440574Z collected 1152 items
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:22.8440719Z
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:23.6821821Z Tests/CI/test_backlog_task_id_uniqueness.py ...                          [  0%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:23.7316940Z Tests/CI/test_canvas_mermaid_asset_checker.py ..........                 [  1%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:24.0807452Z Tests/CI/test_ci_queue_pressure_contract.py .................            [  2%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:24.1656598Z Tests/CI/test_derived_artifacts_workflow.py .........                    [  3%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:24.3002124Z Tests/CI/test_github_actions_test_workflow.py ...................        [  5%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:24.3375736Z Tests/CI/test_task19637_platform_evidence.py ....                        [  5%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:24.3879570Z Tests/CI/test_task2062_1_gguf_import_evidence.py ....                    [  5%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:24.5566642Z Tests/CI/test_task2062_2_gguf_source_evidence.py .....                   [  6%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:25.1426137Z Tests/CI/test_task31942_macos_concurrency_evidence.py ...............    [  7%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:26.5732102Z Tests/CI/test_task598_external_parakeet_evidence.py .................... [  9%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:26.7627009Z ................................                                         [ 11%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:26.9481739Z Tests/CI/test_task601_process_tree_evidence.py ......................... [ 14%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:27.7148369Z ................................................................         [ 19%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:27.9143748Z Tests/CI/test_task602_platform_evidence.py ............................. [ 22%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:28.1468242Z .......................................                                  [ 25%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:28.3385115Z Tests/CI/test_task603_dictation_evidence.py ............................ [ 28%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:28.7079448Z .........................                                                [ 30%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:28.8008072Z Tests/CI/test_textual_runtime_contract.py ..                             [ 30%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:54.3884043Z Tests/test_smoke.py ................                                     [ 31%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:54.6938206Z Tests/Agents/test_execution_capacity.py .......................          [ 33%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:54.9791406Z Tests/Agents/test_fleet_messages.py .................................... [ 36%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:55.1890294Z .....                                                                    [ 37%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:55.3904323Z Tests/Agents/test_session_todo_store.py ................................ [ 40%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:55.9073531Z ........................................................................ [ 46%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:57.8554417Z ........................................................................ [ 52%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:58.1797857Z .........                                                                [ 53%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:07:59.8162811Z Tests/DB/test_agent_orchestration_dev_migration.py ....                  [ 53%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:08:02.0057325Z Tests/DB/test_agent_run_budget_accounting.py ...............             [ 55%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:08:07.1333847Z Tests/DB/test_automatic_work_budget.py ..............................    [ 57%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:08:09.0332490Z Tests/DB/test_automatic_runtime_owner.py .........                       [ 58%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:08:12.0481193Z Tests/DB/test_automatic_wake_attempts.py ...............                 [ 59%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:08:12.5159102Z Tests/Model_Artifacts/test_operation_leases.py ......................... [ 61%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:08:12.8838350Z .........................                                                [ 64%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:08:16.1222991Z Tests/Model_Artifacts/test_operation_leases_process.py ......            [ 64%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:09:36.7693627Z Tests/UI/test_mcp_workbench.py F........................................ [ 68%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:11:50.7405036Z ...................................................F.................... [ 74%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:13:36.0139924Z ........................................................................ [ 80%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:15:53.2102445Z ........................................................................ [ 86%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:18:25.0314225Z ....................................................................F... [ 93%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:19:21.7224529Z .....................                                                    [ 94%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:19:45.6952299Z Tests/UI/test_mcp_tools_mode.py ........................................ [ 98%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4804449Z ..................                                                       [100%]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4804949Z
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4805165Z =================================== FAILURES ===================================
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4805849Z _____ test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers ______
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4806758Z Tests/UI/test_mcp_workbench.py:289: in test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4807502Z     await app.workers.wait_for_complete()
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4808315Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/worker_manager.py:179: in wait_for_complete
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4809258Z     await asyncio.gather(*[worker.wait() for worker in (workers or self)])
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4810105Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/worker.py:454: in wait
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4811676Z     raise WorkerCancelled("Worker was cancelled, and did not complete.")
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4812476Z E   textual.worker.WorkerCancelled: Worker was cancelled, and did not complete.
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4812987Z
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4813266Z During handling of the above exception, another exception occurred:
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4814154Z Tests/UI/test_mcp_workbench.py:287: in test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4814938Z     async with app.run_test() as pilot:
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4815343Z                ^^^^^^^^^^^^^^
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4815933Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/contextlib.py:231: in __aexit__
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4816602Z     await self.gen.athrow(value)
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4817402Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4818305Z     raise self._exception
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4819071Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/timer.py:189: in _tick
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4819903Z     await invoke(self._callback)
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4820706Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4821809Z     return await _invoke(callback, *params)
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4822274Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4823068Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4823951Z     result = callback(*params[:parameter_count])
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4824493Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4825223Z tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4262: in _sync_local_config_save_status
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4825990Z     self._sync_master_save_status()
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4826657Z tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4252: in _sync_master_save_status
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4827369Z     canvas.project_local_master(
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4827983Z tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py:966: in project_local_master
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4828845Z     button = self.query_one("#mcp-tools-local-enabled", MCPLocalMasterButton)
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4829549Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4830432Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4831842Z     raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4832904Z E   textual.css.query.NoMatches: No nodes match '#mcp-tools-local-enabled' on MCPToolsMode(id='mcp-mode-canvas-tools')
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4833933Z ---------------------------- Captured stderr setup -----------------------------
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4835262Z 2026-09-18 16:08:16.416 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4837288Z 2026-09-18 16:08:17.167 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4838445Z ----------------------------- Captured stderr call -----------------------------
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4839462Z ╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4840314Z │ /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/UI/MCP_Modules/m │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4841405Z │ cp_workbench.py:4262 in _sync_local_config_save_status                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4842131Z │                                                                              │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4842761Z │   4259 │                                                                     │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4843579Z │   4260 │   def _sync_local_config_save_status(self) -> None:                 │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4844698Z │   4261 │   │   self._sync_root_save_status()                                 │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4845566Z │ ❱ 4262 │   │   self._sync_master_save_status()                               │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4846361Z │   4263 │                                                                     │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4847184Z │   4264 │   async def _observe_local_master_save(self, task) -> None:         │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4848081Z │   4265 │   │   outcome = await asyncio.shield(task)                          │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4848841Z │                                                                              │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4849613Z │ ╭──────────────── locals ─────────────────╮                                  │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4850470Z │ │ self = MCPWorkbench(id='mcp-workbench') │                                  │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4851550Z │ ╰─────────────────────────────────────────╯                                  │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4852296Z │                                                                              │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4853158Z │ /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/UI/MCP_Modules/m │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4854191Z │ cp_workbench.py:4252 in _sync_master_save_status                             │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4855076Z │                                                                              │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4855906Z │   4249 │   │   │   if self.query(canvas_type):                               │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4856774Z │   4250 │   │   │   │   canvas = self.query_one(canvas_type)                  │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4857736Z │   4251 │   │   │   │   canvas.submit_local_master = self._admit_local_master │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4858654Z │ ❱ 4252 │   │   │   │   canvas.project_local_master(                          │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4859537Z │   4253 │   │   │   │   │   enabled,                                          │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4860373Z │   4254 │   │   │   │   │   text,                                             │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4861468Z │   4255 │   │   │   │   │   error=error,                                      │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4862258Z │                                                                              │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4863070Z │ ╭────────────────────── locals ──────────────────────╮                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4863903Z │ │  canvas = MCPToolsMode(id='mcp-mode-canvas-tools') │                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4864704Z │ │ enabled = False                                    │                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4865429Z │ │   error = False                                    │                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4866126Z │ │   owner = None                                     │                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4866847Z │ │ pending = False                                    │                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4867621Z │ │    self = MCPWorkbench(id='mcp-workbench')         │                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4868652Z │ │   state = None                                     │                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4869502Z │ │    text = 'Applies immediately - no Save needed.'  │                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4870316Z │ ╰────────────────────────────────────────────────────╯                       │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4871186Z │                                                                              │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4871993Z │ /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/UI/MCP_Modules/m │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4872855Z │ cp_tools_mode.py:966 in project_local_master                                 │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4873562Z │                                                                              │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4874216Z │   963 │   ) -> None:                                                         │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4874943Z │   964 │   │   """Refresh only the master control; root input events may stil │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4875748Z │   965 │   │   self._local_tools_enabled = enabled                            │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4876742Z │ ❱ 966 │   │   button = self.query_one("#mcp-tools-local-enabled", MCPLocalMa │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4877575Z │   967 │   │   button.enabled, button.config_path = enabled, config_path      │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4878376Z │   968 │   │   button.label = _local_tools_toggle_label(enabled)              │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4879141Z │   969 │   │   self.set_local_config_status(message, error=error)             │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4879840Z │                                                                              │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4880534Z │ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4881935Z │ │ config_path = PosixPath('/tmp/tldw_test_config_ukgtx0h_/config/config.t… │ │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4882760Z │ │     enabled = False                                                      │ │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4883479Z │ │       error = False                                                      │ │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4884255Z │ │     message = 'Applies immediately - no Save needed.'                    │ │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4885008Z │ │     pending = False                                                      │ │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4885770Z │ │        self = MCPToolsMode(id='mcp-mode-canvas-tools')                   │ │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4886595Z │ ╰──────────────────────────────────────────────────────────────────────────╯ │
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4887337Z ╰──────────────────────────────────────────────────────────────────────────────╯
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4887939Z NoMatches: No nodes match '#mcp-tools-local-enabled' on
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4888479Z MCPToolsMode(id='mcp-mode-canvas-tools')
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:00.4888778Z
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2579772Z NOTE: 1 of 2 errors shown. Run with textual run --dev to see all errors.
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2580657Z ______________ test_switching_selected_server_clears_tool_detail _______________
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2582357Z Tests/UI/test_mcp_workbench.py:4079: in test_switching_selected_server_clears_tool_detail
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2582993Z     assert not list(app.query("#mcp-inspector-tool-name"))
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2583631Z E   AssertionError: assert not [Static(id='mcp-inspector-tool-name', classes='ds-field-row')]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2584536Z E    +  where [Static(id='mcp-inspector-tool-name', classes='ds-field-row')] = list(<DOMQuery query='#mcp-inspector-tool-name'>)
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2585408Z E    +    where <DOMQuery query='#mcp-inspector-tool-name'> = query('#mcp-inspector-tool-name')
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2586273Z E    +      where query = ToolTestApp(title='ToolTestApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}).query
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2587021Z ----------------------------- Captured stderr call -----------------------------
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2588133Z 2026-09-18 16:11:17.614 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2589920Z 2026-09-18 16:11:18.441 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2591236Z _______________ test_switching_rail_server_clears_finding_detail _______________
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2592017Z Tests/UI/test_mcp_workbench.py:10659: in test_switching_rail_server_clears_finding_detail
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2592652Z     assert app.query_one("#mcp-inspector-finding").display is False
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2593102Z E   AssertionError: assert True is False
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2593518Z E    +  where True = Vertical(id='mcp-inspector-finding').display
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2594118Z E    +    where Vertical(id='mcp-inspector-finding') = query_one('#mcp-inspector-finding')
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2595023Z E    +      where query_one = AuditFindingsApp(title='AuditFindingsApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}).query_one
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2595815Z =============================== warnings summary ===============================
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2596425Z Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_primary_content_reachable
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2597366Z   /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Tools/patch_tool_impls.py:32: SyntaxWarning: invalid escape sequence '\ '
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2598236Z     satisfied (accepting only the ``\ No newline at end of file`` marker
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2598587Z
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2598846Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2599387Z ============================= slowest 25 durations =============================
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2599937Z 11.52s call     Tests/test_smoke.py::TestUIComponents::test_app_initialization
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2600671Z 8.08s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2601658Z 6.57s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2602443Z 6.17s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2603146Z 4.43s call     Tests/UI/test_mcp_workbench.py::test_mutations_panel_cancel_clears_selection_and_does_not_reopen_on_resync
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2603948Z 3.97s call     Tests/UI/test_mcp_workbench.py::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2604727Z 3.73s call     Tests/UI/test_mcp_workbench.py::test_raw_shell_hand_edited_allow_renders_ask_and_cycles_only_ask_off
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2605445Z 3.23s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_unmount_and_remount_revokes_old_nonce
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2606142Z 3.20s call     Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2607063Z 3.20s call     Tests/UI/test_mcp_workbench.py::test_server_source_add_names_implicit_target_and_create_drills_into_new_record
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2607766Z 3.20s call     Tests/UI/test_mcp_workbench.py::test_connect_action_runs_lifecycle_and_notifies
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2608430Z 3.19s call     Tests/UI/test_mcp_workbench.py::test_validate_action_runs_test_lifecycle_and_notifies_int_tool_count
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2609120Z 2.95s call     Tests/UI/test_mcp_workbench.py::test_different_target_selection_rebinds_advanced_context
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2609853Z 2.88s call     Tests/UI/test_mcp_workbench.py::test_space_cycle_ring_continues_through_ask_deny_and_back_to_inherit_for_builtin
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2610553Z 2.86s call     Tests/UI/test_mcp_workbench.py::test_same_row_reclick_preserves_advanced_section
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2611306Z 2.82s call     Tests/UI/test_mcp_workbench.py::test_double_space_cycle_on_tool_row_stays_on_that_row
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2611998Z 2.79s call     Tests/UI/test_mcp_workbench.py::test_delete_confirmed_deletes_profile_clears_selection_and_notifies
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2612790Z 2.78s call     Tests/UI/test_mcp_workbench.py::test_double_space_cycle_echo_replaces_not_appends
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2613423Z 2.76s call     Tests/UI/test_mcp_workbench.py::test_builtin_flag_toggle_saves_setting_and_reloads_catalog
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2614104Z 2.75s call     Tests/UI/test_mcp_workbench.py::test_detail_disconnect_button_routes_through_start_lifecycle
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2614753Z 2.73s call     Tests/UI/test_mcp_workbench.py::test_builtin_expose_flag_toggle_saves_matching_key
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2615396Z 2.72s call     Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_server_master_switch_reachable
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2616037Z 2.71s call     Tests/UI/test_mcp_workbench.py::test_selecting_different_profile_while_armed_disarms
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2616661Z 2.70s call     Tests/UI/test_mcp_workbench.py::test_submit_success_with_clean_args_toasts_no_warning
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2617278Z 2.68s call     Tests/UI/test_mcp_workbench.py::test_import_apply_existing_id_warns_and_overwrites
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2617787Z =========================== short test summary info ============================
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2618766Z FAILED Tests/UI/test_mcp_workbench.py::test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers - textual.css.query.NoMatches: No nodes match '#mcp-tools-local-enabled' on MCPToolsMode(id='mcp-mode-canvas-tools')
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2620152Z FAILED Tests/UI/test_mcp_workbench.py::test_switching_selected_server_clears_tool_detail - AssertionError: assert not [Static(id='mcp-inspector-tool-name', classes='ds-field-row')]
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2621454Z  +  where [Static(id='mcp-inspector-tool-name', classes='ds-field-row')] = list(<DOMQuery query='#mcp-inspector-tool-name'>)
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2622189Z  +    where <DOMQuery query='#mcp-inspector-tool-name'> = query('#mcp-inspector-tool-name')
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2622873Z  +      where query = ToolTestApp(title='ToolTestApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}).query
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2623674Z FAILED Tests/UI/test_mcp_workbench.py::test_switching_rail_server_clears_finding_detail - AssertionError: assert True is False
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2624303Z  +  where True = Vertical(id='mcp-inspector-finding').display
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2624790Z  +    where Vertical(id='mcp-inspector-finding') = query_one('#mcp-inspector-finding')
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2625504Z  +      where query_one = AuditFindingsApp(title='AuditFindingsApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}).query_one
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:01.2626161Z ============ 3 failed, 1149 passed, 1 warning in 762.83s (0:12:42) =============
+PR Fast Lane	Run fast PR contract	2026-09-18T16:20:03.3149181Z ##[error]Process completed with exit code 1.
+Derived artifacts reproduce from their sources	Require successful PR fast lane	﻿2026-09-18T16:20:32.7556368Z ##[group]Run echo "PR Fast Lane result: failure"
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7556823Z [36;1mecho "PR Fast Lane result: failure"[0m
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7557216Z [36;1mecho "::error::The required PR fast lane did not succeed."[0m
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7557925Z [36;1mexit 1[0m
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7599755Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7600025Z env:
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7600318Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7600769Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7601215Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7601618Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7602009Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7602422Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7602754Z ##[endgroup]
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7683910Z PR Fast Lane result: failure
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7700609Z ##[error]The required PR fast lane did not succeed.
+Derived artifacts reproduce from their sources	Require successful PR fast lane	2026-09-18T16:20:32.7710877Z ##[error]Process completed with exit code 1.

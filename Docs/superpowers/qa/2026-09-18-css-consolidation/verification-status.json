@@ -1,0 +1,9 @@
+{
+  "consumer_cases": 194,
+  "final_guard_cases": 37,
+  "native_cells": 28,
+  "mounted_target_owners": 29,
+  "observed_style_mismatches": 0,
+  "new_ruff_diagnostics": 0,
+  "scope": "Targeted verification only; README records baseline UI/lifecycle issues and incomplete workflow review."
+}

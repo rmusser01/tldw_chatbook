@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││             Local workspace, web, and Watchlists tools: on ▸              ││                                             │
+│ Source                                     ││  Applies immediately - no Save needed.                                    ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  Available by default. Calls still follow Ask, Allow, or Off              ││  Why · Off — enable it to let MCP clients   │
+│ ▊  Local                              ▼  ▎ ││  permissions.                                                             ││  use chatbook's tools.                      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root      ││  Add server                                 │
+│                                            ││  ▊  Local MCP / Hub test root                          ▎                  ││  fs_edit — Local workspace, web, and        │
+│ Servers                                    ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                  ││  Watchlists                                 │
+│  ◦ off (opt-in) · ⌂ built-in               ││                                                                           ││  Replace an exact string in a file. Fails   │
+│     All servers                            ││  Root: local MCP serving and Hub tests. Blank uses the serving process's  ││  unless the match is unique, unless         │
+│   ◦ ⌂ tldw_chatbook (built-in)             ││  current folder. Console uses Chat scratch and admitted Workspace         ││  replace_all is true.                       │
+│                                            ││  folders.                                                                 ││  Tags: mutates                              │
+│                                            ││                                                                           ││                                             │
+│                                            ││  ┌─────────────────────────────────────────┐▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││  Parameters: form                           │
+│                                            ││  │  fs_                                    │▊  All servers          ▼  ▎  ││                                             │
+│                                            ││  └─────────────────────────────────────────┘▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││    Test Tool                                │
+│                                            ││                                                                           ││  fs_edit — Local workspace, web, and        │
+│                                            ││  Tool      State  Server                    Tags     Schema               ││  Watchlists                                 │
+│                                            ││  fs_edit   Ask    Local workspace, web, a…  mutates  form                 ││  Permission: Ask                            │
+│                                            ││  fs_glob   Ask    Local workspace, web, a…  —        form                 ││                                             │
+│                                            ││  fs_grep   Ask    Local workspace, web, a…  —        form                 ││  Inherited from the global default.         │
+│                                            ││  fs_list   Ask    Local workspace, web, a…  —        form                 ││                                             │
+│                                            ││  fs_patch  Ask    Local workspace, web, a…  mutates  form                 ││  Change in Permissions                      │
+│                                            ││  fs_read   Ask    Local workspace, web, a…  —        form                 ││    Advanced…                                │
+│                                            ││  fs_write  Ask    Local workspace, web, a…  mutates  raw                  ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹╭──────────────────────────────────────────────────────────────────────────╮
+──│                                                                          │──
+ S│  Get to know you                                                         │
+ M│                                                                          │
+┌─│  Fixed local questionnaire                                               │─┐
+│ │  No external provider is used by the fixed questionnaire.                │ │
+│ │   Final review is ready.                                                 │ │
+│ │  Question 3 of 20                                                        │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │  │  Your answer                                                          │ │
+│ │  │                                                                       │ │
+│ │  │                                                                       │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │            Review changes                         Cancel                 │ │
+│ │                                                                          │ │
+└─│                                                                          │─┘
+  ╰──────────────────────────────────────────────────────────────────────────╯
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MC▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎e ▾
+─────▊                                                                    ▎─────
+ Sett▊  Review first Tool Profile bind                                    ▎al
+ Mode▊                                                                    ▎
+┌────▊  ▊  local:__virtual_cli__/grep, local:__virtual_cli__/ls,      ▎   ▎────┐
+│  Fi▊  ▊  local:__virtual_cli__/stat                                 ▎   ▎    │
+│    ▊  ▊                                                             ▎   ▎e   │
+│   >▊  ▊                                                             ▎   ▎    │
+│    ▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ▎ │  │
+│    ▊  │                                                                 ▎ │  │
+│    ▊  Confirmation boundary                                             ▎ │  │
+│    ▊  Confirming authorizes this exact workspace, assistant defaults,   ▎ │  │
+│  Tr▊  profile revision, policy digest, and tool inventory once. Any     ▎ │▇ │
+│    ▊  change requires a new review. This is separate from the        ▁  ▎ │▄ │
+│    ▊  read_write memory acknowledgement.                                ▎ │  │
+│    ▊                                                                    ▎ │  │
+│  Ex▊                                                                    ▎ │  │
+│    ▊                                    Cancel     Confirm exact bind   ▎ │  │
+│    ▊                                                                    ▎ │  │
+│   D▊                                                                    ▎ │  │
+└────▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

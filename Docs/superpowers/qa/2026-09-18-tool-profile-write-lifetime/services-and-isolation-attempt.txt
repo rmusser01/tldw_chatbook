@@ -1,0 +1,38 @@
+..................................................................F      [100%]
+=================================== FAILURES ===================================
+____________ test_mounting_the_real_app_under_test_arms_no_watchdog ____________
+Tests/App/test_app_shutdown.py:541: in test_mounting_the_real_app_under_test_arms_no_watchdog
+    from tldw_chatbook.app import TldwCli
+tldw_chatbook/app.py:1166: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 05:17:30.600 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 05:17:30.852 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/App/test_app_shutdown.py::test_mounting_the_real_app_under_test_arms_no_watchdog
+1 failed, 66 passed in 5.04s

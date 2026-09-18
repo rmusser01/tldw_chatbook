@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Tool Profiles
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Reviewed actions | Imports stay unbound; MCP owns policy editing; removal            │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  permanently reserves the profile id.                                                        │  │  │                              │
+│  category search             │  │  │   Import Tool Pack                                                                           │  │  │ Selected category: Tool      │
+│                              │  │  │ ┌─────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Profiles                     │
+│  Core                        │  │  │ │ a-extra-0                                                                               │  │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ │ Local · Unbound · Policy lifecycle valid                                                │▂ │  │  │  Reviewed actions: imports   │
+│     Providers & Models       │  │  │ │ Unversioned local profile · Policy digest                                               │  │  │  │  stay unbound, exports       │
+│     Web Search               │  │  │ │ 08163ece4308a41131ea5e70dc9c47beb7ed36653c128dab8386cb598102e4ea                        │  │  │  │  publish an exact snapshot,  │
+│     Speech & TTS             │  │  │ │ Local provenance · References: 0 active · 0 archived                                    │  │  │  │  and policy editing opens    │
+│  Interface                   │  │  │ │ Allow 2 · Ask 82 · Deny 0                                                               │  │  │  │  MCP Permissions.            │
+│     Appearance               │  │  │ │   Export    Edit    Bind    Remove                                                      │  │  │  │ Local-only: saves write your │
+│     Theme                    │  │  │ └─────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │ config file.                 │
+│     Splash Screen            │  │  │                                                                                              │  │  │ Impact and boundaries        │
+│     Console Behavior         │  │  │ ┌─────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Import, export, review,      │
+│  Data & Privacy              │  │  │ │ a-extra-1                                                                               │  │  │  │ bind, and remove portable    │
+│     Storage                  │  │  │ │ Local · Unbound · Policy lifecycle valid                                                │  │  │  │ tool permission profiles.    │
+│     Workspaces               │  │  │ │ Unversioned local profile · Policy digest                                               │  │  │  │  Runtime owner:              │
+│   > Tool Profiles            │  │  │ │ 08163ece4308a41131ea5e70dc9c47beb7ed36653c128dab8386cb598102e4ea                        │  │  │  │  ToolPackService             │
+│     Privacy & Security       │  │  │ │ Local provenance · References: 0 active · 0 archived                                    │  │  │  │  (immediate reviewed         │
+│     Network                  │  │  │ │ Allow 2 · Ask 82 · Deny 0                                                               │  │  │  │  actions)                    │
+│     My Profile               │  │  │ │   Export    Edit    Bind    Remove                                                      │  │  │  │                              │
+│  Troubleshooting             │  │  │ └─────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │  Writes allowed: Yes         │
+│     Diagnostics (view)       │  │  │                                                                                              │  │  │                              │
+│     About (view)             │  │  │ ┌─────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │  Owns: MCP                   │
+│     Agents                   │  │  │ │ default                                                                                 │  │  │  │  permission-store Tool       │
+│  Expert                      │  │  │ │ Local · Unbound · Policy lifecycle valid                                                │  │  │  │  profiles                    │
+│     Internal Prompts         │  │  │ │ Unversioned local profile · Policy digest                                               │  │  │  │  portable Tool Pack import   │
+│     Advanced Config          │  │  │ │ 682eb7b8de0afa216a9d7b73c5f53b1bf11be15fcf5bb14e8ddc18868416e67e                        │  │  │  │  receipts                    │
+│   Domain Defaults ▸ (11)     │  │  │ │ Local provenance · References: 0 active · 0 archived                                    │  │  │  │                              │
+│                              │  │  │ │ Allow 2 · Ask 82 · Deny 0                                                               │  │  │  │  Affected data: local Tool   │
+│                              │  │  │ │   Export    Edit    Bind    Remove                                                      │  │  │  │  policy profiles and         │
+│                              │  │  │ └─────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │  portable Tool Pack          │
+│                              │  │  │                                                                                            ▄ │  │  │  receipts                    │
+│                              │  │  │ ┌─────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │                              │
+│                              │  │  │ │ native-source                                                                           │  │  │  │  Recovery: re-inspect        │
+│                              │  │  │ │ Local · Unbound · Policy lifecycle valid                                                │  │  │  │  imports, keep profiles      │
+│                              │  │  │ │ Unversioned local profile · Policy digest                                               │  │  │  │ ▼ more — scroll the          │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+ Inspect a Tool Pack before importing an unbound profile.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

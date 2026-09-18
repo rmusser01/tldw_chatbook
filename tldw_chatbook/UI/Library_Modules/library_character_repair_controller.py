@@ -275,15 +275,15 @@ class LibraryCharacterRepairController:
 class LibraryCharacterRepairDialog(ModalScreen[None]):
     """Library-owned explicit selection and two-step repair presentation."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     LibraryCharacterRepairDialog { align: center middle; }
     LibraryCharacterRepairDialog > Container {
         width: 76; max-width: 96%; height: auto; max-height: 90%;
         border: thick $accent; background: $surface; padding: 1 2;
     }
-    LibraryCharacterRepairDialog Select { width: 100%; }
-    LibraryCharacterRepairDialog Horizontal { height: auto; }
-    LibraryCharacterRepairDialog Button { min-width: 14; margin-right: 1; }
+    LibraryCharacterRepairDialog Select.library-character-repair-dialog-select { width: 100%; }
+    LibraryCharacterRepairDialog Horizontal.library-character-repair-dialog-horizontal { height: auto; }
+    LibraryCharacterRepairDialog Button.library-character-repair-dialog-button { min-width: 14; margin-right: 1; }
     """
 
     def __init__(
@@ -308,18 +308,34 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
                 prompt="Choose a replacement; nothing is preselected",
                 allow_blank=True,
                 id="library-character-repair-candidate",
+                classes="library-character-repair-dialog-select",
             )
             yield Static(
                 self.controller.status_copy,
                 id="library-character-repair-status",
             )
             yield Button(
-                "Next 20 characters", id="library-character-repair-next", disabled=True
+                "Next 20 characters",
+                id="library-character-repair-next",
+                disabled=True,
+                classes="library-character-repair-dialog-button",
             )
-            with Horizontal():
-                yield Button("Refresh", id="library-character-repair-refresh")
-                yield Button("Repair", id="library-character-repair-apply")
-                yield Button("Cancel", id="library-character-repair-cancel")
+            with Horizontal(classes="library-character-repair-dialog-horizontal"):
+                yield Button(
+                    "Refresh",
+                    id="library-character-repair-refresh",
+                    classes="library-character-repair-dialog-button",
+                )
+                yield Button(
+                    "Repair",
+                    id="library-character-repair-apply",
+                    classes="library-character-repair-dialog-button",
+                )
+                yield Button(
+                    "Cancel",
+                    id="library-character-repair-cancel",
+                    classes="library-character-repair-dialog-button",
+                )
 
     def on_mount(self) -> None:
         """Load candidates off the UI thread after controls exist."""

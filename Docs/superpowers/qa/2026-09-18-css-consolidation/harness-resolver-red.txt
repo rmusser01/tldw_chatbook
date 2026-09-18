@@ -1,0 +1,26 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_harness_scan_resolves_real_library_sheet_sequence ____________
+
+    def test_harness_scan_resolves_real_library_sheet_sequence():
+        """A Library screen path includes its split sheet; app paths alone do not."""
+        for expression, expected in (
+            ("[*TldwCli.CSS_PATH, *LibraryScreen.CSS_PATH]", True),
+            ("[*TldwCli.CSS_PATH]", False),
+        ):
+            source = "CSS_PATH = " + expression
+            tree = ast.parse(source)
+            expanded = _expanded_css_path_source(tree.body[0].value, tree, source)
+>           assert ("screen_agentic_library.tcss" in expanded) is expected
+E           AssertionError: assert ('screen_agentic_library.tcss' in '[*/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/css/screen_css...ub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/css/screen_css_self.tcss, *LibraryScreen.CSS_PATH]') is True
+
+Tests/UI/test_consolidated_css_harness.py:586: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 11:50:18.962 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 11:50:18.998 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 11:50:18.998 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 11:50:18.998 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+1 failed in 1.42s

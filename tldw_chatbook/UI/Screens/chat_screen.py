@@ -23,7 +23,7 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
-from textual.app import ComposeResult
+from textual.app import ComposeResult, ScreenStackError
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -4716,6 +4716,7 @@ class ChatScreen(BaseAppScreen):
         if generation <= observed:
             return False
         self._console_appearance_refresh_generation = generation
+        self._refresh_console_background_effects()
         self._character.invalidate_refresh_scope()
         if self.is_mounted:
             self.run_worker(
@@ -5199,7 +5200,11 @@ class ChatScreen(BaseAppScreen):
         """Return whether live focus is inside either mounted rail (TASK-32322)."""
         from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 
-        focused = self.app.focused
+        try:
+            focused = self.app.focused
+        except ScreenStackError:
+            # A late setup refresh can rebuild hints after the last screen pops.
+            return False
         if not isinstance(focused, Widget):
             return False
         for rail_id in ("console-left-rail", "console-right-rail"):
@@ -5218,7 +5223,10 @@ class ChatScreen(BaseAppScreen):
             rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
         except (NoMatches, QueryError):
             return False
-        focused = self.app.focused
+        try:
+            focused = self.app.focused
+        except ScreenStackError:
+            return False
         return isinstance(focused, Widget) and rail.inspector_active(focused)
 
     def _apply_focus_chrome(self) -> None:
@@ -7780,6 +7788,15 @@ class ChatScreen(BaseAppScreen):
             console.get("background_effects", {}) if isinstance(console, dict) else {}
         )
         return normalize_console_background_effects(background)
+
+    def _refresh_console_background_effects(self) -> None:
+        """Apply saved effects without rebuilding the transcript or resetting an unchanged timer."""
+        surface = self.console_session_surface
+        if surface is None:
+            return
+        settings = self._console_background_effect_settings()
+        if surface.background_effect_settings != settings:
+            surface.sync_background_effect_settings(settings)
 
     @staticmethod
     def _is_console_choose_model_action(label: object) -> bool:
@@ -23507,6 +23524,8 @@ class ChatScreen(BaseAppScreen):
         # task-17652: a Settings change to the status-row position must land
         # on this cached screen without a recompose.
         apply_status_chips_position(self)
+        # Settings can save while this cached Console is outside the screen stack.
+        self._refresh_console_background_effects()
         # TASK-31520: re-arm what on_screen_suspend quiesced. mount() is
         # idempotency-guarded, so the first visit's mount+resume pair does
         # the wiring once. A run left active while the user was away needs

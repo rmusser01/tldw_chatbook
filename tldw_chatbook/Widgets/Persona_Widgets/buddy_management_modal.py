@@ -68,7 +68,7 @@ class BuddyManagementModal(
         ("escape", "request_safe_cancel", "Cancel")
     ]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     BuddyManagementModal { align: center middle; }
     #buddy-management {
         width: 78; max-width: 96%; height: 90%; max-height: 48;
@@ -78,17 +78,17 @@ class BuddyManagementModal(
     #buddy-management-body { height: 1fr; padding-right: 1; }
     .buddy-section { height: auto; margin-top: 1; text-style: bold; }
     .buddy-help { height: auto; color: $text-muted; }
-    #buddy-management-body Select, #buddy-management-body Input { width: 100%; }
+    #buddy-management-body Select.buddy-management-modal-select, #buddy-management-body Input.buddy-management-modal-input { width: 100%; }
     .buddy-toggle-row { height: 3; align-vertical: middle; }
-    .buddy-toggle-row Static { width: 1fr; height: auto; }
+    .buddy-toggle-row Static.buddy-management-modal-static { width: 1fr; height: auto; }
     .buddy-toggle-row Switch { width: auto; }
     #buddy-size { height: 3; }
-    #buddy-management-body #buddy-size Input { width: 1fr; min-width: 4; }
-    #buddy-size Static { width: 9; height: 3; content-align: left middle; }
+    #buddy-management-body #buddy-size Input.buddy-management-modal-input { width: 1fr; min-width: 4; }
+    #buddy-size Static.buddy-management-modal-static { width: 9; height: 3; content-align: left middle; }
     #buddy-size #buddy-height-label { width: 10; padding-left: 1; }
     #buddy-preview { height: auto; max-height: 12; content-align: center middle; }
     #buddy-artwork-pages { height: 3; }
-    #buddy-artwork-pages Button { width: auto; min-width: 10; }
+    #buddy-artwork-pages Button.buddy-management-modal-button { width: auto; min-width: 10; }
     #buddy-artwork-page { width: 1fr; content-align: center middle; }
     #buddy-preview-actions { height: 3; }
     #buddy-management-body #buddy-preview-state { width: 1fr; min-width: 10; }
@@ -97,7 +97,7 @@ class BuddyManagementModal(
     #buddy-advanced { height: auto; padding: 0; }
     #buddy-preview-button:focus { text-style: bold reverse; }
     #buddy-management-actions { height: 3; min-height: 3; align-horizontal: right; }
-    #buddy-management-actions Button { width: auto; min-width: 10; margin-left: 1; }
+    #buddy-management-actions Button.buddy-management-modal-button { width: auto; min-width: 10; margin-left: 1; }
     """
 
     def __init__(
@@ -170,37 +170,62 @@ class BuddyManagementModal(
                 (Text("Current target is unavailable — choose another"), target_key)
             )
         with Vertical(id="buddy-management"):
-            yield Static("Buddy & Persona Management", id="buddy-management-title")
+            yield Static(
+                "Buddy & Persona Management",
+                id="buddy-management-title",
+                classes="buddy-management-modal-static",
+            )
             with VerticalScroll(id="buddy-management-body"):
-                yield Static("Buddy", classes="buddy-section")
+                yield Static(
+                    "Buddy", classes="buddy-section buddy-management-modal-static"
+                )
                 with Horizontal(classes="buddy-toggle-row"):
-                    yield Static("Show Buddy")
+                    yield Static("Show Buddy", classes="buddy-management-modal-static")
                     yield Switch(initial.enabled, id="buddy-enabled")
                 yield Select(
                     artwork_choices,
                     value=selected_artwork,
                     allow_blank=False,
                     id="buddy-artwork",
+                    classes="buddy-management-modal-select",
                 )
                 if self._import_petdex is not None:
-                    yield Button("Import from Petdex", id="buddy-petdex")
+                    yield Button(
+                        "Import from Petdex",
+                        id="buddy-petdex",
+                        classes="buddy-management-modal-button",
+                    )
                     yield Static(
-                        "", id="buddy-staged", classes="buddy-help", markup=False
+                        "",
+                        id="buddy-staged",
+                        classes="buddy-help buddy-management-modal-static",
+                        markup=False,
                     )
                 if self._create_character is not None:
                     yield Button(
-                        "Create character", id="buddy-character", disabled=True
+                        "Create character",
+                        id="buddy-character",
+                        disabled=True,
+                        classes="buddy-management-modal-button",
                     )
                 if self._artwork_page is not None:
                     with Horizontal(id="buddy-artwork-pages"):
                         yield Button(
-                            "Previous", id="buddy-artwork-previous", disabled=True
+                            "Previous",
+                            id="buddy-artwork-previous",
+                            disabled=True,
+                            classes="buddy-management-modal-button",
                         )
-                        yield Static("Page 1", id="buddy-artwork-page")
+                        yield Static(
+                            "Page 1",
+                            id="buddy-artwork-page",
+                            classes="buddy-management-modal-static",
+                        )
                         yield Button(
                             "Next",
                             id="buddy-artwork-next",
                             disabled=len(self._buddies) < self._artwork_page_size,
+                            classes="buddy-management-modal-button",
                         )
                 if self._preview_callback is not None:
                     with Horizontal(id="buddy-preview-actions"):
@@ -218,30 +243,48 @@ class BuddyManagementModal(
                             value="idle",
                             allow_blank=False,
                             id="buddy-preview-state",
+                            classes="buddy-management-modal-select",
                         )
-                        yield Button("Preview", id="buddy-preview-button")
-                    yield Static("", id="buddy-preview")
-                yield Static("Expressions", classes="buddy-help")
+                        yield Button(
+                            "Preview",
+                            id="buddy-preview-button",
+                            classes="buddy-management-modal-button",
+                        )
+                    yield Static(
+                        "", id="buddy-preview", classes="buddy-management-modal-static"
+                    )
+                yield Static(
+                    "Expressions", classes="buddy-help buddy-management-modal-static"
+                )
                 yield Select(
                     [("Dynamic", "dynamic"), ("Static", "static")],
                     value="dynamic" if initial.animated else "static",
                     allow_blank=False,
                     id="buddy-motion",
+                    classes="buddy-management-modal-select",
                 )
-                yield Static("Follow", classes="buddy-section")
+                yield Static(
+                    "Follow", classes="buddy-section buddy-management-modal-static"
+                )
                 yield Select(
                     target_choices,
                     value=target_key,
                     allow_blank=False,
                     id="buddy-follow",
+                    classes="buddy-management-modal-select",
                 )
                 yield Static(
                     "This target stays fixed when you switch screens or conversations.",
-                    classes="buddy-help",
+                    classes="buddy-help buddy-management-modal-static",
                 )
-                yield Static("Persona", classes="buddy-section")
                 yield Static(
-                    "", id="buddy-persona-help", classes="buddy-help", markup=False
+                    "Persona", classes="buddy-section buddy-management-modal-static"
+                )
+                yield Static(
+                    "",
+                    id="buddy-persona-help",
+                    classes="buddy-help buddy-management-modal-static",
+                    markup=False,
                 )
                 yield Select(
                     [
@@ -252,6 +295,7 @@ class BuddyManagementModal(
                     value=initial.persona_choice,
                     allow_blank=False,
                     id="buddy-persona",
+                    classes="buddy-management-modal-select",
                 )
                 with Collapsible(
                     title="Import pack & size",
@@ -260,35 +304,69 @@ class BuddyManagementModal(
                 ):
                     yield Static(
                         "Import a native Buddy pack (.tldw-persona-vpack or .zip)",
-                        classes="buddy-help",
+                        classes="buddy-help buddy-management-modal-static",
                     )
                     yield Input(
                         value=initial.import_path,
                         placeholder="Absolute path or ~/Downloads/pack.tldw-persona-vpack",
                         id="buddy-import",
+                        classes="buddy-management-modal-input",
                     )
-                    yield Static("", id="buddy-import-error", markup=False)
+                    yield Static(
+                        "",
+                        id="buddy-import-error",
+                        markup=False,
+                        classes="buddy-management-modal-static",
+                    )
                     with Horizontal(id="buddy-size"):
-                        yield Static("Width")
+                        yield Static("Width", classes="buddy-management-modal-static")
                         yield Input(
-                            str(initial.width), type="integer", id="buddy-width"
+                            str(initial.width),
+                            type="integer",
+                            id="buddy-width",
+                            classes="buddy-management-modal-input",
                         )
-                        yield Static("Height", id="buddy-height-label")
+                        yield Static(
+                            "Height",
+                            id="buddy-height-label",
+                            classes="buddy-management-modal-static",
+                        )
                         yield Input(
-                            str(initial.height), type="integer", id="buddy-height"
+                            str(initial.height),
+                            type="integer",
+                            id="buddy-height",
+                            classes="buddy-management-modal-input",
                         )
-                yield Static("Notifications & voice", classes="buddy-section")
+                yield Static(
+                    "Notifications & voice",
+                    classes="buddy-section buddy-management-modal-static",
+                )
                 with Horizontal(classes="buddy-toggle-row"):
-                    yield Static("Speak responses with conversation names")
+                    yield Static(
+                        "Speak responses with conversation names",
+                        classes="buddy-management-modal-static",
+                    )
                     yield Switch(initial.speak_responses, id="buddy-speech")
                 yield Static(
                     "Workspace Buddies accept typed replies; voice input is available only for a conversation Buddy.",
-                    classes="buddy-help",
+                    classes="buddy-help buddy-management-modal-static",
                 )
-            yield Static("", id="buddy-form-error", markup=False)
+            yield Static(
+                "",
+                id="buddy-form-error",
+                markup=False,
+                classes="buddy-management-modal-static",
+            )
             with Horizontal(id="buddy-management-actions"):
-                yield Button("Cancel", id="buddy-cancel")
-                yield Button("Apply", variant="primary", id="buddy-apply")
+                yield Button(
+                    "Cancel", id="buddy-cancel", classes="buddy-management-modal-button"
+                )
+                yield Button(
+                    "Apply",
+                    variant="primary",
+                    id="buddy-apply",
+                    classes="buddy-management-modal-button",
+                )
 
     def on_mount(self) -> None:
         super().on_mount()

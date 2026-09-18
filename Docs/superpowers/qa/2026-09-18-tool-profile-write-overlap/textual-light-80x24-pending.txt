@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Tool Profiles
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Reviewed actions | Imports      │
+│  Core                        │  │  │  stay unbound; MCP owns policy          │
+│     Overview (view)          │  │  │  editing; removal permanently reserves  │
+│     Providers & Models       │  │  │  the profile id.                        │
+│     Web Search               │  │  │ │  Removal in progress. Wait for it  │  │
+│     Speech & TTS             │  │  │ │  to finish.                        │  │
+│  Interface                   │  │  │ │      Export            Edit        │  │
+│     Appearance               │  │  │ │                                    │  │
+│     Theme                  ▁ │  │  │ │       Bind            Remove       │  │
+│     Splash Screen            │  │  │ └────────────────────────────────────┘  │
+│     Console Behavior         │  │  │                                       ▄ │
+│  Data & Privacy              │  │  │ ┌────────────────────────────────────┐  │
+│     Storage                  │  │  │ │ native-source                      │▃ │
+│     Workspaces               │  │  │ │ Local · Unbound · Policy lifecycle │  │
+│   > Tool Profiles            │  │  │ │ valid                              │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Remove this unreferenced profile.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,143 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_catalog_refresh_keeps_the_focused_server_control _____________
+
+self = <Coroutine test_catalog_refresh_keeps_the_focused_server_control>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_catalog_refresh_keeps_the_focused_server_control>>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2027/test_catalog_refresh_keeps_the0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____________ test_catalog_refresh_keeps_the_focused_server_control _____________
+E
+E           request = <FixtureRequest for <Coroutine test_catalog_refresh_keeps_the_focused_server_control>>
+E
+E               @private_profile_test
+E               async def test_catalog_refresh_keeps_the_focused_server_control(request):
+E                   app = RailApp()
+E                   async with app.run_test() as pilot:
+E                       rail = app.query_one(MCPRail)
+E                       row = rail.query_one("#mcp-rail-row-2", Button)
+E                       row.focus()
+E                       await _settle(pilot)
+E                       rail.sync_state(
+E                           source=rail.source,
+E                           snapshots=[replace(snap, tool_count=42) for snap in rail.snapshots],
+E                           selected_server_key="local:docs",
+E                           scope_options=rail.scope_options,
+E                           scope_value=rail.scope_value,
+E                           scope_ref_options=rail.scope_ref_options,
+E                           scope_ref_value=rail.scope_ref_value,
+E                       )
+E                       await _settle(pilot)
+E           >           assert app.focused is row
+E           E           AssertionError: assert None is Button(id='mcp-rail-row-2', classes='mcp-status-warning mcp-rail-row console-action-subdued -style-default -textual-compact')
+E           E            +  where None = RailApp(title='RailApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'}).focused
+E
+E           Tests/UI/test_mcp_rail_compact_navigation.py:113: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 10:17:49.913 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 10:17:49.918 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 10:17:49.919 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 10:17:49.919 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_rail_compact_navigation.py::test_catalog_refresh_keeps_the_focused_server_control
+E           1 failed in 1.92s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 10:17:48.154 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 10:17:48.160 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 10:17:48.162 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 10:17:48.163 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+2.54s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_catalog_refresh_keeps_the_focused_server_control
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_rail_compact_navigation.py::test_catalog_refresh_keeps_the_focused_server_control
+1 failed, 5 deselected in 4.31s

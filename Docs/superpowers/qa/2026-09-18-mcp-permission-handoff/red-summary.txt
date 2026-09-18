@@ -1,0 +1,8 @@
+TASK-32785 red evidence
+Original real Settings route: 4 cases failed with the table below the canvas clip.
+Overflow alone: the same 4 cases failed because focus preceded final content layout.
+Final focus/layout reveal: 4 passed in 81.59s.
+Source logs: /private/tmp/32785-red.log; /private/tmp/32785-green.log; /private/tmp/32785-green2.log.
+Older mode tests:62 setup errors before test bodies. The same RecoveryRequired(raw_source_selection_changed) occurs with HEAD 1b16329e03 mode/workbench source. Existing private_profile_test restores isolation.
+One old CSS assertion then failed against an already tokenized 70% cap; the baseline source and bundle reproduce it. The updated assertion pins the existing token AND its unchanged 70% value.
+Baseline logs: /private/tmp/32785-permissions-baseline.log; /private/tmp/32785-mode-css-baseline.log.

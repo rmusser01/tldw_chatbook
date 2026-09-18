@@ -1,0 +1,60 @@
+[
+  {
+    "node": "Tests/UI/test_pattern_gallery_snapshots.py::test_gallery_snapshot[textual-dark]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_pattern_gallery_snapshots.py::test_gallery_snapshot[textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_pattern_gallery_snapshots.py::test_gallery_snapshot[textual-dark]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_pattern_gallery_snapshots.py::test_gallery_snapshot[textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-snapshots-final-001/001",
+    "classes": [],
+    "mismatches": 0,
+    "log": "snapshot-final-001.txt"
+  },
+  {
+    "node": "Tests/UI/test_pattern_gallery_snapshots.py::test_gallery_snapshot[textual-light]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_pattern_gallery_snapshots.py::test_gallery_snapshot[textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_pattern_gallery_snapshots.py::test_gallery_snapshot[textual-light]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_pattern_gallery_snapshots.py::test_gallery_snapshot[textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-snapshots-final-001/002",
+    "classes": [],
+    "mismatches": 0,
+    "log": "snapshot-final-002.txt"
+  }
+]

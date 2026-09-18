@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each action reversible: unarchive, rename again, or set        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  active.                                                                                     │  │  │                              │
+│  category search             │  │  │                                                                                              │  │  │ Selected category:           │
+│                              │  │  │  Workspace management                                                                        │  │  │ Workspaces                   │
+│  Core                        │  │  │  Create workspace…                                                                           │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                       │  │  │  Immediate actions:          │
+│     Providers & Models       │  │  │ ▊ ▐X▌ Sh╭──────────────────────────────────────────────────────────────────────────╮         │  │  │  workspace changes apply as  │
+│     Web Search               │  │  │ ▊▁▁▁▁▁▁▁│                                                                          │         │  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  │  Default│  Get to know you                                                         │         │  │  │  draft to save or revert.    │
+│  Interface                   │  │  │  Cancel │                                                                          │         │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │  Review │  Fixed local questionnaire                                               │         │  │  │ config file.                 │
+│     Theme                    │  │  │         │  No external provider is used by the fixed questionnaire.                │         │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │  Select │   Final review is ready.                                                 │         │  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  │         │  Question 3 of 20                                                        │         │  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  │         │                                                                          │         │  │  │ tools.                       │
+│     Storage                  │  │  │         │                                                                          │         │  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  │         │  │  Your answer                                                          │         │  │  │  registry (immediate         │
+│     Tool Profiles            │  │  │         │  │                                                                       │         │  │  │  actions)                    │
+│     Privacy & Security       │  │  │         │  │                                                                       │         │  │  │                              │
+│     Network                  │  │  │         │                                                                          │         │  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  │         │                                                                          │         │  │  │                              │
+│  Troubleshooting             │  │  │         │                                                                          │         │  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  │         │                                                                          │         │  │  │  lifecycle records and       │
+│     About (view)             │  │  │         │                                                                          │         │  │  │  their bound folders         │
+│     Agents                   │  │  │         │            Review changes                         Cancel                 │         │  │  │                              │
+│  Expert                      │  │  │         │                                                                          │         │  │  │  Recovery:                   │
+│     Internal Prompts         │  │  │         │                                                                          │         │  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  │         ╰──────────────────────────────────────────────────────────────────────────╯         │  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  │                                                                                              │  │  │  workspace in Library        │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │  Boundary: lifecycle and     │
+│                              │  │  │                                                                                              │  │  │  folder bindings apply       │
+│                              │  │  │                                                                                              │  │  │  immediately; there is no    │
+│                              │  │  │                                                                                              │  │  │  draft state here            │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

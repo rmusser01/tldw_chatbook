@@ -1,0 +1,51 @@
+{
+  "pid": 17505,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "revision_conflict_keeps_consent": true,
+      "failed_retry_is_explicit": true,
+      "preparing_failed_ready_updated_in_place": true,
+      "draft_and_focus_retained": true,
+      "one_retry_scheduled": true,
+      "real_snapshot_head": "2a7a0c97e38d1da84f5cd3562f6d5893a5838ff4",
+      "shadow_git_dir": "/private/tmp/tldw-32771-native-003/data/default_user/change_review/66960deb5b903a0c/git",
+      "fixture_unchanged": true,
+      "disable_retains_history": true
+    }
+  ],
+  "runner_sha256": "763a7b8931c110fa0201ec3b5379fbba8dc8bd5bfe093de30e577a8b2cb1a013",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "631ec86eb3cb7f786b5a0d3ab40d77ad06358b5d66dd4a637f9d11b0c8803466",
+    "tldw_chatbook/Widgets/Settings_Widgets/workspace_change_review.py": "a009812e546bdc9daca62fa99724d5af3ba0169a61ed793f48ffe9a9a50b82ec",
+    "tldw_chatbook/Workspaces/change_review_consent.py": "4bb4f21a87b87c2b8160dc8bd141bc9bc2f526632cf65f1517d5b04a410880bf",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "6fa772fe15dc43d3977ae7f6c6547389cf8ca85c4b6550a9c23edb268017c452",
+    "tldw_chatbook/css/features/_settings.tcss": "352be084e19440d7940f492028b35eb408507b95e5c39ee09a5e152b46682fd5",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "3a77bf24728f6e67009b2e04e917910cfb881de1ca1022fcd655464e998a9bb3",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Applied pane settled",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Real registry/consent/initializer/shadow Git, controlled first-attempt failure and release",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-change-review/native_check.py\", line 253, in journey\n    await press(\"#settings-workspace-row-\" + workspace_id)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-change-review/native_check.py\", line 144, in press\n    await focus(selector)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-change-review/native_check.py\", line 124, in focus\n    control = app.screen.query_one(selector)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/dom.py\", line 1505, in query_one\n    raise NoMatches(f\"No nodes match {query_selector!r} on {base_node!r}\")\ntextual.css.query.NoMatches: No nodes match '#settings-workspace-row-ws-textual-dark-80x24' on SettingsScreen(classes='shell-header-compact')\n",
+  "focused_id": "settings-category-workspaces",
+  "focused_region": "Region(x=2, y=19, width=27, height=1)",
+  "app_run_returned": true
+}

@@ -1,0 +1,22 @@
+============================= slowest 25 durations =============================
+4.73s call     Tests/UI/test_settings_tool_profiles.py::test_bind_request_stages_profile_in_active_workspace_without_binding
+4.71s call     Tests/UI/test_settings_tool_profiles.py::test_bind_request_without_explicit_workspace_shows_recovery_guidance
+4.32s call     Tests/UI/test_settings_tool_profiles.py::test_removal_confirmation_does_not_interpolate_the_profile_id
+4.27s call     Tests/UI/test_settings_tool_profiles.py::test_removal_worker_rechecks_cancellation_after_confirmation
+4.21s call     Tests/UI/test_settings_tool_profiles.py::test_tool_profiles_refresh_when_settings_resumes_after_policy_edit
+4.19s call     Tests/UI/test_settings_tool_profiles.py::test_import_worker_reinspects_revised_options_then_imports_unbound
+4.12s call     Tests/UI/test_settings_tool_profiles.py::test_edit_policy_deep_link_captures_exact_profile_authority
+4.01s call     Tests/UI/test_settings_tool_profiles.py::test_removal_worker_confirms_and_uses_the_rendered_revision
+3.97s call     Tests/UI/test_settings_tool_profiles.py::test_export_worker_uses_exact_profile_context_and_captured_destination
+3.95s call     Tests/UI/test_settings_tool_profiles.py::test_tool_profiles_category_retries_failed_service_composition_once
+3.92s call     Tests/UI/test_settings_tool_profiles.py::test_tool_profile_actions_remain_focusable_at_narrow_size
+3.91s call     Tests/UI/test_settings_tool_profiles.py::test_listing_worker_does_not_surface_private_exception_categories
+3.91s call     Tests/UI/test_settings_tool_profiles.py::test_canonical_settings_category_loads_app_owned_listing_off_thread
+3.86s call     Tests/UI/test_settings_tool_profiles.py::test_tool_profiles_first_use_refreshes_after_composition
+3.04s call     Tests/UI/test_settings_tool_profiles.py::test_tool_profiles_category_is_searchable_by_user_vocabulary
+
+(10 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_tool_profiles.py::test_edit_policy_deep_link_captures_exact_profile_authority
+FAILED Tests/UI/test_settings_tool_profiles.py::test_export_worker_uses_exact_profile_context_and_captured_destination
+2 failed, 28 passed in 66.57s (0:01:06)

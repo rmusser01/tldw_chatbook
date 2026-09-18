@@ -1,9 +1,11 @@
 """Dialog behavior tests for artifact share."""
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Button, Input, SelectionList, Static
 
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.UI.Screens.artifact_share_dialog import ArtifactShareDialog
 
 pytestmark = pytest.mark.ui
@@ -34,7 +36,11 @@ def _records() -> list[dict]:
     ]
 
 
-async def test_cancel_dismisses_with_none():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_cancel_dismisses_with_none(
+    request,
+):
     dialog = ArtifactShareDialog(_records())
     app = _DialogHost(dialog)
     async with app.run_test(size=(100, 60)) as pilot:
@@ -43,7 +49,11 @@ async def test_cancel_dismisses_with_none():
     assert app.result is None
 
 
-async def test_start_requires_selection():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_start_requires_selection(
+    request,
+):
     dialog = ArtifactShareDialog(_records())
     app = _DialogHost(dialog)
     async with app.run_test(size=(100, 60)) as pilot:
@@ -54,7 +64,11 @@ async def test_start_requires_selection():
         assert "select" in status.renderable.lower() if status.renderable else True
 
 
-async def test_valid_submission_returns_options():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_valid_submission_returns_options(
+    request,
+):
     dialog = ArtifactShareDialog(_records())
     app = _DialogHost(dialog)
     async with app.run_test(size=(100, 60)) as pilot:
@@ -78,7 +92,11 @@ async def test_valid_submission_returns_options():
     assert app.result["port"] == 0
 
 
-async def test_lan_without_password_requires_typed_confirmation():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_lan_without_password_requires_typed_confirmation(
+    request,
+):
     dialog = ArtifactShareDialog(_records())
     app = _DialogHost(dialog)
     async with app.run_test(size=(100, 60)) as pilot:
@@ -103,7 +121,11 @@ async def test_lan_without_password_requires_typed_confirmation():
     assert app.result["password"] == ""
 
 
-async def test_username_with_colon_is_rejected():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_username_with_colon_is_rejected(
+    request,
+):
     # Qodo #14: Basic auth splits on the first ':', so a colon username is
     # refused at the dialog instead of starting an unusable share.
     dialog = ArtifactShareDialog(_records())
@@ -123,7 +145,11 @@ async def test_username_with_colon_is_rejected():
         assert ":" in str(status.renderable)
 
 
-async def test_oversized_fields_are_rejected():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_oversized_fields_are_rejected(
+    request,
+):
     # Qodo #2: share_name (200), username (64), and password (256) are
     # bounded; an over-long value keeps the dialog open with a message.
     dialog = ArtifactShareDialog(_records())

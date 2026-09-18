@@ -1,0 +1,24 @@
+....ss.....                                                              [100%]
+=============================== warnings summary ===============================
+Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/Performance/test_app_import_weight.py:317: UserWarning: boot-import-weight: 669/686 modules (headroom 17)
+    ratchet.emit_headroom(
+
+Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/Performance/test_ui_ready_module_census.py:428: UserWarning: ui-ready-census: 1022/1022 modules (headroom 0)
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+52.59s call     Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+3.00s call     Tests/Performance/test_app_import_weight.py::test_app_import_stays_well_under_pre_fix_baseline
+2.76s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers
+2.51s call     Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+2.33s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_full_heavy_dependency_set
+1.92s setup    Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers
+
+(19 durations < 1s hidden.)
+=========================== short test summary info ============================
+SKIPPED [1] Tests/Performance/test_app_import_weight.py:352: torch not installed in this environment
+SKIPPED [1] Tests/Performance/test_app_import_weight.py:370: torch/transformers not installed in this environment
+9 passed, 2 skipped, 2 warnings in 65.22s (0:01:05)

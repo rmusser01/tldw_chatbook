@@ -1,0 +1,24 @@
+        ╭────────╮
+ ‹ lows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││  tools (calculator, date/time, file      ││                  │
+│ Source       ││  and note tools).                        ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││  Why · Off —     │
+│ ▊ Local  ▼ ▎ ││ ▊  Filter tool or server…             ▎  ││  enable it to    │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▅ ││  let MCP         │
+│              ││  Tool                          State     ││  clients use     │
+│ Servers      ││  s                                       ││  chatbook's      │
+│  ◦ off · ⌂   ││    watchlists_list_sources     Ask       ││  tools.          │
+│  built-in    ││    watchlists_search_items     Ask       ││  Add server      │
+│     All      ││    watchlists_set_briefing_sc  Ask     ▃ ││  watchlists_upd  │
+│   ◦ ⌂ tld... ││  hedule                              ▅▅  ││  ate_collection  │
+│              ││    watchlists_update_collecti  Ask   ▅▅  ││  _sources —      │
+│              ││  on_sources                              ││  Local           │
+│              ││                              ▉           ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

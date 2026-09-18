@@ -437,7 +437,7 @@ def local_tools_exposure_enabled() -> bool:
 
 
 def resolve_server_workspace_root() -> Path:
-    """The workspace root for external MCP serving (Console's rule).
+    """The root for external MCP serving and operator Hub tool tests.
 
     ``[console] workspace_root`` with ``~`` expanded, else the process cwd.
     """

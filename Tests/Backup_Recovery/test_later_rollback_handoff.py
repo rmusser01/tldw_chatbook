@@ -16,9 +16,9 @@ def test_recovery_copies_hint_rejects_non_bool(tmp_path, value):
 async def test_ordinary_later_rollback_requires_fresh_recovery_host(
     tmp_path, monkeypatch, action
 ):
-    from textual.app import App
     from textual.widgets import Button, Checkbox, Input, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -122,6 +122,9 @@ def headless(app):
   async with app.run_test(size=(100,36)) as pilot:
    screen=app.screen
    assert screen._mode=='copies'
+   # Standalone recovery owns this screen's defaults without normal app imports.
+   assert screen.query_one('#backup-actions').styles.height.value == 6
+   assert screen.query_one('#backup-open-create').styles.width.value == 100
    assert screen.query_one('#backup-later-target',Input).value==str(selector)
    assert screen._rollback_copy_id is None and screen._rollback_plan is None
    assert not screen.query_one('#backup-later-form').display

@@ -1,0 +1,72 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+_____________ test_selecting_persona_then_press_applies_read_only ______________
+
+    @pytest.mark.asyncio
+    async def test_selecting_persona_then_press_applies_read_only() -> None:
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_settings_workspace_assistant_defaults.py:334:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10e864e90>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only
+1 failed, 1 passed, 14 deselected in 2.06s

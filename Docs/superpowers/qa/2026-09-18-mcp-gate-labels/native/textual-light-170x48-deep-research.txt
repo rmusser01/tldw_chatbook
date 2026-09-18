@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││   ← All servers  ◦ Off (opt-in)  tldw_chatbook (built-in)                 ││                                             │
+│ Source                                     ││  Turned off — open to enable.                                             ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││                                                                           ││  ◦ Off (opt-in)  tldw_chatbook (built-in)   │
+│ ▊  Local                              ▼  ▎ ││  Runs over stdio when an MCP client launches it:                          ││  Why · Off — enable it to let MCP clients   │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││    python3 -m tldw_chatbook.MCP                                           ││  use chatbook's tools.                      │
+│                                            ││ ▐X▌ Enabled                                                               ││  Add server                                 │
+│ Servers                                    ││ ▐X▌ Expose tools                                                          ││    Advanced…                                │
+│  ◦ off (opt-in) · ⌂ built-in               ││ ▐X▌ Expose resources                                                      ││                                             │
+│    All servers                             ││ ▐X▌ Expose prompts                                                        ││                                             │
+│  ◦ ⌂ tldw_chatbook (built-in)              ││  Applies to the next client launch — the built-in server reads config at  ││                                             │
+│                                            ││  start.                                                                   ││                                             │
+│                                            ││ Tool gates                                                                ││                                             │
+│                                            ││  Agent built-ins                                                          ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                             Read file: off ▸                              ││                                             │
+│                                            ││                           List directory: off ▸                           ││                                             │
+│                                            ││                             Write file: off ▸                             ││                                             │
+│                                            ││                            Create note: off ▸                             ││                                             │
+│                                            ││                            Update note: off ▸                             ││                                             │
+│                                            ││                             Find files: off ▸                             ││                                             │
+│                                            ││                          Search in files: off ▸                           ││                                             │
+│                                            ││                          Expand document: off ▸                           ││                                             │
+│                                            ││  Local workspace, web, and Watchlists tools                               ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││  Includes web_search, web_fetch, and web_crawl, plus workspace file,      ││                                             │
+│                                            ││  Git, Watchlists search/detail, and session todo tools. web_deep_search   ││                                             │
+│                                            ││  is separately gated.                                                     ││                                             │
+│                                            ││     Local workspace, web, and Watchlists tools (master switch): on ▸      ││                                             │
+│                                            ││ Applies immediately - no Save needed.                                     ││                                             │
+│                                            ││                 Deep web research (web_deep_search): on ▸                 ││                                             │
+│                                            ││                    Ask you a question (ask_user): on ▸                    ││                                             │
+│                                            ││  Applies to the next Console agent run — each run builds its tool         ││                                             │
+│                                            ││  catalog fresh.                                                           ││                                             │
+│                                            ││  When [mcp] expose_local_tools is on, external MCP clients also see this  ││                                             │
+│                                            ││  change: web_deep_search — on their next client launch.                   ││                                             │
+│                                            ││  Copy client config                                                       ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

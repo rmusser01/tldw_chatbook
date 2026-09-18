@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎──────
+ Setti▊                                                                  ▎cal
+ Mode:▊                                                                  ▎
+┌─────▊  Review Tool Pack export                                         ▎─────┐
+│  Fil▊                                                                  ▎     │
+│  Cor▊  Identity                                                        ▎     │
+│     ▊  Profile: native-export · revision local snapshot                ▎ves  │
+│     ▊  Policy digest:                                               ▅  ▎     │
+│     ▊  08163ece4308a41131ea5e70dc9c47beb7ed36653c128dab8386cb598102e   ▎  │  │
+│     ▊  4ea                                                             ▎y │  │
+│  Int▊  Name: native-export                                             ▎  │  │
+│     ▊  Suggested id: native-export                                     ▎7 │  │
+│     ▊  Producer: tldw_chatbook 1                                       ▎  │  │
+│     ▊  Content digest:                                                 ▎  │  │
+│     ▊  b027ed1c2861bf2958e19905add290a8f4940131c8952740178178583ecf2   ▎  │  │
+│  Dat▊                                                                  ▎  │▃ │
+│     ▊                                  Cancel     Choose destination   ▎e │  │
+│     ▊                                                                  ▎──┘  │
+│   > ▊                                                                  ▎     │
+└─────▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎─────┘
+ Review and export this profile without tool binaries.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 if TYPE_CHECKING:
@@ -59,10 +61,22 @@ class ToolProfileRow:
     policy_digest: str | None
 
 
+class _ToolProfileResult(Static):
+    """Recheck outcome visibility after its text has wrapped."""
+
+    profile_id: str | None = None
+
+    def on_resize(self) -> None:
+        for ancestor in self.ancestors:
+            if isinstance(ancestor, ToolProfilesPanel):
+                ancestor._reveal_result()
+                break
+
+
 class ToolProfilesPanel(Vertical):
     """Render immutable profile facts and emit explicit management requests."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ToolProfilesPanel {
         width: 100%;
         height: auto;
@@ -93,7 +107,7 @@ class ToolProfilesPanel(Vertical):
         color: $text-muted;
     }
 
-    ToolProfilesPanel Button {
+    ToolProfilesPanel Button.tool-profiles-panel-button {
         width: auto;
         min-width: 8;
         height: 1;
@@ -103,7 +117,7 @@ class ToolProfilesPanel(Vertical):
         margin-right: 1;
     }
 
-    ToolProfilesPanel .tool-profile-actions Button {
+    ToolProfilesPanel .tool-profile-actions Button.tool-profiles-panel-button {
         margin-right: 0;
     }
     """
@@ -144,16 +158,20 @@ class ToolProfilesPanel(Vertical):
         listing: ToolProfileListing,
         *,
         result: str = "",
+        result_profile_id: str | None = None,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id)
         self._listing = listing
         self._result = result
+        self._result_profile_id = result_profile_id
+        self._result_anchor: Widget | None = None
         self._profiles = listing.profiles
         self._rows = {
             profile.profile_id: self._present(profile) for profile in self._profiles
         }
-        self._button_actions: dict[str, tuple[str, ToolProfilePresentation]] = {}
+        self._button_actions: dict[Button, tuple[str, ToolProfilePresentation]] = {}
+        self._listing_lock = asyncio.Lock()
 
     @staticmethod
     def _present(profile: ToolProfilePresentation) -> ToolProfileRow:
@@ -182,22 +200,127 @@ class ToolProfilesPanel(Vertical):
         return self._rows[profile_id]
 
     async def apply_listing(self, listing: ToolProfileListing) -> None:
-        """Replace presentation state with one complete service snapshot."""
-        self._listing = listing
-        self._profiles = listing.profiles
-        self._rows = {
-            profile.profile_id: self._present(profile) for profile in self._profiles
-        }
-        self._button_actions.clear()
-        await self.recompose()
+        """Refresh changed facts while retaining the user's current action."""
+        async with self._listing_lock:
+            if listing == self._listing or not self.is_attached:
+                return
+            screen = self.screen
+            focused = screen.focused
+            reveal_result = focused is not None and focused is self._result_anchor
+            context = self._button_actions.get(focused)
+            focus_key = (context[0], context[1].profile_id) if context else None
+            if focused is self.query_one("#tool-profiles-import", Button):
+                focus_key = ("import", None)
+            if focus_key is not None:
+                # Prevent teardown's automatic fallback from being mistaken for
+                # deliberate user focus. Any newer focus during the await wins.
+                screen.set_focus(None)
+            self._listing = listing
+            self._profiles = listing.profiles
+            self._rows = {
+                profile.profile_id: self._present(profile) for profile in self._profiles
+            }
+            self._button_actions.clear()
+            await self.recompose()
+            if focus_key is None or not self.is_attached or screen.focused is not None:
+                return
+            action, profile_id = focus_key
+            enabled = [
+                (button, kind, profile.profile_id)
+                for button, (kind, profile) in self._button_actions.items()
+                if not button.disabled
+            ]
+            target = next(
+                (button for button, kind, key in enabled if (kind, key) == focus_key),
+                None,
+            )
+            if target is None and action != "import":
+                target = next(
+                    (button for button, _, key in enabled if key == profile_id), None
+                )
+            if target is None:
+                target = self.query_one("#tool-profiles-import", Button)
+                if target.disabled:
+                    target = next(
+                        (ancestor for ancestor in self.ancestors if ancestor.focusable),
+                        None,
+                    )
+            screen.set_focus(target)
+            self._result_anchor = target if reveal_result else None
 
-    def set_result(self, result: str) -> None:
-        """Show one bounded path-free workflow outcome."""
+            def reveal() -> None:
+                if (
+                    target is not None
+                    and target.is_attached
+                    and self.app.screen is screen
+                    and screen.focused is target
+                ):
+                    target.scroll_visible(animate=False, immediate=True)
+                    self._reveal_result()
+
+            self.call_after_refresh(reveal)
+
+    def set_result(self, result: str, *, profile_id: str | None = None) -> None:
+        """Keep removal feedback beside its profile, or the Import continuation."""
         self._result = result[:512]
-        try:
-            self.query_one("#tool-profiles-result", Static).update(self._result)
-        except Exception:
+        self._result_profile_id = profile_id
+        focused = self.screen.focused
+        context = self._button_actions.get(focused)
+        self._result_anchor = (
+            focused
+            if context and (context[0], context[1].profile_id) == ("remove", profile_id)
+            else None
+        )
+        self._sync_results()
+        self.call_after_refresh(self._reveal_result)
+
+    def _result_widget(self, profile_id: str | None, widget_id: str) -> Static:
+        text = self._result_for(profile_id)
+        widget = _ToolProfileResult(
+            text,
+            id=widget_id,
+            classes="settings-detail-row"
+            if profile_id is None
+            else "settings-status-row",
+            markup=False,
+        )
+        widget.profile_id = profile_id
+        widget.display = bool(text) or (
+            profile_id is None and self._result_profile_id is None
+        )
+        return widget
+
+    def _result_for(self, profile_id: str | None) -> str:
+        destination = (
+            self._result_profile_id if self._result_profile_id in self._rows else None
+        )
+        return self._result if profile_id == destination else ""
+
+    def _sync_results(self) -> None:
+        for widget in self.query(_ToolProfileResult):
+            text = self._result_for(widget.profile_id)
+            widget.update(text)
+            widget.display = bool(text) or (
+                widget.profile_id is None and self._result_profile_id is None
+            )
+
+    def _reveal_result(self) -> None:
+        """Reveal only while the originating action still owns visible focus."""
+        anchor = self._result_anchor
+        if (
+            not self.is_attached
+            or not self._result
+            or anchor is None
+            or not anchor.is_attached
+            or self.app.screen is not self.screen
+            or self.screen.focused is not anchor
+        ):
             return
+        for widget in self.query(_ToolProfileResult):
+            if widget.display and widget.size:
+                widget.scroll_visible(animate=False, immediate=True)
+                anchor.scroll_visible(animate=False, immediate=True)
+                break
 
     @staticmethod
     def _reference_label(counts: tuple[int, int]) -> str:
@@ -220,15 +343,17 @@ class ToolProfilesPanel(Vertical):
         tooltip: str,
     ) -> Button:
         button_id = f"tool-profile-{action}-{index}"
-        self._button_actions[button_id] = (action, profile)
-        return Button(
+        button = Button(
             label,
             id=button_id,
-            classes="console-action-subdued",
+            classes="console-action-subdued tool-profile-action tool-profiles-panel-button",
             compact=True,
             disabled=disabled,
             tooltip=tooltip,
         )
+        # A queued event belongs to this control, even if a refresh reuses its ID.
+        self._button_actions[button] = (action, profile)
+        return button
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -239,17 +364,12 @@ class ToolProfilesPanel(Vertical):
             "profile never installs tools or binds it to a workspace.",
             classes="settings-detail-row",
         )
-        yield Static(
-            self._result,
-            id="tool-profiles-result",
-            classes="settings-detail-row",
-            markup=False,
-        )
+        yield self._result_widget(None, "tool-profiles-result")
         with Horizontal(classes="tool-profiles-toolbar"):
             yield Button(
                 "Import Tool Pack",
                 id="tool-profiles-import",
-                classes="console-action-subdued",
+                classes="console-action-subdued tool-profiles-panel-button",
                 compact=True,
                 disabled=self._listing.unavailable_category is not None,
                 tooltip="Inspect a Tool Pack before importing an unbound profile.",
@@ -323,6 +443,9 @@ class ToolProfilesPanel(Vertical):
                     self._posture_label(row.posture_counts),
                     classes="tool-profile-detail",
                 )
+                yield self._result_widget(
+                    profile.profile_id, f"tool-profile-result-{index}"
+                )
                 with Horizontal(classes="tool-profile-actions"):
                     invalid = not row.lifecycle_valid
                     yield self._action_button(
@@ -363,12 +486,15 @@ class ToolProfilesPanel(Vertical):
                     )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if not self.is_attached or not event.button.is_attached:
+            event.stop()
+            return
         button_id = event.button.id or ""
         if button_id == "tool-profiles-import":
             event.stop()
             self.post_message(self.ImportRequested())
             return
-        action_context = self._button_actions.get(button_id)
+        action_context = self._button_actions.get(event.button)
         if action_context is None:
             return
         event.stop()

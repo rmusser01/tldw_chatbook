@@ -1,0 +1,86 @@
+[
+  {
+    "path": "Tests/Character_Chat/test_local_character_persona_service.py",
+    "baseline_diagnostics": 6,
+    "current_diagnostics": 6,
+    "introduced": []
+  },
+  {
+    "path": "Tests/UI/test_workspace_persona_picker_identity.py",
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/Character_Chat/local_character_persona_service.py",
+    "baseline_diagnostics": 5,
+    "current_diagnostics": 5,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/MCP/local_config_saves.py",
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/Tool_Packs/operations.py",
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_local_master_button.py",
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py",
+    "baseline_diagnostics": 3,
+    "current_diagnostics": 3,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_rail.py",
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py",
+    "baseline_diagnostics": 4,
+    "current_diagnostics": 4,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py",
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+    "baseline_diagnostics": 114,
+    "current_diagnostics": 114,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Settings_Widgets/workspace_change_review.py",
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/workspace_persona_default.py",
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/css/widget_css.py",
+    "baseline_diagnostics": 3,
+    "current_diagnostics": 3,
+    "introduced": []
+  }
+]

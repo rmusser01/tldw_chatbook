@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 from typing import Any, Literal, NamedTuple
 
@@ -456,12 +457,22 @@ class ProfileInterviewScreen(
             self._retry_cleanup()
 
     def _submit_answer(self) -> None:
+        if self._session_id is None or self._busy:
+            return
         answer = self.query_one("#profile-interview-answer", Input).value.strip()
         if not answer:
             self._apply_error("Enter an answer, or choose Skip.")
             return
+        self._set_busy(True)
+        self._run_thread(
+            partial(self._coordinator.answer, self._session_id, answer=answer),
+            self._answer_accepted,
+        )
+
+    def _answer_accepted(self, session: InterviewSession) -> None:
+        """Clear only an accepted submission; failures keep editable input."""
         self.query_one("#profile-interview-answer", Input).value = ""
-        self._session_action(partial(self._coordinator.answer, answer=answer))
+        self.apply_session(session)
 
     def _session_action(self, operation: Callable[..., InterviewSession]) -> None:
         if self._session_id is None or self._busy:
@@ -483,7 +494,16 @@ class ProfileInterviewScreen(
         self.show_review()
 
     def _open_review(self, diff: InterviewDiff) -> None:
-        self._set_busy(False)
+        if self._session is not None:
+            # The coordinator has persisted this transition. Keep that known
+            # state so closing review cannot rebuild it from original answers.
+            self.apply_session(
+                replace(
+                    self._session, status="review", question=None, provider_error=None
+                )
+            )
+        else:
+            self._set_busy(False)
         from ...Widgets.Settings_Widgets.personal_context_review_modal import (
             PersonalContextReviewModal,
         )
@@ -499,6 +519,8 @@ class ProfileInterviewScreen(
 
     def _review_closed(self, result: Any) -> None:
         if result is None:
+            if self._session is not None:
+                self.apply_session(self._session)
             return
         from ...Widgets.Settings_Widgets.personal_context_review_modal import (
             ReviewCommitUnknownResult,

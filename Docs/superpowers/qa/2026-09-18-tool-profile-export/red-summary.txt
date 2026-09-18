@@ -1,0 +1,29 @@
+Real-service payload regression
+
+E   1 failed in 9.59s
+E   │ │ error = AttributeError("'ToolProfilePayload' object has no attribute     │ │
+E   AttributeError: 'ToolProfilePayload' object has no attribute 'rules'
+E   FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[True-appeared]
+E   1 failed in 9.36s
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[False-existing]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[False-suffix]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[False-appeared]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[True-existing]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[True-suffix]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[True-appeared]
+6 failed in 64.07s (0:01:04)
+
+Recovery regression after payload repair
+
+E   >               raise TimeoutError from exc_val
+E   E               TimeoutError
+E   ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+E   FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[True-appeared]
+E   1 failed in 10.31s
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[False-existing]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[False-suffix]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[False-appeared]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[True-existing]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[True-suffix]
+FAILED Tests/UI/test_tool_profile_export_recovery.py::test_export_corrects_destination_without_repeating_review[True-appeared]
+6 failed in 69.62s (0:01:09)

@@ -26,23 +26,30 @@ class BackupRestoreScreen(Screen):
     """Navigation releases widgets, while the app retains accepted native work."""
 
     BINDINGS = (Binding("escape", "back", "Back"),)
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     BackupRestoreScreen { background: $background; }
     BackupRestoreScreen #backup-title { height: auto; padding: 1 2; text-style: bold; }
     BackupRestoreScreen #backup-actions { layout: grid; grid-size: 2; grid-columns: 1fr 1fr; height: 6; padding: 0 1; }
-    BackupRestoreScreen #backup-actions Button { width: 100%; }
+    BackupRestoreScreen #backup-actions Button.backup-restore-screen-button { width: 100%; }
     BackupRestoreScreen #backup-status { height: auto; max-height: 5; padding: 0 2; }
     BackupRestoreScreen #backup-body { height: 1fr; padding: 1 2; }
     BackupRestoreScreen .backup-form { height: auto; }
     BackupRestoreScreen .backup-form Static { height: auto; margin-top: 1; }
-    BackupRestoreScreen .backup-form Input { width: 100%; }
+    BackupRestoreScreen .backup-form Input.backup-restore-screen-input { width: 100%; }
     BackupRestoreScreen .backup-form Checkbox { height: auto; width: 100%; }
     BackupRestoreScreen #backup-message { height: auto; padding: 0 2; max-height: 4; }
     BackupRestoreScreen #backup-footer-actions { height: auto; padding: 0 1; }
-    BackupRestoreScreen #backup-footer-actions Button { min-width: 10; width: 1fr; }
+    BackupRestoreScreen #backup-footer-actions Button.backup-restore-screen-button { min-width: 10; width: 1fr; }
     """
 
-    def __init__(self, service, *, config_paths=(), include_known_profiles=False, restart_request=None):
+    def __init__(
+        self,
+        service,
+        *,
+        config_paths=(),
+        include_known_profiles=False,
+        restart_request=None,
+    ):
         super().__init__()
         self.service = service
         self.config_paths = tuple(Path(path) for path in config_paths)
@@ -83,10 +90,26 @@ class BackupRestoreScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static("Backup & Restore", id="backup-title")
         with Container(id="backup-actions"):
-            yield Button("Create backup", id="backup-open-create")
-            yield Button("Inspect / restore", id="backup-open-inspect")
-            yield Button("Recovery copies", id="backup-open-copies")
-            yield Button("Restored profiles", id="backup-open-profiles")
+            yield Button(
+                "Create backup",
+                id="backup-open-create",
+                classes="backup-restore-screen-button",
+            )
+            yield Button(
+                "Inspect / restore",
+                id="backup-open-inspect",
+                classes="backup-restore-screen-button",
+            )
+            yield Button(
+                "Recovery copies",
+                id="backup-open-copies",
+                classes="backup-restore-screen-button",
+            )
+            yield Button(
+                "Restored profiles",
+                id="backup-open-profiles",
+                classes="backup-restore-screen-button",
+            )
         yield Static("No operation started", id="backup-status", markup=False)
         with VerticalScroll(id="backup-body"):
             yield Static(
@@ -97,7 +120,11 @@ class BackupRestoreScreen(Screen):
             with Vertical(id="backup-create-form", classes="backup-form"):
                 yield Static("Profile configurations", classes="destination-section")
                 yield Static(self._profile_text(), id="backup-profiles", markup=False)
-                yield Button("Add profile configuration", id="backup-add-profile")
+                yield Button(
+                    "Add profile configuration",
+                    id="backup-add-profile",
+                    classes="backup-restore-screen-button",
+                )
                 yield Static("Data to back up", classes="destination-section")
                 yield BackupDataGroupSelector(
                     tuple(asdict(group) for group in BACKUP_GROUPS), id="backup-data"
@@ -109,18 +136,31 @@ class BackupRestoreScreen(Screen):
                 yield Static(
                     "Use .tldw-backup.zip, or .tldw-backup.zip.age when encrypted."
                 )
-                yield Input(placeholder="Choose a new file", id="backup-destination")
-                yield Button("Choose output file", id="backup-pick-destination")
+                yield Input(
+                    placeholder="Choose a new file",
+                    id="backup-destination",
+                    classes="backup-restore-screen-input",
+                )
+                yield Button(
+                    "Choose output file",
+                    id="backup-pick-destination",
+                    classes="backup-restore-screen-button",
+                )
                 yield Static("Optional additions", classes="destination-section")
                 yield Static(
                     "No external folders selected",
                     id="backup-external-roots",
                     markup=False,
                 )
-                yield Button("Add external folder", id="backup-add-external")
+                yield Button(
+                    "Add external folder",
+                    id="backup-add-external",
+                    classes="backup-restore-screen-button",
+                )
                 yield Input(
                     placeholder="Optional model IDs, separated by commas",
                     id="backup-models",
+                    classes="backup-restore-screen-input",
                 )
                 yield Checkbox("Include temporary media", id="backup-temporary")
                 yield Checkbox("Include diagnostic history", id="backup-diagnostics")
@@ -133,11 +173,17 @@ class BackupRestoreScreen(Screen):
                     id="backup-credentials",
                 )
                 yield Checkbox("Encrypt this backup", id="backup-encrypted")
-                yield Input(placeholder="Password", password=True, id="backup-password")
+                yield Input(
+                    placeholder="Password",
+                    password=True,
+                    id="backup-password",
+                    classes="backup-restore-screen-input",
+                )
                 yield Input(
                     placeholder="Confirm password",
                     password=True,
                     id="backup-password-confirm",
+                    classes="backup-restore-screen-input",
                 )
                 yield Static(
                     "Review coverage before creating the backup.",
@@ -147,12 +193,21 @@ class BackupRestoreScreen(Screen):
                 yield Vertical(id="backup-credential-review", classes="backup-form")
             with Vertical(id="backup-inspect-form", classes="backup-form"):
                 yield Static("Backup archive", classes="destination-section")
-                yield Input(placeholder="Choose an archive", id="backup-source")
-                yield Button("Choose archive", id="backup-pick-source")
+                yield Input(
+                    placeholder="Choose an archive",
+                    id="backup-source",
+                    classes="backup-restore-screen-input",
+                )
+                yield Button(
+                    "Choose archive",
+                    id="backup-pick-source",
+                    classes="backup-restore-screen-button",
+                )
                 yield Input(
                     placeholder="Archive password, if encrypted",
                     password=True,
                     id="backup-inspect-password",
+                    classes="backup-restore-screen-input",
                 )
                 yield Static(
                     "Inspect first. Restore controls require a verified archive and a reviewed local destination plan.",
@@ -178,7 +233,11 @@ class BackupRestoreScreen(Screen):
                         "Replacement continues after Chatbook closes. Review the archive and destinations again in recovery mode.",
                         id="backup-restart-note",
                     )
-                    yield Button("Continue in recovery mode", id="backup-restart")
+                    yield Button(
+                        "Continue in recovery mode",
+                        id="backup-restart",
+                        classes="backup-restore-screen-button",
+                    )
                     yield Static(
                         "Choose a new folder and display name for each isolated profile. Required database and application folders are arranged automatically."
                     )
@@ -190,6 +249,7 @@ class BackupRestoreScreen(Screen):
                         yield Input(
                             placeholder="Existing private local directory",
                             id="backup-setup-parent",
+                            classes="backup-restore-screen-input",
                         )
                     yield Static(
                         "For replacement: selected existing profile configuration"
@@ -200,30 +260,40 @@ class BackupRestoreScreen(Screen):
                     yield Input(
                         placeholder="Existing local config.toml",
                         id="backup-target-config",
+                        classes="backup-restore-screen-input",
                     )
                     yield Input(
                         placeholder="Replacement rollback password",
                         password=True,
                         id="backup-rollback-password",
+                        classes="backup-restore-screen-input",
                     )
                     yield Input(
                         placeholder="Confirm rollback password",
                         password=True,
                         id="backup-rollback-confirm",
+                        classes="backup-restore-screen-input",
                     )
-                    yield Vertical(id="backup-restore-credential-review", classes="backup-form")
+                    yield Vertical(
+                        id="backup-restore-credential-review", classes="backup-form"
+                    )
                     yield Vertical(id="backup-safety-scope", classes="backup-form")
                     yield Static(
                         "Review the actual restore, retirement and preservation plan.",
                         id="backup-restore-preview",
                         markup=False,
                     )
-                    yield Button("Review restore", id="backup-review-restore")
+                    yield Button(
+                        "Review restore",
+                        id="backup-review-restore",
+                        classes="backup-restore-screen-button",
+                    )
                     yield Button(
                         "Confirm reviewed restore",
                         id="backup-start-restore",
                         variant="warning",
                         disabled=True,
+                        classes="backup-restore-screen-button",
                     )
                 with Vertical(id="backup-inert-form", classes="backup-form"):
                     yield Static(
@@ -233,18 +303,24 @@ class BackupRestoreScreen(Screen):
                     yield Input(
                         placeholder="New absolute directory for extracted files",
                         id="backup-inert-destination",
+                        classes="backup-restore-screen-input",
                     )
                     yield Static(
                         "Select groups and review the extraction first.",
                         id="backup-inert-preview",
                         markup=False,
                     )
-                    yield Button("Review extraction", id="backup-review-extraction")
+                    yield Button(
+                        "Review extraction",
+                        id="backup-review-extraction",
+                        classes="backup-restore-screen-button",
+                    )
                     yield Button(
                         "Confirm inert extraction",
                         id="backup-start-extraction",
                         variant="warning",
                         disabled=True,
+                        classes="backup-restore-screen-button",
                     )
             with Vertical(id="backup-dependent", classes="backup-form"):
                 yield Static("", id="backup-list-title", markup=False)
@@ -252,6 +328,7 @@ class BackupRestoreScreen(Screen):
                     placeholder="Recovery archive password, if required",
                     password=True,
                     id="backup-copy-password",
+                    classes="backup-restore-screen-input",
                 )
                 yield Vertical(id="backup-list", classes="backup-form")
                 yield Static("", id="backup-delete-preview", markup=False)
@@ -264,6 +341,7 @@ class BackupRestoreScreen(Screen):
                     id="backup-delete-copy",
                     variant="error",
                     disabled=True,
+                    classes="backup-restore-screen-button",
                 )
                 with Vertical(id="backup-later-form", classes="backup-form"):
                     yield Static(
@@ -276,24 +354,38 @@ class BackupRestoreScreen(Screen):
                         else "",
                         placeholder="Current profile configuration to review",
                         id="backup-later-target",
+                        classes="backup-restore-screen-input",
                     )
                     yield Static(
                         "Close Chatbook and continue in recovery mode, then select this copy and review again.",
-                        id="backup-later-restart-note", markup=False,
+                        id="backup-later-restart-note",
+                        markup=False,
                     )
-                    yield Button("Continue in recovery mode", id="backup-later-restart")
-                    yield Button("Review later rollback", id="backup-later-review")
+                    yield Button(
+                        "Continue in recovery mode",
+                        id="backup-later-restart",
+                        classes="backup-restore-screen-button",
+                    )
+                    yield Button(
+                        "Review later rollback",
+                        id="backup-later-review",
+                        classes="backup-restore-screen-button",
+                    )
                     yield Static("", id="backup-later-preview", markup=False)
-                    yield Vertical(id="backup-later-credential-review", classes="backup-form")
+                    yield Vertical(
+                        id="backup-later-credential-review", classes="backup-form"
+                    )
                     yield Input(
                         placeholder="New safety-copy password",
                         password=True,
                         id="backup-safety-password",
+                        classes="backup-restore-screen-input",
                     )
                     yield Input(
                         placeholder="Repeat new safety-copy password",
                         password=True,
                         id="backup-safety-confirm",
+                        classes="backup-restore-screen-input",
                     )
                     yield Checkbox(
                         "I reviewed the affected data and understand current changes will be replaced",
@@ -304,6 +396,7 @@ class BackupRestoreScreen(Screen):
                         id="backup-later-start",
                         variant="warning",
                         disabled=True,
+                        classes="backup-restore-screen-button",
                     )
             with Vertical(id="backup-media-form", classes="backup-form"):
                 yield Static("Recovered media in the current profile", markup=False)
@@ -314,28 +407,76 @@ class BackupRestoreScreen(Screen):
                 yield Static("", id="backup-media-summary", markup=False)
                 yield Vertical(id="backup-media-list", classes="backup-form")
                 with Horizontal():
-                    yield Button("Previous page", id="backup-media-previous", disabled=True)
-                    yield Button("Next page", id="backup-media-next", disabled=True)
+                    yield Button(
+                        "Previous page",
+                        id="backup-media-previous",
+                        disabled=True,
+                        classes="backup-restore-screen-button",
+                    )
+                    yield Button(
+                        "Next page",
+                        id="backup-media-next",
+                        disabled=True,
+                        classes="backup-restore-screen-button",
+                    )
                 yield Static("", id="backup-media-review", markup=False)
-                yield Checkbox("I reviewed every affected reference and hold", id="backup-media-confirm")
-                yield Button("Delete reviewed asset", id="backup-media-delete", variant="error", disabled=True)
-                yield Button("Clean up reviewed orphan", id="backup-media-cleanup", variant="warning", disabled=True)
-                yield Button("Cancel review", id="backup-media-cancel")
+                yield Checkbox(
+                    "I reviewed every affected reference and hold",
+                    id="backup-media-confirm",
+                )
+                yield Button(
+                    "Delete reviewed asset",
+                    id="backup-media-delete",
+                    variant="error",
+                    disabled=True,
+                    classes="backup-restore-screen-button",
+                )
+                yield Button(
+                    "Clean up reviewed orphan",
+                    id="backup-media-cleanup",
+                    variant="warning",
+                    disabled=True,
+                    classes="backup-restore-screen-button",
+                )
+                yield Button(
+                    "Cancel review",
+                    id="backup-media-cancel",
+                    classes="backup-restore-screen-button",
+                )
         yield Static("", id="backup-message", markup=False)
         with Horizontal(id="backup-footer-actions"):
-            yield Button("Review", id="backup-review")
             yield Button(
-                "Create backup", id="backup-create", variant="primary", disabled=True
+                "Review", id="backup-review", classes="backup-restore-screen-button"
             )
-            yield Button("Inspect", id="backup-inspect", variant="primary")
-            yield Button("Cancel operation", id="backup-cancel", disabled=True)
-            yield Button("Back", id="backup-back")
+            yield Button(
+                "Create backup",
+                id="backup-create",
+                variant="primary",
+                disabled=True,
+                classes="backup-restore-screen-button",
+            )
+            yield Button(
+                "Inspect",
+                id="backup-inspect",
+                variant="primary",
+                classes="backup-restore-screen-button",
+            )
+            yield Button(
+                "Cancel operation",
+                id="backup-cancel",
+                disabled=True,
+                classes="backup-restore-screen-button",
+            )
+            yield Button(
+                "Back", id="backup-back", classes="backup-restore-screen-button"
+            )
         yield Footer()
 
     def _profile_text(self):
         if self.include_known_profiles:
-            return "All known local profiles, plus selected configurations:\n" + "\n".join(
-                str(path) for path in self.config_paths
+            return (
+                "All known local profiles, plus selected configurations:\n"
+                + "\n".join(str(path) for path in self.config_paths)
             )
         return (
             "\n".join(str(path) for path in self.config_paths)
@@ -352,8 +493,12 @@ class BackupRestoreScreen(Screen):
         elif self._restart_request is not None:
             self._show_mode("inspect")
             if self._restart_request.archive is not None:
-                self.query_one("#backup-source", Input).value = str(self._restart_request.archive)
-            self.query_one("#backup-target-config", Input).value = str(self._restart_request.target_config)
+                self.query_one("#backup-source", Input).value = str(
+                    self._restart_request.archive
+                )
+            self.query_one("#backup-target-config", Input).value = str(
+                self._restart_request.target_config
+            )
             self.query_one("#backup-restore-mode", Select).value = "replace"
         self._sync_replacement_host()
         self._poller = self.set_interval(0.2, self._refresh_status)
@@ -489,7 +634,7 @@ class BackupRestoreScreen(Screen):
                     Button(
                         "Review asset details",
                         name=asset.asset_id,
-                        classes="backup-review-media",
+                        classes="backup-review-media backup-restore-screen-button",
                     ),
                 )
 
@@ -621,7 +766,9 @@ class BackupRestoreScreen(Screen):
                 current,
             )
         else:
-            self._deliver(app, self._list_ready, revision, mode, entries, pending, None, current)
+            self._deliver(
+                app, self._list_ready, revision, mode, entries, pending, None, current
+            )
 
     async def _list_ready(self, revision, mode, entries, pending, issue, current=None):
         if not self.is_mounted or mode != self._mode or revision != self._revision:
@@ -684,7 +831,13 @@ class BackupRestoreScreen(Screen):
                     markup=False,
                 )
             )
-            widgets.append(Button("Recovered media details", id="backup-open-media"))
+            widgets.append(
+                Button(
+                    "Recovered media details",
+                    id="backup-open-media",
+                    classes="backup-restore-screen-button",
+                )
+            )
         if not entries and not pending and current is None:
             widgets.append(Static("No local entries.", markup=False))
         for entry in entries:
@@ -698,20 +851,20 @@ class BackupRestoreScreen(Screen):
                         Button(
                             "Inspect recovery copy",
                             name=entry.operation_id,
-                            classes="backup-inspect-copy",
+                            classes="backup-inspect-copy backup-restore-screen-button",
                             disabled=entry.status != "verified",
                         ),
                         Button(
                             "Review deletion",
                             name=entry.operation_id,
-                            classes="backup-review-delete",
+                            classes="backup-review-delete backup-restore-screen-button",
                             disabled=entry.pending_operation
                             or entry.status != "verified",
                         ),
                         Button(
                             "Review later rollback",
                             name=entry.operation_id,
-                            classes="backup-review-rollback",
+                            classes="backup-review-rollback backup-restore-screen-button",
                             disabled=entry.pending_operation
                             or entry.status != "verified",
                         ),
@@ -739,7 +892,7 @@ class BackupRestoreScreen(Screen):
                         Button(
                             "Open in new process",
                             name=entry["profile_id"],
-                            classes="backup-open-profile",
+                            classes="backup-open-profile backup-restore-screen-button",
                             disabled=not entry.get("requirements_checked"),
                         ),
                     ]
@@ -763,7 +916,8 @@ class BackupRestoreScreen(Screen):
                     Button(
                         label,
                         name=row["operation_id"],
-                        classes="backup-recover-" + action,
+                        classes=("backup-recover-" + action)
+                        + " backup-restore-screen-button",
                     )
                 )
         await listing.mount(*widgets)
@@ -892,7 +1046,9 @@ class BackupRestoreScreen(Screen):
         self.query_one("#backup-later-preview", Static).update(message)
         self.query_one("#backup-later-start", Button).disabled = (
             self._requires_recovery_restart()
-            or plan is None or availability is not None and not availability[0]
+            or plan is None
+            or availability is not None
+            and not availability[0]
         )
         codes = tuple(code for code in review_issues if code.startswith("credential_"))
         if codes:
@@ -1161,7 +1317,9 @@ class BackupRestoreScreen(Screen):
             box.disabled = True
 
     def _later_selection(self):
-        return self._rollback_copy_id, str(Path(self._input("backup-later-target")).expanduser())
+        return self._rollback_copy_id, str(
+            Path(self._input("backup-later-target")).expanduser()
+        )
 
     def _forget_later_credential_review(self):
         """Omission decisions belong to the selected copy and current target."""
@@ -1195,7 +1353,9 @@ class BackupRestoreScreen(Screen):
         options = self._options()
         try:
             if options["data_groups"] == ():
-                raise ValueError("Choose at least one data group, or select Everything.")
+                raise ValueError(
+                    "Choose at least one data group, or select Everything."
+                )
             self._validate_password(options)
             destination = Path(self._input("backup-destination")).expanduser()
             if not destination.is_absolute() or (
@@ -1219,7 +1379,9 @@ class BackupRestoreScreen(Screen):
     def _preview_sources(self, app, revision, profiles, destination, options):
         try:
             preview = self.service.preview_backup_details(
-                profiles, options=options, destination=destination,
+                profiles,
+                options=options,
+                destination=destination,
                 include_known_profiles=self.include_known_profiles,
             )
         except (OSError, ValueError, RuntimeError) as error:
@@ -1250,9 +1412,11 @@ class BackupRestoreScreen(Screen):
         self._preview, self._reviewed = preview, reviewed
         self._backup_availability = details["availability"]
         self.query_one("#backup-profiles", Static).update(
-            "Reviewed profile configurations:\n" + "\n".join(
+            "Reviewed profile configurations:\n"
+            + "\n".join(
                 dict.fromkeys(
-                    str(item.path) for item in preview.items
+                    str(item.path)
+                    for item in preview.items
                     if item.owner == "config" and item.path is not None
                 )
             )
@@ -1281,7 +1445,9 @@ class BackupRestoreScreen(Screen):
                 )
             )
         if not whole_profile:
-            rows.append("Coverage applies to the selected groups, not the whole profile.")
+            rows.append(
+                "Coverage applies to the selected groups, not the whole profile."
+            )
         available, reason = self._backup_availability
         rows.append(
             "Availability: " + ("available" if available else f"unavailable ({reason})")
@@ -1499,7 +1665,9 @@ class BackupRestoreScreen(Screen):
             ):
                 self._restore_review_codes_seen = codes
                 self.run_worker(
-                    self._show_restore_credential_review(current["operation_id"], codes),
+                    self._show_restore_credential_review(
+                        current["operation_id"], codes
+                    ),
                     exclusive=True,
                     group="restore-credential-review",
                 )
@@ -1508,14 +1676,16 @@ class BackupRestoreScreen(Screen):
                 and current["operation_id"] == self._requested_rollback_operation
                 and self._rollback_selection == self._later_selection()
                 and self._mode == "copies"
-                and codes and codes != self._later_review_codes_seen
+                and codes
+                and codes != self._later_review_codes_seen
             ):
                 self._later_review_codes_seen = codes
                 self.run_worker(
                     self._show_later_credential_review(
                         self._revision, self._rollback_selection, codes, pending=True
                     ),
-                    exclusive=True, group="later-credential-review",
+                    exclusive=True,
+                    group="later-credential-review",
                 )
         self.query_one("#backup-status", Static).update(text)
         self.query_one("#backup-cancel", Button).disabled = (
@@ -1552,12 +1722,18 @@ class BackupRestoreScreen(Screen):
             )
 
     async def _show_restore_credential_review(self, operation, codes):
-        if operation != self._requested_restore_operation or codes != self._restore_review_codes_seen:
+        if (
+            operation != self._requested_restore_operation
+            or codes != self._restore_review_codes_seen
+        ):
             return
         self._invalidate()
         area = self.query_one("#backup-restore-credential-review", Vertical)
         await area.remove_children()
-        if operation != self._requested_restore_operation or codes != self._restore_review_codes_seen:
+        if (
+            operation != self._requested_restore_operation
+            or codes != self._restore_review_codes_seen
+        ):
             return
         area.display = True
         await area.mount(
@@ -1697,7 +1873,9 @@ class BackupRestoreScreen(Screen):
                     markup=False,
                 ),
                 Input(
-                    placeholder="Absolute local directory", id=f"backup-root-{index}"
+                    placeholder="Absolute local directory",
+                    id=f"backup-root-{index}",
+                    classes="backup-restore-screen-input",
                 ),
             )
         for index, profile in enumerate(summary["profile_ids"]):
@@ -1709,6 +1887,7 @@ class BackupRestoreScreen(Screen):
                 Input(
                     placeholder="Required new profile display name",
                     id=f"backup-profile-name-{index}",
+                    classes="backup-restore-screen-input",
                 ),
             )
         for index, profile in enumerate(summary["profile_ids"]):
@@ -1721,6 +1900,7 @@ class BackupRestoreScreen(Screen):
                     Input(
                         placeholder="Existing local config.toml",
                         id=f"backup-target-config-{index}",
+                        classes="backup-restore-screen-input",
                     ),
                 )
         self._sync_replacement_host()
@@ -1925,8 +2105,18 @@ class BackupRestoreScreen(Screen):
 
     @work(exclusive=True, thread=True, group="backup-restore-preview")
     def _preview_restore(
-        self, app, revision, inspection, mode, destinations, names, target, acknowledged,
-        safety_scope, data_groups=None, displayed_groups=None,
+        self,
+        app,
+        revision,
+        inspection,
+        mode,
+        destinations,
+        names,
+        target,
+        acknowledged,
+        safety_scope,
+        data_groups=None,
+        displayed_groups=None,
     ):
         try:
             inventory = (
@@ -2025,9 +2215,14 @@ class BackupRestoreScreen(Screen):
                     Button(
                         "Select required safety-copy files",
                         id="backup-select-required-safety",
+                        classes="backup-restore-screen-button",
                     ),
                     *(
-                        Checkbox(Text(f"{owner}: {path}"), name=key, classes="backup-safety-member")
+                        Checkbox(
+                            Text(f"{owner}: {path}"),
+                            name=key,
+                            classes="backup-safety-member",
+                        )
                         for key, owner, path in choices
                     ),
                 )
@@ -2069,7 +2264,9 @@ class BackupRestoreScreen(Screen):
                 "Selected and required groups replace stored data. Unselected stored data stays in place."
             )
             if plan.retained_configs:
-                rows.append("Existing settings stay in place and determine local storage paths.")
+                rows.append(
+                    "Existing settings stay in place and determine local storage paths."
+                )
         rows.extend(f"Local profile name: {name}" for _, name in plan.profile_names)
         for label, entries in (
             ("Restore", plan.restore),
@@ -2078,7 +2275,9 @@ class BackupRestoreScreen(Screen):
         ):
             rows.extend(f"{label}: {key} → {path}" for key, path in entries)
         rows.extend(f"Issue: {issue}" for issue in plan.issues)
-        rows.extend(f"Additional safety-copy source: {key}" for key in plan.safety_scope)
+        rows.extend(
+            f"Additional safety-copy source: {key}" for key in plan.safety_scope
+        )
         rows.extend(
             f"Acknowledged safety-copy credential omission: {issue}"
             for issue in plan.acknowledged_credential_issues
@@ -2114,8 +2313,10 @@ class BackupRestoreScreen(Screen):
             return
         required = set(required_rollback_dependencies(self._restore_plan))
         boxes = {
-            box.name: box for box in self.query(".backup-safety-member")
-            if not box.disabled and box.name in {row[0] for row in self._safety_scope_seen}
+            box.name: box
+            for box in self.query(".backup-safety-member")
+            if not box.disabled
+            and box.name in {row[0] for row in self._safety_scope_seen}
         }
         if not required or not required <= boxes.keys():
             return

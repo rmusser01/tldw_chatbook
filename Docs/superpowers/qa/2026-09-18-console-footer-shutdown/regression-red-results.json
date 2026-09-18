@@ -1,0 +1,86 @@
+[
+  {
+    "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32815-red-001/001",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32815-red-001/002",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32815-red-001/003",
+    "classes": [],
+    "mismatches": 0
+  }
+]

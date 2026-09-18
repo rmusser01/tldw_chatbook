@@ -1,0 +1,43 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone ______
+
+    def test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone():
+        """task-32204 AC#2: a bundle-only pin over split-sheet widgets is a bug.
+    
+        The failure names the harness and the sheet it is missing so the fix is
+        a one-line swap to ``APP_STYLESHEETS`` (``Tests/UI/consolidated_css.py``),
+        which is what the running app ends up with once the owning screen has
+        been visited.
+        """
+        findings = scan_bundle_only_harnesses()
+>       assert not findings, "\n".join(
+            f"{path}::{cls} pins the bundle without {sheet} "
+            f"but queries {', '.join(used)} -- "
+            "use CSS_PATH = [str(p) for p in APP_STYLESHEETS]"
+            for path, cls, sheet, used in findings
+        )
+E       AssertionError: Tests/UI/test_library_notes_w5_import_preview.py::_ChooserHost pins the bundle without screen_agentic_library.tcss but queries library-note-title, library-note-work-authority, library-notes-row -- use CSS_PATH = [str(p) for p in APP_STYLESHEETS]
+E         Tests/UI/test_library_notes_w5_import_preview.py::_FolderFilesHost pins the bundle without screen_agentic_library.tcss but queries library-note-title, library-note-work-authority, library-notes-row -- use CSS_PATH = [str(p) for p in APP_STYLESHEETS]
+E         Tests/UI/test_library_notes_w5_import_preview.py::_ImportCanvasHost pins the bundle without screen_agentic_library.tcss but queries library-note-title, library-note-work-authority, library-notes-row -- use CSS_PATH = [str(p) for p in APP_STYLESHEETS]
+E         Tests/UI/test_library_notes_w5_import_preview.py::_PreviewHost pins the bundle without screen_agentic_library.tcss but queries library-note-title, library-note-work-authority, library-notes-row -- use CSS_PATH = [str(p) for p in APP_STYLESHEETS]
+E         Tests/UI/test_library_notes_w5_kbd_focus.py::_BundledPanelHarness pins the bundle without screen_agentic_library.tcss but queries library-note-context-delete, library-note-context-keywords, library-note-context-meta, library-notes-filter, library-search-input -- use CSS_PATH = [str(p) for p in APP_STYLESHEETS]
+E         Tests/UI/test_workspace_persona_picker_identity.py::_Host pins the bundle without screen_agentic_settings.tcss but queries settings-workspace-row -- use CSS_PATH = [str(p) for p in APP_STYLESHEETS]
+E       assert not [('Tests/UI/test_library_notes_w5_import_preview.py', '_ChooserHost', 'screen_agentic_library.tcss', ('library-note-ti...s/UI/test_workspace_persona_picker_identity.py', '_Host', 'screen_agentic_settings.tcss', ('settings-workspace-row',))]
+
+Tests/UI/test_consolidated_css_harness.py:568: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 11:39:13.749 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 11:39:13.772 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 11:39:13.772 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 11:39:13.773 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 11:39:27.506 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ pydub dependency not found. Feature 'pydub' will be disabled. Reason: No module named 'pydub'
+2026-09-18 11:39:27.507 | WARNING  | tldw_chatbook.TTS.audio_stitch:<module>:83 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+============================= slowest 25 durations =============================
+14.88s call     Tests/UI/test_consolidated_css_harness.py::test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_consolidated_css_harness.py::test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone
+1 failed in 15.91s

@@ -1,0 +1,12 @@
+.........                                                                [100%]
+============================= slowest 25 durations =============================
+4.63s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]
+4.59s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]
+4.58s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-light]
+4.44s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-dark]
+3.54s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+1.58s call     Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog
+1.49s call     Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_server_master_switch_reachable
+
+(18 durations < 1s hidden.)
+9 passed, 361 deselected in 29.07s

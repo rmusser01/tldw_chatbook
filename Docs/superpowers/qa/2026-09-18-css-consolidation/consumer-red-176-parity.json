@@ -1,0 +1,148 @@
+{
+  "exitstatus": 1,
+  "cases": [
+    "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]"
+  ],
+  "outcomes": [
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+      "phase": "setup",
+      "outcome": "passed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+      "phase": "call",
+      "outcome": "failed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+      "phase": "teardown",
+      "outcome": "passed",
+      "wasxfail": null
+    }
+  ],
+  "classes": {
+    "WorkspaceArchiveReceiptModal": [
+      [
+        "Button",
+        "workspace-archive-done",
+        [
+          "blur",
+          "can-focus",
+          "dark",
+          "empty",
+          "enabled",
+          "last-child",
+          "last-of-type",
+          "nocolor",
+          "odd"
+        ]
+      ],
+      [
+        "Button",
+        "workspace-archive-undo",
+        [
+          "can-focus",
+          "dark",
+          "empty",
+          "enabled",
+          "first-child",
+          "first-of-type",
+          "focus",
+          "focus-within",
+          "nocolor",
+          "odd"
+        ]
+      ],
+      [
+        "Button",
+        "workspace-archive-view",
+        [
+          "blur",
+          "can-focus",
+          "dark",
+          "empty",
+          "enabled",
+          "even",
+          "nocolor"
+        ]
+      ],
+      [
+        "Horizontal",
+        "workspace-archive-receipt-actions",
+        [
+          "blur",
+          "dark",
+          "enabled",
+          "first-of-type",
+          "focus-within",
+          "last-child",
+          "last-of-type",
+          "nocolor",
+          "odd"
+        ]
+      ],
+      [
+        "Static",
+        "",
+        [
+          "blur",
+          "dark",
+          "empty",
+          "enabled",
+          "even",
+          "last-of-type",
+          "nocolor"
+        ]
+      ],
+      [
+        "Static",
+        "",
+        [
+          "blur",
+          "dark",
+          "empty",
+          "enabled",
+          "first-child",
+          "first-of-type",
+          "nocolor",
+          "odd"
+        ]
+      ],
+      [
+        "Vertical",
+        "workspace-archive-receipt",
+        [
+          "blur",
+          "dark",
+          "enabled",
+          "first-child",
+          "first-of-type",
+          "focus-within",
+          "last-child",
+          "last-of-type",
+          "nocolor",
+          "odd"
+        ]
+      ],
+      [
+        "WorkspaceArchiveReceiptModal",
+        "",
+        [
+          "blur",
+          "dark",
+          "enabled",
+          "first-of-type",
+          "focus-within",
+          "last-child",
+          "last-of-type",
+          "nocolor",
+          "odd"
+        ]
+      ]
+    ]
+  },
+  "mismatches": []
+}
