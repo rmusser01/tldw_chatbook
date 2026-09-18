@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from textual import on
 from textual.app import ComposeResult
@@ -127,7 +127,7 @@ class WorkspaceCreateModal(
     """
 
     SAFE_MODAL_CONTENT = "#workspace-create-modal"
-    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    BINDINGS: ClassVar = [("escape", "request_safe_cancel", "Cancel")]
     AUTO_FOCUS = "#workspace-create-name"
 
     def __init__(
@@ -572,7 +572,25 @@ class WorkspaceCreateModal(
         self._error_origin = retry
         self.call_after_refresh(self._reveal_error)
 
-    def _create(self) -> None:
+    async def _prepare_automatic_creation(self) -> None:
+        """Wait without blocking Cancel or owning the shared app initialization."""
+        generation = self._safe_mount_generation
+        try:
+            await self.app.ensure_workspace_agent_provisioning()
+        finally:
+            if generation == self._safe_mount_generation:
+                self._committed = False
+        if (
+            not self.is_attached
+            or self.app.screen is not self
+            or self._safe_dismiss_committed
+            or generation != self._safe_mount_generation
+        ):
+            return
+        # Re-read the form and validate again after the asynchronous boundary.
+        self._create(authority_prepared=True)
+
+    def _create(self, *, authority_prepared: bool = False) -> None:
         # Finding 1: guard against a double-submit (rapid Enter-Enter on the
         # name Input, or a double-click on Create) re-running the side
         # effects below before the modal has actually popped off the screen
@@ -613,6 +631,20 @@ class WorkspaceCreateModal(
         # locking the Create button for the rest of the session.
         try:
             assistant_kwargs = self.query_one(WorkspacePersonaPicker).creation_kwargs()
+            if (
+                not assistant_kwargs
+                and not authority_prepared
+                and callable(
+                    getattr(self.app, "ensure_workspace_agent_provisioning", None)
+                )
+            ):
+                self.run_worker(
+                    self._prepare_automatic_creation(),
+                    group="workspace-create-readiness",
+                    exclusive=False,
+                    exit_on_error=False,
+                )
+                return
             workspace_id, generated_name = next_local_workspace_identity(self._registry)
             self._registry.create_workspace(
                 workspace_id=workspace_id,

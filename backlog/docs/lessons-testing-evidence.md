@@ -129,6 +129,12 @@ governance negative cases also needed to call the original assertion via
 otherwise made their expected failures disappear. Preserve the production guard,
 prove the baseline, and exercise negative controls after harness changes.
 
+**TASK-32777, 2026-09-18.** Five App startup hygiene cases hit the same
+collection-to-fixture profile change while checking cold provisioning. Four
+raised `raw_source_selection_changed`; the composition case swallowed it and
+reported an empty call list. Giving each the existing private-profile process
+wrapper restored all five original assertions without changing recovery admission.
+
 ## Range comparisons do not prove finite input
 
 **TASK-32748, 2026-09-17.** Existing out-of-range generation-profile tests passed,

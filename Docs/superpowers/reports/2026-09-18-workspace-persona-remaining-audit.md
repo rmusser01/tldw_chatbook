@@ -3,7 +3,9 @@
 Read-only audit at `3e0c14de96`, followed by TASK-32775 native cold creation.
 TASK-32776 closes findings 1–2 with real-service regressions and four native
 size/theme cells; [the QA receipt](../qa/2026-09-18-workspace-persona-identity/README.md)
-records the exact scope. Finding 3 remains open.
+records the exact scope. TASK-32777 closes finding 3 with the existing deferred
+Tool Profile authority, ten mounted regressions and a native cold creation
+([QA receipt](../qa/2026-09-18-workspace-cold-provisioning/README.md)).
 
 1. `WorkspacePersonaPicker` uses valid string IDs `none` and `auto` for control
    choices. The real Persona service accepts both. In a production-CSS mounted
@@ -33,5 +35,6 @@ healthy databases and unchanged default fingerprints). TASK-32775 continues
 interview qualification after explicitly opening Tool Profiles; that setup does
 not qualify cold automatic Persona creation.
 
-No whole-workstream completion claim is supported while cold automatic
-provisioning remains unqualified.
+All three findings above are now qualified within their recorded scope. Broader
+Persona management and Tool Profiles management remain separate component
+reviews; this ledger does not mark the whole workstream complete.
