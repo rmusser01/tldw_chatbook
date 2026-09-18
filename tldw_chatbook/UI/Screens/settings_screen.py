@@ -197,6 +197,7 @@ from ...config import (
     coerce_int_setting,
     get_cli_config_path,
     get_cli_setting,
+    get_runtime_config_generation,
     get_runtime_config_snapshot,
     load_settings,
     provider_settings_for_key,
@@ -677,6 +678,21 @@ class _ConsoleToggleWrite:
     lock: Any = field(default_factory=threading.Lock, repr=False)
 
 
+@dataclass(slots=True)
+class _PermissionSummaryWrite:
+    """Keep immediate form edits and their writer across Settings recreation."""
+
+    screen: "SettingsScreen"
+    form: dict[str, str] | None = None
+    pending: tuple[int, dict[str, str]] | None = None
+    running: bool = False
+    revision: int = 0
+    failed: bool = False
+    cache_warning_generation: int | None = None
+    result: str = ""
+    lock: Any = field(default_factory=threading.Lock, repr=False)
+
+
 @dataclass(frozen=True, slots=True)
 class _VllmDefaultPresentationSnapshot:
     """Complete provider presentation restored after a late handoff failure."""
@@ -1079,6 +1095,7 @@ PERMISSION_SUMMARY_FIELD_IDS = frozenset(
         "settings-permission-summary-mode",
         "settings-permission-summary-provider",
         "settings-permission-summary-model",
+        "settings-permission-summary-retry",
     }
 )
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
@@ -2974,6 +2991,13 @@ class SettingsScreen(BaseAppScreen):
         for pending in toggle_writes.values():
             with pending.lock:
                 pending.screen = self
+        summary_write = getattr(app_instance, "_settings_permission_summary_write", None)
+        if summary_write is None:
+            summary_write = _PermissionSummaryWrite(self)
+            app_instance._settings_permission_summary_write = summary_write
+        self._permission_summary_write = summary_write
+        with summary_write.lock:
+            summary_write.screen = self
         self._syncing_console_rail_layout_scope = False
         self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
@@ -5857,18 +5881,16 @@ class SettingsScreen(BaseAppScreen):
     def _saved_permission_summary_payload(self) -> dict[str, str]:
         """The normalized saved ``[permission_summary]`` trio (ADR-090).
 
-        Reads the cached ``load_settings()`` config -- the model-catalog
-        group's source (cheap cache hit, and every config write refreshes
-        it) -- and normalizes through the settings payload helper, so
-        compose-time widget values and the instant-apply no-op guard can
-        never disagree about what "saved" means.
+        Read the cached runtime configuration shared with the approval
+        summary consumer. Normalize through the payload helper so composition
+        and the no-op guard agree about what "saved" means.
         """
         from ...Chat.permission_summary_service import (
             permission_summary_settings_payload,
         )
 
         section = load_settings().get("permission_summary")
-        section = section if isinstance(section, dict) else {}
+        section = section if isinstance(section, Mapping) else {}
         return permission_summary_settings_payload(
             str(section.get("mode") or ""),
             str(section.get("provider") or ""),
@@ -6640,22 +6662,28 @@ class SettingsScreen(BaseAppScreen):
                 else "error",
             )
 
-    #: Qodo review #11: generation guard for the instant-apply
-    #: permission-summary writes. Each dispatch stamps a token; a worker
-    #: whose token is no longer the latest skips its write, so an older
-    #: full-section snapshot can never overwrite a newer edit when two
-    #: threaded saves race (per-keystroke Input.Changed).
-    _permission_summary_persist_generation: int = 0
+    def _permission_summary_form_payload(self) -> dict[str, str]:
+        """Prefer pending/failed edits; otherwise read the current saved config."""
+        state = self._permission_summary_write
+        generation = get_runtime_config_generation()
+        with state.lock:
+            if (
+                state.cache_warning_generation is not None
+                and state.cache_warning_generation != generation
+                and not state.running
+            ):
+                state.form = None
+                state.cache_warning_generation = None
+                state.result = "Saved settings reloaded."
+            form = state.form
+        return (
+            dict(form)
+            if form is not None
+            else self._saved_permission_summary_payload()
+        )
 
-    def _persist_permission_summary_settings(self) -> None:
-        """Persist the permission-summary trio to ``[permission_summary]`` (ADR-090).
-
-        Instant-apply group (model-catalog pattern, ADR-020/task-1341): the
-        disclosure copy is the consent surface, so changes save immediately
-        instead of staging into the category draft. States matching the
-        saved config are skipped (no-op guard) so merely viewing the
-        category never rewrites config.toml.
-        """
+    def _persist_permission_summary_settings(self, *, retry: bool = False) -> None:
+        """Admit the latest form snapshot without racing an earlier write."""
         from ...Chat.permission_summary_service import (
             permission_summary_settings_payload,
         )
@@ -6670,45 +6698,112 @@ class SettingsScreen(BaseAppScreen):
             model = self.query_one("#settings-permission-summary-model", Input).value
         except QueryError:
             return
-        section_values = {
-            "permission_summary": permission_summary_settings_payload(
-                mode, provider, model
+        payload = permission_summary_settings_payload(mode, provider, model)
+        saved = self._saved_permission_summary_payload()
+        state = self._permission_summary_write
+        with state.lock:
+            displayed = state.form if state.form is not None else saved
+            if not retry and payload == displayed:
+                return
+            state.revision += 1
+            state.form = payload
+            state.pending = (state.revision, payload)
+            state.failed = False
+            state.cache_warning_generation = None
+            state.result = "Saving permission summaries..."
+            start = not state.running
+            state.running = True
+        self._refresh_permission_summary_save_widgets()
+        if start:
+            host = self.app
+            host.run_worker(
+                lambda: self._persist_permission_summary_section_values(state, host),
+                thread=True,
+                group="settings-permission-summary",
             )
-        }
-        if (
-            section_values["permission_summary"]
-            == self._saved_permission_summary_payload()
-        ):
-            return
-        self._permission_summary_persist_generation += 1
-        self._persist_permission_summary_section_values(
-            section_values, self._permission_summary_persist_generation
-        )
 
-    @work(thread=True)
-    def _persist_permission_summary_section_values(
-        self,
-        section_values: dict[str, dict[str, object]],
-        generation: int = 0,
-    ) -> None:
-        """Write ``[permission_summary]`` off the event loop (task-15470 shape).
-
-        The Inputs are bound to ``Input.Changed``; the actual write is
-        deferred off the event loop while the cheap no-op guard above stays
-        synchronous. Guarded broadly: an uncaught exception in a
-        ``@work(thread=True)`` worker is fatal to the app by default.
-        ``save_settings_to_cli_config`` merges keys, so advanced
-        ``[permission_summary]`` keys (api_key, system_prompt, budgets) are
-        preserved. ``generation`` is the dispatch-time token (Qodo review
-        #11): a worker whose token has been superseded by a newer dispatch
-        skips the write, so out-of-order completion cannot lose updates.
-        """
-        if generation != self._permission_summary_persist_generation:
-            return
+    def _refresh_permission_summary_save_widgets(self) -> None:
+        state = self._permission_summary_write
+        with state.lock:
+            result, failed = state.result, state.failed
+        self._set_static_text("#settings-permission-summary-result", result)
         try:
-            save_settings_to_cli_config(section_values)
-        except Exception:
-            logger.warning("Failed to persist permission_summary settings.")
+            retry = self.query_one("#settings-permission-summary-retry", Button)
+            if retry.has_focus and not failed:
+                self.query_one("#settings-permission-summary-mode", Select).focus()
+            retry.display = failed
+        except QueryError:
+            pass
+
+    def _persist_permission_summary_section_values(
+        self, state: _PermissionSummaryWrite, host
+    ) -> None:
+        """One app-owned writer drains edits even after the source screen leaves."""
+        while True:
+            with state.lock:
+                pending = state.pending
+                state.pending = None
+                if pending is None:
+                    state.running = False
+                    return
+            revision, payload = pending
+            generation = get_runtime_config_generation()
+
+            def capture_generation() -> None:
+                nonlocal generation
+                # Called under the config write lock, before replacement.
+                generation = get_runtime_config_generation()
+
+            try:
+                mutation = apply_settings_mutation_to_cli_config(
+                    {"permission_summary": payload}, before_replace=capture_generation
+                )
+            except Exception:
+                logger.warning("Failed to persist permission_summary settings.")
+                mutation = ConfigMutationResult(False, False, "before_replace")
+            try:
+                host.call_from_thread(
+                    self._permission_summary_save_finished,
+                    state,
+                    revision,
+                    mutation,
+                    generation,
+                )
+            except RuntimeError:
+                # A stopped UI cannot cancel an admitted config write.
+                pass
+
+    def _permission_summary_save_finished(
+        self,
+        state: _PermissionSummaryWrite,
+        revision: int,
+        mutation: ConfigMutationResult,
+        generation: int,
+    ) -> None:
+        with state.lock:
+            if revision != state.revision:
+                return
+            saved = mutation.file_replaced or (
+                not mutation.conflict and mutation.failure_phase is None
+            )
+            state.failed = not saved
+            if not saved:
+                state.result = (
+                    "Changes not saved. Check that the config file is writable, "
+                    "then choose Retry."
+                )
+            elif mutation.file_replaced and not mutation.caches_reloaded:
+                state.cache_warning_generation = generation
+                state.result = (
+                    "Saved, but live settings could not be refreshed. "
+                    "Restart Chatbook to apply."
+                )
+            else:
+                state.form = None
+                state.result = "Saved. Applies immediately."
+            screen = state.screen
+        if screen.is_attached:
+            screen._refresh_permission_summary_save_widgets()
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -17588,6 +17683,7 @@ class SettingsScreen(BaseAppScreen):
             # and changes persist immediately via the handlers below -- the
             # disclosure copy is the consent surface, so there is no staged
             # Save step between opting in and the egress it enables.
+            summary_values = self._permission_summary_form_payload()
             with Vertical(
                 id="settings-permission-summary-group",
                 classes="settings-instant-apply-group",
@@ -17613,7 +17709,7 @@ class SettingsScreen(BaseAppScreen):
                             ("Fallback (no rationale)", "fallback"),
                             ("Every approval", "always"),
                         ],
-                        value=self._saved_permission_summary_payload()["mode"],
+                        value=summary_values["mode"],
                         id="settings-permission-summary-mode",
                         classes="settings-compact-select",
                         allow_blank=False,
@@ -17622,7 +17718,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Provider", classes="settings-input-label")
                     yield Input(
-                        value=self._saved_permission_summary_payload()["provider"],
+                        value=summary_values["provider"],
                         id="settings-permission-summary-provider",
                         classes="settings-compact-input",
                         placeholder="e.g. OpenAI",
@@ -17630,11 +17726,20 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Model", classes="settings-input-label")
                     yield Input(
-                        value=self._saved_permission_summary_payload()["model"],
+                        value=summary_values["model"],
                         id="settings-permission-summary-model",
                         classes="settings-compact-input",
                         placeholder="empty = the provider's default model",
                     )
+                yield Static(
+                    self._permission_summary_write.result,
+                    id="settings-permission-summary-result",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+                retry = Button("Retry", id="settings-permission-summary-retry")
+                retry.display = self._permission_summary_write.failed
+                yield retry
             yield Static("Selection side chat", classes="destination-section")
             yield Static(
                 "Ephemeral chat about selected transcript text (More Details / "
@@ -27933,6 +28038,11 @@ class SettingsScreen(BaseAppScreen):
     def handle_permission_summary_mode_changed(self, event: Select.Changed) -> None:
         event.stop()
         self._persist_permission_summary_settings()
+
+    @on(Button.Pressed, "#settings-permission-summary-retry")
+    def handle_permission_summary_retry(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._persist_permission_summary_settings(retry=True)
 
     @on(Input.Changed, "#settings-permission-summary-provider")
     def handle_permission_summary_provider_changed(self, event: Input.Changed) -> None:

@@ -1,0 +1,55 @@
+                                                                                                                                           ╭─────────────╮
+ ‹ 1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                           │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │ │ │ │  When enabled, a fast LLM you designate receives a bounded excerpt of this conversation (your  │ │ │  │  │  │                                   │
+│  category search             │  │  │ │ │ │  messages and the assistant's, only) to write the approval summary.                            │ │ │  │  │  │ Selected category: Console        │
+│                              │  │  │ │ │ │                         ┌────────────────────────────────────────────────────────────────────┐ │ │ │  │  │  │ Behavior                          │
+│  Core                        │  │  │ │ │ │ Summary mode            │ Off                                                              ▼ │ │ │ │  │  │  │ No unsaved changes                │
+│     Overview (view)          │  │  │ │ │ │                         └────────────────────────────────────────────────────────────────────┘ │ │ │  │  │  │  Guided edits: change a field     │
+│     Providers & Models       │  │  │ │ │ │ Provider                │ OpenAI                                                               │ │ │  │  │  │  first.                           │
+│     Web Search               │  │  │ │ │ │ Model                   │ permission-review-model                                              │ │ │  │  │  │  Save (s) — no changes            │
+│     Speech & TTS             │  │  │ │ │ │  Saved. Applies immediately.                                                                   │ │ │  │  │  │  Revert (r) — no changes          │
+│  Interface                   │  │  │ │ │ └────────────────────────────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │ Local-only: saves write your      │
+│     Appearance               │  │  │ │ │                                                                                                    │ │  │  │  │ config file.                      │
+│     Theme                    │  │  │ │ │  Selection side chat                                                                               │ │  │  │  │  Purpose: Opt-in advisory         │
+│     Splash Screen            │  │  │ │ │  Ephemeral chat about selected transcript text (More Details / Ask in Side Chat). Nothing is       │ │  │  │  │  summaries on agent approval      │
+│   > Console Behavior         │  │  │ │ │  persisted.                                                                                        │ │  │  │  │  cards (ADR-090).                 │
+│  Data & Privacy              │  │  │ │ │ Side chat model         │ empty = current session model                                            │ │  │  │  │                                   │
+│     Storage                  │  │  │ │ │ Prompt template         │ Give me more details about: {selection}                                  │ │  │  │  │  Consequences: When enabled, a    │
+│     Workspaces               │  │  │ │ │ Template used by More Details: {selection} inserts the selected text; without it the selection is  │ │  │  │  │  fast LLM you designate           │
+│     Tool Profiles            │  │  │ │ │ appended. An empty template uses the built-in default.                                             │ │  │  │  │  receives a bounded excerpt of    │
+│     Privacy & Security       │  │  │ │ │                                                                                                    │ │  │  │  │  this conversation (user and      │
+│     Network                  │  │  │ │ │  Conversation context and memory                                                                   │ │  │  │  │  assistant text only) to write    │
+│     My Profile               │  │  │ │ │  Global defaults for new and inherited conversations. Current-conversation overrides remain in     │ │  │  │  │  the approval summary.            │
+│  Troubleshooting             │  │  │ │ │  the Console's Context & memory view.                                                              │ │  │  │  │  Summaries are display-only:      │
+│     Diagnostics (view)       │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │▁ │  │  │  never persisted, never a         │
+│     About (view)             │  │  │ │ │ Budget strategy         │ Automatic                                                            ▼ │ │ │  │  │  │  verdict input; failures fail     │
+│     Agents                   │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  open (no summary).               │
+│  Expert                      │  │  │ │ │ Conversation max tokens │ tokens (used in Custom mode)                                             │ │  │  │  │                                   │
+│     Internal Prompts         │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  Saved as:                        │
+│     Advanced Config          │  │  │ │ │ When limit nears        │ Ask                                                                  ▼ │ │ │  │  │  │  permission_summary.mode/         │
+│   Domain Defaults ▸ (11)     │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │    provider/model                 │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  (instant-apply)                  │
+│                              │  │  │ │ │ Representation          │ Text summary                                                         ▼ │ │ │  │  │  │                                   │
+│                              │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │▅ │  │  │  Applies: Approval rounds         │
+│                              │  │  │ │ │  Visual and Hybrid apply only to vision-capable sessions; unsupported models safely use Text       │ │  │  │  │  rendered after the change; no    │
+│                              │  │  │ │ │  summary without overwriting this default.                                                         │ │  │  │  │  Save step.                       │
+│                              │  │  │ │ │ Compact at (%)          │ 80                                                                       │ │  │  │  │                                   │
+│                              │  │  │ │ │ Reduce conversation to  │ 55                                                                       │ │  │  │  │ Override rules                    │
+│                              │  │  │ │ │ Summary response max    │ 1024                                                                     │ │  │  │  │  Priority: active Console         │
+│                              │  │  │ │ │  Summary response max applies only to Text summary and Hybrid.                                     │ │  │  │  │  session, then provider+model     │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  profile, then these global       │
+│                              │  │  │ │ │ If compaction fails     │ Stop and ask                                                         ▼ │ │ │  │  │  │  fallbacks                        │
+│                              │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │                                   │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  Scope:  response fallbacks and ▇ │
+│                              │  │  │ │ │ Keep after compaction   │ Memory + recent turns                                                ▼ │ │ │  │  │  │  paste display settings           │
+│                              │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

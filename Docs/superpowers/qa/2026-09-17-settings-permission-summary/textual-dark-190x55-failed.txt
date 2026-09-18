@@ -1,0 +1,55 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                           │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │ │ │  limiter.                                                                                          │ │  │  │  │                                   │
+│  category search             │  │  │ │ │                                                                                                    │ │  │  │  │ Selected category: Console        │
+│                              │  │  │ │ │                                                                                                    │ │  │  │  │ Behavior                          │
+│  Core                        │  │  │ │ │  Agent tool-result display cap                                                                     │ │  │  │  │ No unsaved changes                │
+│     Overview (view)          │  │  │ │ │ Display cap (chars)     │ 160                                                                      │ │  │  │  │  Guided edits: change a field     │
+│     Providers & Models       │  │  │ │ │  How much of an agent tool result the Console shows you here -- distinct from                      │ │  │  │  │  first.                           │
+│     Web Search               │  │  │ │ │  max_tool_result_chars, which caps what the model itself saw. Open a run's "View full log" (Agent  │ │  │  │  │  Save (s) — no changes            │
+│     Speech & TTS             │  │  │ │ │  rail) to read everything beyond this cap.                                                         │ │  │  │  │  Revert (r) — no changes          │
+│  Interface                   │  │  │ │ │ ┌────────────────────────────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │ Local-only: saves write your      │
+│     Appearance               │  │  │ │ │ │                                                                                                │ │ │  │  │  │ config file.                      │
+│     Theme                    │  │  │ │ │ │  Permission summaries                                                                          │ │ │  │  │  │  Purpose: Opt-in advisory         │
+│     Splash Screen            │  │  │ │ │ │  applies immediately - no Save needed                                                          │ │ │  │  │  │  summaries on agent approval      │
+│   > Console Behavior         │  │  │ │ │ │  When enabled, a fast LLM you designate receives a bounded excerpt of this conversation (your  │ │ │  │  │  │  cards (ADR-090).                 │
+│  Data & Privacy              │  │  │ │ │ │  messages and the assistant's, only) to write the approval summary.                            │ │ │  │  │  │                                   │
+│     Storage                  │  │  │ │ │ │                         ┌────────────────────────────────────────────────────────────────────┐ │ │ │  │  │  │  Consequences: When enabled, a    │
+│     Workspaces               │  │  │ │ │ │ Summary mode            │ Fallback (no rationale)                                          ▼ │ │ │ │  │  │  │  fast LLM you designate           │
+│     Tool Profiles            │  │  │ │ │ │                         └────────────────────────────────────────────────────────────────────┘ │ │ │  │  │  │  receives a bounded excerpt of    │
+│     Privacy & Security       │  │  │ │ │ │ Provider                │ OpenAI                                                               │ │ │  │  │  │  this conversation (user and      │
+│     Network                  │  │  │ │ │ │ Model                   │ permission-review-model                                              │ │ │  │  │  │  assistant text only) to write    │
+│     My Profile               │  │  │ │ │ │  Changes not saved. Check that the config file is writable, then choose Retry.                 │ │ │▄ │  │  │  the approval summary.            │
+│  Troubleshooting             │  │  │ │ │ │      Retry                                                                                     │ │ │  │  │  │  Summaries are display-only:      │
+│     Diagnostics (view)       │  │  │ │ │ └────────────────────────────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  never persisted, never a         │
+│     About (view)             │  │  │ │ │                                                                                                    │ │  │  │  │  verdict input; failures fail     │
+│     Agents                   │  │  │ │ │  Selection side chat                                                                               │ │  │  │  │  open (no summary).               │
+│  Expert                      │  │  │ │ │  Ephemeral chat about selected transcript text (More Details / Ask in Side Chat). Nothing is       │ │  │  │  │                                   │
+│     Internal Prompts         │  │  │ │ │  persisted.                                                                                        │ │  │  │  │  Saved as:                        │
+│     Advanced Config          │  │  │ │ │ Side chat model         │ empty = current session model                                            │ │  │  │  │  permission_summary.mode/         │
+│   Domain Defaults ▸ (11)     │  │  │ │ │ Prompt template         │ Give me more details about: {selection}                                  │ │  │  │  │    provider/model                 │
+│                              │  │  │ │ │ Template used by More Details: {selection} inserts the selected text; without it the selection is  │ │  │  │  │  (instant-apply)                  │
+│                              │  │  │ │ │ appended. An empty template uses the built-in default.                                             │ │  │  │  │                                   │
+│                              │  │  │ │ │                                                                                                    │ │  │  │  │  Applies: Approval rounds         │
+│                              │  │  │ │ │  Conversation context and memory                                                                   │ │  │  │  │  rendered after the change; no    │
+│                              │  │  │ │ │  Global defaults for new and inherited conversations. Current-conversation overrides remain in     │ │  │  │  │  Save step.                       │
+│                              │  │  │ │ │  the Console's Context & memory view.                                                              │ │  │  │  │                                   │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │ Override rules                    │
+│                              │  │  │ │ │ Budget strategy         │ Automatic                                                            ▼ │ │ │  │  │  │  Priority: active Console         │
+│                              │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  session, then provider+model     │
+│                              │  │  │ │ │ Conversation max tokens │ tokens (used in Custom mode)                                             │ │  │  │  │  profile, then these global       │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  fallbacks                        │
+│                              │  │  │ │ │ When limit nears        │ Ask                                                                  ▼ │ │ │  │  │  │                                   │
+│                              │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  Scope:  response fallbacks and ▇ │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  paste display settings           │
+│                              │  │  │ │ │ Representation          │ Text summary                                                         ▼ │ │ │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

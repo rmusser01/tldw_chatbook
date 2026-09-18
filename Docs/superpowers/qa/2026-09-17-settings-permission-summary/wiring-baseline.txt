@@ -1,0 +1,274 @@
+...F.FFFFF                                                               [100%]
+=================================== FAILURES ===================================
+______________ test_fallback_fires_when_missing_and_always_fires _______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d97c500>
+
+    def test_fallback_fires_when_missing_and_always_fires(monkeypatch):
+        for mode, rationales in (("fallback", ("",)), ("always", ("why",))):
+            _armed(monkeypatch, mode)
+            ctrl = _bare_controller()
+            ctrl._pending_approval_rounds["r1"] = {
+                "event": threading.Event(), "summary_fired": False,
+            }
+            ctrl._maybe_fire_permission_summary(_payload(rationales))
+>           assert _ThreadStub.started == [True], mode
+E           AssertionError: fallback
+E           assert [] == [True]
+E
+E             Right contains one more item: True
+E             Use -v to get more diff
+
+Tests/Chat/test_permission_summary_wiring.py:115: AssertionError
+________________ test_parked_round_fires_once_on_attach_remount ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d97c980>
+
+    def test_parked_round_fires_once_on_attach_remount(monkeypatch):
+        ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+>       assert ctrl.remount_pending_approval_for_active_session() is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_permission_summary_wiring.py:157:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10d94f260>
+
+    def remount_pending_approval_for_active_session(self) -> bool:
+        """Mount the ACTIVE session's still-armed approval round, if any.
+
+        task-15860 Task 5. UI THREAD (called from
+        ``ConsoleRuntime.attach_view``, which runs on it). Re-derives the
+        card from ``_parked_approval_payloads`` exactly as
+        ``switch_session`` does -- same single source of truth, no second
+        copy of "what is this session's card showing".
+
+        Deliberately mounts NOTHING when no round is armed: pushing
+        ``None`` here would clear a card on every new claim, and an attach
+        is not a reason to hide anything.
+
+        PR0 (task-15661, fixed): ``_parked_approval_payloads`` is keyed by
+        ROUND now, so two rounds armed for one session each keep their own
+        payload. This mounts the session's FIFO HEAD -- the oldest-armed
+        round -- and each later sibling mounts in turn as the head ahead of
+        it resolves. Covered by ``Tests/UI/test_console_headless_approval.
+        py::test_two_headless_rounds_each_mount_in_turn``.
+
+        Returns:
+            True when a card was mounted.
+        """
+        session_id = self.store.active_session_id
+        if not session_id:
+            return False
+>       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:14722: AttributeError
+_____________ test_consumed_flag_prevents_refire_on_attach_remount _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d97cc50>
+
+    def test_consumed_flag_prevents_refire_on_attach_remount(monkeypatch):
+        ctrl, _payload_, mounted = _parked_controller(monkeypatch, "always")
+        ctrl._pending_approval_rounds["r1"]["summary_fired"] = True  # consumed
+>       assert ctrl.remount_pending_approval_for_active_session() is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_permission_summary_wiring.py:171:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10d94d9d0>
+
+    def remount_pending_approval_for_active_session(self) -> bool:
+        """Mount the ACTIVE session's still-armed approval round, if any.
+
+        task-15860 Task 5. UI THREAD (called from
+        ``ConsoleRuntime.attach_view``, which runs on it). Re-derives the
+        card from ``_parked_approval_payloads`` exactly as
+        ``switch_session`` does -- same single source of truth, no second
+        copy of "what is this session's card showing".
+
+        Deliberately mounts NOTHING when no round is armed: pushing
+        ``None`` here would clear a card on every new claim, and an attach
+        is not a reason to hide anything.
+
+        PR0 (task-15661, fixed): ``_parked_approval_payloads`` is keyed by
+        ROUND now, so two rounds armed for one session each keep their own
+        payload. This mounts the session's FIFO HEAD -- the oldest-armed
+        round -- and each later sibling mounts in turn as the head ahead of
+        it resolves. Covered by ``Tests/UI/test_console_headless_approval.
+        py::test_two_headless_rounds_each_mount_in_turn``.
+
+        Returns:
+            True when a card was mounted.
+        """
+        session_id = self.store.active_session_id
+        if not session_id:
+            return False
+>       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:14722: AttributeError
+___________ test_switch_session_promotes_parked_round_and_fires_once ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d97c980>
+
+    def test_switch_session_promotes_parked_round_and_fires_once(monkeypatch):
+        ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+        ctrl.store.active_session_id = "s0"  # switching away from s0 onto s1
+        ctrl.store.switch_session = lambda session_id: SimpleNamespace(id=session_id)
+        ctrl.mark_session_visited = lambda session_id: None
+        ctrl._clear_terminal_run_state = lambda **_: None
+        ctrl._remount_parked_skill_install = lambda session_id: None
+        ctrl._remount_parked_skill_script = lambda session_id: None
+>       ctrl.switch_session("s1")
+
+Tests/Chat/test_permission_summary_wiring.py:184:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Chat/console_chat_controller.py:12923: in switch_session
+    self.set_answerable_decision(previous_session_id, None)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10d94fce0>
+session_id = 's0', decision_id = None
+
+    def set_answerable_decision(self, session_id: str, decision_id: str | None) -> bool:
+        """Update Console's claim without erasing another visible owner's claim."""
+        with self._approval_state_lock:
+            self._interrupt_host.decision_view_revision += 1
+>           self._console_answerable_decision_by_session.pop(session_id, None)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'ConsoleChatController' object has no attribute '_console_answerable_decision_by_session'
+
+tldw_chatbook/Chat/console_chat_controller.py:14498: AttributeError
+_____________ test_remount_head_helper_fires_promoted_sibling_once _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d97cc50>
+
+    def test_remount_head_helper_fires_promoted_sibling_once(monkeypatch):
+        # Teardown/revocation promotion: the resolved head was unparked and its
+        # round popped; `_remount_head` promotes the queued sibling r2.
+        ctrl, _head, mounted = _parked_controller(monkeypatch, "always")
+        parked = ctrl._parked_approval_payloads
+        parked["r2"] = dict(parked["r1"], round_id="r2")
+        parked.pop("r1")
+        ctrl._pending_approval_rounds.pop("r1")
+        ctrl._pending_approval_rounds["r2"] = {
+            "event": threading.Event(), "summary_fired": False,
+        }
+
+        class _InlineApp:
+            @staticmethod
+            def call_from_thread(fn, *args):
+                fn(*args)  # run the UI-thread callback inline
+
+        ctrl.app = _InlineApp()
+>       ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
+
+Tests/Chat/test_permission_summary_wiring.py:211:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10d929040>
+store = {'r2': {'round_id': 'r2', 'session_id': 's1', 'calls': [{'llm_name': 't', 'rationale': 'why'}], 'summary': None}}
+setter = <built-in method append of list object at 0x10d957d80>
+session_id = 's1'
+
+    def _remount_head(
+        self,
+        store: dict[str, dict[str, Any]],
+        setter: Callable[[dict[str, Any] | None], None] | None,
+        session_id: str | None,
+    ) -> None:
+        """Push ``store``'s head for ``session_id`` through ``setter`` on the UI thread.
+
+        The pre-host body, kept verbatim: every kind's activation re-derive
+        and the approval attach path call it with their own store and
+        setter, and it fires the ADR-090 permission summary for any dict
+        payload -- ``_maybe_fire_permission_summary`` itself ignores round
+        ids it does not know, so a skill payload passes through untouched.
+
+        Args:
+            store: A per-kind parked-payload dict.
+            setter: The kind's UI-thread setter, or None to do nothing.
+            session_id: The session whose head to push; None means the
+                store's active session.
+        """
+        if self.app is None:
+            return
+
+>       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:14645: AttributeError
+_______________ test_remount_head_helper_skips_non_mcp_payloads ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d97c290>
+
+    def test_remount_head_helper_skips_non_mcp_payloads(monkeypatch):
+        # The skill bridges share `_remount_head`; their payloads' round ids
+        # are unknown to `_pending_approval_rounds`, so nothing may fire.
+        ctrl, _payload_, _mounted = _parked_controller(monkeypatch, "always")
+        skill_payload = {"round_id": "skill-1", "session_id": "s1", "calls": []}
+        parked = {"skill-1": skill_payload}
+        ctrl._pending_approval_rounds.pop("r1")  # no MCP round armed at all
+
+        class _InlineApp:
+            @staticmethod
+            def call_from_thread(fn, *args):
+                fn(*args)
+
+        ctrl.app = _InlineApp()
+        mounted = []
+        ctrl.set_pending_approval = mounted.append
+>       ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
+
+Tests/Chat/test_permission_summary_wiring.py:237:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10d94f8f0>
+store = {'skill-1': {'round_id': 'skill-1', 'session_id': 's1', 'calls': []}}
+setter = <built-in method append of list object at 0x10d971440>
+session_id = 's1'
+
+    def _remount_head(
+        self,
+        store: dict[str, dict[str, Any]],
+        setter: Callable[[dict[str, Any] | None], None] | None,
+        session_id: str | None,
+    ) -> None:
+        """Push ``store``'s head for ``session_id`` through ``setter`` on the UI thread.
+
+        The pre-host body, kept verbatim: every kind's activation re-derive
+        and the approval attach path call it with their own store and
+        setter, and it fires the ADR-090 permission summary for any dict
+        payload -- ``_maybe_fire_permission_summary`` itself ignores round
+        ids it does not know, so a skill payload passes through untouched.
+
+        Args:
+            store: A per-kind parked-payload dict.
+            setter: The kind's UI-thread setter, or None to do nothing.
+            session_id: The session whose head to push; None means the
+                store's active session.
+        """
+        if self.app is None:
+            return
+
+>       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:14645: AttributeError
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_fallback_fires_when_missing_and_always_fires
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_parked_round_fires_once_on_attach_remount
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_consumed_flag_prevents_refire_on_attach_remount
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_switch_session_promotes_parked_round_and_fires_once
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_fires_promoted_sibling_once
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_skips_non_mcp_payloads
+6 failed, 4 passed in 1.16s

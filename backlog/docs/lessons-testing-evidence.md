@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## A saved config section may still be absent from the runtime view
+
+**TASK-32762, 2026-09-17.** Permission-summary helper tests supplied a
+top-level section directly, but `load_settings()` never projected that section
+from TOML. Real private-profile saves succeeded while reopened Settings showed
+empty fields and the approval consumer saw no configuration. Exercise the full
+save → runtime snapshot → consuming resolver path as well as pure helpers.
+The same review held a cache-failed write across another successful publication:
+sampling its generation after releasing the write lock assigned the newer
+generation to an older receipt. Capture that baseline inside the transaction.
+
 ## Settings category navigation does not exercise screen departure
 
 **TASK-32761, 2026-09-17.** Fourteen immediate-toggle cases passed while

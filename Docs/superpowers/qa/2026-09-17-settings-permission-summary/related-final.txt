@@ -1,0 +1,297 @@
+...................F.FFFFF................................               [100%]
+=================================== FAILURES ===================================
+______________ test_fallback_fires_when_missing_and_always_fires _______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f4d0ce0>
+
+    def test_fallback_fires_when_missing_and_always_fires(monkeypatch):
+        for mode, rationales in (("fallback", ("",)), ("always", ("why",))):
+            _armed(monkeypatch, mode)
+            ctrl = _bare_controller()
+            ctrl._pending_approval_rounds["r1"] = {
+                "event": threading.Event(), "summary_fired": False,
+            }
+            ctrl._maybe_fire_permission_summary(_payload(rationales))
+>           assert _ThreadStub.started == [True], mode
+E           AssertionError: fallback
+E           assert [] == [True]
+E
+E             Right contains one more item: True
+E             Use -v to get more diff
+
+Tests/Chat/test_permission_summary_wiring.py:115: AssertionError
+________________ test_parked_round_fires_once_on_attach_remount ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1106bea20>
+
+    def test_parked_round_fires_once_on_attach_remount(monkeypatch):
+        ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+>       assert ctrl.remount_pending_approval_for_active_session() is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_permission_summary_wiring.py:157:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10f8455e0>
+
+    def remount_pending_approval_for_active_session(self) -> bool:
+        """Mount the ACTIVE session's still-armed approval round, if any.
+
+        task-15860 Task 5. UI THREAD (called from
+        ``ConsoleRuntime.attach_view``, which runs on it). Re-derives the
+        card from ``_parked_approval_payloads`` exactly as
+        ``switch_session`` does -- same single source of truth, no second
+        copy of "what is this session's card showing".
+
+        Deliberately mounts NOTHING when no round is armed: pushing
+        ``None`` here would clear a card on every new claim, and an attach
+        is not a reason to hide anything.
+
+        PR0 (task-15661, fixed): ``_parked_approval_payloads`` is keyed by
+        ROUND now, so two rounds armed for one session each keep their own
+        payload. This mounts the session's FIFO HEAD -- the oldest-armed
+        round -- and each later sibling mounts in turn as the head ahead of
+        it resolves. Covered by ``Tests/UI/test_console_headless_approval.
+        py::test_two_headless_rounds_each_mount_in_turn``.
+
+        Returns:
+            True when a card was mounted.
+        """
+        session_id = self.store.active_session_id
+        if not session_id:
+            return False
+>       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:14722: AttributeError
+_____________ test_consumed_flag_prevents_refire_on_attach_remount _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f845520>
+
+    def test_consumed_flag_prevents_refire_on_attach_remount(monkeypatch):
+        ctrl, _payload_, mounted = _parked_controller(monkeypatch, "always")
+        ctrl._pending_approval_rounds["r1"]["summary_fired"] = True  # consumed
+>       assert ctrl.remount_pending_approval_for_active_session() is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_permission_summary_wiring.py:171:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10f845e50>
+
+    def remount_pending_approval_for_active_session(self) -> bool:
+        """Mount the ACTIVE session's still-armed approval round, if any.
+
+        task-15860 Task 5. UI THREAD (called from
+        ``ConsoleRuntime.attach_view``, which runs on it). Re-derives the
+        card from ``_parked_approval_payloads`` exactly as
+        ``switch_session`` does -- same single source of truth, no second
+        copy of "what is this session's card showing".
+
+        Deliberately mounts NOTHING when no round is armed: pushing
+        ``None`` here would clear a card on every new claim, and an attach
+        is not a reason to hide anything.
+
+        PR0 (task-15661, fixed): ``_parked_approval_payloads`` is keyed by
+        ROUND now, so two rounds armed for one session each keep their own
+        payload. This mounts the session's FIFO HEAD -- the oldest-armed
+        round -- and each later sibling mounts in turn as the head ahead of
+        it resolves. Covered by ``Tests/UI/test_console_headless_approval.
+        py::test_two_headless_rounds_each_mount_in_turn``.
+
+        Returns:
+            True when a card was mounted.
+        """
+        session_id = self.store.active_session_id
+        if not session_id:
+            return False
+>       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:14722: AttributeError
+___________ test_switch_session_promotes_parked_round_and_fires_once ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f8469f0>
+
+    def test_switch_session_promotes_parked_round_and_fires_once(monkeypatch):
+        ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+        ctrl.store.active_session_id = "s0"  # switching away from s0 onto s1
+        ctrl.store.switch_session = lambda session_id: SimpleNamespace(id=session_id)
+        ctrl.mark_session_visited = lambda session_id: None
+        ctrl._clear_terminal_run_state = lambda **_: None
+        ctrl._remount_parked_skill_install = lambda session_id: None
+        ctrl._remount_parked_skill_script = lambda session_id: None
+>       ctrl.switch_session("s1")
+
+Tests/Chat/test_permission_summary_wiring.py:184:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Chat/console_chat_controller.py:12923: in switch_session
+    self.set_answerable_decision(previous_session_id, None)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10f844fe0>
+session_id = 's0', decision_id = None
+
+    def set_answerable_decision(self, session_id: str, decision_id: str | None) -> bool:
+        """Update Console's claim without erasing another visible owner's claim."""
+        with self._approval_state_lock:
+            self._interrupt_host.decision_view_revision += 1
+>           self._console_answerable_decision_by_session.pop(session_id, None)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'ConsoleChatController' object has no attribute '_console_answerable_decision_by_session'
+
+tldw_chatbook/Chat/console_chat_controller.py:14498: AttributeError
+_____________ test_remount_head_helper_fires_promoted_sibling_once _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f846ae0>
+
+    def test_remount_head_helper_fires_promoted_sibling_once(monkeypatch):
+        # Teardown/revocation promotion: the resolved head was unparked and its
+        # round popped; `_remount_head` promotes the queued sibling r2.
+        ctrl, _head, mounted = _parked_controller(monkeypatch, "always")
+        parked = ctrl._parked_approval_payloads
+        parked["r2"] = dict(parked["r1"], round_id="r2")
+        parked.pop("r1")
+        ctrl._pending_approval_rounds.pop("r1")
+        ctrl._pending_approval_rounds["r2"] = {
+            "event": threading.Event(), "summary_fired": False,
+        }
+
+        class _InlineApp:
+            @staticmethod
+            def call_from_thread(fn, *args):
+                fn(*args)  # run the UI-thread callback inline
+
+        ctrl.app = _InlineApp()
+>       ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
+
+Tests/Chat/test_permission_summary_wiring.py:211:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10f79dcd0>
+store = {'r2': {'round_id': 'r2', 'session_id': 's1', 'calls': [{'llm_name': 't', 'rationale': 'why'}], 'summary': None}}
+setter = <built-in method append of list object at 0x111565600>
+session_id = 's1'
+
+    def _remount_head(
+        self,
+        store: dict[str, dict[str, Any]],
+        setter: Callable[[dict[str, Any] | None], None] | None,
+        session_id: str | None,
+    ) -> None:
+        """Push ``store``'s head for ``session_id`` through ``setter`` on the UI thread.
+
+        The pre-host body, kept verbatim: every kind's activation re-derive
+        and the approval attach path call it with their own store and
+        setter, and it fires the ADR-090 permission summary for any dict
+        payload -- ``_maybe_fire_permission_summary`` itself ignores round
+        ids it does not know, so a skill payload passes through untouched.
+
+        Args:
+            store: A per-kind parked-payload dict.
+            setter: The kind's UI-thread setter, or None to do nothing.
+            session_id: The session whose head to push; None means the
+                store's active session.
+        """
+        if self.app is None:
+            return
+
+>       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:14645: AttributeError
+_______________ test_remount_head_helper_skips_non_mcp_payloads ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f847da0>
+
+    def test_remount_head_helper_skips_non_mcp_payloads(monkeypatch):
+        # The skill bridges share `_remount_head`; their payloads' round ids
+        # are unknown to `_pending_approval_rounds`, so nothing may fire.
+        ctrl, _payload_, _mounted = _parked_controller(monkeypatch, "always")
+        skill_payload = {"round_id": "skill-1", "session_id": "s1", "calls": []}
+        parked = {"skill-1": skill_payload}
+        ctrl._pending_approval_rounds.pop("r1")  # no MCP round armed at all
+
+        class _InlineApp:
+            @staticmethod
+            def call_from_thread(fn, *args):
+                fn(*args)
+
+        ctrl.app = _InlineApp()
+        mounted = []
+        ctrl.set_pending_approval = mounted.append
+>       ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
+
+Tests/Chat/test_permission_summary_wiring.py:237:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10f8478f0>
+store = {'skill-1': {'round_id': 'skill-1', 'session_id': 's1', 'calls': []}}
+setter = <built-in method append of list object at 0x10fa40f80>
+session_id = 's1'
+
+    def _remount_head(
+        self,
+        store: dict[str, dict[str, Any]],
+        setter: Callable[[dict[str, Any] | None], None] | None,
+        session_id: str | None,
+    ) -> None:
+        """Push ``store``'s head for ``session_id`` through ``setter`` on the UI thread.
+
+        The pre-host body, kept verbatim: every kind's activation re-derive
+        and the approval attach path call it with their own store and
+        setter, and it fires the ADR-090 permission summary for any dict
+        payload -- ``_maybe_fire_permission_summary`` itself ignores round
+        ids it does not know, so a skill payload passes through untouched.
+
+        Args:
+            store: A per-kind parked-payload dict.
+            setter: The kind's UI-thread setter, or None to do nothing.
+            session_id: The session whose head to push; None means the
+                store's active session.
+        """
+        if self.app is None:
+            return
+
+>       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:14645: AttributeError
+============================= slowest 25 durations =============================
+18.89s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+18.59s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+4.72s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+2.81s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+2.02s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.80s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.72s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+1.71s call     Tests/UI/test_component_pattern_governance.py::test_canonical_owning_sheets_are_bundled
+1.66s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.65s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.64s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.62s call     Tests/UI/test_component_pattern_governance.py::test_active_css_extension_is_in_dimension_floor
+1.60s call     Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
+1.59s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.58s call     Tests/UI/test_component_pattern_governance.py::test_catalog_and_gallery_sync
+1.58s call     Tests/UI/test_component_pattern_governance.py::test_pin_rejects_active_css_extension_without_writing_baseline
+1.56s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+1.56s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+1.56s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_ignores_tokens_and_token_definitions
+1.55s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.55s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+1.54s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]
+1.54s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+1.53s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+1.51s call     Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_fallback_fires_when_missing_and_always_fires
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_parked_round_fires_once_on_attach_remount
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_consumed_flag_prevents_refire_on_attach_remount
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_switch_session_promotes_parked_round_and_fires_once
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_fires_promoted_sibling_once
+FAILED Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_skips_non_mcp_payloads
+6 failed, 52 passed in 92.21s (0:01:32)

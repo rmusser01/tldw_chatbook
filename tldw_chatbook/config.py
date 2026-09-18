@@ -3292,6 +3292,7 @@ def _load_settings_uncached(
         "APP_DATABASE_CONFIG": {**DEFAULT_DATABASE_CONFIG, **app_database_config},
         "APP_RAG_SEARCH_CONFIG": {**DEFAULT_RAG_SEARCH_CONFIG, **app_rag_search_config},
         "acp": get_toml_section("acp"),
+        "permission_summary": get_toml_section("permission_summary"),
         "library": {
             **copy.deepcopy(library_section),
             "ingest_directory_scan_limit": coerce_int_setting(

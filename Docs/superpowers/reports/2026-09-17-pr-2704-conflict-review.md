@@ -1,6 +1,6 @@
 # PR #2704 — historical conflict-resolution audit
 
-Read-only reconstruction of the four merge commits on the reviewed branch, through HEAD 96d4ca2b966e0a0f999100f6d1a1b4f1c33a7623. Uncommitted TASK-32761 work is excluded. “Ours” means first parent (component branch); “theirs” means second parent (incoming dev). This report describes the recorded results, not a new merge or runtime certification.
+Read-only reconstruction of the four merge commits on the reviewed branch, through 96d4ca2b966e0a0f999100f6d1a1b4f1c33a7623. Subsequent Settings repairs are excluded from the conflict counts. “Ours” means first parent (component branch); “theirs” means second parent (incoming dev). This report describes the recorded results, not a new merge or runtime certification.
 
 **Result: 20 conflicted file entries, containing 30 conflict blocks (including one modify/delete conflict).** No blanket selection of one parent was used. Both document additions were usually retained; source ownership stayed with the component branch while incoming behavior was incorporated.
 
@@ -76,12 +76,12 @@ The numerous Interface screenshots, test outputs, lifecycle manifests, QA receip
 - Auto-merges are not human ours/theirs decisions. They normally disappear from `git show --remerge-diff`, which compares Git's reconstructed merge with the recorded merge result.
 - A remerge diff can also contain extra edits made while completing a merge. The four full reconstructions contain respectively **49, 83, 81, and 7** additional file entries without a reconstructed conflict. Their exact names are in the manifest; they include QA artifacts, source transplants, harness adaptations, generated-file rebuilding, and task/receipt updates.
 - Source transplants into clean feature files are necessary parts of resolving the CSS relocation conflicts, but those destination files did not themselves conflict.
-- This audit identifies what was selected; it does not certify every imported feature or the currently uncommitted Console/Storage repair. No branch, index, working-tree source, or merge state was changed by this audit. Git used temporary objects for read-only remerge reconstruction; review artifacts were written only under /private/tmp.
+- This audit identifies what was selected; it does not certify every imported feature or subsequent Settings repairs. The reconstruction did not change source or merge state. Git used temporary objects for read-only remerge reconstruction; the conflict diffs, manifest and this report were subsequently saved in the PR for review.
 
 
 ## Visual inspection of the integrated UI
 
-These are the recorded native captures for the second integration, not newly generated before/after images. They show the resolved Console and Library layouts at compact and wide sizes. The [QA receipt](../qa/2026-09-17-component-current-dev/README.md) defines the exact tested source and limitations. Later Interface, rail and pending Console/Storage work is separate.
+These are the recorded native captures for the second integration, not newly generated before/after images. They show the resolved Console and Library layouts at compact and wide sizes. The [QA receipt](../qa/2026-09-17-component-current-dev/README.md) defines the exact tested source and limitations. Later Interface, rail and Console/Storage work has separate receipts in the [completion ledger](2026-09-17-design-system-completion-audit.md).
 
 | Console, compact dark | Library Notes, compact dark |
 | --- | --- |

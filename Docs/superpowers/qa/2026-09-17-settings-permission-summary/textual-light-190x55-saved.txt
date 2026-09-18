@@ -1,0 +1,55 @@
+                                                                                                                                           ╭─────────────╮
+ ‹ 1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                           │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │ │ │  Individual loop steps. One tool round costs 3 (think, call, result) and the closing reply costs   │ │  │  │  │                                   │
+│  category search             │  │  │ │ │  1, so N turns need 3*(N-1)+1 steps. Set below that and this, not the turn count, becomes your     │ │  │  │  │ Selected category: Console        │
+│                              │  │  │ │ │  limiter.                                                                                          │ │  │  │  │ Behavior                          │
+│  Core                        │  │  │ │ │                                                                                                    │ │  │  │  │ No unsaved changes                │
+│     Overview (view)          │  │  │ │ │                                                                                                    │ │  │  │  │  Guided edits: change a field     │
+│     Providers & Models       │  │  │ │ │  Agent tool-result display cap                                                                     │ │  │  │  │  first.                           │
+│     Web Search               │  │  │ │ │ Display cap (chars)     │ 160                                                                      │ │  │  │  │  Save (s) — no changes            │
+│     Speech & TTS             │  │  │ │ │  How much of an agent tool result the Console shows you here -- distinct from                      │ │  │  │  │  Revert (r) — no changes          │
+│  Interface                   │  │  │ │ │  max_tool_result_chars, which caps what the model itself saw. Open a run's "View full log" (Agent  │ │  │  │  │ Local-only: saves write your      │
+│     Appearance               │  │  │ │ │  rail) to read everything beyond this cap.                                                         │ │  │  │  │ config file.                      │
+│     Theme                    │  │  │ │ │ ┌────────────────────────────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  Purpose: Opt-in advisory         │
+│     Splash Screen            │  │  │ │ │ │                                                                                                │ │ │  │  │  │  summaries on agent approval      │
+│   > Console Behavior         │  │  │ │ │ │  Permission summaries                                                                          │ │ │  │  │  │  cards (ADR-090).                 │
+│  Data & Privacy              │  │  │ │ │ │  applies immediately - no Save needed                                                          │ │ │  │  │  │                                   │
+│     Storage                  │  │  │ │ │ │  When enabled, a fast LLM you designate receives a bounded excerpt of this conversation (your  │ │ │  │  │  │  Consequences: When enabled, a    │
+│     Workspaces               │  │  │ │ │ │  messages and the assistant's, only) to write the approval summary.                            │ │ │  │  │  │  fast LLM you designate           │
+│     Tool Profiles            │  │  │ │ │ │                         ┌────────────────────────────────────────────────────────────────────┐ │ │ │  │  │  │  receives a bounded excerpt of    │
+│     Privacy & Security       │  │  │ │ │ │ Summary mode            │ Fallback (no rationale)                                          ▼ │ │ │ │  │  │  │  this conversation (user and      │
+│     Network                  │  │  │ │ │ │                         └────────────────────────────────────────────────────────────────────┘ │ │ │  │  │  │  assistant text only) to write    │
+│     My Profile               │  │  │ │ │ │ Provider                │ OpenAI                                                               │ │ │▇ │  │  │  the approval summary.            │
+│  Troubleshooting             │  │  │ │ │ │ Model                   █ permission-review-model                                              │ │ │  │  │  │  Summaries are display-only:      │
+│     Diagnostics (view)       │  │  │ │ │ │  Saved. Applies immediately.                                                                   │ │ │  │  │  │  never persisted, never a         │
+│     About (view)             │  │  │ │ │ └────────────────────────────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  verdict input; failures fail     │
+│     Agents                   │  │  │ │ │                                                                                                    │ │  │  │  │  open (no summary).               │
+│  Expert                      │  │  │ │ │  Selection side chat                                                                               │ │  │  │  │                                   │
+│     Internal Prompts         │  │  │ │ │  Ephemeral chat about selected transcript text (More Details / Ask in Side Chat). Nothing is       │ │  │  │  │  Saved as:                        │
+│     Advanced Config          │  │  │ │ │  persisted.                                                                                        │ │  │  │  │  permission_summary.mode/         │
+│   Domain Defaults ▸ (11)     │  │  │ │ │ Side chat model         │ empty = current session model                                            │ │▃ │  │  │    provider/model                 │
+│                              │  │  │ │ │ Prompt template         │ Give me more details about: {selection}                                  │ │  │  │  │  (instant-apply)                  │
+│                              │  │  │ │ │ Template used by More Details: {selection} inserts the selected text; without it the selection is  │ │  │  │  │                                   │
+│                              │  │  │ │ │ appended. An empty template uses the built-in default.                                             │ │  │  │  │  Applies: Approval rounds         │
+│                              │  │  │ │ │                                                                                                    │ │  │  │  │  rendered after the change; no    │
+│                              │  │  │ │ │  Conversation context and memory                                                                   │ │  │  │  │  Save step.                       │
+│                              │  │  │ │ │  Global defaults for new and inherited conversations. Current-conversation overrides remain in     │ │  │  │  │                                   │
+│                              │  │  │ │ │  the Console's Context & memory view.                                                              │ │  │  │  │ Override rules                    │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  Priority: active Console         │
+│                              │  │  │ │ │ Budget strategy         │ Automatic                                                            ▼ │ │ │  │  │  │  session, then provider+model     │
+│                              │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  profile, then these global       │
+│                              │  │  │ │ │ Conversation max tokens │ tokens (used in Custom mode)                                             │ │  │  │  │  fallbacks                        │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │                                   │
+│                              │  │  │ │ │ When limit nears        │ Ask                                                                  ▼ │ │ │  │  │  │  Scope:  response fallbacks and ▇ │
+│                              │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  paste display settings           │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+
+  Esc, s save category | Esc, r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

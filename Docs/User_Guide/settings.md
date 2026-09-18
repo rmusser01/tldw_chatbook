@@ -515,7 +515,7 @@ fix the setting was inert: the splash was never focused, so it never saw a key.
 
 ### Interface — Console Behavior
 
-Drafted, with one exception.
+Most controls are drafted. Groups marked **applies immediately** save as you edit.
 
 | Group | What's in it |
 |---|---|
@@ -526,8 +526,15 @@ Drafted, with one exception.
 | **Chat images** | One Enabled/Disabled toggle, off by default: "Render images linked in assistant replies (remote fetch)." and "Off by default: fetching a model-suggested link reveals your IP address to that host." Like Status row placement, **this control writes immediately** — pressing it takes effect at once ("Linked images in replies will now render."), with no save and no draft. |
 | **Parallel agent runs** | **Max parallel agent runs**, read live, so it applies to the running app once saved. |
 | **Agent tool-result display cap** | **Display cap (chars)** (20–2000): how much of a tool result Console shows *you*, which is not what the model saw. Open a run's "View full log" to read past it. |
+| **Permission summaries** | **Off** by default. **Fallback (no rationale)** or **Every approval** sends a bounded excerpt of user/assistant conversation text to your designated provider/model for an advisory summary. Mode, provider and model save immediately; summaries do not decide approvals. |
 | **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. |
 | **Background effects** | An Enabled/Disabled toggle, **Background effect** (None / Snow / Rain / Matrix), **Scope**, **Intensity**, and **Frame rate** (1–12). |
+
+Permission-summary results appear inside their group. **Changes not saved** keeps
+your edits when you switch categories or reopen Settings; correct the config-file
+problem and choose **Retry**. The previously saved choice remains active until a
+write succeeds. If the file was saved but live settings could not refresh, restart
+Chatbook or reload the configuration before relying on the new choice.
 
 Two honest limits: fallbacks reach **new or default sessions**, not a
 conversation already open; and "Workbench (advanced)" under **Scope** is

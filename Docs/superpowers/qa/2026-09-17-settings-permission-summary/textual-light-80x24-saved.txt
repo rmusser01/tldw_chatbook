@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │ │ ││ Provider                     ││ │  │
+│     Web Search               │  │  │ │ ││ │ OpenAI                     ││ │  │
+│     Speech & TTS             │  │  │ │ ││                              ││ │  │
+│  Interface                   │  │  │ │ ││ Model                        ││ │  │
+│     Appearance               │  │  │ │ ││ █ permission-review-model    ││ │  │
+│     Theme                  ▁ │  │  │ │ ││                              ││ │▂ │
+│     Splash Screen            │  │  │ │ ││  Saved. Applies              ││ │▂ │
+│   > Console Behavior         │  │  │ │ ││  immediately.                ││ │  │
+│  Data & Privacy              │  │  │ │ │└──────────────────────────────┘│ │  │
+│     Storage                  │  │  │ │ │                                │ │  │
+│     Workspaces               │  │  │ │ │ Selection side chat            │ │  │
+│     Tool Profiles            │  │  │ │ │ Ephemeral chat about selected  │ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | F1 · F6 · Ctrl+P · Ctrl+Q
