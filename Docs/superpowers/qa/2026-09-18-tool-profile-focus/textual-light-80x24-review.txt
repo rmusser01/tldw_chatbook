@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎e ▾
+─────▊                                                                    ▎─────
+ Sett▊  Review Tool Pack                                                  ▎al
+ Mode▊                                                                    ▎
+┌────▊                                                                    ▎────┐
+│  Fi▊  Identity                                                       ▇  ▎    │
+│  Co▊  Name: Native fixture                                              ▎    │
+│    ▊  Producer: tldw_chatbook 1                                         ▎es  │
+│    ▊  Content digest:                                                   ▎    │
+│    ▊  574686418a616c92e2a946fb0bc83ed2f97df4396e468295ba084354e9ead0c   ▎  ▂ │
+│    ▊  7                                                                 ▎    │
+│  In▊  Proposed profile id: native-light-80                              ▎  ▄ │
+│    ▊                                                                    ▎    │
+│    ▊  Policy                                                            ▎─┐  │
+│    ▊  Fallback · builtin/agent:builtin: Ask                             ▎ │  │
+│    ▊                                                                    ▎ │  │
+│  Da▊                                                                    ▎ │  │
+│    ▊        Cancel     Change id or mappings   Import unbound profile   ▎ │  │
+│    ▊                                                                    ▎ │  │
+│   >▊                                                                    ▎ │  │
+└────▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎────┘
+ Inspect a Tool Pack before importing an unbound profile.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

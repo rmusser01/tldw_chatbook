@@ -944,6 +944,19 @@ Button.settings-category-group-toggle:focus {
 }
 /* RAW CLI DANGER GATE END */
 
+/* Keep every Tool Profile action visible inside the compact detail pane. */
+.settings-workbench-compact ToolProfilesPanel .tool-profile-actions {
+    layout: grid;
+    grid-size: $ds-size-2;
+    grid-columns: 1fr 1fr;
+    grid-rows: $ds-control-height-compact;
+    grid-gutter: $ds-space-stack $ds-space-inline;
+}
+
+.settings-workbench-compact ToolProfilesPanel .tool-profile-actions Button {
+    width: $ds-width-fill;
+}
+
 #settings-advanced-config-card {
     height: $ds-height-fill;
     min-height: $ds-size-0;

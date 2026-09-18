@@ -1026,7 +1026,6 @@ Button.settings-category-group-toggle:focus {
     border: none;
     outline: none;
 }
-/* RAW CLI DANGER GATE END */
 
 #settings-advanced-config-card {
     height: $ds-height-fill;

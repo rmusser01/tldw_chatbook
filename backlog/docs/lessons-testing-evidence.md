@@ -15795,3 +15795,14 @@ normal activation/debounce behavior. A real-registry regression now expects
 the stale Disable to conflict and leave review disabled. When replacing pane
 rebuilds with in-place updates, test queued actions across those updates; stable
 widget identity does not mean its action intent stayed stable.
+
+
+## Focus identity alone does not prove a complete button is visible
+
+**TASK-32781, 2026-09-18.** Tool Profiles focus restoration correctly selected
+Remove after refresh, but the production 80×24 compositor clipped a ten-column
+button to eight columns. The full-region paint assertion failed three cases
+that identity-only checks would have passed. A scoped two-column action grid
+repaired the clipping; four native size/theme journeys then showed complete
+labels and the same focus continuation. Qualify the focused control's entire
+painted region, not just its identity or intersection with the viewport.

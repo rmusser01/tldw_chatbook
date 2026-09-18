@@ -4530,7 +4530,8 @@ class SettingsScreen(BaseAppScreen):
         self.run_worker(
             panel.apply_listing(listing),
             group="settings-tool-profiles-render",
-            exclusive=True,
+            # The panel serializes renders; never cancel a teardown mid-await.
+            exclusive=False,
             exit_on_error=False,
         )
 

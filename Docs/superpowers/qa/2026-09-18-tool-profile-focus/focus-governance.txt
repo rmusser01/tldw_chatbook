@@ -1,0 +1,28 @@
+.............................................                            [100%]
+============================= slowest 25 durations =============================
+19.27s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+18.86s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+5.36s call     Tests/UI/test_tool_profile_focus.py::test_render_does_not_reclaim_newer_focus[modal]
+5.36s call     Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[export]
+5.28s call     Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[import]
+5.27s call     Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[remove]
+5.13s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-remove]
+5.12s call     Tests/UI/test_tool_profile_focus.py::test_disappearing_action_has_a_safe_visible_continuation[missing]
+5.11s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-bind]
+4.99s call     Tests/UI/test_tool_profile_focus.py::test_disappearing_action_has_a_safe_visible_continuation[disabled]
+4.99s call     Tests/UI/test_tool_profile_focus.py::test_overlapping_renders_finish_teardown_and_keep_latest_listing
+4.96s call     Tests/UI/test_tool_profile_focus.py::test_disappearing_action_has_a_safe_visible_continuation[unavailable]
+4.84s call     Tests/UI/test_tool_profile_focus.py::test_render_does_not_reclaim_newer_focus[rail]
+4.71s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-export]
+4.63s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-export]
+4.51s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-edit]
+4.49s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-remove]
+4.48s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+4.36s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-bind]
+4.36s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-import]
+4.35s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-import]
+4.34s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-edit]
+1.90s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.79s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.64s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+45 passed in 175.30s (0:02:55)
