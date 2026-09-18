@@ -1,0 +1,28 @@
+.................................                                        [100%]
+============================= slowest 25 durations =============================
+9.30s call     Tests/UI/test_settings_workspaces_category.py::test_create_rename_archive_unarchive_flow
+7.86s call     Tests/UI/test_settings_workspaces_category.py::test_activation_failure_surfaces_inline_but_creates_workspace
+6.81s call     Tests/UI/test_settings_workspaces_category.py::test_compact_overview_keeps_a_painted_recovery_action
+6.80s call     Tests/UI/test_settings_workspaces_category.py::test_folder_bindings_add_toggle_remove_and_inline_errors
+6.03s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_toggle_flips_and_persists
+5.95s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_stale_toggle_reports_conflict_and_refreshes
+5.75s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_unavailable_consent_has_no_toggle
+5.19s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_failed_root_offers_one_retry_without_paths
+5.11s call     Tests/UI/test_settings_workspaces_category.py::test_settings_archive_receipt_undo_without_switching
+4.95s call     Tests/UI/test_settings_workspaces_category.py::test_pane_refreshes_after_external_registry_change
+4.94s call     Tests/UI/test_settings_workspaces_category.py::test_settings_archived_label_and_restore_name_preserve_active_workspace
+4.90s call     Tests/UI/test_settings_workspaces_category.py::test_archived_workspace_card_offers_only_unarchive
+4.82s call     Tests/UI/test_settings_workspaces_category.py::test_default_workspace_card_is_protected
+4.67s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_global_kill_disclosed_in_settings
+4.67s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_preparing_is_explicitly_non_blocking
+4.65s call     Tests/UI/test_settings_workspaces_category.py::test_resume_refreshes_workspaces_pane_only_when_active
+4.64s call     Tests/UI/test_settings_workspaces_category.py::test_change_review_git_absent_shows_honest_copy
+4.38s call     Tests/UI/test_settings_workspaces_category.py::test_scope_inspector_shows_immediate_actions_not_read_only
+4.37s call     Tests/UI/test_settings_workspaces_category.py::test_workspaces_category_registered_and_immediate
+4.02s call     Tests/UI/test_settings_workspaces_category.py::test_overview_pins_workspaces_recovery_copy
+2.90s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+2.03s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.64s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+1.61s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.61s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+33 passed in 136.04s (0:02:16)

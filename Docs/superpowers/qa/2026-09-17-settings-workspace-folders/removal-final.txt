@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+29.52s call     Tests/UI/test_settings_workspace_folder_journeys.py::test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark]
+7.23s call     Tests/UI/test_settings_workspaces_category.py::test_folder_bindings_add_toggle_remove_and_inline_errors
+
+(4 durations < 1s hidden.)
+2 passed in 38.70s

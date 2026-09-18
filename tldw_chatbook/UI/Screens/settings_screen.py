@@ -3265,6 +3265,7 @@ class SettingsScreen(BaseAppScreen):
         #: cached separately, so there is no stale-watcher state to wipe.
         self._settings_show_archived_workspaces: bool = False
         self._settings_workspaces_result = ""
+        self._settings_workspace_folder_result: tuple[str, str | None, str] | None = None
         #: Task 10 (workspace assistant defaults): the staged-but-unapplied
         #: selection in the "Default assistant" section
         #: (``{"workspace_id", "persona_id", "persona_label",
@@ -20239,6 +20240,7 @@ class SettingsScreen(BaseAppScreen):
                 f"{binding.locator} [{access}] {freshness}",
                 id=f"settings-workspace-folder-{binding.binding_id}",
                 classes="settings-detail-row",
+                markup=False,
             )
             with Horizontal(classes="settings-input-row"):
                 toggle_button = Button(
@@ -20257,6 +20259,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 remove_button.binding_id = binding.binding_id
                 yield remove_button
+            yield self._workspace_folder_result_widget(workspace_id, binding.binding_id)
         with Horizontal(classes="settings-input-row"):
             yield Input(
                 placeholder="~/path/to/folder",
@@ -20264,6 +20267,64 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-compact-input",
             )
             yield Button("Add folder", id="settings-workspace-folder-add", compact=True)
+        yield self._workspace_folder_result_widget(workspace_id)
+
+    def _workspace_folder_result_widget(
+        self, workspace_id: str, binding_id: str | None = None
+    ) -> Static:
+        """Keep the latest folder outcome next to the action that produced it."""
+        result = self._settings_workspace_folder_result
+        text = result[2] if result and result[:2] == (workspace_id, binding_id) else ""
+        suffix = f"-{binding_id}" if binding_id else ""
+        return Static(
+            text,
+            id=f"settings-workspace-folder-result{suffix}",
+            classes="settings-status-row settings-workspace-folder-result",
+            markup=False,
+        )
+
+    def _set_workspace_folder_result(
+        self, text: str, binding_id: str | None = None
+    ) -> None:
+        """Publish folder feedback without recomposing a rejected input draft."""
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        self._settings_workspace_folder_result = (workspace_id, binding_id, text)
+        for result in self.query(".settings-workspace-folder-result"):
+            result.update("")
+        suffix = f"-{binding_id}" if binding_id else ""
+        self._set_static_text(f"#settings-workspace-folder-result{suffix}", text)
+        self.call_after_refresh(
+            self._reveal_workspace_folder_result, self._settings_workspace_folder_result
+        )
+
+    def _reveal_workspace_folder_result(
+        self, result: tuple[str, str | None, str]
+    ) -> None:
+        """Reveal the outcome only while its folder action still owns focus."""
+        if not self.is_attached or self._settings_workspace_folder_result != result:
+            return
+        workspace_id, binding_id, _text = result
+        if self._settings_selected_workspace_id != workspace_id:
+            return
+        targets = (
+            (
+                f"settings-workspace-folder-toggle-{binding_id}",
+                f"settings-workspace-folder-remove-{binding_id}",
+            )
+            if binding_id
+            else ("settings-workspace-folder-path", "settings-workspace-folder-add")
+        )
+        if getattr(self.app.focused, "id", None) not in targets:
+            return
+        suffix = f"-{binding_id}" if binding_id else ""
+        try:
+            self.query_one(f"#settings-workspace-folder-result{suffix}").scroll_visible(
+                animate=False
+            )
+        except QueryError:
+            pass
 
     def _set_settings_workspaces_result(self, text: str) -> None:
         self._settings_workspaces_result = text
@@ -20287,6 +20348,13 @@ class SettingsScreen(BaseAppScreen):
         go stale or get wiped by the recompose.
         """
         self.mutate_reactive(SettingsScreen.active_category)
+        if self._settings_workspace_folder_result is not None:
+            # Recomposition can move the retained target before its first layout.
+            self._after_category_panes(
+                self.call_after_refresh,
+                self._reveal_workspace_folder_result,
+                self._settings_workspace_folder_result,
+            )
 
     def _speech_tts_cached_runtime_state(
         self,
@@ -24931,9 +24999,9 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.add_folder_binding(workspace_id, raw)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_folder_result(str(exc))
             return
-        self._set_settings_workspaces_result("Folder added (read-only).")
+        self._set_workspace_folder_result("Folder added (read-only).")
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, ".settings-workspace-folder-toggle")
@@ -24968,9 +25036,12 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.set_folder_binding_access(binding_id, allow_write=allow_write)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_folder_result(str(exc), binding_id)
             return
-        self._settings_workspaces_result = ""
+        self._set_workspace_folder_result(
+            "Folder access: read-write." if allow_write else "Folder access: read-only.",
+            binding_id,
+        )
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, ".settings-workspace-folder-remove")
@@ -24986,10 +25057,15 @@ class SettingsScreen(BaseAppScreen):
         try:
             registry.remove_runtime_binding(binding_id)
         except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
+            self._set_workspace_folder_result(str(exc), binding_id)
             return
-        self._settings_workspaces_result = ""
+        self._set_workspace_folder_result("Folder removed.")
         self._refresh_settings_workspaces_pane()
+        # Query the replacement: focus() on the old Add is queued and may run
+        # during teardown, leaving focus attached to a removed control.
+        self._after_category_panes(
+            self._restore_category_pane_focus, "settings-workspace-folder-add"
+        )
 
     @on(OptionList.OptionSelected, "#settings-workspace-persona-picker")
     def handle_workspace_persona_selected(
