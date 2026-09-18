@@ -1557,6 +1557,7 @@ class MCPWorkbench(Container):
                 policy_inventory=policy_inventory,
                 refresh_governance=True,
             )
+            await self._refresh_selected_tool()
             await self._sync_audit_mode()
 
     async def _sync_audit_mode(self) -> None:
@@ -4431,6 +4432,27 @@ class MCPWorkbench(Container):
         elif event.action_key in ("connect", "refresh"):
             self.set_mode("servers")
             self.app.notify("Select a server below to connect or refresh its tools.")
+
+    async def _refresh_selected_tool(self) -> None:
+        """Reconcile existing detail with this pass's catalog, never select a row."""
+        inspector = self.query_one(MCPInspector)
+        current = inspector.current_tool
+        if current is None:
+            return
+        context = self._validate_profile_context(self._tool_policy_profile_context)
+        tool = self._tool_for(current.server_key, current.name) if context else None
+        await inspector.show_tool(
+            tool,
+            effective=self._effective_for_display(tool) if tool is not None else None,
+            profile_context=context,
+            arg_rules=self._arg_rules_for_row(tool, context.profile_id)
+            if tool is not None and context is not None
+            else (),
+            session_approvals=self._session_approvals_for_row(context.profile_id)
+            if context is not None
+            else (),
+            refresh_from=current,
+        )
 
     def _tool_for_row_key(self, tool_id: str) -> HubTool | None:
         """Resolve a Tools-mode DataTable row key (`HubTool.tool_id`, a
