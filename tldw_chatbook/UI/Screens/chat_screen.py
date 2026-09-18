@@ -22030,11 +22030,13 @@ class ChatScreen(BaseAppScreen):
         session_id: str,
         assistant_message_id: str,
         action: str,
+        on_complete: Callable[[], None],
     ) -> None:
         """Run one mounted recovery intent against the currently pinned owner."""
 
         controller = self._console_chat_controller
         if controller is None or not session_id or not assistant_message_id:
+            on_complete()
             return
         recovery = controller.store.dispatch_recovery_for_session(session_id)
         if (
@@ -22042,6 +22044,7 @@ class ChatScreen(BaseAppScreen):
             or recovery.assistant_message_id != assistant_message_id
             or not recovery.recovery_needed
         ):
+            on_complete()
             return
         revision = controller.prompt_queue_registry.snapshot(session_id).revision
         self.run_worker(
@@ -22049,6 +22052,7 @@ class ChatScreen(BaseAppScreen):
                 session_id,
                 action=action,
                 expected_revision=revision,
+                on_recovery_complete=on_complete,
             ),
             exclusive=True,
             group="console-dispatch-recovery-action",

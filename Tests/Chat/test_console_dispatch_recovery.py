@@ -147,7 +147,7 @@ def _acceptance(
     )
 
 
-def _database(path: Path) -> tuple[CharactersRAGDB, str, ConsoleDispatchRepository]:
+def _database(path: Path | str) -> tuple[CharactersRAGDB, str, ConsoleDispatchRepository]:
     db = CharactersRAGDB(path, client_id="dispatch-recovery-test")
     conversation_id = db.add_conversation({"title": "recovery"})
     assert conversation_id is not None

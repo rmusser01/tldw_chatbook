@@ -56,10 +56,15 @@ async def test_recovery_rearms_after_unchanged_failed_action(outcome):
         {"notified": [], "sync": []},
     )
 
-    def dispatch(session_id, _assistant_id, action):
+    def dispatch(session_id, _assistant_id, action, on_complete):
         pending.append(
             asyncio.create_task(
-                ui.handle_primary_intent(session_id, action=action, expected_revision=0)
+                ui.handle_primary_intent(
+                    session_id,
+                    action=action,
+                    expected_revision=0,
+                    on_recovery_complete=on_complete,
+                )
             )
         )
 
@@ -90,7 +95,8 @@ async def test_recovery_rearms_after_unchanged_failed_action(outcome):
 
 
 @pytest.mark.asyncio
-async def test_pending_recovery_still_ignores_duplicate_clicks():
+@pytest.mark.parametrize("model_in_flight", [False, True])
+async def test_pending_recovery_still_ignores_duplicate_clicks(model_in_flight):
     recovery = _state(started=True)
     attempts = []
     region = ConsoleDispatchRecoveryRegion(
@@ -106,7 +112,7 @@ async def test_pending_recovery_still_ignores_duplicate_clicks():
         retry.press()
         retry.press()
         await pilot.pause()
-        region.sync_recovery("session-1", recovery.with_in_flight(True))
+        region.sync_recovery("session-1", recovery.with_in_flight(model_in_flight))
         await pilot.pause()
         region.query_one("#console-dispatch-recovery-discard", Button).press()
         await pilot.pause()
@@ -118,13 +124,13 @@ async def test_pending_recovery_still_ignores_duplicate_clicks():
 @pytest.mark.parametrize("first_attempt", ["discard_failure", "retry_cancel"])
 @private_profile_test
 async def test_restored_recovery_failed_discard_can_be_discarded_again(
-    request, tmp_path, check_copy, first_attempt, monkeypatch
+    request, check_copy, first_attempt, monkeypatch
 ):
     """Real SQLite rollback, store release, screen callback, and composer."""
     _app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        db, conversation_id, repository = _database(tmp_path / "recovery.sqlite")
+        db, conversation_id, repository = _database(":memory:")
         request.addfinalizer(db.close)
         checkpoint = _insert(db, repository, _acceptance(conversation_id))
         _start(repository, checkpoint)
@@ -168,13 +174,12 @@ async def test_restored_recovery_failed_discard_can_be_discarded_again(
                 "Send blocked — resolve response recovery first"
             )
             await pilot.pause()
-        connection = db.get_connection()
         if first_attempt == "discard_failure":
-            connection.execute(
-                "CREATE TRIGGER fail_discard_delete BEFORE DELETE ON "
-                "console_dispatch_checkpoints BEGIN SELECT RAISE(ABORT, 'fail'); END"
-            )
-            connection.commit()
+            with db.transaction() as connection:
+                connection.execute(
+                    "CREATE TRIGGER fail_discard_delete BEFORE DELETE ON "
+                    "console_dispatch_checkpoints BEGIN SELECT RAISE(ABORT, 'fail'); END"
+                )
             region.query_one("#console-dispatch-recovery-discard", Button).press()
         else:
             claimed = asyncio.Event()
@@ -200,8 +205,8 @@ async def test_restored_recovery_failed_discard_can_be_discarded_again(
         recovery = store.dispatch_recovery_for_session(session_id)
         assert recovery is not None and not recovery.in_flight
         if first_attempt == "discard_failure":
-            connection.execute("DROP TRIGGER fail_discard_delete")
-            connection.commit()
+            with db.transaction() as connection:
+                connection.execute("DROP TRIGGER fail_discard_delete")
         region.query_one("#console-dispatch-recovery-discard", Button).press()
         await _wait_for_condition(pilot, lambda: len(syncs) == 2)
         await pilot.pause()
@@ -212,3 +217,105 @@ async def test_restored_recovery_failed_discard_can_be_discarded_again(
             composer.query_one("#console-send-disabled-reason", Static).styles.display
             == "none"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_repaint_failure_preserves_original_recovery_error(cancelled):
+    original = asyncio.CancelledError() if cancelled else RuntimeError("action failed")
+
+    async def recover(_session_id):
+        raise original
+
+    async def repaint():
+        raise ValueError("repaint failed")
+
+    ui = _ui_controller(
+        SimpleNamespace(discard_dispatch_recovery=recover),
+        {"notified": [], "sync": []},
+    )
+    ui._sync_ui = repaint
+    with pytest.raises(type(original)) as caught:
+        await ui.handle_primary_intent(
+            "session-1", action="discard", expected_revision=0
+        )
+    assert caught.value is original
+
+
+@pytest.mark.asyncio
+async def test_repaint_failure_propagates_after_successful_recovery():
+    repaint_error = ValueError("repaint failed")
+
+    async def recover(_session_id):
+        return ConsoleSubmitResult(True, False, "Discarded")
+
+    async def repaint():
+        raise repaint_error
+
+    ui = _ui_controller(
+        SimpleNamespace(discard_dispatch_recovery=recover),
+        {"notified": [], "sync": []},
+    )
+    ui._sync_ui = repaint
+    with pytest.raises(ValueError) as caught:
+        await ui.handle_primary_intent(
+            "session-1", action="discard", expected_revision=0
+        )
+    assert caught.value is repaint_error
+
+
+@pytest.mark.parametrize("change_owner", [False, True])
+def test_stale_completion_cannot_release_a_new_click(change_owner):
+    recovery = _state(started=True)
+    attempts = []
+    region = ConsoleDispatchRecoveryRegion(
+        recovery, session_id="session-1", on_action=lambda *args: attempts.append(args)
+    )
+    button = Button("Discard", id="console-dispatch-recovery-discard")
+    region.on_button_pressed(Button.Pressed(button))
+    first_complete = attempts[0][3]
+    if change_owner:
+        region.sync_recovery("session-2", recovery)
+    else:
+        first_complete()
+    region.on_button_pressed(Button.Pressed(button))
+    first_complete()
+    region.on_button_pressed(Button.Pressed(button))
+    assert len(attempts) == 2
+    attempts[1][3]()
+    region.on_button_pressed(Button.Pressed(button))
+    assert len(attempts) == 3
+
+
+def test_completion_does_not_release_model_owned_claim():
+    recovery = _state(started=True)
+    attempts = []
+    region = ConsoleDispatchRecoveryRegion(
+        recovery, session_id="session-1", on_action=lambda *args: attempts.append(args)
+    )
+    button = Button("Discard", id="console-dispatch-recovery-discard")
+    region.on_button_pressed(Button.Pressed(button))
+    region.sync_recovery("session-1", recovery.with_in_flight(True))
+    attempts[0][3]()
+    region.on_button_pressed(Button.Pressed(button))
+    assert len(attempts) == 1
+    region.sync_recovery("session-1", recovery)
+    region.on_button_pressed(Button.Pressed(button))
+    assert len(attempts) == 2
+
+
+def test_scheduling_failure_releases_click():
+    attempts = []
+
+    def fail_to_schedule(*_args):
+        attempts.append(True)
+        raise RuntimeError("could not schedule")
+
+    region = ConsoleDispatchRecoveryRegion(
+        _state(started=True), session_id="session-1", on_action=fail_to_schedule
+    )
+    button = Button("Discard", id="console-dispatch-recovery-discard")
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="could not schedule"):
+            region.on_button_pressed(Button.Pressed(button))
+    assert len(attempts) == 2

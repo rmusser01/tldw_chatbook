@@ -12,11 +12,13 @@ session switches are observed at call time rather than frozen at construction.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, TYPE_CHECKING
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
@@ -522,7 +524,12 @@ class ConsolePromptQueueUIController:
         self._sync_ui = sync_ui
 
     async def handle_primary_intent(
-        self, session_id: str, *, action: str, expected_revision: int
+        self,
+        session_id: str,
+        *,
+        action: str,
+        expected_revision: int,
+        on_recovery_complete: Callable[[], None] | None = None,
     ) -> None:
         """Apply the shelf's state-specific primary action and repaint."""
 
@@ -530,6 +537,7 @@ class ConsolePromptQueueUIController:
             await self._handle_turn_recovery_intent(session_id, action)
             return
         if action in {"retry_response", "retry_anyway", "discard"}:
+            action_error: BaseException | None = None
             try:
                 controller = self._chat_controller_accessor()
                 result = (
@@ -542,10 +550,23 @@ class ConsolePromptQueueUIController:
                         result.visible_copy or "That recovery action is unavailable.",
                         "warning",
                     )
+            except (Exception, asyncio.CancelledError) as exc:
+                action_error = exc
+                raise
             finally:
                 # Controller cleanup releases the model-owned action claim,
-                # including cancellation. Reconcile the view on every exit.
-                await self._sync_ui()
+                # including cancellation. Release this click before repainting.
+                try:
+                    if on_recovery_complete is not None:
+                        on_recovery_complete()
+                    await self._sync_ui()
+                except Exception as exc:
+                    if action_error is None:
+                        raise
+                    logger.warning(
+                        "Recovery repaint failed during action unwind ({})",
+                        type(exc).__name__,
+                    )
             return
         if action == "toggle-pause":
             await self.handle_pause_intent(

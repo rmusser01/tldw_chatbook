@@ -20,10 +20,14 @@ local click latch, leaving Retry and Discard enabled-looking but inert. A mounte
 restored-conversation test with a real SQLite settlement failure reproduced it;
 after the database failure was removed, another Discard still did nothing.
 
-Reconcile interaction state before display deduplication, and refresh after
-exceptional or cancelled actions as well as successful returns. Test a failed
-attempt followed by a second click through the real dispatcher; store-only
-assertions that actions are enabled cannot detect a stranded widget latch.
+Release the widget's pending click explicitly when its action completes, then
+refresh after exceptional or cancelled actions as well as successful returns.
+Qodo review reproduced the opposite race in the first fix: an unrelated repaint
+of unchanged model state released a click before its worker had claimed the
+action. Use a per-click completion token so a stale worker cannot release a
+newer click or owner. Preserve the action's original exception if repainting also
+fails. Test a failed attempt followed by a second click through the real
+dispatcher; store-only assertions cannot detect a stranded widget latch.
 
 The dev rebase also exposed stale harness assumptions: full-app tests must use
 `private_profile_test` once config sources are lifetime-bound, and controller-only
