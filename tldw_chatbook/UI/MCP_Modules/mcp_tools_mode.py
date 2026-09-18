@@ -124,6 +124,16 @@ def _ellipsize(text: str, budget: int) -> str:
     return rendered.plain
 
 
+class MCPToolsTable(DataTable):
+    """Report the final catalog viewport, including parent scrollbar changes."""
+
+    class Resized(Message, namespace="mcp_tools_table"):
+        """The table's geometry changed independently of its outer canvas."""
+
+    def on_resize(self, event: Resize) -> None:
+        self.post_message(self.Resized())
+
+
 class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
     """Canvas for the Tools mode: cross-server catalog, filters, empty state."""
 
@@ -243,6 +253,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         # `_apply_filter()` so the Tags column doesn't flicker in/out as a
         # text/server filter narrows the visible rows to a tagless subset.
         self._has_tags: bool = False
+        self._tool_column_width: int | None = None
         # Mount-echo guard state for the filter Select -- see _ECHO_CONSUMED.
         self._displayed_server_value: Any = Select.NULL
         # task-32286: the last `enabled` value `update_local_config()` was
@@ -295,7 +306,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
             # servers actually present in the last `update_tools()` call,
             # which compose() (run once, at construction time) can't know.
             yield Vertical(id="mcp-tools-filter-server-slot")
-        table = DataTable(id="mcp-tools-table")
+        table = MCPToolsTable(id="mcp-tools-table")
         table.cursor_type = "row"
         yield table
         with Vertical(id="mcp-tools-empty", classes="ds-recovery-callout"):
@@ -317,7 +328,50 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         self.call_after_refresh(self.reveal_focused_control)
 
     def on_resize(self, event: Resize) -> None:
+        self.call_after_refresh(self._reflow_table)
         self.call_after_refresh(self.reveal_focused_control)
+
+    def on_mcp_tools_table_resized(self, event: MCPToolsTable.Resized) -> None:
+        event.stop()
+        self.call_after_refresh(self._reflow_table)
+
+    def _measured_tool_width(self, table: DataTable) -> int | None:
+        """Reserve readable State cells before allowing Tool names to wrap."""
+        if table.content_region.width <= 0:
+            return None
+        states = (
+            self._states.get((tool.server_key, tool.name)) for tool in self._tools
+        )
+        state_width = max(
+            [Text("State").cell_len]
+            + [
+                Text(format_tool_state_label(state)).cell_len
+                for state in states
+                if state is not None
+            ]
+        )
+        tool_width = max(
+            [Text("Tool").cell_len] + [Text(tool.name).cell_len for tool in self._tools]
+        )
+        # ds-runtime: available table cells minus measured State text, both
+        # columns' native padding and the scrollbar that wrapping may reveal.
+        budget = max(
+            1,
+            table.content_region.width
+            - table.styles.scrollbar_size_vertical
+            - state_width
+            - 4 * table.cell_padding,
+        )
+        return budget if tool_width > budget else None
+
+    def _reflow_table(self) -> None:
+        """Rebuild only when resize changes wrapping, retaining tool identity."""
+        if not self.is_attached or not self._tools:
+            return
+        table = self.query_one("#mcp-tools-table", DataTable)
+        if self._measured_tool_width(table) != self._tool_column_width:
+            self._apply_filter()
+            self.call_after_refresh(self.reveal_focused_control)
 
     def reveal_focused_control(self) -> None:
         """Reveal the current child after layout without overriding newer focus."""
@@ -580,6 +634,9 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
             ),
         )
         table = self.query_one("#mcp-tools-table", DataTable)
+        cursor_key = None
+        if table.columns and 0 <= table.cursor_row < table.row_count:
+            cursor_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
         # UX batch item 11: the Tags column tuple is decided by
         # `self._has_tags` (the FULL unfiltered catalog, set once per
         # `update_tools()` call), never recomputed against `ordered`
@@ -590,9 +647,14 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         # same RowHighlighted a click does. Declaring the rebuild stops that
         # being read as a selection -- see DataTableClickSelectMixin.
         self.repopulating_table()
+        # A retained key is still the same tool, but an activation after this
+        # redraw is a fresh gesture, not the Enter paired with an old highlight.
+        self._pending_activation_key = None
         table.clear(columns=True)
+        self._tool_column_width = self._measured_tool_width(table)
+        table.add_column("Tool", width=self._tool_column_width)
         table.add_columns(
-            *(_TABLE_COLUMNS if self._has_tags else _TABLE_COLUMNS_NO_TAGS)
+            *(_TABLE_COLUMNS[1:] if self._has_tags else _TABLE_COLUMNS_NO_TAGS[1:])
         )
         seen_keys: set[str] = set()
         for tool in ordered:
@@ -633,7 +695,16 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
                 tags_cell = ", ".join(tool.tags) if tool.tags else "—"
                 row_cells.append(Text(tags_cell))
             row_cells.append(Text(schema_cell))
-            table.add_row(*row_cells, key=tool.tool_id)
+            table.add_row(*row_cells, key=tool.tool_id, height=None)
+        if cursor_key is not None:
+            try:
+                cursor_row = table.get_row_index(cursor_key)
+            except RowDoesNotExist:
+                # A removed or filtered-out tool leaves clear()'s first-row
+                # fallback. Resolve by key because duplicate IDs are skipped.
+                pass
+            else:
+                table.move_cursor(row=cursor_row)
         has_any_tools = bool(self._tools)
         table.display = has_any_tools
         self._update_empty_state(show=not has_any_tools)

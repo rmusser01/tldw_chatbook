@@ -1,0 +1,13 @@
+............................................                             [100%]
+============================= slowest 25 durations =============================
+19.16s call     Tests/UI/test_mcp_tools_compact_access.py::test_tools_filters_and_first_last_rows_visible_through_resize[textual-dark]
+18.51s call     Tests/UI/test_mcp_tools_compact_access.py::test_tools_filters_and_first_last_rows_visible_through_resize[textual-light]
+9.52s call     Tests/UI/test_mcp_tools_compact_access.py::test_complete_local_switch_label_survives_compact_pane[textual-light]
+8.96s call     Tests/UI/test_mcp_tools_compact_access.py::test_complete_local_switch_label_survives_compact_pane[textual-dark]
+8.88s call     Tests/UI/test_mcp_tools_compact_access.py::test_overflowing_catalog_retains_visible_cursor_on_resize[textual-light]
+8.46s call     Tests/UI/test_mcp_tools_compact_access.py::test_overflowing_catalog_retains_visible_cursor_on_resize[textual-dark]
+3.96s call     Tests/UI/test_mcp_table_click_selects_end_to_end.py::test_clicking_a_tool_row_updates_the_inspector_end_to_end
+3.85s call     Tests/UI/test_mcp_table_click_selects_end_to_end.py::test_opening_tools_mode_selects_nothing_on_its_own
+
+(17 durations < 1s hidden.)
+44 passed in 90.18s (0:01:30)
