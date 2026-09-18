@@ -1,0 +1,13 @@
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py: Ruff baseline 4, current 4; no new diagnostics.
+1 file already formatted
+CSS bundle reproduces from its source modules.
+widget_defaults_self.tcss reproduces from its Python sources.
+widget_defaults_scoped.tcss reproduces from its Python sources.
+screen_css_self.tcss reproduces from its Python sources.
+screen_css_scoped.tcss reproduces from its Python sources.
+screen_agentic_library.tcss reproduces from its Python sources.
+screen_agentic_settings.tcss reproduces from its Python sources.
+screen_feature_evals.tcss reproduces from its Python sources.
+screen_feature_scheduling.tcss reproduces from its Python sources.
+screen_feature_workflows.tcss reproduces from its Python sources.
+screen_feature_watchlists.tcss reproduces from its Python sources.

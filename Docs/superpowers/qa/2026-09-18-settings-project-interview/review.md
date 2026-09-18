@@ -13,3 +13,5 @@ blocker. No service or persistence authority changed.
 
 Preexisting worker callbacks that can outlive cancellation/dismissal remain a
 separate lifetime audit; this review makes no whole-interview-lifetime claim.
+
+The CI selector correction was independently reviewed: both Subject and Value Inputs carry the dedicated class, including legacy Value rows; source and generated rules retain the intended scope. The guard ceiling is unchanged. No introduced blocker was found.

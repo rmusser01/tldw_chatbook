@@ -1,0 +1,7 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+15.30s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+2.03s setup    Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+
+(1 durations < 1s hidden.)
+1 passed in 17.67s

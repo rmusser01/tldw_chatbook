@@ -14,7 +14,7 @@ presentation. No new token, schema, service boundary or ADR was required.
 
 ## Targeted verification
 
-**139 distinct cases pass across final and related runs:**
+**140 distinct cases pass across final and related runs:**
 
 - [Ten new keyboard/state regressions](answer-final-tests.txt) cover dark/light
   × 80×24/170×48 paint, ValueError/RuntimeError recovery, pending duplicate
@@ -37,6 +37,8 @@ The new ten cases use explicit private-profile child processes.
 new files, scoped formatting and diff hygiene. [Independent review](review.md)
 found and then verified the edit-preservation correction; no introduced blocker
 remains. No full suite or provider requests were run.
+
+The CSS performance guard on commit `38e3cd5889` found one additional ancestor-scoped bare type rule (275 against the existing limit of 274). The correction gives both review Inputs a dedicated class and scopes their focus rule to it. The [unchanged ratchet passes](ci-selector-tests.txt); [bundle and scoped static checks](ci-static.txt) pass. The [combined focus/ratchet attempt](ci-focused-review-tests.txt) passed the focus case but hit a Console-store fixture startup error before the census; the isolated ratchet run passes. The focus case overlaps the ten cases above. The final native matrix was refreshed for this selector correction.
 
 ## Native review
 
@@ -67,11 +69,11 @@ not an exhaustive Tab traversal of every modal control.
 | Save controls after selection | ![textual-dark 80x24](textual-dark-80x24-review.svg) | ![textual-light 80x24](textual-light-80x24-review.svg) | ![textual-dark 170x48](textual-dark-170x48-review.svg) | ![textual-light 170x48](textual-light-170x48-review.svg) |
 | Discard disclosure | ![textual-dark 80x24](textual-dark-80x24-cancel.svg) | ![textual-light 80x24](textual-light-80x24-cancel.svg) | ![textual-dark 170x48](textual-dark-170x48-cancel.svg) | ![textual-light 170x48](textual-light-170x48-cancel.svg) |
 
-All 20 final SVG captures were rendered and visually inspected. Run004 used the
+All 20 final SVG captures were rendered and visually inspected. Run005 used the
 exact final source and runner hashes in [native-result.json](native-result.json).
 [capture-manifest.json](capture-manifest.json) records all 40 SVG/text hashes.
 The [lifecycle receipt](lifecycle.json) verifies normal keyboard shutdown, exit 0,
-PID 65830 absent before closing its owned terminal, twelve healthy SQLite
+PID 69704 absent before closing its owned terminal, twelve healthy SQLite
 databases, instance-lock reacquisition, zero durable conversations/messages,
 no error or faulthandler output, and unchanged default-profile fingerprints.
 
