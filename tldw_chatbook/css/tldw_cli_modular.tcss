@@ -10109,6 +10109,12 @@ WorktreeRecoveryDialog {
     margin-right: $ds-space-0;
 }
 
+#settings-workspace-persona-picker:focus > .option-list--option-highlighted,
+#settings-workspace-profile-picker:focus > .option-list--option-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
 .settings-speech-stacked .settings-speech-input-row .settings-input-label,
 .settings-speech-stacked .settings-speech-input-row .settings-speech-control-stack,
 .settings-speech-stacked .settings-speech-input-row > Input,

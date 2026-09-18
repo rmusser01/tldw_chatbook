@@ -1,0 +1,1 @@
+No duplicate task IDs across 4121 task files in backlog/tasks, backlog/completed, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.

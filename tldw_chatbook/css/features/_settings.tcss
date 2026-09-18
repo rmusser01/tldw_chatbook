@@ -818,6 +818,21 @@ Button.settings-category-group-toggle:focus {
     height: auto;
 }
 
+/* Keep the selected option and its adjacent staging receipt together even
+   when the user's Persona/profile catalog is long. */
+#settings-workspace-persona-picker,
+#settings-workspace-profile-picker {
+    max-height: $ds-size-5;
+    /* The generic focus outline paints over compact option text. */
+    outline: none;
+}
+
+#settings-workspace-persona-picker:focus > .option-list--option-highlighted,
+#settings-workspace-profile-picker:focus > .option-list--option-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
 .settings-workbench-compact #settings-overview-primary .settings-action-row {
     layout: vertical;
     height: auto;

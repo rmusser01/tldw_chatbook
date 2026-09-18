@@ -15699,3 +15699,15 @@ The regression delays an old-control focus request until after replacement and
 checks current widget identity, attachment, paint and real Tab traversal. Native
 run003 then completed all four size/theme cells and quit normally. A matching
 control ID alone is not proof that focus belongs to the mounted control.
+
+## A screen refresh callback can precede a Static receipt’s text reflow (TASK-32769)
+
+The workspace assistant journey changed a one-row staging receipt into a
+four-row memory disclosure. Two screen `call_after_refresh` callbacks still
+observed the old one-row region; scrolling then left two disclosure rows clipped
+at 80×24. An immediate scroll closed the separate stale-navigation race, but
+could not repair that outdated geometry. A small receipt `on_resize` hook now
+reuses the guarded reveal after actual text reflow. The populated dark/light
+keyboard matrix asserts the complete painted disclosure and focused action, and
+the native gallery records the final layout. Use geometry-change evidence for
+this case; another screen callback alone did not prove text had reflowed.
