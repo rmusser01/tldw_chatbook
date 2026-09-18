@@ -11,17 +11,11 @@ Token migration alone does not qualify a complete workflow.
 | Compact introduction, Source and permission matrix | TASK-32788, [134 targeted cases and native gallery](../qa/2026-09-18-mcp-compact-readability/README.md) | Complete guidance and Local/Server labels; permission Tool/State together, tags accessible; no connected external server qualification |
 | Tools controls and catalog access | TASK-32789, [88 distinct targeted cases and native gallery](../qa/2026-09-18-mcp-tools-access/README.md) | Full on/off label, focused filters/rows, retained cursor through resize, real private toggle persistence and exact row inspection; no tool execution |
 | Tools name/state readability and identity | TASK-32790, [88 final targeted cases and native gallery](../qa/2026-09-18-mcp-tools-readability/README.md) | Complete names and State together, metadata reachable, identity retained through resize/filter/refresh, independent Enter and short/long scrollbar transitions; no tool execution |
-
-| Root drafts, ordered saves and truthful scope | TASK-32791, [targeted checks and ten native captures](../qa/2026-09-18-mcp-root-settings/README.md) | Exact draft ownership, app lifetime/shutdown, cache warnings and later config/external-file supersession; existing Permissions resize failure is separately retained |
+| Root drafts, ordered saves and truthful scope | TASK-32791, [targeted checks and ten native captures](../qa/2026-09-18-mcp-root-settings/README.md) | Exact draft ownership, app lifetime/shutdown, cache warnings and later config/external-file supersession; original Permissions resize failure retained and repaired below |
+| Permissions final viewport and selected-row continuity | TASK-32792, [targeted checks and twelve native captures](../qa/2026-09-18-mcp-permission-reflow/README.md) | Child width/height reflow, full Tool/State paint, selected row/focus/filter retention and fresh-context Enter; no policy changes or tool execution |
 
 ## Remaining review
 
-- **Permissions table final viewport:** TASK-32791's related rerun found the
-  light-theme selected State cell clipped from 7 to 6 columns after resize. A fresh
-  baseline checkout at6c0e317ab7 reproduced it unchanged on the first attempt;
-  an isolated current retry passed. The plain Permissions DataTable observes
-  canvas resize but not all final child/outer-scrollbar geometry transitions.
-  Repair and qualify this separately; passing retries do not close it.
 - **Local-tools master toggle:** verify ordering, lifetime and truthful outcomes
   under overlapping saves; the root-specific owner does not change this path.
 - **Tools refresh and execution:** retained selection/filter drafts across

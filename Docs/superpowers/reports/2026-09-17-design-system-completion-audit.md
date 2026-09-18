@@ -138,8 +138,12 @@ close any whole-destination or provider-execution gate.
 TASK-32791 qualifies MCP root draft/save lifetime and corrects the root's actual
 local MCP/Hub scope. [Targeted and native evidence](../qa/2026-09-18-mcp-root-settings/README.md)
 records 26 root cases, adjacent checks, ten reviewed captures, independent review
-and ADR-168. Its related rerun also reproduces a preexisting Permissions table
-resize clip on both current and saved baseline code; that separate repair remains
-open in the MCP ledger. PR2707 remains draft/unmerged, and its pre-save head has an
-unresolved Windows GGUF SelectOverlay CI failure. Neither the component review
-nor integration is declared complete.
+and ADR-168. Its related rerun reproduced a preexisting Permissions table
+resize clip on both current and saved baseline code. TASK-32792 now qualifies
+that repair, plus native selected-row and fresh-Enter continuity, with
+[final reflow checks and twelve inspected captures](../qa/2026-09-18-mcp-permission-reflow/README.md).
+Master-toggle ordering and remaining MCP workflows stay open in the MCP ledger.
+PR2707 remains draft/unmerged. All named applicable checks passed on saved head
+fb16c9087c, including Windows GGUF; the earlier 6c0e317ab7 missing SelectOverlay
+failure remains historical evidence requiring investigation, rather than a
+currently failing check. Neither component review nor integration is complete.

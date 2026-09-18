@@ -11,6 +11,15 @@ was also unhandled because Textual converted `MCPToolsTable` to `mcptools_table`
 an explicit message namespace aligned the handler. Exercise short and long
 catalogs across scrollbar transitions, not only the terminal dimensions.
 
+**TASK-32792 follow-up.** The sibling Permissions table retained the same gap: a
+child-only width42→39 left the canvas geometry unchanged and clipped State.
+The native real catalog then exposed a selected row below the viewport after
+resize, while an earlier test manually scrolled it back before checking paint.
+Observe final child geometry, and reveal the current selected row without test
+repair. Height-only20→10 changes need a separate deferred reveal even when
+width-gated reflow correctly performs no rebuild. Preserve newer focus and
+check the selected cell against both compositor and table viewport.
+
 ## A stale review and an admitted write have different lifetimes
 
 **TASK-32780, 2026-09-18.** Preventing delayed Tool Profile reviews after

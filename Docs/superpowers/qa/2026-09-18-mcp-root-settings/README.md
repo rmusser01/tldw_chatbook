@@ -22,8 +22,9 @@ The Permissions failure is retained, not erased by its [passing isolated retry](
 A fresh detached checkout of pre-change HEAD `6c0e317ab75638cc34343b6170c7cba9c7cd1b29`
 failed the identical light-theme case on its first run: a 7-cell State region was
 clipped to 6 cells. [Baseline evidence](permissions-baseline.txt) proves this
-predates the root changes. It remains an open Permissions reflow repair in the
-[MCP ledger](../../reports/2026-09-18-mcp-review.md). The 131 distinct selected cases
+predates the root changes. TASK-32792 subsequently repaired and qualified this
+reflow failure; see the [follow-up evidence](../2026-09-18-mcp-permission-reflow/README.md).
+The 131 distinct selected cases
 have passing evidence across these runs; this is not an all-green final sweep or
 whole-destination completion claim. No full repository suite was run.
 
@@ -68,7 +69,7 @@ pre-final receipts are historical and do not qualify final source.
 [ADR-168](../../../../backlog/decisions/168-mcp-root-save-lifetime.md) records the
 narrow app-owned lifetime and config identity fences. Existing ADR-033/082/102/150/161
 retain authority. Draft PR2707 still requires separate visual review and merge
-approval. Permissions resize, the local-tools master toggle, remaining MCP
+approval. The local-tools master toggle and remaining MCP
 runtime workflows and the broader component migration remain open. The pre-save
-PR head also has an unresolved Windows GGUF SelectOverlay failure; no CI-green
-claim is made here.
+PR head had a Windows GGUF SelectOverlay failure. All named applicable checks
+subsequently passed on fb16c9087c; the earlier failure is retained for investigation.

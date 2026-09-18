@@ -1,0 +1,247 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_real_catalog_selected_row_stays_visible_after_resize ___________
+
+self = <Coroutine test_real_catalog_selected_row_stays_visible_after_resize>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_real_catalog_selected_row_stays_visible_after_resize>>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1947/test_real_catalog_selected_row0/private-profile-process/pytest.log
+E           --- _setup_logging START (from Logging_Config.py) ---
+E           Loguru: All pre-existing sinks removed.
+E           Loguru: Configured to forward its messages to standard Python logging system.
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           __________ test_real_catalog_selected_row_stays_visible_after_resize ___________
+E
+E           request = <FixtureRequest for <Coroutine test_real_catalog_selected_row_stays_visible_after_resize>>
+E
+E               @private_profile_test
+E               async def test_real_catalog_selected_row_stays_visible_after_resize(request):
+E                   save_setting_to_cli_config("splash_screen", "enabled", False)
+E                   app = _build_test_app("home")
+E                   async with app.run_test(size=(80, 24)) as pilot:
+E                       await _wait(pilot, lambda: getattr(app, "_initial_screen_pushed", False))
+E                       await app.handle_screen_navigation(NavigateToScreen("mcp"))
+E                       await _wait(pilot, lambda: getattr(app.screen, "screen_name", None) == "mcp")
+E                       workbench = app.screen.workbench
+E                       await _wait(
+E                           pilot,
+E                           lambda: not workbench.is_loading and not workbench._reloading
+E                           and bool(workbench.query("#mcp-perm-table")),
+E                       )
+E                       workbench.set_mode("permissions")
+E                       await _settle(pilot)
+E                       canvas = workbench.query_one(MCPPermissionsMode)
+E                       table = canvas.query_one(DataTable)
+E                       await _wait(pilot, lambda: table.row_count > 0)
+E                       target = max(
+E                           (row for row in canvas._all_rows if row.kind == "tool"),
+E                           key=lambda row: len(_tool_column_text(row)),
+E                       )
+E                       table.focus()
+E                       await pilot.press("ctrl+home")
+E                       await pilot.press(*(["down"] * table.get_row_index(_row_key(target))))
+E                       await _settle(pilot)
+E                       _readable(table, target)
+E                       before = app.unified_mcp_service.permission_store.load()
+E                       for size in [(170, 48), (80, 24), (170, 48), (80, 24)]:
+E                           await pilot.resize_terminal(*size)
+E                           await _settle(pilot)
+E                           assert app.focused is table
+E           >               _readable(table, target)
+E
+E           Tests/UI/test_mcp_permission_reflow.py:78:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           Tests/UI/test_mcp_permission_reflow.py:40: in _readable
+E               _cell_paint(table, table.cursor_row, 0)
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           table = MCPPermissionsTable(id='mcp-perm-table'), row_index = 59
+E           column_index = 0
+E
+E               def _cell_paint(table, row_index, column_index):
+E                   cell = table._get_cell_region(Coordinate(row_index, column_index))
+E                   region = cell.translate(
+E                       Offset(
+E                           table.content_region.x - int(table.scroll_x),
+E                           table.content_region.y - int(table.scroll_y),
+E                       )
+E                   )
+E                   clip = table.screen._compositor.visible_widgets[table][1]
+E                   assert region.intersection(clip) == region
+E           >       assert region.intersection(table.scrollable_content_region) == region
+E           E       AssertionError: assert Region(x=48, ...=55, height=0) == Region(x=48, ...=55, height=1)
+E           E
+E           E         Omitting 3 identical items, use -vv to show
+E           E         Differing attributes:
+E           E         ['height']
+E           E
+E           E         Drill down into differing attribute height:
+E           E           height: 0 != 1
+E           E         Use -v to get more diff
+E
+E           Tests/UI/test_mcp_compact_readability.py:70: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 07:43:56.152 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 07:43:56.157 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 07:43:56.157 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 07:43:56.158 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 07:43:56.159 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
+E           2026-09-18 07:43:56.174 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+E           2026-09-18 07:43:56.183 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1947/test_real_catalog_selected_row0/private-profile-process/profile/config/config.toml
+E           2026-09-18 07:43:56.185 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 07:43:56.185 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 07:43:56.186 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-09-18 07:43:56.186 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-09-18 07:43:56.205 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1947/test_real_catalog_selected_row0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-09-18 07:43:56.205 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E           2026-09-18 07:43:56.206 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+E           2026-09-18 07:43:56.280 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-18 07:43:56.301 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-18 07:43:56.301 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-18 07:43:56.302 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-18 07:43:56.302 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-18 07:43:56.367 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1947/test_real_catalog_selected_row0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 07:43:56.423 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-vlhvsacl/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 07:43:56.570 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-vlhvsacl/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 07:43:56.582 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 07:43:56.583 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-vlhvsacl/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 07:43:56.583 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-vlhvsacl/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 07:43:56.676 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-18 07:43:56.706 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-18 07:43:56.739 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-18 07:43:56.770 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-18 07:43:56.800 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-18 07:43:56.830 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-18 07:43:56.831 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-vlhvsacl/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 07:43:56.873 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-18 07:43:56.873 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-18 07:43:56.880 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 07:43:56.945 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-18 07:43:56.945 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1947/test_real_catalog_selected_row0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 07:43:56.945 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-18 07:43:57.009 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-18 07:43:57.010 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+E           2026-09-18 07:43:57.010 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+E           2026-09-18 07:43:57.010 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 0.797 seconds
+E           2026-09-18 07:43:57.011 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.086s (10.8%)
+E           2026-09-18 07:43:57.011 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+E           2026-09-18 07:43:57.011 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.001s (0.2%)
+E           2026-09-18 07:43:57.011 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-18 07:43:57.012 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-18 07:43:57.012 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-09-18 07:43:57.012 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 07:43:57.012 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: home
+E           WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:12312 Splash screen enabled: False
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E           INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E           INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+E           INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+E           ============================= slowest 25 durations =============================
+E           11.57s call     Tests/UI/test_mcp_permission_reflow.py::test_real_catalog_selected_row_stays_visible_after_resize
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_permission_reflow.py::test_real_catalog_selected_row_stays_visible_after_resize
+E           1 failed in 13.24s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 07:43:54.515 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 07:43:54.519 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 07:43:54.520 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 07:43:54.520 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+14.19s call     Tests/UI/test_mcp_permission_reflow.py::test_real_catalog_selected_row_stays_visible_after_resize
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_permission_reflow.py::test_real_catalog_selected_row_stays_visible_after_resize
+1 failed in 15.98s

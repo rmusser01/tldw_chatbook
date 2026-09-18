@@ -402,6 +402,16 @@ def _tool_column_text(row: PermRow) -> str:
     return f"{_TOOL_ROW_INDENT}{row.tool_name or ''}"
 
 
+class MCPPermissionsTable(DataTable):
+    """Report matrix geometry after enclosing scrollbars settle."""
+
+    class Resized(Message, namespace="mcp_permissions_table"):
+        """The matrix viewport changed independently of its outer canvas."""
+
+    def on_resize(self, event: Resize) -> None:
+        self.post_message(self.Resized())
+
+
 class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
     """Canvas for the Permissions mode: kill switch, matrix, policy preview."""
 
@@ -662,7 +672,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         # docstring below for why no mount-echo guard is needed here,
         # unlike the filter Select in `mcp_tools_mode.py`).
         yield Input(placeholder="Filter tool or server…", id="mcp-perm-filter-text")
-        table = DataTable(id="mcp-perm-table")
+        table = MCPPermissionsTable(id="mcp-perm-table")
         table.cursor_type = "row"
         yield table
         yield Static("", id="mcp-perm-preview", markup=False)
@@ -684,6 +694,13 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         self.call_after_refresh(self.reveal_focused_control)
 
     def on_resize(self, event: Resize) -> None:
+        self.call_after_refresh(self._reflow_table)
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def on_mcp_permissions_table_resized(
+        self, event: MCPPermissionsTable.Resized
+    ) -> None:
+        event.stop()
         self.call_after_refresh(self._reflow_table)
         self.call_after_refresh(self.reveal_focused_control)
 
@@ -730,6 +747,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         focused = self.app.focused
         if focused is not None and self in focused.ancestors:
             focused.scroll_visible(animate=False, immediate=True)
+            if isinstance(focused, DataTable) and focused.row_count:
+                focused._scroll_cursor_into_view(animate=False)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action == "cycle_state":
@@ -991,6 +1010,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         # below puts it back; declaring the rebuild keeps that transient from
         # being read as a selection (DataTableClickSelectMixin).
         self.repopulating_table()
+        # A later Enter belongs to the rebuilt row and its current profile.
+        self._pending_activation_key = None
         table.clear(columns=True)
         self._tool_column_width = self._measured_tool_width(table)
         table.add_column("Tool", width=self._tool_column_width)

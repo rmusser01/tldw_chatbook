@@ -1,0 +1,3 @@
+Independent read-only review against fb16c9087c and the TASK-32792 working diff.
+
+Width probes reproduce the baseline clipping; final State is fully painted with one convergent reflow. The reviewer found a residual child-height-only gap after the first cursor repair; the separate deferred reveal now adjusts scroll_y41→51 and keeps row59 visible without selection/action events. Newer filter focus and hidden modes override queued reveals. Real-catalog resize and fresh-context Enter regressions pass. No remaining actionable findings. Final probe receipts are stored beside this review.
