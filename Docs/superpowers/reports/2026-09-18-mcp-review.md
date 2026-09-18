@@ -18,14 +18,14 @@ Token migration alone does not qualify a complete workflow.
 | Workbench status lifetime | TASK-32795, [79 distinct targeted cases and eight native captures](../qa/2026-09-18-mcp-workbench-lifetime/README.md) | Pre-compose/prune polling, receipt replay across canvas/Workbench replacement, actual loading boundary; native navigation and saved receipts, no generic Select shutdown claim |
 | Quiet table redraw and inspector clearing | TASK-32796, [275 distinct targeted cases and eight native captures](../qa/2026-09-18-mcp-table-selection/README.md) | Publication-time row/cell suppression, table-scoped gesture dedup and quiet external drills; real keyboard refresh/navigation, no schema/execution qualification |
 | Compact rail navigation | TASK-32812, [119 targeted cases and eight native captures](../qa/2026-09-18-mcp-rail-navigation/README.md) | Full All servers/Source paint, literal Unicode names/counts, ordinary-refresh/resize focus, exact row identity and scrollbars; structural catalog replacement focus is not qualified |
+| Complete tool-switch labels | TASK-32822, [37 targeted cases and eight native captures](../qa/2026-09-18-mcp-gate-labels/README.md) | All eleven gate labels, focus/scroll reveal, disabled dependencies and real private Deep research save/reversal; no broader save concurrency or execution qualification |
 
 ## Remaining review
 
-- **Remote verification:** all applicable checks passed on saved head
-  9a4ba3cef3. Rail head bc1b1215 failed only the stale ASCII ellipsis assertion
-  in Fast Lane (and its dependent aggregate). TASK-32814 aligns it with the
-  existing terminal-cell glyph; its exact targeted case passes. Fresh remote
-  checks are required after the consolidation/ellipsis push.
+- **Remote verification:** Fast Lane, CSS, latency, backlog and all platform GGUF
+  checks pass on saved head d7b4c10a7d. The derived-artifact aggregate is still
+  running at this checkpoint; checks on the next pushed head are separate.
+  TASK-32814 repaired the earlier rail ellipsis assertion failure.
 - **Existing test debt:** four Audit CSS literal assertions fail against unchanged
   token-based CSS; two Speech harness cases failed during profile setup before UI
   creation. Both boundaries are recorded in TASK-32796 evidence. TASK-32812 also
@@ -36,9 +36,9 @@ Token migration alone does not qualify a complete workflow.
   argument drafts across background refresh, diagnostic empty-state action routing,
   disconnected/stale tools, schema/raw arguments, execution and inspector recovery.
 - **Servers:** source transitions, add/edit/remove and connection lifecycles,
-  built-in enable/expose controls, errors and recovery. Compact non-master gate
-  labels still clip (visible in TASK-32793 captures). The All servers rail button
-  clipping recorded in TASK-32796 is repaired by TASK-32812 above.
+  built-in enable/expose controls, errors and recovery. TASK-32822 repairs the
+  compact non-master gate label clipping recorded in TASK-32793. The All servers
+  rail clipping recorded in TASK-32796 is repaired by TASK-32812 above.
 - **Audit and remaining permissions:** filtering, exact tool/event drilldown,
   restored roots, bulk actions, review/approval and connected-runtime journeys.
 

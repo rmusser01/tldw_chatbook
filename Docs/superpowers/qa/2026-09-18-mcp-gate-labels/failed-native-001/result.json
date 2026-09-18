@@ -1,0 +1,29 @@
+{
+  "pid": 4453,
+  "base_commit": "d7b4c10a7d9a761ecc7fbe54a587e2d72308d620",
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "4127c071e1c8b0d0c871a3c5aceba4d0c162420982662587596d4d31ad5e7e20",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "6e6a717a72eb52d6d3c7cfa3d75c1561df426813610f5380049453aa54710149",
+    "tldw_chatbook/UI/MCP_Modules/mcp_rail.py": "f0a5ba16235f850a2c63787a426c2813ddbd42d3211900a6b3b105b4bf9e0bc4",
+    "tldw_chatbook/Agents/builtin_tool_gate.py": "ea9b8f1384e3319e1a483a2db90748dfada31857dfc89c00b67d138a1c8f0155",
+    "tldw_chatbook/Agents/tool_catalog.py": "f2cb99e3eb046febc6ba35567056233e4cfadbb602929a7b70dd11f7d727d15c",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "fc46f9883511d563022d33a0c7635b1bedd10871cf283ab6aa15cb14b433d22c",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "410b2894a0c0fc64b989fb76dc4d65157b68e15314ea108f8bcb9a2be5d6d96b",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "2042e083a1d49186a2eb4022140eceff20d269d92ebd0b36f36f9b3d29a65fce",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "Docs/superpowers/qa/2026-09-18-mcp-gate-labels/native_check.py": "d780e75cef32114e5b267c9fec37d2d7d46ea35e2ad0dc13d2bde5aab3729d19",
+    "Tests/UI/test_mcp_gate_label_layout.py": "3274924da2bee518381fbf505738a7d6f60190c400edf038f6a1e847846670d2"
+  },
+  "cells": [],
+  "fixture_scope": "Real TldwCli and private config/service. Production MCP navigation, keyboard Servers/built-in selection, direct focus of first gate followed by real Tab traversal, and real deep-research gate save/reversal. No tool execution, remote server, permission mutation or broader gate-save concurrency qualification.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "MCP loaded",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-mcp-gate-labels/native_check.py\", line 161, in journey\n    workbench.query_one(\"#mcp-mode-servers\", Button).focus()\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/dom.py\", line 1505, in query_one\n    raise NoMatches(f\"No nodes match {query_selector!r} on {base_node!r}\")\ntextual.css.query.NoMatches: No nodes match '#mcp-mode-servers' on MCPWorkbench(id='mcp-hub-workbench')\n",
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

@@ -1,0 +1,988 @@
+[
+  {
+    "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-dark-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-dark-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-dark-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-dark-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/001",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-001.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-dark-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-dark-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-dark-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-dark-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/002",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-002.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/003",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-003.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size0-textual-light-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/004",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-004.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-dark-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-dark-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-dark-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-dark-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/005",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-005.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-dark-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-dark-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-dark-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-dark-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/006",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-006.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-light-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-light-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-light-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-light-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/007",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-007.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-light-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-light-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-light-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_gate_label_layout.py::test_each_tool_switch_paints_complete_label_and_state[size1-textual-light-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/008",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-008.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/009",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-009.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/010",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-010.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-dark]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-dark]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/011",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-011.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-light]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-light]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/012",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-012.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_servers_mode.py::test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_and_note",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_and_note",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_and_note",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_and_note",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/013",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-013.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_servers_mode.py::test_local_group_dependents_are_disabled_while_master_is_off",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_local_group_dependents_are_disabled_while_master_is_off",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_local_group_dependents_are_disabled_while_master_is_off",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_local_group_dependents_are_disabled_while_master_is_off",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/014",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-014.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_servers_mode.py::test_local_group_dependents_are_enabled_while_master_is_on",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_local_group_dependents_are_enabled_while_master_is_on",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_local_group_dependents_are_enabled_while_master_is_on",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_local_group_dependents_are_enabled_while_master_is_on",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/015",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-015.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_servers_mode.py::test_toggling_tool_gate_button_posts_tool_gate_changed_with_section_and_key",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_toggling_tool_gate_button_posts_tool_gate_changed_with_section_and_key",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_toggling_tool_gate_button_posts_tool_gate_changed_with_section_and_key",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_toggling_tool_gate_button_posts_tool_gate_changed_with_section_and_key",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/016",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-016.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_servers_mode.py::test_gate_row_state_is_spelled_out_and_follows_the_saved_value",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_gate_row_state_is_spelled_out_and_follows_the_saved_value",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_gate_row_state_is_spelled_out_and_follows_the_saved_value",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_gate_row_state_is_spelled_out_and_follows_the_saved_value",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/017",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-017.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_servers_mode.py::test_two_gate_presses_before_a_resync_request_opposite_values",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_two_gate_presses_before_a_resync_request_opposite_values",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_two_gate_presses_before_a_resync_request_opposite_values",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_two_gate_presses_before_a_resync_request_opposite_values",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/018",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-018.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_servers_mode.py::test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_servers_mode.py::test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/019",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-019.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/020",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-020.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/021",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-021.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/022",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-022.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/023",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-023.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/024",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-024.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/025",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-025.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/026",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-026.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/027",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-027.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/028",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-028.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/029",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-029.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/030",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-030.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/031",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-031.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/032",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-032.txt"
+  },
+  {
+    "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/033",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-033.txt"
+  },
+  {
+    "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32822-green-001/034",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-034.txt"
+  }
+]

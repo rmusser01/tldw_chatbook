@@ -1220,9 +1220,9 @@ Button.mcp-callout {
     max-height: $ds-agentic-mcp-table-cap;
 }
 
-/* Keep the switch's state readable inside the allocated pane. */
+/* Keep every tool switch's name and state inside its allocated pane. */
 #mcp-tools-local-enabled,
-#mcp-gate-local_tools_enabled {
+#mcp-detail-tool-gates .console-action-secondary {
     width: $ds-width-full;
     height: $ds-height-auto;
     text-wrap: wrap;
