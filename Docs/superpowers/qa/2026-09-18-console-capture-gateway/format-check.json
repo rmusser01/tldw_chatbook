@@ -1,0 +1,44 @@
+[
+  {
+    "path": "Tests/UI/test_console_native_chat_flow.py",
+    "range": "3906-3908",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_console_native_chat_flow.py",
+    "range": "3946-3955",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_console_native_chat_flow.py",
+    "range": "6092-6092",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_console_native_chat_flow.py",
+    "range": "6193-6201",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_console_native_chat_flow.py",
+    "range": "6218-6218",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_console_conversation_archive_flow.py",
+    "range": "269-277",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_console_conversation_archive_flow.py",
+    "range": "281-286",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  }
+]

@@ -264,12 +264,26 @@ async def test_restore_resume_then_send_retains_original_history_and_unrelated_d
     host = ConsoleHarness(app)
     try:
         async with host.run_test(size=(100, 30)) as pilot:
-            await pilot.pause(0.4)
             console = host.screen
             store = console._ensure_console_chat_store()
+            await wait_until(
+                pilot,
+                lambda: (
+                    console._console_composer_or_none() is not None
+                    and store.active_session_id is not None
+                    and console._console_visible_draft_session_id
+                    == store.active_session_id
+                ),
+            )
             keeper = store.active_session_id
             console._console_composer_or_none().load_draft("Unrelated unfinished draft")
             await console._sync_native_console_chat_ui()
+            # A coalesced sync request can return before the incumbent finishes.
+            # Recovery starts only once its unrelated draft fixture is stored.
+            await wait_until(
+                pilot,
+                lambda: store.session_draft(keeper) == "Unrelated unfinished draft",
+            )
             assert store.session_draft(keeper) == "Unrelated unfinished draft"
             monkeypatch.setattr(app, "push_screen", host.push_screen)
             monkeypatch.setattr(app, "run_worker", host.run_worker)
