@@ -556,6 +556,8 @@
         min-width: 24;
         height: 100%;
         min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
 
     /* F-060: the zero-servers empty state reads as quiet guidance, not a

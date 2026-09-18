@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from rich.markup import escape as escape_markup
+from rich.cells import cell_len
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
@@ -32,8 +33,7 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 # Select value can ever equal it, so every subsequent change dispatches.
 # All three selects (source, scope, scope-ref) use this per-instance
 # pattern: a rail-level slot races across back-to-back recompose
-# generations -- the rail recomposes on every resync AND on
-# budget-changing resizes (F-057), and an older generation's echo consumed
+# generations when the source, scope or server list changes. An older echo consumed
 # against a newer generation's reset slot leaks exactly one bogus
 # dispatch.
 _ECHO_CONSUMED = object()
@@ -47,10 +47,10 @@ MCP_RAIL_ROW_PREFIX = "mcp-rail-row-"
 _MAX_ROW_LABEL = 36
 # F-057: everything around the truncated label on one rail row's rendered
 # line -- readiness glyph + space (2), the right-side count field
-# (space + 3), and the row Button's own horizontal padding (2). The label
+# (space + 3), and the row Button's own line padding (2). The label
 # truncation budget at narrow widths is the rail's rendered width minus
-# this chrome, so the line (ellipsis included) always FITS the row instead
-# of being cropped mid-word by the Button's clipping.
+# this chrome, so the label uses the available terminal cells. Narrow rows wrap the
+# remaining glyph/count content instead of clipping it.
 _ROW_CHROME = 8
 # "All servers" carries no readiness glyph but must still line up under the
 # same left edge glyph-prefixed rows use ("<glyph> label...", a 2-char-wide
@@ -133,29 +133,18 @@ def _row_prefix_and_label(
     `budget` (F-057) caps the RENDERED width of `prefix + label` -- the
     fixed `_MAX_ROW_LABEL` at wide rail widths (pre-F-057 behavior), or the
     rail's actual rendered width minus `_ROW_CHROME` when that's narrower,
-    so the truncated line (with its "..." marker) fits the row instead of
+    so the truncated line (with its ellipsis marker) fits the row instead of
     being cropped mid-word by the Button's own clipping.
 
-    Deliberately returns the label BEFORE `escape_markup()` -- callers that
-    only need the rendered width (`len(prefix) + len(label)`, i.e. this
-    function's return value) must measure it here, not on the escaped
-    string `_row_label()` actually embeds. `escape_markup()` inserts one
-    backslash per markup-special character (e.g. `[` -> `\\[`), and
-    Button's own markup parsing consumes exactly that backslash again when
-    displaying the label -- so the escaped string is longer than what
-    actually renders, and padding/measuring against IT (rather than this
-    unescaped, truncated text) misaligns any row whose label contains a
-    markup-special character against its sibling rows.
+    Keep names literal. Callers pass the final label as Rich Text so even a
+    name truncated inside a markup-like tag cannot be parsed as styling.
     """
-    # snapshot.label is user-controlled (local profile ids, server-reported
-    # names) and is rendered through Button, which parses str labels as Rich
-    # markup — escape it (in `_row_label()`, at format time) so a profile id
-    # like "[bold red]x" can't inject styling or break layout.
     label = snapshot.label
     prefix = "⌂ " if snapshot.source == "builtin" else ""
-    label_budget = max(4, budget - len(prefix))
-    if len(label) > label_budget:
-        label = f"{label[: label_budget - 3].rstrip()}..."
+    label_budget = max(1, budget - cell_len(prefix))
+    text = Text(label)
+    text.truncate(label_budget, overflow="ellipsis")
+    label = text.plain
     return prefix, label
 
 
@@ -170,7 +159,7 @@ def _row_label(
     Args:
         snapshot: The row's readiness snapshot.
         pad_width: A6 -- the column width to left-justify `prefix+label`'s
-            RENDERED (post-escape-round-trip) width to before the count
+            rendered terminal-cell width to before the count
             field. `MCPRail.compose()` passes the per-call adaptive width
             (the longest current rendered label width among its rows) so a
             short label's count isn't stranded far right of a long label's;
@@ -182,14 +171,10 @@ def _row_label(
             `_MAX_ROW_LABEL` for standalone/direct calls.
     """
     prefix, label = _row_prefix_and_label(snapshot, budget=budget)
-    # Pad using the RENDERED width (prefix + unescaped label), not the
-    # escaped string's own (longer, for any markup-special character)
-    # length -- see `_row_prefix_and_label()`'s docstring. Python's
-    # `f"{s:<{n}}"` format pads based on `len(s)`, which would be wrong
-    # here once `s` is escaped, so the padding is built manually instead.
-    visual_width = len(prefix) + len(label)
+    # CJK and combining characters need terminal-cell padding, not len().
+    visual_width = cell_len(prefix) + cell_len(label)
     pad = " " * max(0, pad_width - visual_width)
-    text = f"{prefix}{escape_markup(label)}{pad}"
+    text = f"{prefix}{label}{pad}"
     # Task 11 (UX-inputs polish): the tool count sits in a fixed right-side
     # column instead of trailing the label at a variable offset -- the name
     # is left-justified to `pad_width`, and the count is right-aligned in a
@@ -201,10 +186,10 @@ def _row_label(
 
 
 class MCPRail(RecomposeCaptureGuard, Vertical):
-    """Left rail for the MCP workbench. Index-based row ids; keys in a list.
+    """Left rail for the MCP workbench, with target identity tied to each control.
 
-    ``sync_state()`` (below) drives ``self.refresh(recompose=True)`` on every
-    resync; ``RecomposeCaptureGuard`` (task-637) keeps a stale mouse capture
+    Structural changes recompose; ordinary refreshes update controls in place.
+    ``RecomposeCaptureGuard`` (task-637) keeps a stale mouse capture
     from leaking app-wide when that recompose tears down a row/Select the
     mouse is still captured on (same bug class as task-627's
     ``BaseAppScreen`` fix, one level down: the rail isn't a screen, so it
@@ -217,6 +202,8 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         min-width: 24;
         height: 100%;
         min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     Button.mcp-rail-row {
         width: 100%;
@@ -283,7 +270,7 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         self.scope_value = scope_value
         self.scope_ref_options = scope_ref_options
         self.scope_ref_value = scope_ref_value
-        self._row_keys: list[str | None] = []
+        self._row_targets: dict[Button, str | None] = {}
         # The value each scope/scope-ref Select was actually constructed
         # with on the most recent compose() (post-clamp — see compose()'s
         # own clamping comments). Textual 8.2.7 posts a `Select.Changed` for
@@ -292,31 +279,74 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         # T9 pattern as the source select) let `on_select_changed()`
         # recognize and drop that mount-echo instead of forwarding it as a
         # real user-driven ScopeChanged. Per-INSTANCE, not a rail-level
-        # slot: the rail recomposes on every resync AND on budget-changing
-        # resizes (F-057), and a rail-level slot races across back-to-back
+        # slot: a rail-level slot races across back-to-back
         # generations (an older generation's echo consumed against a newer
         # generation's reset slot leaks exactly one bogus dispatch -- the
         # scope-select storm F-057's resize recompose exposed).
-        # F-057: the row truncation budget the current compose() used
-        # (`_MAX_ROW_LABEL` before the first layout, when the rail's width
-        # is still unknown) -- `on_resize` recomposes only when the width-
-        # derived budget actually CHANGES, so terminals wide enough for the
-        # fixed budget never pay a recompose (or the mount-echo/render
-        # churn that comes with it) for a resize that changes nothing.
+        # Refit after layout establishes the viewport and scrollbar width.
         self._row_budget: int = _MAX_ROW_LABEL
 
+    def _label_budget(self) -> int:
+        """Fit terminal cells within the final rail viewport, including its scrollbar."""
+        width = self.scrollable_content_region.width
+        return (
+            _MAX_ROW_LABEL
+            if width <= 0
+            else max(4, min(_MAX_ROW_LABEL, width - _ROW_CHROME))
+        )
+
+    def _pad_width(self, budget: int) -> int:
+        return max(
+            (
+                cell_len(prefix + label)
+                for prefix, label in (
+                    _row_prefix_and_label(snap, budget=budget)
+                    for snap in self.snapshots
+                )
+            ),
+            default=0,
+        )
+
+    def _update_rows(self) -> None:
+        """Refresh literal labels and state without replacing focused controls."""
+        budget = self._label_budget()
+        self._row_budget = budget
+        pad_width = self._pad_width(budget)
+        snapshots = {snap.server_key: snap for snap in self.snapshots}
+        for row, key in self._row_targets.items():
+            row.set_class(key == self.selected_server_key, "is-active")
+            if key in snapshots:
+                snapshot = snapshots[key]
+                row.label = Text(_row_label(snapshot, pad_width, budget=budget))
+                row.tooltip = Text(snapshot.message or snapshot.label)
+                row.remove_class(*STATE_CSS_CLASSES.values())
+                row.add_class(STATE_CSS_CLASSES[snapshot.state])
+        legends = self.query("#mcp-rail-state-legend")
+        if legends:
+            legends.first(Static).update(
+                _present_states_legend(
+                    self.snapshots, short=budget < _LEGEND_SHORT_BUDGET
+                )
+            )
+        self.call_after_refresh(self._reveal_focused_row)
+
+    def _reveal_focused_row(self) -> None:
+        # Read current focus at execution time; never restore an old focus
+        # after the user has moved elsewhere while layout was pending.
+        focused = self.app.focused
+        if focused in self._row_targets and focused.is_attached:
+            focused.scroll_visible(animate=False, immediate=True)
+
+    def on_mount(self) -> None:
+        self.call_after_refresh(self._update_rows)
+
     def on_resize(self) -> None:
-        """F-057: re-truncate row labels when the width-derived budget
-        changes (terminal resize into/out of narrow widths) -- otherwise a
-        width the first pre-layout compose() couldn't know stays stuck at
-        the `_MAX_ROW_LABEL` fallback budget, and rows crop mid-word."""
-        width = self.region.width
-        if width <= 0:
-            return
-        budget = max(8, min(_MAX_ROW_LABEL, width - _ROW_CHROME))
-        if budget != self._row_budget:
-            self._row_budget = budget
-            self.refresh(recompose=True)
+        self.call_after_refresh(self._update_rows)
+
+    def watch_show_vertical_scrollbar(self) -> None:
+        # A catalog refresh can change scrollbar width without resizing
+        # the rail's outer region, so it needs its own viewport refit.
+        self.call_after_refresh(self._update_rows)
 
     def sync_state(
         self,
@@ -329,6 +359,15 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         scope_ref_options: list[tuple[str, str]],
         scope_ref_value: str | None,
     ) -> None:
+        same_controls = (
+            self.source == source
+            and self.scope_options == scope_options
+            and self.scope_value == scope_value
+            and self.scope_ref_options == scope_ref_options
+            and self.scope_ref_value == scope_ref_value
+            and [snap.server_key for snap in self.snapshots]
+            == [snap.server_key for snap in snapshots]
+        )
         self.source = source
         self.snapshots = snapshots
         self.selected_server_key = selected_server_key
@@ -336,7 +375,11 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         self.scope_value = scope_value
         self.scope_ref_options = scope_ref_options
         self.scope_ref_value = scope_ref_value
-        self.refresh(recompose=True)
+        if same_controls:
+            self._update_rows()
+        else:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._update_rows)
 
     def compose(self) -> ComposeResult:
         yield Static("Source", classes="destination-section mcp-rail-heading")
@@ -375,19 +418,16 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         # abbreviates (`short=True`) so it stays one line instead of
         # wrapping to 2-3 rows. The budget is computed HERE (before the
         # rows below reuse it) -- the same F-057 formula the rows use.
-        layout_width = self.region.width
-        budget = (
-            _MAX_ROW_LABEL
-            if layout_width <= 0
-            else max(8, min(_MAX_ROW_LABEL, layout_width - _ROW_CHROME))
-        )
+        budget = self._label_budget()
         if self.snapshots:
             yield Static(
-                _present_states_legend(self.snapshots, short=budget < _LEGEND_SHORT_BUDGET),
+                _present_states_legend(
+                    self.snapshots, short=budget < _LEGEND_SHORT_BUDGET
+                ),
                 id="mcp-rail-state-legend",
                 markup=False,
             )
-        self._row_keys = [None] + [snap.server_key for snap in self.snapshots]
+        self._row_targets = {}
         all_row = Button(
             f"{_ALL_SERVERS_GUTTER}All servers",
             id=f"{MCP_RAIL_ROW_PREFIX}0",
@@ -396,6 +436,7 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         )
         all_row.tooltip = "Show every server in the overview table."
         all_row.set_class(self.selected_server_key is None, "is-active")
+        self._row_targets[all_row] = None
         yield all_row
         # F-060: at zero servers the rail needs an empty state in plain
         # language pointing at the Add-server action, not a bare "All
@@ -406,48 +447,23 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
                 id="mcp-rail-empty",
                 markup=False,
             )
-        # A6: the count column's pad width is computed per compose() call as
-        # the longest CURRENT row's RENDERED width (post-truncate, still
-        # unescaped -- see `_row_prefix_and_label()`'s docstring for why
-        # measuring the escaped string instead would misalign any row whose
-        # label contains a markup-special character) among this rail's rows,
-        # not the fixed `_MAX_ROW_LABEL` truncation budget -- a short label
-        # (e.g. "docs") no longer strands its tool count 30+ columns right of
-        # where a long label's count lands. The truncation budget itself is
-        # unchanged; this only affects the padding applied AFTER truncation.
-        # F-057: the truncation budget IS width-aware now -- at narrow
-        # rendered widths (below ~120-col terminals) it is the rail's own
-        # width minus `_ROW_CHROME`, so rows truncate with an ellipsis that
-        # FITS the row instead of being cropped mid-word. Width 0 (first
-        # compose, pre-layout) falls back to `_MAX_ROW_LABEL`; `on_resize`
-        # recomposes once the real width is known. The budget itself was
-        # already computed above the legend yield (F15) -- reused, not
-        # recomputed.
+        # Align count fields using terminal-cell widths, not character counts.
+        # Narrow rows wrap when glyph/name/count cannot share one line.
         self._row_budget = budget
-        pad_width = max(
-            (
-                len(f"{prefix}{label}")
-                for prefix, label in (
-                    _row_prefix_and_label(snap, budget=budget)
-                    for snap in self.snapshots
-                )
-            ),
-            default=0,
-        )
+        pad_width = self._pad_width(budget)
         for index, snap in enumerate(self.snapshots, start=1):
             # Task 11: each row carries its readiness state's CSS class
             # (STATE_CSS_CLASSES, Task 3) so it can be colored by status --
-            # constructed fresh on every compose() (sync_state() always
-            # recomposes), so there is no stale class from a prior render to
-            # remove first.
+            # In-place refreshes replace the prior readiness class too.
             row = Button(
-                _row_label(snap, pad_width, budget=budget),
+                Text(_row_label(snap, pad_width, budget=budget)),
                 id=f"{MCP_RAIL_ROW_PREFIX}{index}",
                 classes=f"mcp-rail-row console-action-subdued {STATE_CSS_CLASSES[snap.state]}",
                 compact=True,
             )
-            row.tooltip = escape_markup(snap.message or snap.label)
+            row.tooltip = Text(snap.message or snap.label)
             row.set_class(snap.server_key == self.selected_server_key, "is-active")
+            self._row_targets[row] = snap.server_key
             yield row
         if self.source == "server":
             with Vertical(id="mcp-rail-scope"):
@@ -528,9 +544,10 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         if not button_id.startswith(MCP_RAIL_ROW_PREFIX):
             return
         event.stop()
-        index = int(button_id.removeprefix(MCP_RAIL_ROW_PREFIX))
-        if 0 <= index < len(self._row_keys):
-            self.post_message(self.ServerSelected(self._row_keys[index]))
+        # A queued press belongs to the control that displayed that target.
+        # Recomposition may reuse its numeric ID for a different server.
+        if event.button in self._row_targets and event.button.is_attached:
+            self.post_message(self.ServerSelected(self._row_targets[event.button]))
 
     def on_select_changed(self, event: Select.Changed) -> None:
         select_id = event.select.id or ""
