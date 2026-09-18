@@ -3810,6 +3810,19 @@ class ConsoleChatStore:
                     )
                 )
             except Exception:
+                # TASK-32801.3: this is the terminal-settlement write. The
+                # rollback below is correct and the caller's retry queue picks
+                # the turn up again, but the failure itself left no trace
+                # anywhere -- so a turn that never settles is indistinguishable
+                # from one that settled cleanly, in the log and to the user.
+                logger.warning(
+                    "Console terminal settlement failed; rolled back and "
+                    "returning False (session_id={}, assistant_message_id={}, "
+                    "terminal_state={})",
+                    session_id,
+                    assistant_message_id,
+                    terminal_state,
+                )
                 if message is not None and receipt_metadata_before is not None:
                     self._restore_terminal_metadata(
                         message,
