@@ -953,7 +953,7 @@ Button.settings-category-group-toggle:focus {
     grid-gutter: $ds-space-stack $ds-space-inline;
 }
 
-.settings-workbench-compact ToolProfilesPanel .tool-profile-actions Button {
+.settings-workbench-compact ToolProfilesPanel Button.tool-profile-action {
     width: $ds-width-fill;
 }
 

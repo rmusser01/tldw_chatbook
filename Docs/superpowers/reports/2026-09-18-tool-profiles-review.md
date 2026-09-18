@@ -133,6 +133,15 @@ caught queued focus masking a delayed valid callback; synchronous focus and a
 precise regression fix it. Earlier fixture/source attempts are separated from
 final evidence. [QA and gallery](../qa/2026-09-18-tool-profile-bind/README.md).
 
+## Compact CSS indexing — TASK-32784
+
+The PR structural guard reproduced 275 ancestor-scoped bare-type rules versus
+the unchanged limit 274. A dedicated action class restores 274 at identical
+specificity and declarations, without applying the compact rule to Import.
+80 targeted checks pass; four mounted theme/size comparisons have identical
+button styles, geometry, visibility and painted text. Independent review found
+no issue. [Evidence](../qa/2026-09-18-tool-profile-css-fastpath/README.md).
+
 ## Remaining scope
 
 The MCP Edit handoff selects the exact profile, including return visits, but
@@ -141,7 +150,6 @@ canvas clip at 80×24, and Ctrl+End reaches a clipped row at 140×40. Standalone
 profile selection tests pass but do not cover this routed layout. Repair and
 native qualification remain open. Concurrent-workflow review also remains open.
 
-PR2707's existing compact Tool Profiles action rule adds one ancestor-scoped
-bare-type selector (275 versus the 274 ratchet). This is a structural guard
-failure, not measured runtime latency; a separate bounded repair is next.
+The compact-selector CI failure is repaired locally by TASK-32784; remote
+checks still need to run on the new head.
 These bounded management reviews do not complete the broader component workstream.

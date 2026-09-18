@@ -1,0 +1,29 @@
+........................................................................ [ 91%]
+.......                                                                  [100%]
+============================= slowest 25 durations =============================
+17.87s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+17.47s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+15.45s call     Tests/UI/test_css_build_integrity.py::test_schedules_visit_loads_the_screen_owned_sheet
+10.13s call     Tests/UI/test_css_build_integrity.py::test_schedules_as_initial_tab_loads_the_screen_owned_sheet
+4.95s call     Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[import]
+4.86s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-edit]
+4.82s call     Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[export]
+4.82s call     Tests/UI/test_tool_profile_focus.py::test_render_does_not_reclaim_newer_focus[modal]
+4.78s call     Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[remove]
+4.75s call     Tests/UI/test_tool_profile_focus.py::test_disappearing_action_has_a_safe_visible_continuation[unavailable]
+4.57s call     Tests/UI/test_tool_profile_focus.py::test_disappearing_action_has_a_safe_visible_continuation[disabled]
+4.56s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-remove]
+4.55s call     Tests/UI/test_tool_profile_focus.py::test_render_does_not_reclaim_newer_focus[rail]
+4.53s call     Tests/UI/test_tool_profile_focus.py::test_disappearing_action_has_a_safe_visible_continuation[missing]
+4.53s call     Tests/UI/test_tool_profile_focus.py::test_overlapping_renders_finish_teardown_and_keep_latest_listing
+4.49s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-import]
+4.44s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-export]
+4.43s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-bind]
+4.36s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-import]
+4.35s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-export]
+4.31s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-bind]
+4.31s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-edit]
+4.29s call     Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-remove]
+4.25s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+2.57s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+79 passed in 238.99s (0:03:58)
