@@ -5,10 +5,11 @@ status: In Progress
 created_date: 2026-09-18 18:54
 references:
 - https://github.com/rmusser01/tldw_chatbook/issues/2708
+- https://github.com/rmusser01/tldw_chatbook/pull/2709
 documentation:
 - backlog/decisions/079-console-library-conversation-authority.md
 - backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md
-updated_date: 2026-09-18 19:08
+updated_date: 2026-09-18 19:09
 modified_files:
 - tldw_chatbook/UI/Console_Modules/dispatch_recovery.py
 - tldw_chatbook/UI/Console_Modules/prompt_queue.py
@@ -54,7 +55,7 @@ PR preparation 2026-09-18: user requested base dev. Rebased the unpublished bran
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Fixed the stale recovery intent latch after identical-state failures and synchronized the UI after refused, exceptional and cancelled actions. Added recovery-specific composer copy and tooltip, including draft-side repaint and clear-on-settlement. Eight mounted regressions pass, including real restored SQLite recovery and real controller cancellation. Independent review found no blocking issues. Broader selection: 172 passed with three unchanged baseline failures. No new lint, formatting or Bandit findings relative to main. User guide and incident lesson updated. Branch: codex/fix-2708-recovery-actions.
+Implementation is available in draft PR #2709 against dev. The recovery latch and composer-copy fixes passed all eight new mounted regressions on the original main base, with no new lint/format/Bandit findings relative to that base. Rebased cleanly onto dev; current targeted verification is 68 passed and 8 failed (four mounted setup failures with raw_source_selection_changed, plus four existing controller-test failures). Validation remains open and the task is In Progress. PR documents these limits and the pending human-written Change summary merge gate.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->
