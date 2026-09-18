@@ -531,7 +531,24 @@ class ConsolePromptQueueUIController:
         expected_revision: int,
         on_recovery_complete: Callable[[], None] | None = None,
     ) -> None:
-        """Apply the shelf's state-specific primary action and repaint."""
+        """Apply the shelf's state-specific primary action and repaint.
+
+        Args:
+            session_id: Session whose recovery or queue action is requested.
+            action: Recovery action or prompt-queue mutation to apply.
+            expected_revision: Queue revision used to reject stale mutations.
+            on_recovery_complete: Optional synchronous callback for response
+                recovery actions (retry_response, retry_anyway, discard). Runs
+                after the action exits, including refusal, error or cancellation,
+                and before repainting. Other actions do not invoke it.
+
+        Raises:
+            Exception: Propagates action failures. Completion or repaint failures
+                propagate if no action failure is already being preserved.
+            asyncio.CancelledError: Propagates action cancellation. Cancellation
+                during completion or repaint also propagates unless preserving
+                an earlier action failure or cancellation.
+        """
 
         if action.startswith("turn-recovery:"):
             await self._handle_turn_recovery_intent(session_id, action)
