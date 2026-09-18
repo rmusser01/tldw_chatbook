@@ -4201,6 +4201,13 @@ should have.
 
 ## `Widget.focus()` is deferred — a same-handler capture of `app.focused` sees the old widget
 
+**TASK-32783, 2026-09-18.** The Tool Profile Bind continuation called `focus()`
+then a focus-guarded receipt reveal. Initial mounted and native journeys passed
+because a later receipt resize retried the reveal. Holding the valid callback
+until layout settled exposed the missed reveal: Persona and guidance remained
+below the compact viewport. Synchronous guarded `Screen.set_focus` fixed the
+ordering. Test the settled-layout path as well as the initial resize path.
+
 **task-3311, 2026-08-09.** The Ingest Clear handler called `path_input.focus()` and
 then a structural recompose helper that captures `app.focused` to restore focus
 afterwards. In Textual 8, `Widget.focus()` does NOT set focus synchronously — it

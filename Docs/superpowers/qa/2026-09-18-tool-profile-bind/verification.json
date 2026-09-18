@@ -1,0 +1,30 @@
+{
+  "task": "TASK-32783",
+  "base_commit": "d7d1f9c7bbb4ad699b208a3fd4d1fef6ffad9c79",
+  "tests": {
+    "distinct": 91,
+    "final_bind_cases": 14,
+    "prior_regressions_before_final_focus_correction": 77,
+    "existing_bind_rechecked_final": 2
+  },
+  "ruff": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "before": 114,
+      "after": 114,
+      "introduced": 0
+    },
+    "Tests/UI/test_settings_tool_profiles.py": {
+      "before": 3,
+      "after": 3,
+      "introduced": 0
+    }
+  },
+  "format": "New tests, runner and changed Settings methods pass",
+  "backlog_guard": "4134 unique tasks; Windows-compatible paths",
+  "diagnostic_inventory": "no drift: the committed inventory matches the rebuild exactly.\ndiagnostic inventory verified: 607 owners, 1407 TASK-492 calls, 55 TASK-31551 calls, 7763 TASK-494 calls, 14 sink files",
+  "native_final_source_and_capture_hashes_match": true,
+  "native_cells": 4,
+  "captures_rendered_and_inspected": 16,
+  "independent_review": "Delayed focus finding fixed; identical probe green, no remaining introduced blocker",
+  "remaining_pr_ci": "Previous Tool Profiles compact action selector adds one ancestor-scoped bare-type rule (275 > 274); separate repair pending."
+}

@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎e ▾
+─────▊                                                                    ▎─────
+ Sett▊  Review first Tool Profile bind                                    ▎al
+ Mode▊                                                                    ▎
+┌────▊                                                                    ▎────┐
+│  Fi▊  Target                                                            ▎    │
+│    ▊  Workspace: native-light-80-workspace                           ▃  ▎e   │
+│   >▊  Action: Set                                                       ▎    │
+│    ▊  Profile: native-light-80 · revision 1                             ▎ │  │
+│    ▊  Policy digest:                                                    ▎ │  │
+│    ▊  d3193f097b4c94fce4d3e411c4816ca8da07f66ef3a810c8c8742bf9ef856d7   ▎ │  │
+│    ▊  6                                                                 ▎ │  │
+│  Tr▊  Assistant kind: persona                                           ▎ │▆ │
+│    ▊  Persona: native-helper                                            ▎ │▄ │
+│    ▊  Memory: read_only                                                 ▎ │  │
+│    ▊                                                                    ▎ │  │
+│  Ex▊                                                                    ▎ │  │
+│    ▊                                    Cancel     Confirm exact bind   ▎ │  │
+│    ▊                                                                    ▎ │  │
+│   D▊                                                                    ▎ │  │
+└────▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

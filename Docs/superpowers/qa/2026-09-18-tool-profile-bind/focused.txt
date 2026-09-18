@@ -1,0 +1,19 @@
+..............                                                           [100%]
+============================= slowest 25 durations =============================
+6.92s call     Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_persona_draft_and_reveals_apply[size1-textual-dark]
+6.64s call     Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_persona_draft_and_reveals_apply[size0-textual-dark]
+6.58s call     Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_persona_draft_and_reveals_apply[size1-textual-light]
+6.58s call     Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_persona_draft_and_reveals_apply[size0-textual-light]
+5.89s call     Tests/UI/test_tool_profile_bind_handoff.py::test_late_bind_continuation_respects_newer_intent[category]
+5.82s call     Tests/UI/test_tool_profile_bind_handoff.py::test_late_bind_continuation_respects_newer_intent[workspace]
+5.81s call     Tests/UI/test_tool_profile_bind_handoff.py::test_late_bind_continuation_respects_newer_intent[dialog]
+5.56s call     Tests/UI/test_tool_profile_bind_handoff.py::test_delayed_bind_continuation_reveals_after_layout_settled
+5.54s call     Tests/UI/test_tool_profile_bind_handoff.py::test_late_bind_continuation_respects_newer_intent[focus]
+5.25s call     Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_only_the_target_workspace_draft[none]
+5.24s call     Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_only_the_target_workspace_draft[other]
+5.06s call     Tests/UI/test_tool_profile_bind_handoff.py::test_bind_without_persona_reveals_picker_and_guidance
+5.00s call     Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_only_the_target_workspace_draft[same]
+4.75s call     Tests/UI/test_tool_profile_bind_handoff.py::test_bind_without_explicit_workspace_reveals_recovery
+
+(11 durations < 1s hidden.)
+14 passed in 83.32s (0:01:23)
