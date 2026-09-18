@@ -1,11 +1,11 @@
 ---
 id: TASK-32814
 title: Align MCP compact rail assertion with terminal-cell ellipsis
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-18 18:36'
-updated_date: '2026-09-18 19:01'
+updated_date: '2026-09-18 19:04'
 labels:
   - ui
   - test-health
@@ -35,4 +35,6 @@ Restore the existing compact MCP reachability contract after TASK-32812 switched
 
 <!-- SECTION:NOTES:BEGIN -->
 Changed only the compact rail test expectation from ASCII three-dot truncation to Rich's terminal-cell ellipsis introduced by TASK-32812. All existing content and reachability assertions remain intact. Saved-head Fast Lane evidence (1151 passed / one stale assertion failed) and the exact passing case are retained in Docs/superpowers/qa/2026-09-18-css-consolidation/. Independent review confirms the actual glyph contract; no production behavior changed. ADR required: no; ADR-150/161 already govern the implementation. Draft PR2707 remains unmerged; remote verification follows push.
+
+Saved to draft PR2707 at 0a4225b55466b041b5c082576e773a167eee1a5e; origin tracking ref verified equal. Local scope is complete; fresh remote checks and broader component review remain separate. No merge performed.
 <!-- SECTION:NOTES:END -->
