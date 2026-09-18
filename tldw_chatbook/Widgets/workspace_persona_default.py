@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum, auto
+from sys import maxsize
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -21,11 +23,18 @@ from ..Workspaces.registry_service import (
 from .modal_dismissal import SafeModalDismissMixin
 
 
+class WorkspacePersonaChoice(Enum):
+    """Form controls that cannot collide with saved string Persona IDs."""
+
+    AUTO = auto()
+    NONE = auto()
+
+
 @dataclass(frozen=True)
 class WorkspacePersonaSelection:
     """Uncommitted form values retained through a parent recompose."""
 
-    persona: str = "auto"
+    persona: str | WorkspacePersonaChoice = WorkspacePersonaChoice.AUTO
     memory_mode: str = "read_only"
     confirm_read_write: bool = False
 
@@ -53,24 +62,41 @@ class WorkspacePersonaPicker(Vertical):
         self._allow_auto = allow_auto
 
     def compose(self) -> ComposeResult:
-        options = [("None", "none")]
+        options = [("None", WorkspacePersonaChoice.NONE)]
         if self._allow_auto:
-            options.insert(0, ("Create a workspace Agent", "auto"))
+            options.insert(0, ("Create a workspace Agent", WorkspacePersonaChoice.AUTO))
         unavailable = False
         try:
-            records = self._personas.list_persona_profiles() if self._personas else []
+            # The local service already sorts the full in-memory catalog.
+            records = (
+                self._personas.list_persona_profiles(limit=maxsize)
+                if self._personas
+                else []
+            )
         except Exception:  # noqa: BLE001 - None remains a usable choice
             records, unavailable = [], True
         for record in records or []:
             if not isinstance(record, Mapping) or record.get("deleted"):
                 continue
             persona_id = str(record.get("id") or "")
-            if persona_id and persona_id not in {"auto", "none"}:
+            if persona_id:
                 options.append(
                     (Text(str(record.get("name") or persona_id)), persona_id)
                 )
         if self._selection.persona not in {value for _, value in options}:
-            options.append(("Saved Persona unavailable", self._selection.persona))
+            selected = self._selection.persona
+            try:
+                record = self._personas.get_persona_profile(selected)
+            except Exception:  # noqa: BLE001 - retain the saved identity
+                record = None
+            label = "Saved Persona unavailable"
+            if (
+                isinstance(record, Mapping)
+                and not record.get("deleted")
+                and record.get("id") == selected
+            ):
+                label = str(record.get("name") or selected)
+            options.append((Text(label), selected))
         yield Static("Default Persona · future new conversations", markup=False)
         yield Select(
             options,
@@ -119,18 +145,18 @@ class WorkspacePersonaPicker(Vertical):
     def _sync_memory_controls(self) -> None:
         selected = self.query_one("#workspace-default-persona", Select).value
         self.query_one("#workspace-default-memory", Select).disabled = selected in {
-            "auto",
-            "none",
+            WorkspacePersonaChoice.AUTO,
+            WorkspacePersonaChoice.NONE,
         }
         self.query_one("#workspace-default-memory-confirm", Checkbox).disabled = (
-            selected in {"auto", "none"}
+            selected in {WorkspacePersonaChoice.AUTO, WorkspacePersonaChoice.NONE}
             or self.query_one("#workspace-default-memory", Select).value != "read_write"
         )
 
     def selection(self) -> WorkspacePersonaSelection:
         """Capture uncommitted values before any parent recomposition."""
         return WorkspacePersonaSelection(
-            str(self.query_one("#workspace-default-persona", Select).value),
+            self.query_one("#workspace-default-persona", Select).value,
             str(self.query_one("#workspace-default-memory", Select).value),
             self.query_one("#workspace-default-memory-confirm", Checkbox).value,
         )
@@ -138,10 +164,14 @@ class WorkspacePersonaPicker(Vertical):
     def creation_kwargs(self, *, profile_id: str | None = None) -> dict[str, Any]:
         """Validate current identity and confirmation without changing any store."""
         choice = self.selection()
-        if choice.persona == "auto" and self._allow_auto:
+        if choice.persona is WorkspacePersonaChoice.AUTO and self._allow_auto:
             return {}
-        if choice.persona == "none":
+        if choice.persona is WorkspacePersonaChoice.NONE:
             return {"assistant_defaults": None}
+        if not isinstance(choice.persona, str):
+            raise ValueError(  # noqa: TRY004 - handled form-validation contract
+                "Choose a saved Persona or None."
+            )
         try:
             record = self._personas.get_persona_profile(choice.persona)
         except Exception as exc:
@@ -199,7 +229,7 @@ class WorkspacePersonaDefaultModal(SafeModalDismissMixin, ModalScreen[bool]):
         record = registry.get_workspace(workspace_id)
         defaults = record.assistant_defaults if record else None
         self._selection = WorkspacePersonaSelection(
-            defaults.assistant_id if defaults else "none",
+            defaults.assistant_id if defaults else WorkspacePersonaChoice.NONE,
             defaults.persona_memory_mode if defaults else "read_only",
         )
         self._original_defaults = defaults

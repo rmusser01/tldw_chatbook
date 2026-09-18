@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import re
+from sys import maxsize
 import threading
 import tomllib
 from typing import TYPE_CHECKING, Any, cast
@@ -20039,11 +20040,24 @@ class SettingsScreen(BaseAppScreen):
             effective.assistant_id if effective.status == "available" else None
         )
         try:
-            persona_records = personas.list_persona_profiles()
+            # The local service already sorts the full in-memory catalog.
+            persona_records = personas.list_persona_profiles(limit=maxsize)
         except Exception:  # noqa: BLE001 -- picker degrades, never blocks
             persona_records = []
-        for index, persona in enumerate(persona_records or []):
-            if not isinstance(persona, dict):
+        persona_records = list(persona_records or [])
+        if highlight_persona and not any(
+            isinstance(record, dict) and record.get("id") == highlight_persona
+            for record in persona_records
+        ):
+            selected = lookup(highlight_persona)
+            if (
+                selected is not None
+                and not selected.get("deleted")
+                and selected.get("id") == highlight_persona
+            ):
+                persona_records.append(selected)
+        for persona in persona_records:
+            if not isinstance(persona, dict) or persona.get("deleted"):
                 continue
             persona_id = str(persona.get("id") or "")
             if not persona_id:

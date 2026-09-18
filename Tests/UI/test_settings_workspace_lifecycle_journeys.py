@@ -12,6 +12,7 @@ from Tests.UI.test_settings_overview_search_journeys import _category, _painted
 from Tests.UI.test_settings_provider_keyboard_journeys import _settle
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 from Tests.UI.test_settings_workspace_memory_confirmation import _press
+from tldw_chatbook.Widgets.workspace_persona_default import WorkspacePersonaChoice
 
 
 @pytest.mark.parametrize(
@@ -116,7 +117,9 @@ async def test_partial_create_keeps_the_committed_workspace_clear(
         field = modal.query_one("#workspace-create-name", Input)
         field.focus()
         await pilot.press("home", "shift+end", *"Created once")
-        modal.query_one("#workspace-default-persona", Select).value = "none"
+        modal.query_one(
+            "#workspace-default-persona", Select
+        ).value = WorkspacePersonaChoice.NONE
         field = modal.query_one("#workspace-create-folder-path", Input)
         field.focus()
         await pilot.press(*str(folder))

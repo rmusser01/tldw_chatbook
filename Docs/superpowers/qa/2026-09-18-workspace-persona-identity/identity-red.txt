@@ -1,0 +1,1128 @@
+FFFFFFF.                                                                 [100%]
+=================================== FAILURES ===================================
+________ test_no_edit_apply_preserves_control_named_saved_persona[none] ________
+
+self = <Coroutine test_no_edit_apply_preserves_control_named_saved_persona[none]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_no_edit_apply_preserves_control_named_saved_persona[none]>>, 'tmp_path...2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_no_edit_apply_preserves_c0'), 'persona_id': 'none'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_no_edit_apply_preserves_c0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ________ test_no_edit_apply_preserves_control_named_saved_persona[none] ________
+E
+E           request = <FixtureRequest for <Coroutine test_no_edit_apply_preserves_control_named_saved_persona[none]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_no_edit_apply_preserves_c0/private-profile-process/pytest/test_no_edit_apply_preserves_c0')
+E           persona_id = 'none'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("persona_id", ["none", "auto"])
+E               @private_profile_test
+E               async def test_no_edit_apply_preserves_control_named_saved_persona(
+E                   request, tmp_path, persona_id
+E               ):
+E                   personas = _personas(tmp_path, [persona_id])
+E                   registry, _store = build(tmp_path, personas)
+E                   defaults = WorkspaceAssistantDefaults(
+E                       assistant_id=persona_id, tool_policy_profile_id="default"
+E                   )
+E                   registry.create_workspace(
+E                       workspace_id="chosen", name="Chosen", assistant_defaults=defaults
+E                   )
+E                   host = _Host()
+E                   try:
+E                       async with host.run_test(size=(80, 24)) as pilot:
+E                           await host.push_screen(
+E                               WorkspacePersonaDefaultModal(registry, personas, "chosen")
+E                           )
+E                           select = host.screen.query_one("#workspace-default-persona", Select)
+E                           label = _selected_label(select)
+E                           memory_disabled = host.screen.query_one(
+E                               "#workspace-default-memory", Select
+E                           ).disabled
+E                           await _press(host, pilot, "#workspace-default-apply")
+E                           saved = registry.get_workspace("chosen")
+E           >               assert (saved.assistant_defaults, label, memory_disabled) == (
+E                               defaults,
+E                               f"Writer [{persona_id}]",
+E                               False,
+E                           )
+E           E               AssertionError: assert (None, 'None', True) == (WorkspaceAss...none]', False)
+E           E
+E           E                 At index 0 diff: None != WorkspaceAssistantDefaults(assistant_kind='persona', assistant_id='none', persona_memory_mode='read_only', voice=None, style=None, tool_policy_profile_id='default')
+E           E                 Use -v to get more diff
+E
+E           Tests/UI/test_workspace_persona_picker_identity.py:77: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 01:06:20.107 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 01:06:20.124 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 01:06:20.518 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 01:06:21.157 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 01:06:21.157 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 01:06:21.157 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 01:06:21.295 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 01:06:22.814 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 01:06:23.170 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_no_edit_apply_preserves_c0/private-profile-process/pytest/test_no_edit_apply_preserves_c0/ws.sqlite [Client: c1]
+E           ============================= slowest 25 durations =============================
+E           3.32s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]
+E           1.42s call     Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]
+E
+E           (1 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]
+E           1 failed in 6.12s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 01:06:16.763 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 01:06:16.774 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 01:06:17.492 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 01:06:17.564 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 01:06:17.565 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 01:06:17.565 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+________ test_no_edit_apply_preserves_control_named_saved_persona[auto] ________
+
+self = <Coroutine test_no_edit_apply_preserves_control_named_saved_persona[auto]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_no_edit_apply_preserves_control_named_saved_persona[auto]>>, 'tmp_path...2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_no_edit_apply_preserves_c1'), 'persona_id': 'auto'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_no_edit_apply_preserves_c1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ________ test_no_edit_apply_preserves_control_named_saved_persona[auto] ________
+E
+E           request = <FixtureRequest for <Coroutine test_no_edit_apply_preserves_control_named_saved_persona[auto]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_no_edit_apply_preserves_c1/private-profile-process/pytest/test_no_edit_apply_preserves_c0')
+E           persona_id = 'auto'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("persona_id", ["none", "auto"])
+E               @private_profile_test
+E               async def test_no_edit_apply_preserves_control_named_saved_persona(
+E                   request, tmp_path, persona_id
+E               ):
+E                   personas = _personas(tmp_path, [persona_id])
+E                   registry, _store = build(tmp_path, personas)
+E                   defaults = WorkspaceAssistantDefaults(
+E                       assistant_id=persona_id, tool_policy_profile_id="default"
+E                   )
+E                   registry.create_workspace(
+E                       workspace_id="chosen", name="Chosen", assistant_defaults=defaults
+E                   )
+E                   host = _Host()
+E                   try:
+E                       async with host.run_test(size=(80, 24)) as pilot:
+E                           await host.push_screen(
+E                               WorkspacePersonaDefaultModal(registry, personas, "chosen")
+E                           )
+E                           select = host.screen.query_one("#workspace-default-persona", Select)
+E                           label = _selected_label(select)
+E                           memory_disabled = host.screen.query_one(
+E                               "#workspace-default-memory", Select
+E                           ).disabled
+E                           await _press(host, pilot, "#workspace-default-apply")
+E                           saved = registry.get_workspace("chosen")
+E           >               assert (saved.assistant_defaults, label, memory_disabled) == (
+E                               defaults,
+E                               f"Writer [{persona_id}]",
+E                               False,
+E                           )
+E           E               AssertionError: assert (WorkspaceAss...ilable', True) == (WorkspaceAss...auto]', False)
+E           E
+E           E                 At index 1 diff: 'Saved Persona unavailable' != 'Writer [auto]'
+E           E                 Use -v to get more diff
+E
+E           Tests/UI/test_workspace_persona_picker_identity.py:77: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 01:06:28.762 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 01:06:28.776 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 01:06:28.860 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 01:06:29.162 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 01:06:29.162 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 01:06:29.163 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 01:06:29.718 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 01:06:30.663 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 01:06:30.961 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_no_edit_apply_preserves_c1/private-profile-process/pytest/test_no_edit_apply_preserves_c0/ws.sqlite [Client: c1]
+E           ============================= slowest 25 durations =============================
+E           2.32s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]
+E           1.67s call     Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]
+E
+E           (1 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]
+E           1 failed in 5.67s
+
+Tests/private_profile.py:84: Failed
+____ test_create_control_named_persona_survives_folder_recomposition[none] _____
+
+self = <Coroutine test_create_control_named_persona_survives_folder_recomposition[none]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_create_control_named_persona_survives_folder_recomposition[none]>>, 't...2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_create_control_named_pers0'), 'persona_id': 'none'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_create_control_named_pers0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_create_control_named_persona_survives_folder_recomposition[none] _____
+E
+E           request = <FixtureRequest for <Coroutine test_create_control_named_persona_survives_folder_recomposition[none]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_create_control_named_pers0/private-profile-process/pytest/test_create_control_named_pers0')
+E           persona_id = 'none'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("persona_id", ["none", "auto"])
+E               @private_profile_test
+E               async def test_create_control_named_persona_survives_folder_recomposition(
+E                   request, tmp_path, persona_id
+E               ):
+E                   personas = _personas(tmp_path, [persona_id])
+E                   registry, _store = build(tmp_path, personas)
+E                   host = _Host()
+E                   try:
+E                       async with host.run_test(size=(80, 24)) as pilot:
+E                           await host.push_screen(
+E                               WorkspaceCreateModal(
+E                                   registry_service=registry, persona_service=personas
+E                               )
+E                           )
+E                           modal = host.screen
+E                           modal.query_one("#workspace-create-name", Input).value = "Chosen"
+E                           modal.query_one("#workspace-default-persona", Select).value = persona_id
+E                           modal.query_one("#workspace-create-folder-path", Input).value = str(
+E                               tmp_path
+E                           )
+E                           await _press(host, pilot, "#workspace-create-folder-add")
+E                           assert (
+E                               modal.query_one("#workspace-default-persona", Select).value
+E                               == persona_id
+E                           )
+E                           await _press(host, pilot, "#workspace-create-confirm")
+E                           saved = next(w for w in registry.list_workspaces() if w.name == "Chosen")
+E           >               assert saved.assistant_defaults is not None
+E           E               AssertionError: assert None is not None
+E           E                +  where None = WorkspaceRecord(workspace_id='workspace-local-1', name='Chosen', description='Created from the workspace setup dialog....aults_explicit_none=True, created_at='2026-09-18T08:06:45.555936+00:00', updated_at='2026-09-18T08:06:45.555936+00:00').assistant_defaults
+E
+E           Tests/UI/test_workspace_persona_picker_identity.py:116: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 01:06:36.874 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 01:06:36.891 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 01:06:36.976 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 01:06:37.291 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 01:06:37.292 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 01:06:37.294 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 01:06:37.619 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 01:06:38.933 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 01:06:39.494 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_create_control_named_pers0/private-profile-process/pytest/test_create_control_named_pers0/ws.sqlite [Client: c1]
+E           ============================= slowest 25 durations =============================
+E           9.60s call     Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]
+E           2.76s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]
+E
+E           (1 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]
+E           1 failed in 14.21s
+
+Tests/private_profile.py:84: Failed
+____ test_create_control_named_persona_survives_folder_recomposition[auto] _____
+
+self = <Coroutine test_create_control_named_persona_survives_folder_recomposition[auto]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_create_control_named_persona_survives_folder_recomposition[auto]>>, 't...2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_create_control_named_pers1'), 'persona_id': 'auto'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_create_control_named_pers1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_create_control_named_persona_survives_folder_recomposition[auto] _____
+E
+E           request = <FixtureRequest for <Coroutine test_create_control_named_persona_survives_folder_recomposition[auto]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_create_control_named_pers1/private-profile-process/pytest/test_create_control_named_pers0')
+E           persona_id = 'auto'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("persona_id", ["none", "auto"])
+E               @private_profile_test
+E               async def test_create_control_named_persona_survives_folder_recomposition(
+E                   request, tmp_path, persona_id
+E               ):
+E                   personas = _personas(tmp_path, [persona_id])
+E                   registry, _store = build(tmp_path, personas)
+E                   host = _Host()
+E                   try:
+E                       async with host.run_test(size=(80, 24)) as pilot:
+E                           await host.push_screen(
+E                               WorkspaceCreateModal(
+E                                   registry_service=registry, persona_service=personas
+E                               )
+E                           )
+E                           modal = host.screen
+E                           modal.query_one("#workspace-create-name", Input).value = "Chosen"
+E                           modal.query_one("#workspace-default-persona", Select).value = persona_id
+E                           modal.query_one("#workspace-create-folder-path", Input).value = str(
+E                               tmp_path
+E                           )
+E                           await _press(host, pilot, "#workspace-create-folder-add")
+E                           assert (
+E                               modal.query_one("#workspace-default-persona", Select).value
+E                               == persona_id
+E                           )
+E                           await _press(host, pilot, "#workspace-create-confirm")
+E                           saved = next(w for w in registry.list_workspaces() if w.name == "Chosen")
+E                           assert saved.assistant_defaults is not None
+E           >               assert saved.assistant_defaults.assistant_id == persona_id
+E           E               AssertionError: assert 'local-person...8bc81040808c7' == 'auto'
+E           E
+E           E                 - auto
+E           E                 + local-persona-a156a495afc946a2a228bc81040808c7
+E
+E           Tests/UI/test_workspace_persona_picker_identity.py:117: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 01:06:52.672 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 01:06:52.704 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 01:06:52.869 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 01:06:52.976 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 01:06:52.977 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 01:06:52.978 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 01:06:53.950 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 01:06:55.127 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 01:06:55.594 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_create_control_named_pers1/private-profile-process/pytest/test_create_control_named_pers0/ws.sqlite [Client: c1]
+E           ============================= slowest 25 durations =============================
+E           9.06s call     Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]
+E           2.98s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]
+E
+E           (1 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]
+E           1 failed in 13.84s
+
+Tests/private_profile.py:84: Failed
+_______________ test_modal_offers_all_personas_beyond_first_page _______________
+
+self = <Coroutine test_modal_offers_all_personas_beyond_first_page>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_modal_offers_all_personas_beyond_first_page>>, 'tmp_path': PosixPath('...te/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_modal_offers_all_personas0')}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_modal_offers_all_personas0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _______________ test_modal_offers_all_personas_beyond_first_page _______________
+E
+E           request = <FixtureRequest for <Coroutine test_modal_offers_all_personas_beyond_first_page>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_modal_offers_all_personas0/private-profile-process/pytest/test_modal_offers_all_personas0')
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_modal_offers_all_personas_beyond_first_page(request, tmp_path):
+E                   ids = [f"writer-{i:03}" for i in range(101)]
+E                   personas = _personas(tmp_path, ids)
+E                   assert ids[0] not in {p["id"] for p in personas.list_persona_profiles()}
+E                   registry, _store = build(tmp_path, personas)
+E                   registry.create_workspace(
+E                       workspace_id="chosen",
+E                       name="Chosen",
+E                       assistant_defaults=WorkspaceAssistantDefaults(assistant_id=ids[0]),
+E                   )
+E                   host = _Host()
+E                   try:
+E                       async with host.run_test(size=(80, 24)):
+E                           await host.push_screen(
+E                               WorkspacePersonaDefaultModal(registry, personas, "chosen")
+E                           )
+E                           select = host.screen.query_one("#workspace-default-persona", Select)
+E                           offered = {value for _, value in select._options}
+E                           assert set(ids) <= offered
+E           >               assert _selected_label(select) == "Writer [writer-000]"
+E           E               AssertionError: assert 'Saved Persona unavailable' == 'Writer [writer-000]'
+E           E
+E           E                 - Writer [writer-000]
+E           E                 + Saved Persona unavailable
+E
+E           Tests/UI/test_workspace_persona_picker_identity.py:145: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 01:07:09.126 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 01:07:09.147 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 01:07:09.230 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 01:07:09.603 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 01:07:09.604 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 01:07:09.604 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 01:07:10.235 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 01:07:11.404 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 01:07:15.194 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_modal_offers_all_personas0/private-profile-process/pytest/test_modal_offers_all_personas0/ws.sqlite [Client: c1]
+E           ============================= slowest 25 durations =============================
+E           4.73s call     Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page
+E           2.47s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page
+E
+E           (1 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page
+E           1 failed in 9.08s
+
+Tests/private_profile.py:84: Failed
+__________ test_settings_offers_and_selects_persona_beyond_first_page __________
+
+self = <Coroutine test_settings_offers_and_selects_persona_beyond_first_page>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_settings_offers_and_selects_persona_beyond_first_page>>, 'tmp_path': P...te/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_settings_offers_and_selec0')}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_settings_offers_and_selec0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           __________ test_settings_offers_and_selects_persona_beyond_first_page __________
+E
+E           request = <FixtureRequest for <Coroutine test_settings_offers_and_selects_persona_beyond_first_page>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_settings_offers_and_selec0/private-profile-process/pytest/test_settings_offers_and_selec0')
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_settings_offers_and_selects_persona_beyond_first_page(request, tmp_path):
+E                   from Tests.UI.app_factory import _build_test_app
+E                   from Tests.UI.test_settings_overview_search_journeys import _category
+E                   from Tests.UI.test_settings_provider_keyboard_journeys import _settle
+E                   from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
+E
+E                   ids = [f"writer-{i:03}" for i in range(101)]
+E                   personas = _personas(tmp_path, ids)
+E                   app = _build_test_app()
+E                   app.local_character_persona_service = personas
+E                   registry = app.workspace_registry_service
+E                   registry.create_workspace(
+E                       workspace_id="chosen",
+E                       name="Chosen",
+E                       assistant_defaults=WorkspaceAssistantDefaults(assistant_id=ids[0]),
+E                   )
+E                   host = _StyledDestinationHarness(app, "settings")
+E                   async with host.run_test(size=(80, 24)) as pilot:
+E                       await _category(host, pilot, "Workspaces")
+E                       await _press(host, pilot, "#settings-workspace-row-chosen")
+E                       await _settle(host, pilot)
+E                       picker = host.screen.query_one("#settings-workspace-persona-picker", OptionList)
+E                       offered = {
+E                           picker.get_option_at_index(i).persona_id for i in range(picker.option_count)
+E                       }
+E           >           assert offered == set(ids)
+E           E           AssertionError: assert {'writer-001'...ter-006', ...} == {'writer-000'...ter-005', ...}
+E           E
+E           E             Extra items in the right set:
+E           E             'writer-000'
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_workspace_persona_picker_identity.py:177: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 01:07:21.618 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 01:07:21.671 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 01:07:21.946 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 01:07:22.390 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 01:07:22.390 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 01:07:22.391 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 01:07:22.592 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 01:07:23.746 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 01:07:23.808 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ pydub dependency not found. Feature 'pydub' will be disabled. Reason: No module named 'pydub'
+E           2026-09-18 01:07:23.809 | WARNING  | tldw_chatbook.TTS.audio_stitch:<module>:83 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+E           2026-09-18 01:07:28.686 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-18 01:07:28.851 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-18 01:07:28.857 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-18 01:07:28.864 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-18 01:07:28.865 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-18 01:07:29.148 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_settings_offers_and_selec0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:07:29.309 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hs7q65_h/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:07:30.064 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hs7q65_h/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:07:30.114 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:07:30.115 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hs7q65_h/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:07:30.116 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hs7q65_h/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:07:30.379 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-18 01:07:30.429 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-18 01:07:30.481 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-18 01:07:30.536 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-18 01:07:30.584 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-18 01:07:30.637 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-18 01:07:30.637 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hs7q65_h/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 01:07:30.803 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-18 01:07:30.804 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-18 01:07:30.815 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 01:07:31.058 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-18 01:07:31.058 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_settings_offers_and_selec0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 01:07:31.059 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-18 01:07:31.334 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-18 01:07:31.335 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E           2026-09-18 01:07:31.335 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E           2026-09-18 01:07:31.335 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 2.798 seconds
+E           2026-09-18 01:07:31.336 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.297s (10.6%)
+E           2026-09-18 01:07:31.336 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E           2026-09-18 01:07:31.337 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.033s (1.2%)
+E           2026-09-18 01:07:31.338 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:07:31.338 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:07:31.338 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:07:31.339 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:07:31.339 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E           2026-09-18 01:07:32.224 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-18 01:07:32.922 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-18 01:07:38.432 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           14.66s call     Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page
+E           2.55s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page
+E
+E           (1 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page
+E           1 failed in 19.14s
+
+Tests/private_profile.py:84: Failed
+___ test_failed_list_resolves_saved_identity_without_silent_rebinding[True] ____
+
+self = <Coroutine test_failed_list_resolves_saved_identity_without_silent_rebinding[True]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_failed_list_resolves_saved_identity_without_silent_rebinding[True]>>, ...80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_failed_list_resolves_save0'), 'available': True}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_failed_list_resolves_save0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ___ test_failed_list_resolves_saved_identity_without_silent_rebinding[True] ____
+E
+E           request = <FixtureRequest for <Coroutine test_failed_list_resolves_saved_identity_without_silent_rebinding[True]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_failed_list_resolves_save0/private-profile-process/pytest/test_failed_list_resolves_save0')
+E           available = True
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("available", [True, False])
+E               @private_profile_test
+E               async def test_failed_list_resolves_saved_identity_without_silent_rebinding(
+E                   request, tmp_path, available
+E               ):
+E                   personas = _personas(tmp_path, ["saved"])
+E                   if not available:
+E                       personas.delete_persona_profile("saved", expected_version=1)
+E                   registry, _store = build(tmp_path, personas)
+E                   defaults = WorkspaceAssistantDefaults(assistant_id="saved")
+E                   registry.create_workspace(
+E                       workspace_id="chosen", name="Chosen", assistant_defaults=defaults
+E                   )
+E
+E                   def unavailable_list(**_kwargs):
+E                       raise RuntimeError("private list failure")
+E
+E                   personas.list_persona_profiles = unavailable_list
+E                   host = _Host()
+E                   try:
+E                       async with host.run_test(size=(80, 24)) as pilot:
+E                           await host.push_screen(
+E                               WorkspacePersonaDefaultModal(registry, personas, "chosen")
+E                           )
+E                           select = host.screen.query_one("#workspace-default-persona", Select)
+E           >               assert _selected_label(select) == (
+E                               "Writer [saved]" if available else "Saved Persona unavailable"
+E                           )
+E           E               AssertionError: assert 'Saved Persona unavailable' == 'Writer [saved]'
+E           E
+E           E                 - Writer [saved]
+E           E                 + Saved Persona unavailable
+E
+E           Tests/UI/test_workspace_persona_picker_identity.py:212: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 01:07:44.674 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 01:07:44.687 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 01:07:45.263 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 01:07:45.367 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 01:07:45.368 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 01:07:45.369 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 01:07:45.735 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 01:07:46.770 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 01:07:47.137 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1792/test_failed_list_resolves_save0/private-profile-process/pytest/test_failed_list_resolves_save0/ws.sqlite [Client: c1]
+E           ============================= slowest 25 durations =============================
+E           2.40s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]
+E           1.81s call     Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]
+E
+E           (1 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]
+E           1 failed in 5.81s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+23.43s call     Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page
+16.39s call     Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]
+16.15s call     Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]
+12.15s call     Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page
+9.56s call     Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]
+9.28s call     Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]
+8.96s call     Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]
+7.17s call     Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]
+FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]
+FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]
+FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]
+FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page
+FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page
+FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]
+7 failed, 1 passed in 106.67s (0:01:46)

@@ -1,0 +1,8 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+42.66s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[retry]
+42.32s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[escape]
+40.49s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[keep]
+
+(6 durations < 1s hidden.)
+3 passed, 10 deselected in 133.04s (0:02:13)
