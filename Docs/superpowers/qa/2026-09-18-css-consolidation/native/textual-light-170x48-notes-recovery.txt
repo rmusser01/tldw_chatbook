@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+         •             *     ·
+                                   ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮         ·
+          ·            •           │                                                                                                  │·          •          *
+                *               *  │  Review recovered Notes Sync pairing                                                             │          *           * •
+                                   │                                                                                                  │
+                                   │  /private/tmp/tldw-32813-native-002                                                              │
+                                   │                                                                                                  │
+                    ·              │  note.md — retained                                                                              │
+                                   │                                                                                                  │
+     • *                           │  Issues:                                                                                         │
+                                   │  None                                                                                            │
+             •                     │                                                                                                  │             ·  •
+ ·                      •          │  Historical managed memberships remain inactive; approval does not transfer them or replay old   │               ·
+                                   │  filesystem intents.                                                                             │              •
+                                   │  No historical owners.                                                                           │
+                    *              │                                                                                                  │   *                       ·
+                                   │                                                                                                  │
+                             *     │                                                                                                  │                            •
+                         *       * │                                                                                                  │
+    ·                           • •│                                                                                                  │         ·
+                                  ·│                                                                                                  │
+                                   │                                                                                                  │                                 •
+       •         •                 │                                                                                                  │
+            ·                      │                                                                                                  │
+                   ·   *           │                                                                                                  │
+   •                               │                                                                                                  │                    ·
+                                   │                                                                                                  │           *
+                                   │                                                                                                  │
+        *                          │                                                                                                  │
+                                   │                                                                                                  │
+•                                  │                                                                                                  │
+                                   │                                                                                                  │                                ·
+                         ·         │                                                                                                  │                                 *
+   •                               │                                                                                                  │                      ·
+                                   │                                                                                                  │        *
+     •                         •   │                                                                                                  │
+                            *      │  Approval rechecks this comparison. Sync and Refresh remain separate actions.                    │                              •
+         •                         │                                                                                                  │                       • *
+                                   │       Close       Approve pairing…                                                               │                       •
+                                   │                                                                                                  │
+                                   ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯                   •
+                                                                               •                         •                            ·        *
+    •                                •                                                                                         ·       *
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter continue setup | Y trace | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

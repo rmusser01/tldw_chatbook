@@ -22,11 +22,10 @@ import pytest
 from textual.widgets import Button, Input
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
-from tldw_chatbook.css import build_css
+from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
 from Tests.UI.test_library_file_notes_git import (
-    _PanelHarness,
     _commit_draft_projection,
+    _PanelHarness,
 )
 from Tests.UI.test_library_notes_w4_editor import (
     _build_notes_host,
@@ -42,10 +41,10 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook.css import build_css
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     LibraryFileNotesGitPanel,
 )
-
 
 # --- shared: the monochrome-visible half of a focus cue -------------------
 
@@ -632,7 +631,7 @@ class _BundledPanelHarness(_PanelHarness):
     with it they go ``round`` -> ``solid``.
     """
 
-    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 @pytest.mark.asyncio

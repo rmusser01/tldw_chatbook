@@ -69,7 +69,6 @@
         margin: 1 0;
     }
 
-
 /* ===== WIDGET: TraceFiltersDialog (UI/Widgets/trace_filter_bar.py) ===== */
 
 
@@ -79,7 +78,6 @@
 
     TraceFiltersDialog #trace-filter-dialog-actions { height: 3; align-horizontal: right; }
     TraceFiltersDialog #trace-filter-dialog-actions Button { min-width: 9; }
-
 
 /* ===== WIDGET: ConsoleCapturePolicyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
 
@@ -99,7 +97,6 @@
     ConsoleCapturePolicyDialog #capture-policy-actions { height: 3; min-height: 3; align-horizontal: right; }
     ConsoleCapturePolicyDialog #capture-policy-actions Button { min-width: 10; margin-left: 1; }
     ConsoleCapturePolicyDialog #capture-policy-status.-error { color: $error; }
-
 
 /* ===== WIDGET: ConsoleExchangeExportDialog (Widgets/Console/console_exchange_export_dialog.py) ===== */
 
@@ -129,7 +126,6 @@
     }
     ConsoleExchangeExportDialog #exchange-export-actions Button { min-width: 10; margin-left: 1; }
     ConsoleExchangeExportDialog #exchange-export-status.-error { color: $error; }
-
 
 /* ===== WIDGET: ConsolePromptComparisonModal (Widgets/Console/console_prompt_comparison_modal.py) ===== */
 
@@ -180,7 +176,6 @@
         width: 22;
         min-width: 22;
     }
-
 
 /* ===== WIDGET: TraceExportDialog (Widgets/Console/trace_export_dialog.py) ===== */
 
@@ -243,7 +238,6 @@
     TraceExportDialog #trace-export-status.-error {
         color: $error;
     }
-
 
 /* ===== WIDGET: NoteSelectionDialog (Widgets/Note_Widgets/note_selection_dialog.py) ===== */
 
@@ -325,7 +319,6 @@
     NoteSelectionDialog .button-row Button {
         margin: 0 1;
     }
-
 
 /* ===== WIDGET: ConversationSelectionDialog (Widgets/conversation_selection_dialog.py) ===== */
 
@@ -411,7 +404,6 @@
         margin: 0 1;
     }
 
-
 /* ===== WIDGET: EmojiPickerScreen (Widgets/emoji_picker.py) ===== */
 
 
@@ -465,8 +457,7 @@
     EmojiPickerScreen EmojiButton.emoji_button:hover {
         background: $primary-background;
     }
-    /* EmojiButton :focus styling lives in css/components/_widgets.tcss
-       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
+
     EmojiPickerScreen .no_emojis_message {
         width: 100%;
         content-align: center middle;
@@ -488,7 +479,6 @@
         color: $primary;
         margin-bottom: 1;
     }
-
 
 /* ===== WIDGET: FileExtractionDialog (Widgets/file_extraction_dialog.py) ===== */
 
@@ -531,7 +521,6 @@
         width: 100%;
         margin: 1 0;
     }
-
 
 /* ===== WIDGET: VoiceBlendDialog (Widgets/voice_blend_dialog.py) ===== */
 

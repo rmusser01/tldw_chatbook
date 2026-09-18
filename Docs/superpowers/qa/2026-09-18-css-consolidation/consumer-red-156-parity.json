@@ -1,0 +1,28 @@
+{
+  "exitstatus": 1,
+  "cases": [
+    "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view"
+  ],
+  "outcomes": [
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+      "phase": "setup",
+      "outcome": "passed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+      "phase": "call",
+      "outcome": "failed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+      "phase": "teardown",
+      "outcome": "passed",
+      "wasxfail": null
+    }
+  ],
+  "classes": {},
+  "mismatches": []
+}

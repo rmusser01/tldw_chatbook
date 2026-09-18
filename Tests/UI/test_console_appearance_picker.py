@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 import tldw_chatbook.Widgets.Console.console_appearance_picker_modal as modal_module
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Chat.console_appearance import ConsoleConversationAppearance
 from tldw_chatbook.Widgets.Console.console_appearance_picker_modal import (
     EMOJI_SELECTED_CLASS,
@@ -34,7 +36,11 @@ def _sandbox_emoji_sources(monkeypatch):
     return saved
 
 
-def test_filter_matches_name_and_alias() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_filter_matches_name_and_alias(
+    request,
+) -> None:
     assert [e["char"] for e in filter_appearance_emojis(_FAKE_CATALOG, "")] == [
         "🧪",
         "🎨",
@@ -47,7 +53,11 @@ def test_filter_matches_name_and_alias() -> None:
     assert filter_appearance_emojis(_FAKE_CATALOG, "nope") == []
 
 
-def test_constructor_rejects_foreign_values() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_constructor_rejects_foreign_values(
+    request,
+) -> None:
     modal = ConsoleAppearancePickerModal(
         conversation_id="conv-1",
         conversation_title="T",
@@ -81,7 +91,9 @@ async def _current_appearance(modal: ConsoleAppearancePickerModal):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_apply_commits_icon_and_color_and_saves_recents(
+    request,
     _sandbox_emoji_sources,
 ) -> None:
     harness = PickerHarness(
@@ -122,7 +134,10 @@ async def test_apply_commits_icon_and_color_and_saves_recents(
 
 
 @pytest.mark.asyncio
-async def test_carried_in_appearance_is_preselected(_sandbox_emoji_sources) -> None:
+@private_profile_test
+async def test_carried_in_appearance_is_preselected(
+    request, _sandbox_emoji_sources
+) -> None:
     harness = PickerHarness(
         conversation_id="conv-1",
         conversation_title="T",
@@ -152,7 +167,8 @@ async def test_carried_in_appearance_is_preselected(_sandbox_emoji_sources) -> N
 
 
 @pytest.mark.asyncio
-async def test_clear_resets_to_unset(_sandbox_emoji_sources) -> None:
+@private_profile_test
+async def test_clear_resets_to_unset(request, _sandbox_emoji_sources) -> None:
     harness = PickerHarness(
         conversation_id="conv-1",
         conversation_title="T",
@@ -171,7 +187,8 @@ async def test_clear_resets_to_unset(_sandbox_emoji_sources) -> None:
 
 
 @pytest.mark.asyncio
-async def test_filter_narrows_the_grid(_sandbox_emoji_sources) -> None:
+@private_profile_test
+async def test_filter_narrows_the_grid(request, _sandbox_emoji_sources) -> None:
     harness = PickerHarness(conversation_id="conv-1", conversation_title="T")
     async with harness.run_test(size=(80, 30)) as pilot:
         modal = harness.screen_stack[-1]
@@ -205,7 +222,10 @@ class SwitcherHarness(App[None]):
 
 
 @pytest.mark.asyncio
-async def test_switcher_row_shows_colored_icon_left_of_title() -> None:
+@private_profile_test
+async def test_switcher_row_shows_colored_icon_left_of_title(
+    request,
+) -> None:
     """task-31208: the Ctrl+K switcher renders the appearance icon left of
     the title, and rows without one are unchanged."""
     from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
@@ -267,7 +287,10 @@ async def test_switcher_row_shows_colored_icon_left_of_title() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_hex_entry_applies_valid_color(_sandbox_emoji_sources) -> None:
+@private_profile_test
+async def test_custom_hex_entry_applies_valid_color(
+    request, _sandbox_emoji_sources
+) -> None:
     """task-31209: typing a canonical hex (with or without '#') selects it;
     junk input leaves the current selection untouched."""
     harness = PickerHarness(
@@ -301,7 +324,9 @@ async def test_custom_hex_entry_applies_valid_color(_sandbox_emoji_sources) -> N
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_unstorable_emoji_sequence_is_rejected_at_selection(
+    request,
     _sandbox_emoji_sources,
 ) -> None:
     """PR #2480 review (#5): a ZWJ-family catalog entry must be rejected at
@@ -326,7 +351,10 @@ async def test_unstorable_emoji_sequence_is_rejected_at_selection(
 
 
 @pytest.mark.asyncio
-async def test_preview_renders_color_not_markup_tags(_sandbox_emoji_sources) -> None:
+@private_profile_test
+async def test_preview_renders_color_not_markup_tags(
+    request, _sandbox_emoji_sources
+) -> None:
     """PR #2480 review (#6): the preview is markup=False, so the color
     sample must arrive as styled content -- literal '[#...]' tags are the
     bug."""
@@ -348,7 +376,9 @@ async def test_preview_renders_color_not_markup_tags(_sandbox_emoji_sources) -> 
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_swatch_press_updates_custom_color_field(
+    request,
     _sandbox_emoji_sources,
 ) -> None:
     """PR #2480 review (#9): the custom-color input must show what Apply
@@ -375,7 +405,11 @@ async def test_swatch_press_updates_custom_color_field(
         assert modal._selected_color is None
 
 
-def test_switcher_prefix_renders_placeholder_for_color_only() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_switcher_prefix_renders_placeholder_for_color_only(
+    request,
+) -> None:
     """PR #2480 review (#8): a color-only appearance keeps a visible marker
     in the switcher via the placeholder glyph, matching the rail."""
     from tldw_chatbook.Chat.console_glyphs import GLYPH_APPEARANCE_PLACEHOLDER
@@ -402,7 +436,10 @@ def test_switcher_prefix_renders_placeholder_for_color_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_escape_cancels_with_none_without_crashing(_sandbox_emoji_sources) -> None:
+@private_profile_test
+async def test_escape_cancels_with_none_without_crashing(
+    request, _sandbox_emoji_sources
+) -> None:
     """Escape must run the one-shot safe cancel and dismiss with None.
 
     Regression: _perform_safe_cancel passed the SYNCHRONOUS

@@ -55,7 +55,7 @@ class _ChangeReviewReceipt(Static):
 class WorkspaceChangeReviewPanel(Vertical):
     """Observe existing consent/readiness; keep controls and input neighbors intact."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     WorkspaceChangeReviewPanel {
         height: auto;
     }

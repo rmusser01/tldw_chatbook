@@ -19,7 +19,6 @@ three things that make that safe:
 from __future__ import annotations
 
 import ast
-import asyncio
 import importlib
 import os
 import re
@@ -32,6 +31,7 @@ from textual.css.parse import parse
 from textual.css.stylesheet import Stylesheet, StylesheetParseError
 from textual.css.tokenize import tokenize_values
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.css import build_css, widget_css
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -697,24 +697,24 @@ def _declares(module: str, class_name: str, names: set[str]) -> bool:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_full_destination_tour_stays_under_the_parse_cache_cliff():
-    """A full 13-destination tour must leave the source count under the cliff.
+@private_profile_test
+async def test_full_destination_tour_stays_under_the_parse_cache_cliff(request):
+    """A full 15-destination tour must leave the source count under the cliff.
 
     This is the measurement the whole task exists for: before consolidation the
     same tour ended at 94 sources with ``stylesheet.parse()`` costing 127-378 ms
     per call; it must now finish well under Textual's ``LRUCache(64)`` with the
     cache warm.
     """
-    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.css_destination_tour import (
+        build_css_tour_app,
+        visit_all_shell_destinations,
+    )
 
-    app = _build_test_app()
+    app = build_css_tour_app()
     async with app.run_test(size=(235, 52)) as pilot:
-        await pilot.pause()
-        await asyncio.sleep(2)
-        for key in [f"ctrl+{digit}" for digit in "1234567890"] + ["f2", "f3", "f4", "f5", "f7"]:
-            await pilot.press(key)
-            await pilot.pause()
-            await asyncio.sleep(0.75)
+        visited = await visit_all_shell_destinations(app, pilot)
+        print(f"CSS destination tour: {visited}")
         sources = len(app.stylesheet.source)
         # Headroom, not just "under": a handful of unconsolidated widget classes
         # still register their own source when first mounted.
@@ -1192,7 +1192,9 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
 ])
 
 
-def test_class_level_css_stays_within_the_allowlist():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_class_level_css_stays_within_the_allowlist(request):
     """No new ``DEFAULT_CSS``/``CSS`` outside the allowlist; no stale entries.
 
     TASK-21115. Static and boot-free on purpose: the integration tour above is

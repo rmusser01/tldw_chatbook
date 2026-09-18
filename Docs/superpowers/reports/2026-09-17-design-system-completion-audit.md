@@ -176,3 +176,20 @@ harness failed at profile setup (`raw_source_selection_changed`) before UI
 construction. Both are excluded from the scoped passing run and remain open;
 this repair does not close migration, all-destination or full-suite verification.
 The existing MCP/Tool Profile/component review bounds and PR2707 merge gate remain.
+
+
+TASK-32813 closes the 26 CSS consolidation offenders and destination-tour setup
+failure recorded above. [194 targeted consumers, final guards and 28 inspected
+native captures](../qa/2026-09-18-css-consolidation/README.md) cover all affected
+owners in observed states. Bytes are 583,097 against a tightened 608,090 ceiling;
+selector cost remains 274 and proven-route/modal source count 46. No allowlist
+exceptions or source/selector budget increases were added. The standalone
+RecoveryApp retains native default styles. TASK-32814 aligns the saved-head CI
+ellipsis assertion with the actual terminal-cell glyph. Fresh pushed-head checks
+remain separate from this local evidence.
+
+The same qualification discovered an intermittent Console shutdown focus query
+(TASK-32815) and preserved compact Appearance clipping (TASK-32816). Roleplay
+recovery's existing unstyled layout also remains component-review debt. The
+native report records these limits rather than treating CSS parity as usable UI.
+PR2707 remains draft, unmerged, and subject to its own visual review and approval.

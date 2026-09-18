@@ -66,10 +66,10 @@ async def test_actual_archive_inspection_survives_navigation(tmp_path, monkeypat
     import asyncio
     from threading import Event
 
-    from textual.app import App
     from textual.widgets import Input, Static
 
     from Tests.Backup_Recovery.test_archive_reader import archive
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery import archive_reader
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
@@ -133,9 +133,9 @@ async def test_actual_archive_inspection_survives_navigation(tmp_path, monkeypat
 async def test_invalid_backup_filename_review_explains_suffix_and_disables_create(
     tmp_path, credentials
 ):
-    from textual.app import App
     from textual.widgets import Button, Checkbox, Input, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -171,9 +171,9 @@ async def test_invalid_backup_filename_review_explains_suffix_and_disables_creat
 
 @pytest.mark.asyncio
 async def test_password_mismatch_stays_in_view_and_inputs_clear_on_back(tmp_path):
-    from textual.app import App
     from textual.widgets import Input, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -210,9 +210,9 @@ async def test_actual_recovery_copy_requires_confirmation_and_displays_tombstone
     from dataclasses import replace
     from threading import Event
 
-    from textual.app import App
     from textual.widgets import Button, Checkbox, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery import crypto, replacement
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
@@ -276,9 +276,9 @@ async def test_actual_recovery_copy_requires_confirmation_and_displays_tombstone
 async def test_narrow_local_lists_do_not_start_an_operation(tmp_path):
     import asyncio
 
-    from textual.app import App
     from textual.widgets import Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -312,9 +312,9 @@ async def test_narrow_local_lists_do_not_start_an_operation(tmp_path):
 async def test_credential_omission_acknowledgement_does_not_transfer_to_new_source(
     tmp_path,
 ):
-    from textual.app import App
     from textual.widgets import Checkbox, Input
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -352,10 +352,10 @@ async def test_later_rollback_reviews_native_plan_then_preserves_new_safety_copy
 ):
     import asyncio
 
-    from textual.app import App
     from textual.widgets import Button, Checkbox, Input, Static
 
     from Tests.Backup_Recovery.test_later_rollback import _completed
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -437,9 +437,9 @@ async def test_pending_abort_preserves_actual_pre_safety_originals(
 ):
     import asyncio
 
-    from textual.app import App
     from textual.widgets import Button, Input
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery import bootstrap
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -487,10 +487,10 @@ async def test_pending_abort_preserves_actual_pre_safety_originals(
 async def test_editing_source_requires_new_actual_archive_inspection(tmp_path):
     import asyncio
 
-    from textual.app import App
     from textual.widgets import Button, Input, Static
 
     from Tests.Backup_Recovery.test_archive_reader import archive
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -552,9 +552,9 @@ async def test_replacement_omissions_require_explicit_review_after_untouched_abo
 ):
     import asyncio
 
-    from textual.app import App
     from textual.widgets import Button, Input, Select
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery import crypto
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
@@ -673,10 +673,10 @@ async def test_replacement_omissions_require_explicit_review_after_untouched_abo
 async def test_later_credential_omissions_remain_visible_during_keyboard_review(tmp_path):
     import asyncio
 
-    from textual.app import App
     from textual.containers import Vertical, VerticalScroll
     from textual.widgets import Button
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 

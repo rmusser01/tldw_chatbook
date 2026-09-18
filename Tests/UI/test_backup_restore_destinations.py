@@ -12,10 +12,10 @@ def _disable_model_catalog_refresh():
 
 @pytest.mark.asyncio
 async def test_keyboard_profile_destination_review_requires_name(tmp_path):
-    from textual.app import App
     from textual.widgets import Button, Input, Static
 
     from Tests.Backup_Recovery.test_restore_destinations import profile_archive
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -69,9 +69,9 @@ async def test_keyboard_profile_destination_review_requires_name(tmp_path):
 async def test_acknowledged_partial_review_does_not_ask_for_acknowledgement_again(
     tmp_path,
 ):
-    from textual.app import App
     from textual.widgets import Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.models import Inventory
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
@@ -109,9 +109,9 @@ async def test_acknowledged_partial_review_does_not_ask_for_acknowledgement_agai
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["status", "source", "start"])
 async def test_operation_failures_show_corrective_guidance(tmp_path, surface):
-    from textual.app import App
     from textual.widgets import Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 

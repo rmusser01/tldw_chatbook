@@ -27,21 +27,17 @@ def markdown_filename_slug(title: str) -> str:
         A lowercase slug of alphanumerics and dashes (max 60 chars),
         never empty -- ``chat`` when the title has nothing usable.
     """
-    slug = "".join(
-        char if char.isalnum() else "-" for char in (title or "").lower()
-    )
+    slug = "".join(char if char.isalnum() else "-" for char in (title or "").lower())
     while "--" in slug:
         slug = slug.replace("--", "-")
     slug = slug.strip("-")[:60]
     return slug or "chat"
 
 
-class ConsoleSaveMarkdownModal(
-    SafeModalDismissMixin, ModalScreen["str | None"]
-):
+class ConsoleSaveMarkdownModal(SafeModalDismissMixin, ModalScreen["str | None"]):
     """Prompt for the .md destination path."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleSaveMarkdownModal {
         align: center middle;
     }
@@ -85,12 +81,8 @@ class ConsoleSaveMarkdownModal(
                 placeholder="/path/to/chat.md",
             )
             with Horizontal(id="console-save-markdown-actions"):
-                yield Button(
-                    "Cancel", id="console-save-markdown-cancel", compact=True
-                )
-                yield Button(
-                    "Save", id="console-save-markdown-save", compact=True
-                )
+                yield Button("Cancel", id="console-save-markdown-cancel", compact=True)
+                yield Button("Save", id="console-save-markdown-save", compact=True)
 
     def on_mount(self) -> None:
         self.query_one("#console-save-markdown-input", Input).focus()

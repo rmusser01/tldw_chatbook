@@ -345,7 +345,7 @@ async def test_workbench_at_100x30_keeps_primary_content_reachable(monkeypatch):
         # The built-in rail row truncates with an ellipsis (honest
         # truncation) rather than cropping mid-word.
         rows = list(app.query("Button.mcp-rail-row"))
-        assert "..." in str(rows[1].label)
+        assert "…" in str(rows[1].label)
 
 
 @pytest.mark.asyncio

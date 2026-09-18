@@ -2,7 +2,7 @@
 # Description: TASK-21115's "feature-rich session" arithmetic, pinned.
 #
 # The consolidation tour guard (test_widget_css_consolidation.py) measures the
-# PLAIN 13-destination tour. The 2026-08-22 holistic review's finding was that
+# PLAIN 15-destination tour. The 2026-08-22 holistic review's finding was that
 # the plain tour is not the exposed case: ~10 distinct modal opens on top of it
 # crossed Textual's LRUCache(64) parse-cache cliff, because 25 new DEFAULT_CSS
 # declarations had accreted since TASK-15450 (measured on the review pin:
@@ -20,23 +20,48 @@
 # while the static allowlist ratchet names the offender.
 from __future__ import annotations
 
-import asyncio
 from inspect import getfile
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 MODAL_TARGETS = [
-    ("tldw_chatbook.Widgets.Console.console_reaction_picker_modal", "ConsoleReactionPickerModal"),
-    ("tldw_chatbook.Widgets.Console.console_review_notes_modal", "ConsoleReviewNotesModal"),
+    (
+        "tldw_chatbook.Widgets.Console.console_reaction_picker_modal",
+        "ConsoleReactionPickerModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_review_notes_modal",
+        "ConsoleReviewNotesModal",
+    ),
     ("tldw_chatbook.Widgets.Console.console_side_chat_modal", "ConsoleSideChatModal"),
-    ("tldw_chatbook.Widgets.Console.console_feedback_comment_modal", "ConsoleFeedbackCommentModal"),
-    ("tldw_chatbook.Widgets.Console.console_auto_speak_consent", "AutoSpeakConsentModal"),
-    ("tldw_chatbook.Widgets.Console.console_project_instructions", "ProjectInstructionSetupModal"),
-    ("tldw_chatbook.Widgets.Console.console_project_instructions", "ProjectInstructionNoticeModal"),
+    (
+        "tldw_chatbook.Widgets.Console.console_feedback_comment_modal",
+        "ConsoleFeedbackCommentModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_auto_speak_consent",
+        "AutoSpeakConsentModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_project_instructions",
+        "ProjectInstructionSetupModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_project_instructions",
+        "ProjectInstructionNoticeModal",
+    ),
     ("tldw_chatbook.Widgets.workspace_create_modal", "WorkspaceCreateModal"),
     ("tldw_chatbook.Widgets.project_skills_import_modal", "ProjectSkillsImportModal"),
-    ("tldw_chatbook.Widgets.Library.library_note_folder_dialog", "LibraryNoteFolderNameDialog"),
-    ("tldw_chatbook.Widgets.Library.library_note_folder_dialog", "LibraryNoteFolderTargetDialog"),
+    (
+        "tldw_chatbook.Widgets.Library.library_note_folder_dialog",
+        "LibraryNoteFolderNameDialog",
+    ),
+    (
+        "tldw_chatbook.Widgets.Library.library_note_folder_dialog",
+        "LibraryNoteFolderTargetDialog",
+    ),
     ("tldw_chatbook.UI.Screens.model_catalog_consent", "ModelCatalogConsentModal"),
 ]
 
@@ -45,14 +70,108 @@ EXTRA_CONVERSION_TARGETS = [
     ("tldw_chatbook.UI.Screens.trajectory_screen", "TrajectoryScreen"),
     ("tldw_chatbook.UI.Widgets.trajectory_timeline", "TrajectoryTimeline"),
     ("tldw_chatbook.UI.Wizards.first_run_recovery_dialog", "SetupRecoveryDialog"),
-    ("tldw_chatbook.Widgets.Console.console_conversation_inspector", "ConsoleConversationInspector"),
-    ("tldw_chatbook.Widgets.Console.console_project_instructions", "ConsoleProjectInstructionContextPanel"),
-    ("tldw_chatbook.Widgets.Console.console_project_instructions", "ConsoleProjectInstructionStatusRow"),
+    (
+        "tldw_chatbook.Widgets.Console.console_conversation_inspector",
+        "ConsoleConversationInspector",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_project_instructions",
+        "ConsoleProjectInstructionContextPanel",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_project_instructions",
+        "ConsoleProjectInstructionStatusRow",
+    ),
     ("tldw_chatbook.Widgets.Console.console_selection_menu", "ConsoleSelectionMenu"),
     ("tldw_chatbook.Widgets.Console.console_transcript", "ConsoleMessageHeader"),
     ("tldw_chatbook.Widgets.Console.console_turn_file_card", "ConsoleTurnFileCard"),
-    ("tldw_chatbook.Widgets.Library.library_note_import_canvas", "LibraryNoteImportCanvas"),
+    (
+        "tldw_chatbook.Widgets.Library.library_note_import_canvas",
+        "LibraryNoteImportCanvas",
+    ),
     ("tldw_chatbook.Widgets.modal_dismissal", "_BackdropClickShield"),
+]
+
+
+# TASK-32813: every declaration that regrew outside the consolidation ratchet.
+MIGRATION_TARGETS = [
+    ("tldw_chatbook.UI.LLM_Management.vllm_setup_view", "VllmSetupView"),
+    (
+        "tldw_chatbook.UI.Library_Modules.library_character_repair_controller",
+        "LibraryCharacterRepairDialog",
+    ),
+    (
+        "tldw_chatbook.UI.Library_Modules.skill_import_choice_modal",
+        "SkillImportChoiceModal",
+    ),
+    (
+        "tldw_chatbook.UI.Navigation.character_conversation_navigation",
+        "RoleplayDraftNavigationDialog",
+    ),
+    (
+        "tldw_chatbook.UI.Navigation.character_conversation_navigation",
+        "RoleplayDraftRecoveryDialog",
+    ),
+    ("tldw_chatbook.UI.Screens.artifact_share_dialog", "ArtifactShareDialog"),
+    ("tldw_chatbook.UI.Screens.backup_restore_screen", "BackupRestoreScreen"),
+    (
+        "tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form",
+        "AutomationDefinitionForm",
+    ),
+    (
+        "tldw_chatbook.UI.Screens.scheduling.forms.new_task_choice_modal",
+        "NewTaskChoiceModal",
+    ),
+    ("tldw_chatbook.UI.Screens.skills_screen", "SkillRecoveryReviewModal"),
+    (
+        "tldw_chatbook.Widgets.Console.console_appearance_picker_modal",
+        "ConsoleAppearancePickerModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_edit_message_modal",
+        "ConsoleEditThinkingModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_endpoint_template_modal",
+        "ConsoleEndpointTemplateModal",
+    ),
+    ("tldw_chatbook.Widgets.Console.console_provider_picker", "ConsoleProviderPicker"),
+    (
+        "tldw_chatbook.Widgets.Console.console_save_markdown_modal",
+        "ConsoleSaveMarkdownModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_terminal_session_modal",
+        "ConsoleTerminalSessionModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Console.console_workspace_switcher_modal",
+        "WorkspaceArchiveReceiptModal",
+    ),
+    ("tldw_chatbook.Widgets.Library.notes_recovery_dialog", "NotesRecoveryDialog"),
+    (
+        "tldw_chatbook.Widgets.Persona_Widgets.buddy_conversation_modal",
+        "BuddyConversationModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal",
+        "BuddyManagementModal",
+    ),
+    (
+        "tldw_chatbook.Widgets.Persona_Widgets.buddy_speech_controls",
+        "BuddySpeechControls",
+    ),
+    (
+        "tldw_chatbook.Widgets.Persona_Widgets.buddy_workspace_modal",
+        "BuddyWorkspaceModal",
+    ),
+    ("tldw_chatbook.Widgets.Settings_Widgets.tool_profiles_panel", "ToolProfilesPanel"),
+    (
+        "tldw_chatbook.Widgets.Settings_Widgets.workspace_change_review",
+        "WorkspaceChangeReviewPanel",
+    ),
+    ("tldw_chatbook.Widgets.workspace_persona_default", "WorkspacePersonaDefaultModal"),
+    ("tldw_chatbook.Widgets.workspace_persona_default", "WorkspacePersonaPicker"),
 ]
 
 
@@ -95,30 +214,30 @@ _SOFT_LIMIT = 56
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_tour_plus_modal_opens_stay_under_the_soft_source_limit():
+@private_profile_test
+async def test_tour_plus_modal_opens_stay_under_the_soft_source_limit(request):
     from importlib import import_module
 
-    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.css_destination_tour import (
+        build_css_tour_app,
+        visit_all_shell_destinations,
+    )
 
-    app = _build_test_app()
+    app = build_css_tour_app()
     async with app.run_test(size=(235, 52)) as pilot:
-        await pilot.pause()
-        await asyncio.sleep(2)
-        for key in [f"ctrl+{digit}" for digit in "1234567890"] + ["f2", "f3", "f4", "f5", "f7"]:
-            await pilot.press(key)
-            await pilot.pause()
-            await asyncio.sleep(0.75)
+        visited = await visit_all_shell_destinations(app, pilot)
+        print(f"CSS destination tour: {visited}")
         tour = len(app.stylesheet.source)
         for module, name in MODAL_TARGETS:
             _register_like_first_mount(app, getattr(import_module(module), name))
         after_modals = len(app.stylesheet.source)
-        for module, name in EXTRA_CONVERSION_TARGETS:
+        for module, name in EXTRA_CONVERSION_TARGETS + MIGRATION_TARGETS:
             _register_like_first_mount(app, getattr(import_module(module), name))
         after_all = len(app.stylesheet.source)
     line = (
         f"TASK-21115 PROBE: tour={tour} "
         f"tour+12modals={after_modals} "
-        f"tour+all25targets={after_all} "
+        f"tour+all_targets={after_all} "
         f"(cliff={_PARSE_CACHE_CAPACITY}, soft={_SOFT_LIMIT})"
     )
     print(f"\n{line}")

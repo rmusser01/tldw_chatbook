@@ -8,10 +8,12 @@ from pathlib import Path
 
 import pytest
 from textual import on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static, TextArea
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
@@ -122,7 +124,11 @@ class _RunningProcess:
         self.running = False
 
 
-async def test_initial_vllm_setup_is_guided_and_blocks_start():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_initial_vllm_setup_is_guided_and_blocks_start(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
@@ -137,7 +143,11 @@ async def test_initial_vllm_setup_is_guided_and_blocks_start():
         assert "checkpoint" not in copy.lower()
 
 
-async def test_guided_readiness_keeps_four_recoverable_rows_and_python_browse():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_guided_readiness_keeps_four_recoverable_rows_and_python_browse(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
@@ -177,7 +187,11 @@ async def test_guided_readiness_keeps_four_recoverable_rows_and_python_browse():
         )
 
 
-async def test_advanced_structured_profile_values_are_visible_editable_and_adjacent():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_advanced_structured_profile_values_are_visible_editable_and_adjacent(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
@@ -230,7 +244,11 @@ async def test_advanced_structured_profile_values_are_visible_editable_and_adjac
         assert "positive whole number" in str(help_copy.renderable)
 
 
-async def test_existing_server_discovery_requires_explicit_model_selection():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_existing_server_discovery_requires_explicit_model_selection(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
@@ -277,7 +295,11 @@ async def test_existing_server_discovery_requires_explicit_model_selection():
         assert owner.snapshot().target is None
 
 
-async def test_checking_exposes_generation_bound_cancel_action():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_checking_exposes_generation_bound_cancel_action(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
@@ -296,7 +318,11 @@ async def test_checking_exposes_generation_bound_cancel_action():
         assert token.generation > 0
 
 
-async def test_current_server_is_separate_from_modified_next_restart_without_path_leak():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_current_server_is_separate_from_modified_next_restart_without_path_leak(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
@@ -364,7 +390,11 @@ async def test_current_server_is_separate_from_modified_next_restart_without_pat
         )
 
 
-async def test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_only():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_only(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -404,7 +434,11 @@ async def test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_o
         ]
 
 
-async def test_existing_server_mode_disables_local_profile_mutations_with_explanation():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_existing_server_mode_disables_local_profile_mutations_with_explanation(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -448,7 +482,10 @@ async def test_existing_server_mode_disables_local_profile_mutations_with_explan
         assert not profile_select.disabled
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_existing_mode_forged_profile_events_preserve_repository(
+    request,
     monkeypatch,
     tmp_path: Path,
 ):
@@ -559,8 +596,10 @@ async def test_existing_mode_forged_profile_events_preserve_repository(
         ),
     ],
 )
+@pytest.mark.asyncio
+@private_profile_test
 async def test_profile_model_repair_focuses_visible_source_specific_control(
-    source, expected_control, expected_copy, tmp_path: Path
+    request, source, expected_control, expected_copy, tmp_path: Path
 ):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -619,8 +658,10 @@ async def test_profile_model_repair_focuses_visible_source_specific_control(
         ),
     ],
 )
+@pytest.mark.asyncio
+@private_profile_test
 async def test_async_profile_validation_routes_to_adjacent_recovery(
-    message, expected_help, expected_control, expected_copy
+    request, message, expected_help, expected_control, expected_copy
 ):
     def fail_profile_change():
         raise VllmProfileValidationError(message)
@@ -638,8 +679,10 @@ async def test_async_profile_validation_routes_to_adjacent_recovery(
         assert app.focused is view.query_one(f"#{expected_control}")
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_rename_and_duplicate_validation_stays_action_adjacent(
-    monkeypatch, tmp_path: Path
+    request, monkeypatch, tmp_path: Path
 ):
     repo = VllmProfileRepository(tmp_path / "vllm_launch_profiles.json")
     local_draft = VllmLaunchDraft(
@@ -683,7 +726,11 @@ async def test_mounted_rename_and_duplicate_validation_stays_action_adjacent(
         assert app.focused is view.query_one("#vllm-profile-select", Select)
 
 
-async def test_profile_validation_classifier_maps_every_editable_schema_field():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_profile_validation_classifier_maps_every_editable_schema_field(
+    request,
+):
     from tldw_chatbook.UI.Screens.llm_screen import (
         _classify_vllm_profile_validation,
     )
@@ -738,8 +785,10 @@ async def _wait_for_profile_mutation_idle(screen: LLMScreen, pilot) -> None:
 
 
 @pytest.mark.parametrize("repair", ["python", "local_model"])
+@pytest.mark.asyncio
+@private_profile_test
 async def test_selected_profile_immediately_projects_local_repair_without_probing(
-    repair, tmp_path: Path
+    request, repair, tmp_path: Path
 ):
     python_path = tmp_path / "venv/bin/python"
     python_path.parent.mkdir(parents=True)
@@ -789,7 +838,10 @@ async def test_selected_profile_immediately_projects_local_repair_without_probin
         assert control.display and control.can_focus
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_selected_profile_projects_invalid_bind_repair_without_any_probe(
+    request,
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -869,7 +921,10 @@ def _write_multi_profile_legacy_bind_store(
     return repository, repository.load(), valid, invalid, original
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_invalid_nonselected_profile_enters_nonpersisting_repair_state(
+    request,
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -937,7 +992,10 @@ async def test_invalid_nonselected_profile_enters_nonpersisting_repair_state(
 
 
 @pytest.mark.parametrize("repair_action", ["save", "delete"])
+@pytest.mark.asyncio
+@private_profile_test
 async def test_invalid_nonselected_profile_can_be_saved_or_deleted_from_repair_state(
+    request,
     repair_action: str,
     tmp_path: Path,
 ) -> None:
@@ -1040,7 +1098,10 @@ def _write_two_invalid_profile_store(
     return repository, repository.load(), valid, first, second
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_multiple_invalid_profiles_can_be_repaired_one_at_a_time_without_probe(
+    request,
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -1101,7 +1162,10 @@ async def test_multiple_invalid_profiles_can_be_repaired_one_at_a_time_without_p
         assert runtime_calls == []
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_multiple_invalid_profiles_can_be_deleted_sequentially_after_reopen(
+    request,
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -1148,7 +1212,10 @@ async def test_multiple_invalid_profiles_can_be_deleted_sequentially_after_reope
         assert runtime_calls == []
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_forged_repair_save_draft_is_rejected_before_worker_or_write(
+    request,
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -1196,7 +1263,10 @@ async def test_forged_repair_save_draft_is_rejected_before_worker_or_write(
         assert runtime_calls == []
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_preflight_exception_settles_current_generation_for_retry(
+    request,
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -1235,7 +1305,10 @@ async def test_preflight_exception_settles_current_generation_for_retry(
     ["http://[", "https://example.test/" + "x" * 2049],
     ids=("malformed-ipv6", "oversized"),
 )
+@pytest.mark.asyncio
+@private_profile_test
 async def test_invalid_existing_url_settles_without_probe_dispatch(
+    request,
     monkeypatch,
     existing_server_url: str,
 ) -> None:
@@ -1274,7 +1347,10 @@ async def test_invalid_existing_url_settles_without_probe_dispatch(
         assert len(rendered) < 20_000
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_probe_request_construction_exception_settles_without_dispatch(
+    request,
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -1311,7 +1387,11 @@ async def test_probe_request_construction_exception_settles_without_dispatch(
         )
 
 
-async def test_name_only_profile_refresh_preserves_stronger_full_preflight():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_name_only_profile_refresh_preserves_stronger_full_preflight(
+    request,
+):
     draft = VllmLaunchDraft(
         mode=VllmMode.LOCAL,
         python_environment="python",
@@ -1356,8 +1436,10 @@ async def test_name_only_profile_refresh_preserves_stronger_full_preflight():
 
 
 @pytest.mark.parametrize("dismissal", ["cancel", "escape", "backdrop"])
+@pytest.mark.asyncio
+@private_profile_test
 async def test_profile_delete_cancel_or_escape_preserves_exact_document(
-    dismissal, monkeypatch, tmp_path: Path
+    request, dismissal, monkeypatch, tmp_path: Path
 ):
     """Removing the confirmation gate must let Delete mutate before consent."""
 
@@ -1421,8 +1503,10 @@ async def test_profile_delete_cancel_or_escape_preserves_exact_document(
         assert app.focused is view.query_one("#vllm-profile-delete-button", Button)
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_confirmed_profile_delete_executes_selected_claim_once_and_recreates_default(
-    monkeypatch, tmp_path: Path
+    request, monkeypatch, tmp_path: Path
 ):
     """Bypassing confirm or replaying its callback must break the exact call count."""
 
@@ -1479,8 +1563,10 @@ async def test_confirmed_profile_delete_executes_selected_claim_once_and_recreat
         (("cancel", "confirm"), False),
     ],
 )
+@pytest.mark.asyncio
+@private_profile_test
 async def test_profile_delete_queued_terminal_actions_settle_once(
-    terminal_actions, confirmed, monkeypatch, tmp_path: Path
+    request, terminal_actions, confirmed, monkeypatch, tmp_path: Path
 ):
     """Removing the one-shot terminal guard must pop or settle more than once."""
 
@@ -1559,8 +1645,10 @@ async def test_profile_delete_queued_terminal_actions_settle_once(
             assert repo.load() == claim
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_profile_delete_confirmation_rejects_stale_selection_claim(
-    monkeypatch, tmp_path: Path
+    request, monkeypatch, tmp_path: Path
 ):
     """Dropping the revision/selection recheck must delete the wrong profile."""
 
@@ -1621,8 +1709,10 @@ async def test_profile_delete_confirmation_rejects_stale_selection_claim(
         assert app.focused is view.query_one("#vllm-profile-delete-button", Button)
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_profile_repository_io_is_threaded_and_selected_profile_restores(
-    monkeypatch, tmp_path: Path
+    request, monkeypatch, tmp_path: Path
 ):
     path = tmp_path / "vllm_launch_profiles.json"
     repo = VllmProfileRepository(path)
@@ -1670,7 +1760,10 @@ async def test_profile_repository_io_is_threaded_and_selected_profile_restores(
         assert current_server_claim(app, "vllm") is None
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_restart_proves_old_process_dead_and_released_before_new_generation(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -1765,7 +1858,11 @@ async def test_restart_proves_old_process_dead_and_released_before_new_generatio
         assert order == ["stop", "reserve", "launch"]
 
 
-async def test_mounted_edit_check_and_restart_uses_exact_live_claim(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mounted_edit_check_and_restart_uses_exact_live_claim(
+    request, monkeypatch
+):
     """Exercise the user-visible edit → Check draft → Restart path."""
 
     app = _build_test_app()
@@ -1836,7 +1933,10 @@ async def test_mounted_edit_check_and_restart_uses_exact_live_claim(monkeypatch)
         assert release_server_claim(app, "vllm", new_claim)
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_restart_termination_failure_keeps_old_snapshot_and_never_reserves(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -1895,7 +1995,11 @@ async def test_restart_termination_failure_keeps_old_snapshot_and_never_reserves
         assert screen._vllm_owner.snapshot().state is VllmReadinessState.NEEDS_ATTENTION
 
 
-async def test_source_specific_controls_and_mode_drafts_are_preserved():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_source_specific_controls_and_mode_drafts_are_preserved(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -1925,7 +2029,11 @@ async def test_source_specific_controls_and_mode_drafts_are_preserved():
         ).display
 
 
-async def test_vllm_inputs_use_shared_lexical_caps_and_restore_rejected_events():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_vllm_inputs_use_shared_lexical_caps_and_restore_rejected_events(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -1972,7 +2080,10 @@ async def test_vllm_inputs_use_shared_lexical_caps_and_restore_rejected_events()
         ("#vllm-gpu-memory-utilization", "gpu_memory_utilization", "1."),
     ),
 )
+@pytest.mark.asyncio
+@private_profile_test
 async def test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness(
+    request,
     selector: str,
     field: str,
     lexeme: str,
@@ -2003,7 +2114,11 @@ async def test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness(
         assert view.preflight is None
 
 
-async def test_numeric_action_boundary_normalizes_exact_values_before_messages():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_numeric_action_boundary_normalizes_exact_values_before_messages(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -2061,7 +2176,11 @@ async def test_numeric_action_boundary_normalizes_exact_values_before_messages()
         assert view.draft == started
 
 
-async def test_invalid_numeric_action_stays_adjacent_and_posts_no_raw_draft():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_invalid_numeric_action_stays_adjacent_and_posts_no_raw_draft(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -2086,7 +2205,11 @@ async def test_invalid_numeric_action_stays_adjacent_and_posts_no_raw_draft():
         assert "1 to 65535" in str(help_label.renderable)
 
 
-async def test_programmatic_state_projection_resets_numeric_lexemes_from_draft():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_programmatic_state_projection_resets_numeric_lexemes_from_draft(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -2121,7 +2244,11 @@ async def test_programmatic_state_projection_resets_numeric_lexemes_from_draft()
         assert view.query_one("#vllm-gpu-memory-utilization", Input).value == "0.75"
 
 
-async def test_numeric_action_revalidates_forged_hydration_without_echo():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_numeric_action_revalidates_forged_hydration_without_echo(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -2148,7 +2275,10 @@ async def test_numeric_action_revalidates_forged_hydration_without_echo():
     "invalid_arguments",
     ("RAW_ARGUMENT_CANARY\x00", "RAW_ARGUMENT_CANARY" + "x" * (16 * 1024)),
 )
+@pytest.mark.asyncio
+@private_profile_test
 async def test_vllm_raw_arguments_reject_nul_or_oversize_without_echo(
+    request,
     invalid_arguments: str,
 ):
     app = _VllmHost()
@@ -2172,7 +2302,11 @@ async def test_vllm_raw_arguments_reject_nul_or_oversize_without_echo(
         assert "RAW_ARGUMENT_CANARY" not in str(help_label.renderable)
 
 
-async def test_vllm_raw_arguments_preserve_blank_and_nonblank_text_exactly():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_vllm_raw_arguments_preserve_blank_and_nonblank_text_exactly(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -2192,7 +2326,11 @@ async def test_vllm_raw_arguments_preserve_blank_and_nonblank_text_exactly():
         assert view.draft.raw_arguments == "  --enable-prefix-caching  "
 
 
-async def test_vllm_semantic_classes_and_input_caps_are_mounted():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_vllm_semantic_classes_and_input_caps_are_mounted(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
@@ -2218,7 +2356,11 @@ async def test_vllm_semantic_classes_and_input_caps_are_mounted():
             assert button.has_class("vllm-focus-target")
 
 
-async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_success():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_success(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
@@ -2269,7 +2411,11 @@ async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_
         assert app.query_one("#vllm-raw-arguments-help", Label).display
 
 
-async def test_lifecycle_projection_enables_stop_only_while_runtime_is_active():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_lifecycle_projection_enables_stop_only_while_runtime_is_active(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
@@ -2302,7 +2448,11 @@ def _bind_local_claim(owner: VllmConnectionOwner, token) -> ServerLaunchClaim:
     return claim
 
 
-async def test_child_view_requires_explicit_profile_hydration_for_ready_projection():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_child_view_requires_explicit_profile_hydration_for_ready_projection(
+    request,
+):
     """A newly mounted child cannot infer that app-scoped READY is reconciled."""
 
     app = _VllmHost()
@@ -2369,7 +2519,11 @@ async def test_child_view_requires_explicit_profile_hydration_for_ready_projecti
         assert view.query_one("#vllm-make-default", Button).display
 
 
-async def test_mounted_activity_renders_ready_and_expands_bounded_failure():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mounted_activity_renders_ready_and_expands_bounded_failure(
+    request,
+):
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
@@ -2438,7 +2592,11 @@ async def _mount_vllm_screen(
     raise AssertionError("vLLM setup view did not mount")
 
 
-async def test_fresh_screen_initial_hydration_preserves_exact_live_ready_target():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_fresh_screen_initial_hydration_preserves_exact_live_ready_target(
+    request,
+):
     """Loading the bound saved profile must not treat its placeholder as an edit."""
 
     app = _build_test_app()
@@ -2469,7 +2627,10 @@ async def test_fresh_screen_initial_hydration_preserves_exact_live_ready_target(
         assert not view.query_one("#vllm-use-console", Button).disabled
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
+    request,
     monkeypatch,
     tmp_path: Path,
 ):
@@ -2727,7 +2888,10 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
             release_second_load.set()
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_delayed_profile_hydration_interaction_fence_preserves_exact_ready(
+    request,
     monkeypatch,
     tmp_path: Path,
 ):
@@ -2862,7 +3026,10 @@ async def test_delayed_profile_hydration_interaction_fence_preserves_exact_ready
         assert not view.query_one("#vllm-use-console", Button).disabled
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_fresh_screen_profile_load_failure_invalidates_ready_with_recovery(
+    request,
     monkeypatch,
 ):
     """An unreadable profile store cannot leave inherited READY actions usable."""
@@ -2927,7 +3094,10 @@ async def test_fresh_screen_profile_load_failure_invalidates_ready_with_recovery
 
 
 @pytest.mark.parametrize("liveness", ("cancelled", "dead", "poll_exception"))
+@pytest.mark.asyncio
+@private_profile_test
 async def test_staged_owned_handoff_is_discarded_without_positive_liveness(
+    request,
     monkeypatch,
     liveness: str,
 ):
@@ -3028,7 +3198,10 @@ async def test_staged_owned_handoff_is_discarded_without_positive_liveness(
 
 
 @pytest.mark.parametrize("receipt_state", ("pending", "in_flight"))
+@pytest.mark.asyncio
+@private_profile_test
 async def test_exact_external_handoff_preserves_ready_departure(
+    request,
     monkeypatch,
     receipt_state: str,
 ):
@@ -3084,7 +3257,11 @@ async def test_exact_external_handoff_preserves_ready_departure(
         assert app.pending_handoffs.acknowledge(claim)
 
 
-async def test_superseded_external_handoff_cannot_preserve_ready_departure(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_superseded_external_handoff_cannot_preserve_ready_departure(
+    request, monkeypatch
+):
     """A newer unrelated value on the same channel does not own this departure."""
 
     from tldw_chatbook.Constants import TAB_CHAT
@@ -3135,7 +3312,11 @@ async def test_superseded_external_handoff_cannot_preserve_ready_departure(monke
         assert app.pending_handoffs.acknowledge(unrelated_claim)
 
 
-async def test_external_handoff_revision_lookup_error_fails_closed(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_external_handoff_revision_lookup_error_fails_closed(
+    request, monkeypatch
+):
     """An indeterminate exact-revision lookup cannot preserve external READY."""
 
     from tldw_chatbook.Constants import TAB_CHAT
@@ -3189,7 +3370,10 @@ async def test_external_handoff_revision_lookup_error_fails_closed(monkeypatch):
     "receipt_case",
     ("mixed_stale_valid", "lookup_error_valid", "no_valid"),
 )
+@pytest.mark.asyncio
+@private_profile_test
 async def test_external_departure_receipts_are_validated_independently(
+    request,
     monkeypatch,
     receipt_case: str,
 ):
@@ -3297,7 +3481,10 @@ async def test_external_departure_receipts_are_validated_independently(
             assert app.pending_handoffs.claim(HandoffChannel.VLLM_DEFAULT) is None
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_staged_owned_handoff_survives_exact_live_unmount_for_consumption(
+    request,
     monkeypatch,
 ):
     """The exact uncancelled live claim remains consumable after departure."""
@@ -3351,7 +3538,10 @@ async def test_staged_owned_handoff_survives_exact_live_unmount_for_consumption(
         assert clear_server_process(app, "vllm", claim, process)
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_fresh_screen_mismatched_profile_invalidates_ready_target_safely(
+    request,
     monkeypatch,
     tmp_path: Path,
 ):
@@ -3407,7 +3597,11 @@ async def test_fresh_screen_mismatched_profile_invalidates_ready_target_safely(
         )
 
 
-async def test_mounted_draft_edit_fences_old_readiness_generation():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mounted_draft_edit_fences_old_readiness_generation(
+    request,
+):
     app = _build_test_app()
     async with app.run_test(size=(235, 52)) as pilot:
         screen, _, view = await _mount_vllm_screen(app, pilot)
@@ -3445,7 +3639,11 @@ async def test_mounted_draft_edit_fences_old_readiness_generation():
         assert raw_edit.activity[-1].code == "target_changed"
 
 
-async def test_mounted_external_selection_starts_fresh_exact_probe(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mounted_external_selection_starts_fresh_exact_probe(
+    request, monkeypatch
+):
     app = _build_test_app()
     async with app.run_test(size=(235, 52)) as pilot:
         screen, _, view = await _mount_vllm_screen(app, pilot)
@@ -3514,7 +3712,10 @@ async def test_mounted_external_selection_starts_fresh_exact_probe(monkeypatch):
         assert selector.value == "org/second"
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_external_changed_list_requires_fresh_bounded_rediscovery(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -3598,7 +3799,11 @@ async def test_mounted_external_changed_list_requires_fresh_bounded_rediscovery(
         assert exact_starts[0][2] is None
 
 
-async def test_mounted_cancel_check_only_cancels_current_generation():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mounted_cancel_check_only_cancels_current_generation(
+    request,
+):
     class _PendingWorker:
         is_finished = False
 
@@ -3631,7 +3836,11 @@ async def test_mounted_cancel_check_only_cancels_current_generation():
         assert snapshot.activity[-1].code == "cancelled"
 
 
-async def test_mounted_profile_validation_error_is_field_adjacent():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mounted_profile_validation_error_is_field_adjacent(
+    request,
+):
     app = _build_test_app()
     async with app.run_test(size=(235, 52)) as pilot:
         screen, _, view = await _mount_vllm_screen(app, pilot)
@@ -3646,7 +3855,10 @@ async def test_mounted_profile_validation_error_is_field_adjacent():
         assert app.focused is view.query_one("#vllm-profile-name", Input)
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_python_environment_browse_updates_the_guided_field(
+    request,
     monkeypatch,
 ):
     """Use the established file picker and return only to the current pane."""
@@ -3681,7 +3893,11 @@ async def test_mounted_python_environment_browse_updates_the_guided_field(
         assert view.query_one("#vllm-python-environment", Input).value == str(selected)
 
 
-async def test_outer_lab_chrome_tracks_verified_vllm_context_without_focus_theft():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_outer_lab_chrome_tracks_verified_vllm_context_without_focus_theft(
+    request,
+):
     """Project the active vLLM profile, target, scope, and next action in Lab."""
 
     app = _build_test_app()
@@ -3777,7 +3993,11 @@ async def test_outer_lab_chrome_tracks_verified_vllm_context_without_focus_theft
         )
 
 
-async def test_mounted_recomposition_preserves_exact_readiness_but_detach_invalidates():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mounted_recomposition_preserves_exact_readiness_but_detach_invalidates(
+    request,
+):
     app = _build_test_app()
     async with app.run_test(size=(235, 52)) as pilot:
         screen, _, _ = await _mount_vllm_screen(app, pilot)
@@ -3825,7 +4045,11 @@ async def test_mounted_recomposition_preserves_exact_readiness_but_detach_invali
         assert detached.activity[-1].code == "screen_detached"
 
 
-async def test_stop_before_process_publication_settles_cancel_and_retry_refuses_claim():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_stop_before_process_publication_settles_cancel_and_retry_refuses_claim(
+    request,
+):
     """Catch a cancelled reservation leaving Retry indefinitely loading."""
 
     app = _build_test_app()
@@ -3864,7 +4088,11 @@ async def test_stop_before_process_publication_settles_cancel_and_retry_refuses_
         assert release_server_claim(app, "vllm", claim)
 
 
-async def test_live_owned_claim_keeps_stop_enabled_across_edit_and_screen_replacement():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_live_owned_claim_keeps_stop_enabled_across_edit_and_screen_replacement(
+    request,
+):
     """Catch editable connection state hiding an app-owned live process."""
 
     app = _build_test_app()
@@ -3918,7 +4146,9 @@ async def test_live_owned_claim_keeps_stop_enabled_across_edit_and_screen_replac
         assert clear_server_process(app, "vllm", claim, process)
 
 
-async def test_preflight_issue_settles_owner_view_and_recovery(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_preflight_issue_settles_owner_view_and_recovery(request, monkeypatch):
     """Catch a preflight failure existing only in the mounted view."""
 
     app = _build_test_app()
@@ -3971,7 +4201,11 @@ async def test_preflight_issue_settles_owner_view_and_recovery(monkeypatch):
         )
 
 
-async def test_probe_deadline_reports_overall_thirty_second_elapsed_bucket(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_probe_deadline_reports_overall_thirty_second_elapsed_bucket(
+    request, monkeypatch
+):
     """A final retry must not report only its own sub-second attempt duration."""
 
     import tldw_chatbook.UI.Screens.llm_screen as llm_screen_module
@@ -4023,7 +4257,10 @@ async def test_probe_deadline_reports_overall_thirty_second_elapsed_bucket(monke
         ) == ("health_timeout", "30s_or_more")
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_vllm_failure_details_never_cross_logs_notifications_or_global_state(
+    request,
     caplog,
 ):
     """Exception details must stop below every app-wide lifecycle surface."""
@@ -4091,7 +4328,11 @@ async def test_vllm_failure_details_never_cross_logs_notifications_or_global_sta
             assert canary not in all_surfaces
 
 
-async def test_vllm_handoff_intents_are_secret_free_exact_and_strict():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_vllm_handoff_intents_are_secret_free_exact_and_strict(
+    request,
+):
     """A looser value type or copied extras would cross the screen boundary."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import (
@@ -4160,7 +4401,11 @@ async def test_vllm_handoff_intents_are_secret_free_exact_and_strict():
         )
 
 
-async def test_vllm_handoff_intents_reject_mutable_string_subclasses():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_vllm_handoff_intents_reject_mutable_string_subclasses(
+    request,
+):
     """Exact handoff text must not retain subclass attributes or behavior."""
 
     from tldw_chatbook.UI.Navigation.vllm_handoff import (
@@ -4184,7 +4429,11 @@ async def test_vllm_handoff_intents_reject_mutable_string_subclasses():
             )
 
 
-async def test_handoff_buttons_enable_only_for_current_verified_target():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_handoff_buttons_enable_only_for_current_verified_target(
+    request,
+):
     """Stale readiness must never leave either cross-screen action enabled."""
 
     app = _VllmHost()
@@ -4234,7 +4483,11 @@ async def test_handoff_buttons_enable_only_for_current_verified_target():
         (VllmReadinessState.NEEDS_ATTENTION, "vllm-recovery-primary"),
     ],
 )
-async def test_explicit_vllm_state_transition_focuses_phase_action(state, target_id):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_explicit_vllm_state_transition_focuses_phase_action(
+    request, state, target_id
+):
     """Lifecycle focus lands on the action that advances or repairs the state."""
 
     app = _VllmHost()
@@ -4277,7 +4530,10 @@ async def test_explicit_vllm_state_transition_focuses_phase_action(state, target
         assert app.focused.id == target_id
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation(
+    request,
     monkeypatch,
 ):
     """A stale target or failed dispatch must not survive as a pending handoff."""

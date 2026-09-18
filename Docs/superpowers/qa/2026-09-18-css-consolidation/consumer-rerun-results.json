@@ -1,0 +1,746 @@
+[
+  {
+    "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/001",
+    "classes": [
+      "BackupRestoreScreen"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/002",
+    "classes": [
+      "BackupRestoreScreen"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/UI/test_backup_restore_screen.py::test_password_mismatch_stays_in_view_and_inputs_clear_on_back",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_backup_restore_screen.py::test_password_mismatch_stays_in_view_and_inputs_clear_on_back",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_backup_restore_screen.py::test_password_mismatch_stays_in_view_and_inputs_clear_on_back",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_backup_restore_screen.py::test_password_mismatch_stays_in_view_and_inputs_clear_on_back",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/003",
+    "classes": [
+      "BackupRestoreScreen"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/004",
+    "classes": [
+      "ConsoleSaveMarkdownModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/005",
+    "classes": [
+      "ConsoleSaveMarkdownModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/006",
+    "classes": [
+      "ConsoleSaveMarkdownModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/007",
+    "classes": [
+      "ConsoleSaveMarkdownModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/008",
+    "classes": [
+      "WorkspaceArchiveReceiptModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/009",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_validation_inline",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_validation_inline",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_validation_inline",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_validation_inline",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/010",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/011",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_hides_error_banner_on_untouched_blank_form",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_hides_error_banner_on_untouched_blank_form",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_hides_error_banner_on_untouched_blank_form",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_hides_error_banner_on_untouched_blank_form",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/012",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_error_banner_after_first_edit",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_error_banner_after_first_edit",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_error_banner_after_first_edit",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_shows_error_banner_after_first_edit",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/013",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_from_entry_preselects_same_family_starter",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_from_entry_preselects_same_family_starter",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_from_entry_preselects_same_family_starter",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_from_entry_preselects_same_family_starter",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/014",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_builtin_template_provider_unchanged",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_builtin_template_provider_unchanged",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_builtin_template_provider_unchanged",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_builtin_template_provider_unchanged",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/015",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_llama_url_placeholder_explains_both_defaults",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_llama_url_placeholder_explains_both_defaults",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_llama_url_placeholder_explains_both_defaults",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_llama_url_placeholder_explains_both_defaults",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/016",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_prefill_filters_placeholder_model_sentinels",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_prefill_filters_placeholder_model_sentinels",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_prefill_filters_placeholder_model_sentinels",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_prefill_filters_placeholder_model_sentinels",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/017",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_parsed_models_drop_placeholder_entries",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_parsed_models_drop_placeholder_entries",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_parsed_models_drop_placeholder_entries",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_parsed_models_drop_placeholder_entries",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/018",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_rederives_slug_when_concurrent_create_takes_it",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_rederives_slug_when_concurrent_create_takes_it",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_rederives_slug_when_concurrent_create_takes_it",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_rederives_slug_when_concurrent_create_takes_it",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/019",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhaust",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhaust",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhaust",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhaust",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/020",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/021",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_create_runs_registry_derivation_off_the_event_loop",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_create_runs_registry_derivation_off_the_event_loop",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_create_runs_registry_derivation_off_the_event_loop",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_create_runs_registry_derivation_off_the_event_loop",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/022",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_carries_env_ref_and_copy_name",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/023",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  },
+  {
+    "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_prefill_respects_display_name_limit",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_prefill_respects_display_name_limit",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_prefill_respects_display_name_limit",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_duplicate_prefill_respects_display_name_limit",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32813-consumer-rerun-003/024",
+    "classes": [
+      "ConsoleEndpointTemplateModal"
+    ],
+    "mismatches": 0,
+    "outcome_evidence": "Pytest phase reports: one passing call, no xfail, clean process."
+  }
+]

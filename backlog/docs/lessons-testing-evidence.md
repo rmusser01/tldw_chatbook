@@ -1,5 +1,15 @@
 # Lessons: what counts as evidence a change works
 
+## CSS consolidation must include standalone production hosts
+
+**TASK-32813, 2026-09-18.** Moving BackupRestoreScreen defaults into the main
+app's generated sheets left the separate RecoveryApp unstyled. The real
+recovery subprocess caught it; a main-app test alone could not. Register that
+screen's existing bundled CSS at its native default scope/tier in the standalone
+host. Keep the child test's patch on native `textual.app.App.run` and assert
+computed geometry on the actual RecoveryApp. Test hosts also need the split
+feature sheets; resolve real screen CSS_PATH sequences before calling them bare.
+
 ## A redraw highlight can arrive after the refresh callback that released its guard
 
 **TASK-32796, 2026-09-18.** MCP server navigation cleared tool/finding details,

@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+1.03s call     Tests/UI/test_backup_restore_screen.py::test_invalid_backup_filename_review_explains_suffix_and_disables_create[True]
+
+(2 durations < 1s hidden.)
+1 passed in 1.81s

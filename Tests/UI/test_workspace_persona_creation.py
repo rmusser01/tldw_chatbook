@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.Workspaces.test_agent_provisioning import StubPersonaService, build
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 from tldw_chatbook.Widgets.workspace_persona_default import WorkspacePersonaChoice

@@ -22,9 +22,9 @@ def _disable_model_catalog_refresh():
 async def test_preserved_builtin_safety_scope_is_explicit_and_target_bound(
     complete_builtin_case, tmp_path, monkeypatch, change_target
 ):
-    from textual.app import App
     from textual.widgets import Button, Input, Select
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 

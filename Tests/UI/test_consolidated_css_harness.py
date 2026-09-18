@@ -32,6 +32,7 @@ from Tests.UI.consolidated_css import (
     ConsolidatedCSSApp,
 )
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import (
     NoteSelectionDialog,
 )
@@ -358,6 +359,7 @@ def _module_string_literals(tree: ast.AST) -> str:
 _REAL_SHEET_SEQUENCES: dict[str, tuple[Path, ...]] = {
     "APP_STYLESHEETS": tuple(APP_STYLESHEETS),
     "TldwCli.CSS_PATH": tuple(Path(entry) for entry in TldwCli.CSS_PATH),
+    "LibraryScreen.CSS_PATH": tuple(Path(entry) for entry in LibraryScreen.CSS_PATH),
 }
 
 
@@ -571,3 +573,15 @@ def test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone():
         "use CSS_PATH = [str(p) for p in APP_STYLESHEETS]"
         for path, cls, sheet, used in findings
     )
+
+
+def test_harness_scan_resolves_real_library_sheet_sequence():
+    """A Library screen path includes its split sheet; app paths alone do not."""
+    for expression, expected in (
+        ("[*TldwCli.CSS_PATH, *LibraryScreen.CSS_PATH]", True),
+        ("[*TldwCli.CSS_PATH]", False),
+    ):
+        source = "CSS_PATH = " + expression
+        tree = ast.parse(source)
+        expanded = _expanded_css_path_source(tree.body[0].value, tree, source)
+        assert ("screen_agentic_library.tcss" in expanded) is expected
