@@ -1,11 +1,11 @@
 {
   "_comment": "Boot-parsed CSS byte census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "total": 583097,
+  "total": 583433,
   "per_source": {
     "screen_css_scoped.tcss": 15072,
     "screen_css_self.tcss": 2477,
     "tldw_cli_modular.tcss": 397525,
-    "widget_defaults_scoped.tcss": 79730,
+    "widget_defaults_scoped.tcss": 80066,
     "widget_defaults_self.tcss": 88293
   },
   "per_segment": {
@@ -106,7 +106,7 @@
     "widget_defaults_scoped.tcss::BuddyWorkspaceModal (Widgets/Persona_Widgets/buddy_workspace_modal.py)": 824,
     "widget_defaults_scoped.tcss::ConflictsTab (UI/Screens/scheduling/conflicts_tab.py)": 626,
     "widget_defaults_scoped.tcss::ConsoleActivityOutcomeNotice (Widgets/Console/console_activity_outcome_notice.py)": 584,
-    "widget_defaults_scoped.tcss::ConsoleAppearancePickerModal (Widgets/Console/console_appearance_picker_modal.py)": 2452,
+    "widget_defaults_scoped.tcss::ConsoleAppearancePickerModal (Widgets/Console/console_appearance_picker_modal.py)": 2788,
     "widget_defaults_scoped.tcss::ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py)": 2307,
     "widget_defaults_scoped.tcss::ConsoleEditThinkingModal (Widgets/Console/console_edit_message_modal.py)": 1042,
     "widget_defaults_scoped.tcss::ConsoleFeedbackCommentModal (Widgets/Console/console_feedback_comment_modal.py)": 1008,

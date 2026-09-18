@@ -91,6 +91,9 @@ def _class_css_blocks(
     root = _PACKAGE_ROOT if root is None else root
     wanted = {"DEFAULT_CSS", "CSS", widget_css.WIDGET_ATTR, widget_css.SCREEN_ATTR}
     blocks: list[tuple[str, str, str]] = []
+    central_tokens = widget_css.resolve_variable_definitions(
+        build_css.design_token_preamble(_CSS_ROOT)
+    )
     for path in sorted(root.rglob("*.py")):
         relative = path.relative_to(root)
         if any(part in excluded_dirs for part in relative.parts):
@@ -109,7 +112,16 @@ def _class_css_blocks(
                     continue
                 value = stmt.value
                 if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                    blocks.append((relative.as_posix(), node.name, value.value))
+                    css = value.value
+                    if widget_css.WIDGET_ATTR in names:
+                        # BUNDLED_CSS receives central tokens at build time;
+                        # DEFAULT_CSS/CSS must still parse independently.
+                        css = widget_css.isolate_local_variables(
+                            css,
+                            scope=node.name,
+                            variables=central_tokens,
+                        )
+                    blocks.append((relative.as_posix(), node.name, css))
     return blocks
 
 
@@ -372,6 +384,46 @@ def test_local_variable_definitions_do_not_leak_across_blocks():
     assert exercised, (
         "neither stream carried the fixture blocks -- the guard is vacuous"
     )
+
+
+@private_profile_test
+def test_widget_build_resolves_central_tokens_without_leaking_local_overrides(
+    request, tmp_path, monkeypatch
+):
+    """Central aliases stay theme-aware and each widget keeps its own scope."""
+    css_dir = tmp_path / "css"
+    core = css_dir / "core"
+    core.mkdir(parents=True)
+    tokens = core / "_variables.tcss"
+    blocks = [
+        widget_css.BundledBlock(
+            "a.py",
+            "Alpha",
+            1,
+            "$ds-height: 7; Alpha { height: $ds-height; background: $ds-panel; }",
+        ),
+        widget_css.BundledBlock(
+            "b.py", "Bravo", 1, "Bravo { height: $ds-height; background: $ds-panel; }"
+        ),
+    ]
+    monkeypatch.setattr(widget_css, "iter_blocks", lambda *args: blocks)
+    own, scoped = css_dir / "self.tcss", css_dir / "scoped.tcss"
+    for height in (3, 5):
+        tokens.write_text(
+            f"$ds-base: {height};\n$ds-height: $ds-base;\n$ds-panel: $panel;\n"
+        )
+        build_css.build_widget_defaults(css_dir, own, scoped)
+        output = own.read_text() + scoped.read_text()
+        assert "$ds-" not in output
+        assert f"Bravo {{ height: {height}; background: $panel; }}" in output
+        assert "Alpha { height: 7; background: $panel; }" in output
+        for theme in ("textual-dark", "textual-light"):
+            app = App()
+            app.theme = theme
+            sheet = Stylesheet(variables=app.get_css_variables())
+            sheet.add_source(output, read_from=("central-token-fixture", ""))
+            sheet.parse()
+            assert len(sheet.rules) == 2
 
 
 _BANNER_RE = re.compile(r"/\* ===== WIDGET: (\S+) \(\S+\) ===== \*/")

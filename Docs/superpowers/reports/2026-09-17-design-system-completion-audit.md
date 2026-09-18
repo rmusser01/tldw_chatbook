@@ -202,3 +202,23 @@ composer hints. Two additional archive send tests fail before composer mount
 on both saved and modified source because their fake gateway lacks the current
 context-window method; TASK-32817 tracks that separate test contract. This
 nonvisual fix does not claim all shutdown paths or a new native gallery.
+
+
+TASK-32816 repairs the compact Appearance layout preserved above. Its
+[eight inspected native captures and targeted evidence](../qa/2026-09-18-console-appearance/README.md)
+qualify dark/light 80×24/170×48 action visibility, readable palette labels,
+twelve-icon first rows, slow search typing, palette access and cancellation.
+Mounted tests preserve Apply/Clear result behavior. Central tokens now resolve
+at build time into the existing widget-default streams; only Appearance's
+generated rules change. Bytes are 583,433/608,090, with selector/source limits
+unchanged. Nine final native source hashes were rechecked; private shutdown,
+databases and unchanged defaults were independently verified.
+
+TASK-32818 isolates host system-audio probing only in the CSS-tour test builder.
+The initial two tour timeouts are retained: Meetings compiled a macOS helper
+in an executor that pytest drained after the test passed. With that external
+probe isolated, both unchanged fifteen-destination/source-budget journeys pass
+and exit normally. Production audio compilation is outside this qualification.
+TASK-32817's archive fixture contract, Roleplay recovery styling and the wider
+MCP/Persona/Personal Context review remain open. PR2707 stays draft/unmerged;
+all applicable checks passed on saved b76e759, with new-head checks separate.

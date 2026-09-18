@@ -697,7 +697,28 @@ def _substitute_local_variables(
     )
 
 
-def isolate_local_variables(css: str, *, scope: str = "") -> str:
+def resolve_variable_definitions(css: str) -> dict[str, str]:
+    """Resolve a declaration-only preamble once, preserving theme references.
+
+    Args:
+        css: Ordered central token declarations, without style rules.
+
+    Returns:
+        Resolved values for initializing an isolated block's variables.
+    """
+    segments = _split_opaque_spans(css)
+    variables: dict[str, str] = {}
+    remaining = _consume_variable_defs(
+        segments, variables, _collect_declared_names(segments), "design tokens"
+    )
+    if remaining.strip():
+        raise ValueError("Design token preamble must contain only declarations")
+    return variables
+
+
+def isolate_local_variables(
+    css: str, *, scope: str = "", variables: dict[str, str] | None = None
+) -> str:
     """Inline and strip one block's own top-level ``$name: value;`` declarations.
 
     Textual resolves ``$variable`` references with a single left-to-right
@@ -744,6 +765,8 @@ def isolate_local_variables(css: str, *, scope: str = "") -> str:
             ``BUNDLED_SCREEN_CSS`` class attribute.
         scope: The declaring class's name, used only to name the block in a
             forward-reference error message.
+        variables: Resolved central tokens. Copied before resolving this
+            block so local overrides cannot change another block's values.
 
     Returns:
         The same CSS with local variable declarations inlined and removed.
@@ -756,7 +779,7 @@ def isolate_local_variables(css: str, *, scope: str = "") -> str:
     segments = _split_opaque_spans(css)
     declared_names = _collect_declared_names(segments)
 
-    local_vars: dict[str, str] = {}
+    local_vars = dict(variables or {})
     out: list[str] = []
     pending: list[tuple[str, str]] = []
     body: list[tuple[str, str]] = []
@@ -928,7 +951,11 @@ def without_source_comments(css: str) -> str:
 
 
 def render_stylesheets(
-    blocks: list[BundledBlock], title: str, *, scope_every_selector: bool = False
+    blocks: list[BundledBlock],
+    title: str,
+    *,
+    scope_every_selector: bool = False,
+    variables: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Render collected blocks as the two generated stylesheets.
 
@@ -937,6 +964,7 @@ def render_stylesheets(
         title: Human-readable description for the generated headers.
         scope_every_selector: Scope every selector of a comma-separated list
             rather than reproducing Textual's last-selector-only quirk.
+        variables: Resolved central tokens to seed each isolated block.
 
     Returns:
         ``(self_sheet, scoped_sheet)`` -- see :func:`split_scoped_css` for what
@@ -963,7 +991,9 @@ def render_stylesheets(
         # fallbacks *before* splitting/scoping, so they cannot leak into a
         # later block's rules once every block lands in the same generated
         # file -- see `isolate_local_variables`.
-        isolated_css = isolate_local_variables(block.css, scope=block.class_name)
+        isolated_css = isolate_local_variables(
+            block.css, scope=block.class_name, variables=variables
+        )
         split = split_scoped_css(
             isolated_css, block.class_name, scope_every_selector=scope_every_selector
         )

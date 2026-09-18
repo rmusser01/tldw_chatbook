@@ -1,0 +1,19 @@
+"""Diagnostic-only timed stacks for the private-profile tour process."""
+import faulthandler
+import os
+from pathlib import Path
+
+_stream = None
+
+
+def pytest_sessionstart(session):
+    global _stream
+    if os.environ.get('TLDW_TEST_PRIVATE_PROFILE_NODE'):
+        _stream = (Path(os.environ['HOME']).parent / 'teardown-stacks.txt').open('w')
+        faulthandler.dump_traceback_later(60, repeat=True, file=_stream)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if _stream is not None:
+        faulthandler.cancel_dump_traceback_later()
+        _stream.close()

@@ -1,0 +1,193 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__ test_widget_build_resolves_central_tokens_without_leaking_local_overrides ___
+
+self = <Coroutine test_widget_build_resolves_central_tokens_without_leaking_local_overrides>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_widget_build_resolves_central_tokens_without_leaking_local_overrides>>.../pytest-2398/test_widget_build_resolves_cen0'), 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a1f3230>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2398/test_widget_build_resolves_cen0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           __ test_widget_build_resolves_central_tokens_without_leaking_local_overrides ___
+E           
+E           request = <FixtureRequest for <Coroutine test_widget_build_resolves_central_tokens_without_leaking_local_overrides>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2398/test_widget_build_resolves_cen0/private-profile-process/pytest/test_widget_build_resolves_cen0')
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c6bb2f0>
+E           
+E               @private_profile_test
+E               def test_widget_build_resolves_central_tokens_without_leaking_local_overrides(request, tmp_path, monkeypatch):
+E                   """Central aliases stay theme-aware and each widget keeps its own scope."""
+E                   css_dir = tmp_path / "css"
+E                   core = css_dir / "core"
+E                   core.mkdir(parents=True)
+E                   tokens = core / "_variables.tcss"
+E                   blocks = [
+E                       widget_css.BundledBlock("a.py", "Alpha", 1,
+E                           "$ds-height: 7; Alpha { height: $ds-height; background: $ds-panel; }"),
+E                       widget_css.BundledBlock("b.py", "Bravo", 1,
+E                           "Bravo { height: $ds-height; background: $ds-panel; }"),
+E                   ]
+E                   monkeypatch.setattr(widget_css, "iter_blocks", lambda *args: blocks)
+E                   own, scoped = css_dir / "self.tcss", css_dir / "scoped.tcss"
+E                   for height in (3, 5):
+E                       tokens.write_text(f"$ds-base: {height};\n$ds-height: $ds-base;\n$ds-panel: $panel;\n")
+E                       build_css.build_widget_defaults(css_dir, own, scoped)
+E                       output = own.read_text() + scoped.read_text()
+E           >           assert "$ds-" not in output
+E           E           AssertionError: assert '$ds-' not in '/* ========...======= */\n'
+E           E             
+E           E             '$ds-' is contained here:
+E           E               ckground: $ds-panel; }
+E           E             ?           ++++
+E           E               
+E           E               /* ===== WIDGET: Bravo (b.py) ===== */
+E           E               Bravo { height: $ds-height; background: $ds-panel; }...
+E           E             
+E           E             ...Full output truncated (9 lines hidden), use '-vv' to show
+E           
+E           Tests/UI/test_widget_css_consolidation.py:397: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 12:30:12.746 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E           2026-09-18 12:30:12.811 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2398/test_widget_build_resolves_cen0/private-profile-process/profile/config/config.toml
+E           2026-09-18 12:30:12.813 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6158 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2398/test_widget_build_resolves_cen0/private-profile-process/profile/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+E           2026-09-18 12:30:12.815 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6167 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2398/test_widget_build_resolves_cen0/private-profile-process/profile/config/config.toml
+E           2026-09-18 12:30:12.815 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6234 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+E           2026-09-18 12:30:12.816 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6238 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E           2026-09-18 12:30:12.839 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 12:30:12.840 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 12:30:12.841 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-09-18 12:30:12.843 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-09-18 12:30:12.943 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2398/test_widget_build_resolves_cen0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-09-18 12:30:12.944 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E           2026-09-18 12:30:12.945 | INFO     | tldw_chatbook.config:<module>:9748 - Default API Endpoint (from config.py global scope): openai
+E           2026-09-18 12:30:12.946 | DEBUG    | tldw_chatbook.config:<module>:9771 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E           2026-09-18 12:30:13.928 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 12:30:13.955 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 12:30:14.172 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 12:30:14.879 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 12:30:14.880 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 12:30:14.881 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 12:30:15.535 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 12:30:16.989 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stdout call -----------------------------
+E           Widget defaults build complete
+E           Widget defaults: 2 classes, 640 + 464 characters
+E           ============================= slowest 25 durations =============================
+E           5.12s setup    Tests/UI/test_widget_css_consolidation.py::test_widget_build_resolves_central_tokens_without_leaking_local_overrides
+E           
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_widget_css_consolidation.py::test_widget_build_resolves_central_tokens_without_leaking_local_overrides
+E           1 failed in 6.17s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 12:30:08.705 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-18 12:30:08.843 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_46lc8aiy/config/config.toml
+2026-09-18 12:30:08.844 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6158 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_46lc8aiy/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-18 12:30:08.846 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6167 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_46lc8aiy/config/config.toml
+2026-09-18 12:30:08.846 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6234 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-18 12:30:08.847 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6238 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-18 12:30:08.857 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 12:30:08.858 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 12:30:08.859 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-18 12:30:08.860 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-18 12:30:09.034 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_46lc8aiy/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-18 12:30:09.034 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+2026-09-18 12:30:09.035 | INFO     | tldw_chatbook.config:<module>:9748 - Default API Endpoint (from config.py global scope): openai
+2026-09-18 12:30:09.036 | DEBUG    | tldw_chatbook.config:<module>:9771 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-18 12:30:09.783 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 12:30:09.796 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 12:30:10.088 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 12:30:10.658 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 12:30:10.659 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 12:30:10.660 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+8.92s call     Tests/UI/test_widget_css_consolidation.py::test_widget_build_resolves_central_tokens_without_leaking_local_overrides
+3.00s setup    Tests/UI/test_widget_css_consolidation.py::test_widget_build_resolves_central_tokens_without_leaking_local_overrides
+
+(1 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_widget_css_consolidation.py::test_widget_build_resolves_central_tokens_without_leaking_local_overrides
+1 failed in 12.83s

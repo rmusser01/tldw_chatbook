@@ -1,0 +1,31 @@
+Observed excerpt from the child faulthandler output at 120 seconds.
+The temporary pytest directory was removed before archival; this is a
+transcription of frames returned by exec, not the original complete trace file.
+
+Worker:
+  selectors.py:415 select
+  subprocess.py:2115 _communicate
+  subprocess.py:1209 communicate
+  subprocess.py:550 run
+  tldw_chatbook/Audio/system_audio_tap.py:235 ensure_helper
+  tldw_chatbook/Audio/system_audio_tap.py:296 probe
+  tldw_chatbook/Audio/meeting_owner.py:1122 prepare
+  tldw_chatbook/UI/Screens/meetings_screen.py:448 _run_prepare
+  textual/worker.py:309 run_callable
+  concurrent/futures/thread.py:59 run
+
+Main thread:
+  selectors.py:566 select
+  asyncio/base_events.py:1961 _run_once
+  asyncio/base_events.py:645 run_forever
+  asyncio/base_events.py:678 run_until_complete
+  asyncio/runners.py:72 close
+  asyncio/runners.py:62 __exit__
+  pytest_asyncio/plugin.py:1052 _scoped_runner
+  _pytest/fixtures.py:1014 _teardown_yield_fixture
+
+Python 3.12 runners.py:72 invokes loop.shutdown_default_executor().
+The child test log ended with all 15 destination names followed by a passing dot.
+Both final parent runs nevertheless exited 1 at the unchanged 180-second limit.
+The first 60-second dump was still within the test call, so it did not establish
+cleanup ownership; the second dump did. No source-budget assertion was weakened.

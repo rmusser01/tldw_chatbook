@@ -3231,3 +3231,32 @@ diff. Cite those by symbol with the file and no line number
 finds a symbol after any rewrite, and a reader who greps never learns the
 number was wrong. Line numbers stay right for files outside the branch's diff
 and best of all for frozen captures.
+
+
+## Debounced grid refresh can replace a search query (TASK-32816)
+
+The Appearance layout repair passed its existing filter tests, but native
+run 001 typed `rocket` and ended with `ket`, selecting a ticket on Enter.
+`EmojiGrid.populate_grid` briefly focused an icon; the modal returned focus to
+its search Input, whose default select-on-focus behavior selected the typed
+prefix. Later keystrokes replaced that prefix. The existing filter test assigned
+`Input.value` directly and could not expose this interaction.
+
+For search controls that rebuild focusable children, verify actual keystrokes
+with pauses beyond the debounce interval and assert both text and cursor/selection.
+Preserve the search cursor on programmatic refocus. The two-theme failing test,
+minimal `select_on_focus=False` repair and corrected native captures are retained
+in `Docs/superpowers/qa/2026-09-18-console-appearance/README.md`.
+
+
+## A CSS route tour can leave a native compiler alive (TASK-32818, 2026-09-18)
+
+During TASK-32816 verification, both private CSS-tour runs printed their
+passing assertion but exceeded 180 seconds during teardown. A child-side timed
+stack dump identified Runner.close draining an executor worker in Meetings
+prepare → system_audio_tap.ensure_helper → swiftc. Cancelling a Textual worker
+does not stop its synchronous subprocess. The CSS-only builder now isolates
+only its instance's tap probe; real owner/preparation, screens, fifteen route
+sentinels and source limits remain, and both tours terminate normally. A passing
+dot is not a completed test; inspect child cleanup and retain the nonzero run.
+This fixture isolation does not establish production audio/compiler shutdown.

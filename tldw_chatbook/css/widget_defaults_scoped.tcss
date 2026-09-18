@@ -1915,21 +1915,36 @@
     ConsoleAppearancePickerModal #console-appearance-picker-emoji {
         width: 100%;
         height: 1fr;
-        min-height: 6;
+        min-height: 3;
         background: $surface-darken-1;
+    }
+
+
+    ConsoleAppearancePickerModal #console-appearance-picker-emoji .emoji_row {
+        height: 3;
+        width: 100%;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-emoji .emoji_button {
+        width: 4;
+        min-width: 4;
+        max-width: 4;
+        height: 3;
+        padding: 0;
+        margin: 0;
     }
 
     ConsoleAppearancePickerModal #console-appearance-picker-colors {
 
         width: 100%;
-        height: 3;
-        margin-top: 1;
+        height: 4;
+        margin-top: 0;
     }
 
     ConsoleAppearancePickerModal #console-appearance-picker-hex {
         width: 1fr;
         height: 3;
-        margin-top: 1;
+        margin-top: 0;
     }
 
     ConsoleAppearancePickerModal .console-appearance-swatch {
@@ -1952,9 +1967,9 @@
     }
 
     ConsoleAppearancePickerModal #console-appearance-swatch-none {
-        width: 5;
-        min-width: 5;
-        max-width: 5;
+        width: 6;
+        min-width: 6;
+        max-width: 6;
     }
 
     ConsoleAppearancePickerModal .console-appearance-emoji-selected {

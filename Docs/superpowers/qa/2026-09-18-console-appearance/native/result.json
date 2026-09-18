@@ -1,0 +1,78 @@
+{
+  "pid": 64528,
+  "base_commit": "b76e759af5a13dfb140445b19f29a3ed3936eefe",
+  "source_hashes": {
+    "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py": "f6a93e35fe1af5644fce50eaffcdc7e5f3c51dd02b802461828b1d5ddd32c8dc",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "2042e083a1d49186a2eb4022140eceff20d269d92ebd0b36f36f9b3d29a65fce",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "c2e22a15fdbfd1625d4729968e1e77a9d1173f13c2180b1a54dffb10a741ba96",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/build_css.py": "a1625228add875c34d41aa215001ef6f90d424c9ac841c474471fe8011938b79",
+    "tldw_chatbook/css/widget_css.py": "2cad4c5ac8e4ffd6a4c817ed54310f71a2b3d1560f0290480f34cfb9cf4f9d18",
+    "Docs/superpowers/qa/2026-09-18-console-appearance/native_check.py": "d6dac4dd342a582906575045a4d08d103cbe3e805bc9561287e3022170dfaaa0",
+    "Tests/UI/test_console_appearance_compact.py": "6730098c67c59dfd9e0250fd1ac441da1c788fb85c381338b096a43f1e1ed5cd"
+  },
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "actions_fully_visible": true,
+      "none_label_unwrapped": true,
+      "first_icon_row_visible": true,
+      "keyboard_palette_reveal": true,
+      "filter_and_pointer_selection": true,
+      "cancelled_without_commit": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "actions_fully_visible": true,
+      "none_label_unwrapped": true,
+      "first_icon_row_visible": true,
+      "keyboard_palette_reveal": true,
+      "filter_and_pointer_selection": true,
+      "cancelled_without_commit": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "actions_fully_visible": true,
+      "none_label_unwrapped": true,
+      "first_icon_row_visible": true,
+      "keyboard_palette_reveal": true,
+      "filter_and_pointer_selection": true,
+      "cancelled_without_commit": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "actions_fully_visible": true,
+      "none_label_unwrapped": true,
+      "first_icon_row_visible": true,
+      "keyboard_palette_reveal": true,
+      "filter_and_pointer_selection": true,
+      "cancelled_without_commit": true
+    }
+  ],
+  "fixture_scope": "Real TldwCli and catalog; directly opened modal with fixture title/initial appearance. Drafts are cancelled; no conversation or appearance save is submitted.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "filtered icons",
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}
